@@ -20,7 +20,7 @@ class GalleryManager {
   /**
    * Save a generated image to gallery. Returns gallery entry.
    */
-  save({ base64Data, mimeType, prompt, source, characterId, aspectRatio, seed }) {
+  save({ base64Data, mimeType, prompt, source, characterId, aspectRatio, seed, tags }) {
     if (!base64Data || !mimeType) {
       throw new AppError('Image data required for gallery', 400, 'VALIDATION_ERROR');
     }
@@ -44,6 +44,7 @@ class GalleryManager {
       characterId: characterId || null,
       aspectRatio: aspectRatio || null,
       seed: seed || null,
+      tags: Array.isArray(tags) ? tags.filter(t => typeof t === 'string').map(t => t.trim().toLowerCase()).slice(0, 20) : [],
       fileSize: buffer.length,
       isFavorite: false,
       createdAt: new Date().toISOString(),
@@ -109,6 +110,50 @@ class GalleryManager {
     return this._toSafe(entry);
   }
 
+  updateTags(id, tags) {
+    const entry = this._store.find((e) => e.id === id);
+    if (!entry) throw new AppError('Gallery image not found', 404, 'NOT_FOUND');
+    if (!Array.isArray(tags)) throw new AppError('tags must be an array', 400, 'VALIDATION_ERROR');
+    entry.tags = tags.filter(t => typeof t === 'string').map(t => t.trim().toLowerCase()).slice(0, 20);
+    this._persist();
+    return this._toSafe(entry);
+  }
+
+  addTag(id, tag) {
+    const entry = this._store.find((e) => e.id === id);
+    if (!entry) throw new AppError('Gallery image not found', 404, 'NOT_FOUND');
+    if (!tag || typeof tag !== 'string') throw new AppError('tag must be a non-empty string', 400, 'VALIDATION_ERROR');
+    const normalized = tag.trim().toLowerCase();
+    if (!entry.tags) entry.tags = [];
+    if (!entry.tags.includes(normalized)) {
+      entry.tags.push(normalized);
+      if (entry.tags.length > 20) entry.tags = entry.tags.slice(0, 20);
+      this._persist();
+    }
+    return this._toSafe(entry);
+  }
+
+  removeTag(id, tag) {
+    const entry = this._store.find((e) => e.id === id);
+    if (!entry) throw new AppError('Gallery image not found', 404, 'NOT_FOUND');
+    if (!tag || typeof tag !== 'string') throw new AppError('tag must be a non-empty string', 400, 'VALIDATION_ERROR');
+    const normalized = tag.trim().toLowerCase();
+    if (!entry.tags) entry.tags = [];
+    entry.tags = entry.tags.filter(t => t !== normalized);
+    this._persist();
+    return this._toSafe(entry);
+  }
+
+  getAllTags() {
+    const tagSet = new Set();
+    for (const entry of this._store) {
+      if (Array.isArray(entry.tags)) {
+        for (const t of entry.tags) tagSet.add(t);
+      }
+    }
+    return [...tagSet].sort();
+  }
+
   bulkRemove(ids) {
     if (!Array.isArray(ids) || ids.length === 0) {
       throw new AppError('No IDs provided', 400, 'VALIDATION_ERROR');
@@ -154,6 +199,7 @@ class GalleryManager {
       characterId: entry.characterId,
       aspectRatio: entry.aspectRatio,
       seed: entry.seed,
+      tags: entry.tags || [],
       fileSize: entry.fileSize,
       isFavorite: entry.isFavorite || false,
       createdAt: entry.createdAt,

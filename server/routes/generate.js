@@ -133,6 +133,7 @@ router.post('/', async (req, res, next) => {
       extraReferenceImage,
       customReferenceImages,
       styleAtomIds,
+      contentType,
     } = req.body;
     const finalAspectRatio = VALID_ASPECT_RATIOS.includes(aspectRatio) ? aspectRatio : '1:1';
     const finalImageSize = VALID_IMAGE_SIZES.includes(resolutionTier) ? resolutionTier : '1K';
@@ -284,6 +285,10 @@ router.post('/', async (req, res, next) => {
     });
 
     // Save to persistent gallery
+    const autoTags = [];
+    if (contentType && typeof contentType === 'string') {
+      autoTags.push(contentType.trim().toLowerCase());
+    }
     const galleryEntry = galleryManager.save({
       base64Data: result.image.base64Data,
       mimeType: result.image.mimeType,
@@ -292,6 +297,7 @@ router.post('/', async (req, res, next) => {
       characterId: resolvedCharacterId,
       aspectRatio: finalAspectRatio,
       seed: null,
+      tags: autoTags,
     });
 
     res.json({

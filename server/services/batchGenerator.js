@@ -204,6 +204,9 @@ class BatchGenerator extends EventEmitter {
       case 'edit':
         tasks = this._buildEditTasks(config);
         break;
+      case 'content-mix':
+        tasks = this._buildContentMixTasks(config);
+        break;
     }
 
     if (tasks.length === 0) {
@@ -515,6 +518,91 @@ class BatchGenerator extends EventEmitter {
     return tasks;
   }
 
+  /**
+   * Mode E: Content Mix — distributes images across content categories
+   * using the 40/30/20/10 rule (lifestyle/personality/teasing/engagement).
+   */
+  _buildContentMixTasks(config) {
+    const {
+      totalCount,
+      distribution,
+      characterId,
+      activeReferenceIds,
+      baseThemes,
+    } = config || {};
+
+    const count = this._validateCount(totalCount || 10);
+
+    const categories = ['lifestyle', 'personality', 'teasing', 'engagement'];
+    const defaultDist = { lifestyle: 40, personality: 30, teasing: 20, engagement: 10 };
+    const dist = distribution && typeof distribution === 'object' ? distribution : defaultDist;
+
+    const total = categories.reduce((sum, cat) => sum + (dist[cat] || 0), 0);
+    if (total !== 100) {
+      throw new AppError(`Distribution must sum to 100%, got ${total}%`, 400, 'VALIDATION_ERROR');
+    }
+
+    // Load content type presets
+    const presetsPath = path.join(__dirname, '..', 'data', 'contentTypePresets.json');
+    let allPresets = [];
+    try {
+      allPresets = JSON.parse(fs.readFileSync(presetsPath, 'utf-8'));
+    } catch {
+      throw new AppError('Content type presets not available', 500, 'PRESETS_MISSING');
+    }
+
+    // Distribute count across categories (last category gets remainder)
+    const catCounts = {};
+    let assigned = 0;
+    for (let i = 0; i < categories.length; i++) {
+      const cat = categories[i];
+      const pct = dist[cat] || 0;
+      if (i === categories.length - 1) {
+        catCounts[cat] = count - assigned;
+      } else {
+        catCounts[cat] = Math.round(count * pct / 100);
+        assigned += catCounts[cat];
+      }
+    }
+
+    const tasks = [];
+    let index = 0;
+    for (const cat of categories) {
+      const catCount = catCounts[cat];
+      if (catCount <= 0) continue;
+
+      const presets = allPresets.filter(p => p.contentType === cat);
+      const customTheme = baseThemes && typeof baseThemes[cat] === 'string' ? baseThemes[cat].trim() : '';
+
+      for (let i = 0; i < catCount; i++) {
+        let promptText;
+        if (customTheme) {
+          promptText = customTheme;
+        } else if (presets.length > 0) {
+          const preset = presets[Math.floor(Math.random() * presets.length)];
+          const atoms = preset.suggestedAtoms || {};
+          promptText = Object.entries(atoms).map(([k, v]) => `${k}: ${v}`).join('\n');
+        } else {
+          promptText = `${cat} content — natural, authentic, Instagram-ready`;
+        }
+
+        tasks.push({
+          index,
+          prompt: promptText,
+          characterId: characterId || null,
+          activeReferenceIds: Array.isArray(activeReferenceIds) ? activeReferenceIds : null,
+          userPrompt: promptText,
+          tags: [cat],
+          contentCategory: cat,
+          seed: crypto.randomInt(0, 2147483647),
+        });
+        index++;
+      }
+    }
+
+    return tasks;
+  }
+
   // =========================================================================
   // Execution engine
   // =========================================================================
@@ -804,6 +892,7 @@ class BatchGenerator extends EventEmitter {
             characterId: task.characterId,
             aspectRatio: job.aspectRatio,
             seed: task.seed || null,
+            tags: task.tags || [],
           });
 
           job.results[task.index] = {
@@ -851,7 +940,7 @@ class BatchGenerator extends EventEmitter {
   // =========================================================================
 
   _validateMode(mode) {
-    const valid = ['variation', 'multi', 'override', 'edit'];
+    const valid = ['variation', 'multi', 'override', 'edit', 'content-mix'];
     if (!mode || !valid.includes(mode)) {
       throw new AppError(`"mode" must be one of: ${valid.join(', ')}`, 400, 'VALIDATION_ERROR');
     }

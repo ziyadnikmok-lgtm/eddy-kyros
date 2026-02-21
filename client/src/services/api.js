@@ -182,6 +182,10 @@ export const gallery = {
   },
   imageUrl: (id) => `${BASE}/gallery/${id}/image`,
   openFolder: (id) => request(`/gallery/${id}/open-folder`, { method: 'POST' }),
+  listTags: () => request('/gallery/tags'),
+  updateTags: (id, tags) => request(`/gallery/${id}/tags`, { method: 'PATCH', body: { tags } }),
+  addTag: (id, tag) => request(`/gallery/${id}/tags`, { method: 'POST', body: { tag } }),
+  removeTag: (id, tag) => request(`/gallery/${id}/tags/${encodeURIComponent(tag)}`, { method: 'DELETE' }),
 };
 
 // --- Scene ---
@@ -242,6 +246,17 @@ export const templates = {
   remove: (id) => request(`/templates/${id}`, { method: 'DELETE' }),
 };
 
+// --- Caption Templates ---
+export const captionTemplates = {
+  list: (category) => request(`/caption-templates${category ? `?category=${category}` : ''}`),
+  get: (id) => request(`/caption-templates/${id}`),
+  create: (data) => request('/caption-templates', { method: 'POST', body: data }),
+  update: (id, data) => request(`/caption-templates/${id}`, { method: 'PATCH', body: data }),
+  remove: (id) => request(`/caption-templates/${id}`, { method: 'DELETE' }),
+  suggest: (category, limit) => request(`/caption-templates/suggest?category=${encodeURIComponent(category || '')}&limit=${limit || 5}`),
+  markUsed: (id) => request(`/caption-templates/${id}/use`, { method: 'POST' }),
+};
+
 // --- Instagram availability precheck ---
 export const availability = {
   check: (url) => request('/availability/check', { method: 'POST', body: { url } }),
@@ -274,6 +289,16 @@ export const styleLibrary = {
   stats: () => request('/style-library/stats'),
   profiles: () => request('/style-library/profiles'),
   contentPresets: () => request('/style-library/content-presets'),
+};
+
+// --- Auto Plans ---
+export const autoPlans = {
+  list: () => request('/auto/plans'),
+  get: (id) => request(`/auto/plans/${id}`),
+  save: (data) => request('/auto/plans', { method: 'POST', body: data }),
+  update: (id, data) => request(`/auto/plans/${id}`, { method: 'PATCH', body: data }),
+  remove: (id) => request(`/auto/plans/${id}`, { method: 'DELETE' }),
+  executeDay: (id, dayNumber) => request(`/auto/plans/${id}/execute-day`, { method: 'POST', body: { dayNumber } }),
 };
 
 // --- Profile Analyzer ---

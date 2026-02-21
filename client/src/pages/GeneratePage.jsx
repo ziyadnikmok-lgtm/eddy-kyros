@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo, useReducer, useRef, lazy, Suspense } from 'react';
-import { generate as genApi, characters as charApi, templates as templatesApi, styleLibrary as styleApi } from '../services/api';
+import { generate as genApi, characters as charApi, templates as templatesApi, styleLibrary as styleApi, captionTemplates as captionApi } from '../services/api';
 // characters, sceneMemories, outfits come from AppContext (fetched once on app load)
 import { useAsync } from '../hooks/useAsync';
 import { useStepTimer } from '../hooks/useStepTimer';
 import { useApp } from '../context/AppContext';
-import { Card, Btn, Textarea, Toggle, Spinner, ImageCard, Badge, StepProgress, Section, Hint } from '../components/UI';
+import { Card, Btn, Textarea, Toggle, Spinner, ImageCard, Badge, StepProgress, Section, Hint, CopyBtn } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 import {
   ASPECT_RATIOS, RESOLUTION_TIERS,
@@ -39,10 +39,19 @@ const CONTENT_TYPES = [
   { key: 'engagement', label: 'Engagement', pct: 10, desc: 'Q&A, polls, conversation' },
 ];
 
+const SMART_DEFAULTS = {
+  lifestyle: { cameraProfileId: 'iphone_selfie', poseMode: 'auto', expressionMode: 'relaxed_soft_smile', sceneMode: 'cafe_street_candid' },
+  personality: { cameraProfileId: 'golden_hour_glow', poseMode: 'hip_pop_stand', expressionMode: 'warm_happy_smile', sceneMode: 'none' },
+  teasing: { cameraProfileId: 'ring_light_vanity', poseMode: 'mirror_selfie', expressionMode: 'playful_soft_pout', sceneMode: 'bathroom_mirror_snap' },
+  engagement: { cameraProfileId: 'iphone_selfie', poseMode: 'none', expressionMode: 'confident_smirk_direct', sceneMode: 'none' },
+};
+
 const INITIAL_STATE = {
   prompt: '',
   aspectRatio: '4:5',
   resolutionTier: '2K',
+  formMode: 'quick',
+  quickContentType: '',
   useCharacter: false,
   selectedCharId: '',
   selectedChar: null,
@@ -103,8 +112,15 @@ export default function GeneratePage() {
   const [contentPresets, setContentPresets] = useState([]);
   const [contentTab, setContentTab] = useState('lifestyle');
 
+  // Caption templates
+  const [captionList, setCaptionList] = useState([]);
+  const [suggestedCaptions, setSuggestedCaptions] = useState([]);
+  const [showCaptionComposer, setShowCaptionComposer] = useState(false);
+  const [captionDraft, setCaptionDraft] = useState({ title: '', body: '', category: 'general', hashtags: '', cta: '' });
+
   useEffect(() => { templatesApi.list('generate').then(setTplList).catch(() => {}); }, []);
   useEffect(() => { styleApi.contentPresets().then(setContentPresets).catch(() => {}); }, []);
+  useEffect(() => { captionApi.list().then(setCaptionList).catch(() => {}); }, []);
 
   // Prompt completeness indicator — Nano-Banana formula coverage
   const promptCompleteness = useMemo(() => {
@@ -214,6 +230,7 @@ export default function GeneratePage() {
       expressionMode: useExpressionMode ? expressionMode : 'none',
       sceneMode: useSceneMode ? sceneMode : 'none',
       styleAtomIds: styleAtomIds.length > 0 ? styleAtomIds : undefined,
+      contentType: state.quickContentType || contentTab || undefined,
     };
     if (useCharacter && selectedCharId) {
       body.characterId = selectedCharId;
@@ -252,6 +269,7 @@ export default function GeneratePage() {
       identityConfidence: data.image?.validation?.identity_match_score,
     }, ...h].slice(0, 9));
     notify('Image generated!', 'success');
+    captionApi.suggest(contentTab || 'lifestyle', 3).then(setSuggestedCaptions).catch(() => {});
   }).finally(() => { busyRef.current = false; });
   };
 
@@ -318,6 +336,21 @@ export default function GeneratePage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-1 space-y-4">
           <Card className="space-y-4">
+            {/* ── Quick / Advanced Toggle ── */}
+            <div className="flex items-center justify-between">
+              <div className="flex rounded-lg bg-zinc-800/60 p-0.5">
+                {[['quick', 'Quick'], ['advanced', 'Advanced']].map(([m, label]) => (
+                  <button key={m} onClick={() => update({ formMode: m })}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition cursor-pointer ${
+                      state.formMode === m ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-zinc-200'
+                    }`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {state.formMode === 'quick' && <span className="text-[10px] text-zinc-500">Essential controls only</span>}
+            </div>
+
             {/* ── Essential: Prompt + Character ── */}
             <Textarea label="Prompt" placeholder="Describe the image you want to generate..." value={prompt} onChange={(e) => update({ prompt: e.target.value })} className="!min-h-[120px]" />
 
@@ -402,6 +435,49 @@ export default function GeneratePage() {
               </div>
             </div>
 
+            {/* ── Quick Mode: Content Type Picker ── */}
+            {state.formMode === 'quick' && (
+              <div>
+                <span className="text-xs text-zinc-400 font-medium block mb-2">Content Type</span>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {CONTENT_TYPES.map(ct => (
+                    <button key={ct.key} onClick={() => {
+                      update({ quickContentType: ct.key });
+                      const defaults = SMART_DEFAULTS[ct.key];
+                      if (defaults) {
+                        update({
+                          cameraProfileId: defaults.cameraProfileId,
+                          poseMode: defaults.poseMode,
+                          useExpressionMode: defaults.expressionMode !== 'none',
+                          expressionMode: defaults.expressionMode,
+                          useSceneMode: defaults.sceneMode !== 'none',
+                          sceneMode: defaults.sceneMode,
+                        });
+                      }
+                    }}
+                      className={`rounded-lg px-2.5 py-2 text-left transition cursor-pointer border ${
+                        state.quickContentType === ct.key
+                          ? 'border-blue-500/40 bg-blue-500/10'
+                          : 'border-zinc-700/40 bg-zinc-800/40 hover:border-zinc-600'
+                      }`}>
+                      <div className="flex items-center justify-between">
+                        <span className={`text-xs font-medium ${state.quickContentType === ct.key ? 'text-blue-300' : 'text-zinc-300'}`}>{ct.label}</span>
+                        <span className="text-[10px] text-zinc-600">{ct.pct}%</span>
+                      </div>
+                      <span className="text-[10px] text-zinc-500 block mt-0.5">{ct.desc}</span>
+                    </button>
+                  ))}
+                </div>
+                {state.quickContentType && (
+                  <div className="mt-2 text-[10px] text-zinc-500">
+                    Auto-configured: {SMART_DEFAULTS[state.quickContentType] && `Camera: ${CAMERA_PROFILES.find(c => c.value === SMART_DEFAULTS[state.quickContentType].cameraProfileId)?.label || '—'}, Pose: ${POSE_MODES.find(p => p.value === SMART_DEFAULTS[state.quickContentType].poseMode)?.label || '—'}`}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Advanced-only sections ── */}
+            {state.formMode === 'advanced' && <>
             {/* ── Collapsible: Authenticity Modifiers ── */}
             <Section title="Authenticity Modifiers" badge={activeMods.size > 0 ? <Badge color="blue">{activeMods.size}</Badge> : null} hint="Add realistic photo imperfections like grain, flash, or phone quality to make images look less AI-generated.">
               <div className="flex flex-wrap gap-1.5">
@@ -599,6 +675,92 @@ export default function GeneratePage() {
               </div>
             </Section>
 
+            {/* ── Collapsible: Captions ── */}
+            <Section title="Captions" badge={captionList.length > 0 ? <Badge color="zinc">{captionList.length}</Badge> : null}
+              hint="Caption templates for Instagram posts. Suggested after generation based on content type.">
+              <div className="space-y-2">
+                {suggestedCaptions.length > 0 && (
+                  <div className="space-y-1.5">
+                    <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Suggested</span>
+                    {suggestedCaptions.map(c => (
+                      <div key={c.id} className="bg-zinc-800/40 rounded-lg p-2 group">
+                        <div className="text-xs text-zinc-300 font-medium">{c.title}</div>
+                        <div className="text-[11px] text-zinc-400 mt-0.5 line-clamp-2">{c.body}</div>
+                        {c.hashtags.length > 0 && (
+                          <div className="text-[10px] text-blue-400 mt-1 truncate">{c.hashtags.map(h => `#${h}`).join(' ')}</div>
+                        )}
+                        <div className="flex gap-1.5 mt-1.5 opacity-0 group-hover:opacity-100 transition">
+                          <CopyBtn text={`${c.body}${c.hashtags.length ? '\n\n' + c.hashtags.map(h => '#' + h).join(' ') : ''}${c.cta ? '\n\n' + c.cta : ''}`} />
+                          <button onClick={() => { captionApi.markUsed(c.id).catch(() => {}); notify('Marked as used', 'info'); }}
+                            className="text-[10px] text-zinc-500 hover:text-green-400 cursor-pointer">Use</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center justify-end">
+                  <button onClick={() => setShowCaptionComposer(!showCaptionComposer)}
+                    className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer">
+                    {showCaptionComposer ? 'Cancel' : '+ New Caption'}
+                  </button>
+                </div>
+                {showCaptionComposer && (
+                  <div className="space-y-2 bg-zinc-800/30 rounded-lg p-2.5">
+                    <input type="text" placeholder="Caption title..."
+                      value={captionDraft.title} onChange={(e) => setCaptionDraft(d => ({ ...d, title: e.target.value }))}
+                      className="w-full h-8 rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-blue-500/70" />
+                    <select value={captionDraft.category} onChange={(e) => setCaptionDraft(d => ({ ...d, category: e.target.value }))}
+                      className="w-full h-8 rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 text-xs text-zinc-300 outline-none cursor-pointer">
+                      {['general', 'lifestyle', 'personality', 'teasing', 'engagement'].map(c => (
+                        <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>
+                      ))}
+                    </select>
+                    <textarea placeholder="Caption body... Use {{placeholder}} for variables" rows={3}
+                      value={captionDraft.body} onChange={(e) => setCaptionDraft(d => ({ ...d, body: e.target.value }))}
+                      className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none resize-y focus:border-blue-500/70" />
+                    <input type="text" placeholder="Hashtags (comma-separated)..."
+                      value={captionDraft.hashtags} onChange={(e) => setCaptionDraft(d => ({ ...d, hashtags: e.target.value }))}
+                      className="w-full h-8 rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-blue-500/70" />
+                    <input type="text" placeholder="Call to action (optional)..."
+                      value={captionDraft.cta} onChange={(e) => setCaptionDraft(d => ({ ...d, cta: e.target.value }))}
+                      className="w-full h-8 rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-blue-500/70" />
+                    <Btn variant="primary" className="!py-1 !px-3 !text-xs" onClick={async () => {
+                      try {
+                        const created = await captionApi.create({
+                          ...captionDraft,
+                          hashtags: captionDraft.hashtags.split(',').map(h => h.trim()).filter(Boolean),
+                        });
+                        setCaptionList(prev => [created, ...prev]);
+                        setCaptionDraft({ title: '', body: '', category: 'general', hashtags: '', cta: '' });
+                        setShowCaptionComposer(false);
+                        notify('Caption template saved', 'success');
+                      } catch (err) { notify(err.message || 'Failed to save', 'error'); }
+                    }}>Save Caption</Btn>
+                  </div>
+                )}
+                {captionList.length > 0 && (
+                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                    {captionList.map(c => (
+                      <div key={c.id} className="flex items-center justify-between rounded-lg bg-zinc-800/60 px-2.5 py-1.5 group">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm text-zinc-300 truncate">{c.title}</div>
+                          <div className="text-[10px] text-zinc-500">{c.category}</div>
+                        </div>
+                        <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition">
+                          <CopyBtn text={`${c.body}${c.hashtags.length ? '\n\n' + c.hashtags.map(h => '#' + h).join(' ') : ''}`} />
+                          <button onClick={() => captionApi.remove(c.id).then(() => {
+                            setCaptionList(prev => prev.filter(x => x.id !== c.id));
+                            notify('Caption deleted', 'success');
+                          }).catch(err => notify(err.message, 'error'))}
+                            className="text-zinc-600 hover:text-red-400 text-xs cursor-pointer ml-1">Del</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </Section>
+
             {/* ── Collapsible: Templates ── */}
             <Section title="Templates" badge={tplList.length > 0 ? <Badge color="zinc">{tplList.length}</Badge> : null}>
               <div className="space-y-2">
@@ -627,6 +789,7 @@ export default function GeneratePage() {
                 )}
               </div>
             </Section>
+            </>}
 
             <div className="pt-1">
               {/* Prompt Completeness Indicator */}

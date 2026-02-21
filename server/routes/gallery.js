@@ -145,6 +145,62 @@ router.post('/bulk-download', (req, res, next) => {
 });
 
 /**
+ * GET /api/gallery/tags
+ * Get all unique tags across gallery images.
+ */
+router.get('/tags', (_req, res, next) => {
+  try {
+    const tags = galleryManager.getAllTags();
+    res.json({ success: true, data: tags });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PATCH /api/gallery/:id/tags
+ * Replace all tags on a gallery image.
+ * Body: { tags: string[] }
+ */
+router.patch('/:id/tags', (req, res, next) => {
+  try {
+    const { tags } = req.body;
+    const entry = galleryManager.updateTags(req.params.id, tags || []);
+    res.json({ success: true, data: entry });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/gallery/:id/tags
+ * Add a single tag to a gallery image.
+ * Body: { tag: string }
+ */
+router.post('/:id/tags', (req, res, next) => {
+  try {
+    const { tag } = req.body;
+    const entry = galleryManager.addTag(req.params.id, tag);
+    res.json({ success: true, data: entry });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * DELETE /api/gallery/:id/tags/:tag
+ * Remove a specific tag from a gallery image.
+ */
+router.delete('/:id/tags/:tag', (req, res, next) => {
+  try {
+    const entry = galleryManager.removeTag(req.params.id, decodeURIComponent(req.params.tag));
+    res.json({ success: true, data: entry });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * GET /api/gallery/:id/image
  * Serve image file by gallery ID.
  */

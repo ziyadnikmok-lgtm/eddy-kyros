@@ -45,6 +45,7 @@ const availabilityRoute = require('./routes/availability');
 const templatesRouter = require('./routes/templates');
 const styleLibraryRouter = require('./routes/styleLibrary');
 const profileAnalyzerRouter = require('./routes/profileAnalyzer');
+const captionTemplatesRouter = require('./routes/captionTemplates');
 const imageStore = require('./services/imageStore');
 const batchGenerator = require('./services/batchGenerator');
 const log = require('./utils/logger');
@@ -144,6 +145,7 @@ app.use('/api/availability', availabilityRoute);
 app.use('/api/templates', templatesRouter);
 app.use('/api/style-library', styleLibraryRouter);
 app.use('/api/profile-analyzer', profileAnalyzerRouter);
+app.use('/api/caption-templates', captionTemplatesRouter);
 
 // 404 catch-all
 app.use((req, _res, next) => {
@@ -228,6 +230,7 @@ const server = app.listen(PORT, HOST, () => {
   console.log('    /api/availability');
   console.log('    /api/style-library');
   console.log('    /api/profile-analyzer');
+  console.log('    /api/caption-templates');
   console.log('==============================================');
   console.log('');
 });

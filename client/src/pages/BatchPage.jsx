@@ -45,6 +45,9 @@ const INITIAL_STATE = {
   sceneMode: 'none',
   jobId: null,
   elapsedSec: 0,
+  contentMixCount: 10,
+  contentMixDist: { lifestyle: 40, personality: 30, teasing: 20, engagement: 10 },
+  contentMixThemes: { lifestyle: '', personality: '', teasing: '', engagement: '' },
 };
 
 function formReducer(state, action) {
@@ -257,6 +260,18 @@ export default function BatchPage() {
           }));
         }
       }
+    } else if (mode === 'content-mix') {
+      const total = Object.values(state.contentMixDist).reduce((a, b) => a + b, 0);
+      if (total !== 100) { notify('Distribution must sum to 100%', 'error'); return; }
+      config = {
+        totalCount: state.contentMixCount,
+        distribution: state.contentMixDist,
+        baseThemes: Object.fromEntries(Object.entries(state.contentMixThemes).filter(([, v]) => v.trim())),
+      };
+      if (charId) {
+        config.characterId = charId;
+        config.activeReferenceIds = charDetail?.references?.filter((r) => r.isActive).map((r) => r.id) || [];
+      }
     }
     config.sceneMemoryId = sceneMemoryId || null;
     config.outfitId = outfitId || null;
@@ -319,7 +334,7 @@ export default function BatchPage() {
         <div>
           <span className="text-sm text-zinc-400 font-medium mb-2 flex items-center gap-1.5">Mode <Hint text="Variation: same prompt, multiple outputs. Multi-Prompt: different prompt per image. Override: same scene, different references. Edit: modify an existing image." /></span>
           <div className="flex flex-wrap gap-2">
-            {[['variation', 'Variation'], ['multi', 'Multi-Prompt'], ['override', 'Override Iter.'], ['edit', 'Edit Image']].map(([m, label]) => (
+            {[['variation', 'Variation'], ['multi', 'Multi-Prompt'], ['override', 'Override Iter.'], ['edit', 'Edit Image'], ['content-mix', 'Content Mix']].map(([m, label]) => (
               <button key={m} onClick={() => update({ mode: m })}
                 className={`rounded-lg px-4 py-2 text-sm font-medium transition cursor-pointer ${mode === m ? 'bg-blue-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}`}>
                 {label}
@@ -586,6 +601,66 @@ export default function BatchPage() {
 
             <Textarea label="Modification Prompt" placeholder="What to change: make it nighttime, add rain..." value={editPrompt} onChange={(e) => update({ editPrompt: e.target.value })} />
             <Input label="Variations" type="number" min={1} max={10} value={count} onChange={(e) => update({ count: Math.min(10, Math.max(1, +e.target.value)) })} />
+          </>
+        )}
+
+        {/* Content Mix mode */}
+        {mode === 'content-mix' && (
+          <>
+            <div>
+              <span className="text-xs text-zinc-400 font-medium block mb-1.5">Character (optional)</span>
+              <select value={charId} onChange={(e) => { update({ charId: e.target.value, charDetail: null }); if (e.target.value) charApi.get(e.target.value).then(d => update({ charDetail: d })).catch(() => {}); }}
+                className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer">
+                <option value="">No character</option>
+                {chars.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+
+            <Input label="Total Images" type="number" min={4} max={20} value={state.contentMixCount}
+              onChange={(e) => update({ contentMixCount: Math.min(20, Math.max(4, +e.target.value)) })} />
+
+            <div>
+              <span className="text-xs text-zinc-400 font-medium block mb-2">Category Distribution</span>
+              <div className="space-y-2.5">
+                {[
+                  { key: 'lifestyle', label: 'Lifestyle', pct: '40%' },
+                  { key: 'personality', label: 'Personality', pct: '30%' },
+                  { key: 'teasing', label: 'Teasing', pct: '20%' },
+                  { key: 'engagement', label: 'Engagement', pct: '10%' },
+                ].map(cat => {
+                  const pct = state.contentMixDist[cat.key];
+                  const computed = Math.round(state.contentMixCount * pct / 100);
+                  return (
+                    <div key={cat.key} className="flex items-center gap-3">
+                      <span className="text-xs text-zinc-300 w-24 shrink-0">{cat.label}</span>
+                      <input type="range" min={0} max={100} step={5} value={pct}
+                        onChange={(e) => update(prev => ({ contentMixDist: { ...prev.contentMixDist, [cat.key]: +e.target.value } }))}
+                        className="flex-1 accent-blue-500 h-1.5 rounded-full appearance-none bg-zinc-700 cursor-pointer" />
+                      <span className="text-xs text-zinc-400 w-10 text-right font-mono">{pct}%</span>
+                      <Badge color="zinc">{computed}</Badge>
+                    </div>
+                  );
+                })}
+                {(() => {
+                  const total = Object.values(state.contentMixDist).reduce((a, b) => a + b, 0);
+                  return total !== 100 && (
+                    <div className="text-xs text-red-400 font-medium">Total: {total}% — must be 100%</div>
+                  );
+                })()}
+              </div>
+            </div>
+
+            <Section title="Custom Themes per Category" hint="Override auto-generated prompts with your own theme for each category. Leave empty for random presets.">
+              <div className="space-y-2">
+                {['lifestyle', 'personality', 'teasing', 'engagement'].map(cat => (
+                  <Textarea key={cat} label={cat.charAt(0).toUpperCase() + cat.slice(1)}
+                    placeholder={`Custom ${cat} prompt... (leave empty for random presets)`}
+                    value={state.contentMixThemes[cat]}
+                    onChange={(e) => update(prev => ({ contentMixThemes: { ...prev.contentMixThemes, [cat]: e.target.value } }))}
+                    className="!min-h-[60px]" />
+                ))}
+              </div>
+            </Section>
           </>
         )}
 

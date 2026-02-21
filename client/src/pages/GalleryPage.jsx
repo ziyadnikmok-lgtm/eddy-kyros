@@ -10,6 +10,8 @@ const SORT_OPTIONS = [
   { value: 'largest', label: 'Largest' },
   { value: 'smallest', label: 'Smallest' },
 ];
+
+const CATEGORY_TAGS = ['lifestyle', 'personality', 'teasing', 'engagement'];
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 
 const PAGE_SIZE = 24;
@@ -39,6 +41,12 @@ export default function GalleryPage() {
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
   const [showFilters, setShowFilters] = useState(false);
 
+  // Tag filtering
+  const [tagFilter, setTagFilter] = useState([]);
+  const [allTags, setAllTags] = useState([]);
+  const [editingTagsId, setEditingTagsId] = useState(null);
+  const [newTagInput, setNewTagInput] = useState('');
+
   // Progressive loading
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const sentinelRef = useRef(null);
@@ -64,6 +72,9 @@ export default function GalleryPage() {
     if (sourceFilter) result = result.filter((i) => i.source === sourceFilter);
     if (ratioFilter) result = result.filter((i) => i.aspectRatio === ratioFilter);
     if (favoritesOnly) result = result.filter((i) => i.isFavorite);
+    if (tagFilter.length > 0) {
+      result = result.filter((i) => tagFilter.some(t => Array.isArray(i.tags) && i.tags.includes(t)));
+    }
 
     if (sortBy === 'oldest') {
       result = [...result].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
@@ -74,12 +85,12 @@ export default function GalleryPage() {
     }
     // 'newest' is the default order from the API
     return result;
-  }, [images, searchQuery, sourceFilter, ratioFilter, favoritesOnly, sortBy]);
+  }, [images, searchQuery, sourceFilter, ratioFilter, favoritesOnly, tagFilter, sortBy]);
 
   const visibleImages = useMemo(() => filteredImages.slice(0, visibleCount), [filteredImages, visibleCount]);
   const galleryImageUrls = useMemo(() => filteredImages.map((i) => galleryApi.imageUrl(i.id)), [filteredImages]);
 
-  const hasActiveFilters = searchQuery || sourceFilter || ratioFilter || favoritesOnly;
+  const hasActiveFilters = searchQuery || sourceFilter || ratioFilter || favoritesOnly || tagFilter.length > 0;
 
   // Load gallery
   const load = async () => {
@@ -88,8 +99,10 @@ export default function GalleryPage() {
     setLoadingList(false);
   };
 
+  const loadTags = () => { galleryApi.listTags().then(setAllTags).catch(() => {}); };
+
   // eslint-disable-next-line react-hooks/set-state-in-effect -- load() is an async launcher
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); loadTags(); }, []);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- reset pagination on filter/data change
   useEffect(() => { setVisibleCount(PAGE_SIZE); }, [filteredImages]);
@@ -192,7 +205,26 @@ export default function GalleryPage() {
     setSourceFilter('');
     setRatioFilter('');
     setFavoritesOnly(false);
+    setTagFilter([]);
     setSortBy('newest');
+  };
+
+  const handleAddTag = async (id, tag) => {
+    if (!tag.trim()) return;
+    try {
+      const updated = await galleryApi.addTag(id, tag.trim());
+      setImages(prev => prev.map(i => i.id === id ? { ...i, tags: updated.tags } : i));
+      setNewTagInput('');
+      loadTags();
+    } catch (err) { notify(err.message || 'Failed to add tag', 'error'); }
+  };
+
+  const handleRemoveTag = async (id, tag) => {
+    try {
+      const updated = await galleryApi.removeTag(id, tag);
+      setImages(prev => prev.map(i => i.id === id ? { ...i, tags: updated.tags } : i));
+      loadTags();
+    } catch (err) { notify(err.message || 'Failed to remove tag', 'error'); }
   };
 
   // Formatters
@@ -316,6 +348,23 @@ export default function GalleryPage() {
                   ))}
                 </div>
               </div>
+              {allTags.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs text-zinc-500">Tags:</span>
+                  {allTags.map(tag => (
+                    <button key={tag} onClick={() => setTagFilter(prev =>
+                      prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
+                    )}
+                      className={`rounded-full px-2 py-0.5 text-[11px] font-medium transition cursor-pointer border ${
+                        tagFilter.includes(tag)
+                          ? 'bg-blue-600/30 text-blue-300 border-blue-500/50'
+                          : 'bg-zinc-700/50 text-zinc-400 border-zinc-700/50 hover:text-zinc-300'
+                      }`}>
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              )}
               {hasActiveFilters && (
                 <button onClick={clearFilters} className="ml-auto text-xs text-zinc-500 hover:text-zinc-300 transition cursor-pointer">
                   Clear all
@@ -424,7 +473,40 @@ export default function GalleryPage() {
                     {img.aspectRatio && <Badge color="zinc">{img.aspectRatio}</Badge>}
                     {img.source && <Badge color="blue">{img.source}</Badge>}
                     <span className="text-[10px] text-zinc-600">{formatSize(img.fileSize)}</span>
+                    <button onClick={(e) => { e.stopPropagation(); setEditingTagsId(editingTagsId === img.id ? null : img.id); setNewTagInput(''); }}
+                      className="text-[10px] text-zinc-600 hover:text-blue-400 transition cursor-pointer ml-auto" aria-label="Edit tags">
+                      🏷
+                    </button>
                   </div>
+                  {/* Tags display */}
+                  {Array.isArray(img.tags) && img.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {img.tags.map(tag => (
+                        <span key={tag} className={`text-[10px] rounded-full px-1.5 py-0.5 inline-flex items-center gap-0.5 ${
+                          CATEGORY_TAGS.includes(tag)
+                            ? 'bg-purple-500/15 text-purple-400 border border-purple-500/20'
+                            : 'bg-zinc-700/30 text-zinc-500 border border-zinc-600/20'
+                        }`}>
+                          {tag}
+                          {editingTagsId === img.id && (
+                            <button onClick={(e) => { e.stopPropagation(); handleRemoveTag(img.id, tag); }}
+                              className="hover:text-red-400 cursor-pointer leading-none">&times;</button>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {/* Tag editor */}
+                  {editingTagsId === img.id && (
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <input type="text" placeholder="Add tag..." value={newTagInput}
+                        onChange={(e) => setNewTagInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { handleAddTag(img.id, newTagInput); } }}
+                        className="flex-1 h-6 rounded border border-zinc-700/80 bg-zinc-900/60 px-2 text-[11px] text-zinc-300 outline-none focus:border-blue-500/70" />
+                      <button onClick={() => handleAddTag(img.id, newTagInput)} disabled={!newTagInput.trim()}
+                        className="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer disabled:opacity-40 disabled:cursor-default">Add</button>
+                    </div>
+                  )}
                 </div>
               </div>
             );
