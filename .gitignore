@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+
+# Build output
+client/dist/
+
+# Environment
+.env
+.env.*
+
+# Encrypted keys
+server/data/keys.enc
+
+# User data (gallery, characters, uploads)
+server/data/gallery.json
+server/data/analyzedProfiles.json
+server/data/sceneMemory.json
+server/data/outfits.json
+server/data/brandVoice.json
+server/data/ig-debug/
+uploads/generated/
+uploads/Maria/
+uploads/pdf_extracts/
+uploads/sanitized/
+characters/
+
+# Temp files
+temp/
+
+# Root-level data folder (user content)
+data/
+
+# Zip archive
+*.zip
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*

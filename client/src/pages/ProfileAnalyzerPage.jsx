@@ -1,0 +1,394 @@
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { useApp } from '../context/AppContext';
+import { profileAnalyzer as analyzerApi, styleLibrary as libraryApi } from '../services/api';
+import { Card, Btn, Input, Select, Badge, Spinner, Empty, ProgressBar } from '../components/UI';
+
+export default function ProfileAnalyzerPage() {
+  const { notify } = useApp();
+
+  const [username, setUsername] = useState('');
+  const [postLimit, setPostLimit] = useState(12);
+  const [sort, setSort] = useState('newest');   // 'newest' | 'oldest'
+  const [newerThan, setNewerThan] = useState(''); // e.g. "30 days", "2025-01-01"
+  const [analyzing, setAnalyzing] = useState(false);
+  const [progress, setProgress] = useState(null); // { current, total, status }
+  const [results, setResults] = useState([]); // [{postIndex, postUrl, atoms: [{category, text, tags}]}]
+  const [checkedAtoms, setCheckedAtoms] = useState(new Set()); // "postIdx-atomIdx" keys
+  const [saving, setSaving] = useState(false);
+  const [profiles, setProfiles] = useState([]);
+  const eventSourceRef = useRef(null);
+  const analyzingRef = useRef(false);
+
+  useEffect(() => {
+    analyzingRef.current = analyzing;
+  }, [analyzing]);
+
+  // Fetch analyzed profiles on mount
+  useEffect(() => {
+    libraryApi.profiles().then(setProfiles).catch(() => {});
+  }, []);
+
+  // Close EventSource on unmount to prevent leaked connections
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+    };
+  }, []);
+
+  // Total atoms across all results
+  const allAtomKeys = useMemo(() => {
+    const keys = [];
+    results.forEach((post, pi) => {
+      post.atoms.forEach((_, ai) => {
+        keys.push(`${pi}-${ai}`);
+      });
+    });
+    return keys;
+  }, [results]);
+
+  const checkedCount = checkedAtoms.size;
+
+  // ─── Analysis ─────────────────────────────────────────
+  const startAnalysis = () => {
+    if (!username.trim() || analyzing) return;
+
+    // Close any previous EventSource to prevent leaked connections
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+
+    setAnalyzing(true);
+    analyzingRef.current = true;
+    setResults([]);
+    setCheckedAtoms(new Set());
+    setProgress({ current: 0, total: 0, status: 'Starting...' });
+
+    const es = analyzerApi.analyze(username.trim(), postLimit, {
+      sort,
+      newerThan: newerThan.trim() || undefined,
+    });
+    eventSourceRef.current = es;
+
+    es.addEventListener('progress', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        setProgress(data);
+      } catch { /* ignore */ }
+    });
+
+    es.addEventListener('atoms', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        setResults(prev => {
+          const next = [...prev, data];
+          // Auto-check atoms >= 15 chars
+          const newChecked = new Set();
+          data.atoms.forEach((atom, ai) => {
+            if (atom.text.length >= 15) {
+              newChecked.add(`${next.length - 1}-${ai}`);
+            }
+          });
+          setCheckedAtoms(prev2 => {
+            const merged = new Set(prev2);
+            for (const key of newChecked) merged.add(key);
+            return merged;
+          });
+          return next;
+        });
+      } catch { /* ignore */ }
+    });
+
+    let closed = false;
+    const finish = () => {
+      if (closed) return;
+      closed = true;
+      es.close();
+      setAnalyzing(false);
+      analyzingRef.current = false;
+    };
+
+    es.addEventListener('complete', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        setProgress({ current: data.total, total: data.total, status: 'Analysis complete!' });
+      } catch { /* ignore */ }
+      finish();
+    });
+
+    es.addEventListener('error', (e) => {
+      if (closed) return;
+      try {
+        const data = JSON.parse(e.data);
+        notify(data.message || 'Analysis error', 'error');
+      } catch {
+        // SSE connection error (not a custom error event)
+        if (!analyzingRef.current) return;
+        notify('Connection lost during analysis', 'error');
+      }
+      finish();
+    });
+  };
+
+  const cancelAnalysis = () => {
+    eventSourceRef.current?.close();
+    setAnalyzing(false);
+    analyzingRef.current = false;
+    setProgress(prev => prev ? { ...prev, status: 'Cancelled' } : null);
+  };
+
+  // ─── Checkbox management ──────────────────────────────
+  const toggleAtom = (key) => {
+    setCheckedAtoms(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const selectAll = () => setCheckedAtoms(new Set(allAtomKeys));
+  const deselectAll = () => setCheckedAtoms(new Set());
+
+  // ─── Save ─────────────────────────────────────────────
+  const handleSave = async () => {
+    if (checkedCount === 0) return;
+    setSaving(true);
+    try {
+      const atoms = [];
+      results.forEach((post, pi) => {
+        post.atoms.forEach((atom, ai) => {
+          if (checkedAtoms.has(`${pi}-${ai}`)) {
+            atoms.push({ category: atom.category, text: atom.text, tags: atom.tags || [] });
+          }
+        });
+      });
+      await analyzerApi.save({
+        profileUsername: username.trim(),
+        atoms,
+        analyzedPostCount: results.length,
+      });
+      notify(`Saved ${atoms.length} atoms to Style Library`, 'success');
+      // Refresh profiles list
+      libraryApi.profiles().then(setProfiles).catch(() => {});
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteProfile = async (profileUsername) => {
+    try {
+      await libraryApi.removeBySource(profileUsername);
+      setProfiles(prev => prev.filter(p => p.username !== profileUsername));
+      notify(`Removed all atoms from @${profileUsername}`, 'success');
+    } catch (err) {
+      notify(err.message, 'error');
+    }
+  };
+
+  // ─── Render ───────────────────────────────────────────
+  return (
+    <div className="space-y-6 animate-in">
+      <h1 className="text-3xl font-bold tracking-tight text-gradient">Profile Analyzer</h1>
+
+      {/* Input Section */}
+      <Card>
+        <div className="flex gap-3 items-end flex-wrap">
+          <div className="flex-1 min-w-[200px]">
+            <Input
+              label="Instagram Username"
+              placeholder="username (without @)"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+            />
+          </div>
+          <div className="w-24">
+            <Input
+              label="Posts"
+              type="number"
+              min={1}
+              max={30}
+              value={postLimit}
+              onChange={e => setPostLimit(parseInt(e.target.value) || 12)}
+            />
+          </div>
+          <div className="w-32">
+            <Select
+              label="Order"
+              value={sort}
+              onChange={e => setSort(e.target.value)}
+              options={[
+                { value: 'newest', label: 'Newest first' },
+                { value: 'oldest', label: 'Oldest first' },
+              ]}
+            />
+          </div>
+          <div className="w-36">
+            <Input
+              label="Newer than"
+              placeholder="e.g. 30 days"
+              value={newerThan}
+              onChange={e => setNewerThan(e.target.value)}
+            />
+          </div>
+          {analyzing ? (
+            <Btn variant="danger" onClick={cancelAnalysis}>Cancel</Btn>
+          ) : (
+            <Btn variant="primary" onClick={startAnalysis} disabled={!username.trim()}>Analyze</Btn>
+          )}
+        </div>
+        {sort === 'oldest' && (
+          <p className="text-[10px] text-zinc-500 mt-2">
+            Oldest mode scrapes up to {Math.min(100, postLimit * 8)} posts to find the {postLimit} oldest. This uses more Apify credits.
+          </p>
+        )}
+      </Card>
+
+      {/* Progress */}
+      {progress && (
+        <Card>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-zinc-400">{progress.status}</span>
+              {progress.total > 0 && (
+                <span className="text-xs text-zinc-500">{progress.current}/{progress.total}</span>
+              )}
+            </div>
+            {progress.total > 0 && (
+              <ProgressBar value={Math.round((progress.current / progress.total) * 100)} />
+            )}
+          </div>
+        </Card>
+      )}
+
+      {/* Results */}
+      {results.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-zinc-300">{results.length} posts analyzed</span>
+            <div className="flex gap-2">
+              <button onClick={selectAll} className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer">Select All</button>
+              <button onClick={deselectAll} className="text-xs text-zinc-500 hover:text-zinc-300 cursor-pointer">Deselect All</button>
+            </div>
+          </div>
+
+          {results.map((post, pi) => (
+            <Card key={pi}>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-zinc-300">Post {pi + 1}</span>
+                  {post.postUrl && (
+                    <a
+                      href={post.postUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-zinc-500 hover:text-blue-400 truncate max-w-[300px]"
+                    >
+                      {post.postUrl}
+                    </a>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  {post.atoms.map((atom, ai) => {
+                    const key = `${pi}-${ai}`;
+                    return (
+                      <label key={key} className="flex items-start gap-2 p-2 rounded-lg bg-zinc-800/40 hover:bg-zinc-800/70 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={checkedAtoms.has(key)}
+                          onChange={() => toggleAtom(key)}
+                          className="mt-0.5 accent-blue-500"
+                        />
+                        <Badge color={CATEGORY_COLORS[atom.category] || 'zinc'}>{atom.category}</Badge>
+                        <p className="flex-1 text-xs text-zinc-300 leading-relaxed">{atom.text}</p>
+                      </label>
+                    );
+                  })}
+                  {post.atoms.length === 0 && (
+                    <p className="text-xs text-zinc-600 italic">No atoms extracted from this post</p>
+                  )}
+                </div>
+                {post.recommendedPrompt && (
+                  <details className="mt-2 group">
+                    <summary className="text-[10px] font-medium text-purple-400 cursor-pointer select-none hover:text-purple-300">
+                      Suggested Recreation Prompt
+                    </summary>
+                    <div className="mt-1 p-2 rounded-lg bg-zinc-800/60 border border-zinc-700/50">
+                      <p className="text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap">{post.recommendedPrompt}</p>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(post.recommendedPrompt);
+                          notify('Prompt copied to clipboard', 'success');
+                        }}
+                        className="mt-1 text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  </details>
+                )}
+              </div>
+            </Card>
+          ))}
+
+          {/* Save bar */}
+          <div className="flex items-center justify-between gap-3 pt-2">
+            <Btn variant="primary" onClick={handleSave} disabled={saving || checkedCount === 0}>
+              {saving ? <><Spinner size={14} /> Saving...</> : `Save ${checkedCount} Selected \u2192 Library`}
+            </Btn>
+            <Btn variant="ghost" onClick={() => { setResults([]); setCheckedAtoms(new Set()); setProgress(null); }}>
+              Discard All
+            </Btn>
+          </div>
+        </div>
+      )}
+
+      {/* Empty state (no results, not analyzing) */}
+      {!analyzing && results.length === 0 && !progress && (
+        <Empty
+          icon={'\uD83D\uDD0D'}
+          title="Analyze an Instagram profile"
+          subtitle="Enter a username to scrape their posts and extract reusable style atoms"
+        />
+      )}
+
+      {/* Previously Analyzed Profiles */}
+      {profiles.length > 0 && (
+        <Card>
+          <h3 className="text-xs font-medium text-zinc-400 mb-3">Previously Analyzed Profiles</h3>
+          <div className="space-y-2">
+            {profiles.map(p => (
+              <div key={p.username} className="flex items-center justify-between p-2 rounded-lg bg-zinc-800/40">
+                <div>
+                  <span className="text-sm text-zinc-300">@{p.username}</span>
+                  <span className="text-xs text-zinc-500 ml-2">{p.atomCount || 0} atoms</span>
+                </div>
+                <div className="flex gap-2 items-center">
+                  <span className="text-[10px] text-zinc-600">
+                    {new Date(p.analyzedAt).toLocaleDateString()}
+                  </span>
+                  <button
+                    onClick={() => handleDeleteProfile(p.username)}
+                    className="text-xs text-zinc-600 hover:text-red-400 cursor-pointer"
+                    title="Delete all atoms from this profile"
+                  >
+                    {'\u2715'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+const CATEGORY_COLORS = {
+  pose: 'blue', expression: 'green', outfit: 'yellow', scene: 'blue',
+  lighting: 'yellow', camera: 'zinc', vibe: 'green', accessories: 'red', format: 'purple',
+};
