@@ -4,6 +4,7 @@ const { asText } = require('../utils/helpers');
 const referenceManager = require('../services/referenceManager');
 const batchGenerator = require('../services/batchGenerator');
 const styleLibrary = require('../services/styleLibrary');
+const autoPlanStore = require('../services/autoPlanStore');
 const { generateWeeklyPlan } = require('../services/auto/planner');
 const { buildDayImages } = require('../services/auto/sampler');
 const { buildFinalPrompt } = require('../services/auto/promptBuilder');
@@ -482,6 +483,171 @@ function buildAutoPlanData({
 
   return { days, imageEntries, sceneMemoryId, footwearLock: runFootwearLock, styleAtomIds: mergedAtomIds };
 }
+
+// ---------------------
+// Saved Plans CRUD
+// ---------------------
+
+/** GET /api/auto/plans — list saved plans */
+router.get('/plans', (_req, res, next) => {
+  try {
+    res.json({ success: true, data: autoPlanStore.list() });
+  } catch (err) { next(err); }
+});
+
+/** GET /api/auto/plans/:id — get a saved plan */
+router.get('/plans/:id', (req, res, next) => {
+  try {
+    res.json({ success: true, data: autoPlanStore.get(req.params.id) });
+  } catch (err) { next(err); }
+});
+
+/** POST /api/auto/plans — save a plan */
+router.post('/plans', (req, res, next) => {
+  try {
+    const plan = autoPlanStore.save(req.body);
+    res.status(201).json({ success: true, data: plan });
+  } catch (err) { next(err); }
+});
+
+/** PATCH /api/auto/plans/:id — update a plan */
+router.patch('/plans/:id', (req, res, next) => {
+  try {
+    const plan = autoPlanStore.update(req.params.id, req.body);
+    res.json({ success: true, data: plan });
+  } catch (err) { next(err); }
+});
+
+/** DELETE /api/auto/plans/:id — delete a plan */
+router.delete('/plans/:id', (req, res, next) => {
+  try {
+    res.json({ success: true, data: autoPlanStore.remove(req.params.id) });
+  } catch (err) { next(err); }
+});
+
+/** POST /api/auto/plans/:id/execute-day — execute a single day from a saved plan */
+router.post('/plans/:id/execute-day', (req, res, next) => {
+  try {
+    const plan = autoPlanStore.get(req.params.id);
+    const { dayNumber } = req.body || {};
+
+    if (!Number.isInteger(dayNumber) || dayNumber < 1) {
+      throw new AppError('"dayNumber" is required (positive integer)', 400, 'VALIDATION_ERROR');
+    }
+
+    const dayBlock = plan.days.find((d) => d.day === dayNumber);
+    if (!dayBlock) {
+      throw new AppError(`Day ${dayNumber} not found in plan`, 404, 'NOT_FOUND');
+    }
+
+    const alreadyExecuted = (plan.executedDays || []).some((d) => d.day === dayNumber);
+    if (alreadyExecuted) {
+      throw new AppError(`Day ${dayNumber} has already been executed`, 400, 'ALREADY_EXECUTED');
+    }
+
+    const { characterId } = plan;
+    if (!characterId) {
+      throw new AppError('Plan is missing characterId', 400, 'VALIDATION_ERROR');
+    }
+
+    const characterConfig = referenceManager.getCharacter(characterId);
+    const activeReferenceIds = resolveActiveReferenceIds(
+      plan.config?.activeReferenceIds,
+      characterConfig,
+    );
+
+    // Build image entries from the day block
+    const entries = [];
+
+    for (const prompt of (dayBlock.carouselPrompts || [])) {
+      if (typeof prompt === 'string' && prompt.trim()) {
+        entries.push({
+          type: 'carousel',
+          prompt,
+          sceneMemoryId: dayBlock.sceneMemoryId || null,
+          outfitId: dayBlock.outfitId || null,
+          cameraProfileId: dayBlock.cameraProfiles?.carousel || 'iphone_selfie',
+          resolutionTier: '2K',
+          aspectRatio: '4:5',
+        });
+      }
+    }
+
+    if (dayBlock.lifestylePrompt && typeof dayBlock.lifestylePrompt === 'string' && dayBlock.lifestylePrompt.trim()) {
+      entries.push({
+        type: 'lifestyle',
+        prompt: dayBlock.lifestylePrompt,
+        sceneMemoryId: dayBlock.sceneMemoryId || null,
+        outfitId: dayBlock.outfitId || null,
+        cameraProfileId: dayBlock.cameraProfiles?.carousel || 'iphone_selfie',
+        resolutionTier: '2K',
+        aspectRatio: '4:5',
+      });
+    }
+
+    for (const prompt of (dayBlock.reelPrompts || [])) {
+      if (typeof prompt === 'string' && prompt.trim()) {
+        entries.push({
+          type: 'reel',
+          prompt,
+          sceneMemoryId: dayBlock.sceneMemoryId || null,
+          outfitId: dayBlock.outfitId || null,
+          cameraProfileId: dayBlock.cameraProfiles?.reel || 'friend_phone_flash',
+          resolutionTier: '2K',
+          aspectRatio: '9:16',
+        });
+      }
+    }
+
+    for (const prompt of (dayBlock.storyPrompts || [])) {
+      if (typeof prompt === 'string' && prompt.trim()) {
+        entries.push({
+          type: 'story',
+          prompt,
+          sceneMemoryId: dayBlock.sceneMemoryId || null,
+          outfitId: dayBlock.outfitId || null,
+          cameraProfileId: dayBlock.cameraProfiles?.reel || 'friend_phone_flash',
+          resolutionTier: '2K',
+          aspectRatio: '9:16',
+        });
+      }
+    }
+
+    if (entries.length === 0) {
+      throw new AppError(`Day ${dayNumber} has no prompts to execute`, 400, 'VALIDATION_ERROR');
+    }
+
+    const postEntries = entries.filter((e) => e.type === 'carousel' || e.type === 'lifestyle');
+    const verticalEntries = entries.filter((e) => e.type === 'reel' || e.type === 'story');
+    const styleAtomIds = plan.config?.styleAtomIds || [];
+
+    const jobIds = [
+      ...startMultiBatches(
+        postEntries,
+        { imageSize: '2K', aspectRatio: '4:5' },
+        { characterId, activeReferenceIds },
+        styleAtomIds,
+      ),
+      ...startMultiBatches(
+        verticalEntries,
+        { imageSize: '2K', aspectRatio: '9:16' },
+        { characterId, activeReferenceIds },
+        styleAtomIds,
+      ),
+    ];
+
+    autoPlanStore.markDayExecuted(plan.id, dayNumber, jobIds);
+
+    res.status(202).json({
+      success: true,
+      data: {
+        dayNumber,
+        totalImages: entries.length,
+        jobIds,
+      },
+    });
+  } catch (err) { next(err); }
+});
 
 router.post('/plan', async (req, res, next) => {
   try {
