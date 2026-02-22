@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState, useEffect } from 'react';
 import { useApp } from './context/AppContext';
 import { Toasts, Spinner } from './components/UI';
+import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { PageErrorBoundary } from './components/ErrorBoundary';
 import { keys as keysApi } from './services/api';
 
@@ -148,6 +149,7 @@ export default function App() {
   const currentNav = ALL_NAV_ITEMS.find((n) => n.id === page);
 
   return (
+    <TooltipPrimitive.Provider delayDuration={200}>
     <div className="flex h-screen overflow-hidden bg-zinc-950">
       {sidebarOpen && (
         <div className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={() => setSidebarOpen(false)} />
@@ -226,5 +228,6 @@ export default function App() {
 
       <Toasts />
     </div>
+    </TooltipPrimitive.Provider>
   );
 }

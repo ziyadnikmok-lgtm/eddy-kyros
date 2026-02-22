@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { styleLibrary as api } from '../services/api';
 import { Card, Btn, Badge, Spinner, Empty, Modal } from '../components/UI';
@@ -47,15 +47,20 @@ export default function PromptBuilderPage() {
   const [presetName, setPresetName] = useState('');
   const [showPresets, setShowPresets] = useState(false);
 
-  // Compose prompt whenever slots change (exclude disabled slots)
+  // Debounced compose — avoids API call on every rapid slot change
+  const composeTimerRef = useRef(null);
   useEffect(() => {
     const filledIds = COMPOSE_ORDER.filter(c => !disabledSlots.has(c)).map(c => slots[c]?.atomId).filter(Boolean);
     if (filledIds.length === 0) { setComposedPrompt(''); return; }
-    setComposing(true);
-    api.compose(filledIds)
-      .then(r => setComposedPrompt(r.prompt || ''))
-      .catch(() => setComposedPrompt(''))
-      .finally(() => setComposing(false));
+    clearTimeout(composeTimerRef.current);
+    composeTimerRef.current = setTimeout(() => {
+      setComposing(true);
+      api.compose(filledIds)
+        .then(r => setComposedPrompt(r.prompt || ''))
+        .catch(() => setComposedPrompt(''))
+        .finally(() => setComposing(false));
+    }, 300);
+    return () => clearTimeout(composeTimerRef.current);
   }, [slots, disabledSlots]);
 
   const activeSlots = COMPOSE_ORDER.filter(c => !disabledSlots.has(c));
@@ -401,21 +406,30 @@ function SlotPicker({ category, currentAtomId, onSelect, onClose }) {
   const [atoms, setAtoms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQ, setSearchQ] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
+  const debounceRef = useRef(null);
+
+  // Debounce search input
+  useEffect(() => {
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setDebouncedSearch(searchQ), 300);
+    return () => clearTimeout(debounceRef.current);
+  }, [searchQ]);
 
   const fetchAtoms = useCallback(async () => {
     setLoading(true);
     try {
       const params = { page, limit: 20, category };
-      if (searchQ.trim()) params.q = searchQ.trim();
+      if (debouncedSearch.trim()) params.q = debouncedSearch.trim();
       const result = await api.list(params);
       setAtoms(result.atoms || []);
       setPages(result.pages || 1);
     } catch { /* ignore */ } finally {
       setLoading(false);
     }
-  }, [page, category, searchQ]);
+  }, [page, category, debouncedSearch]);
 
   useEffect(() => { fetchAtoms(); }, [fetchAtoms]);
 

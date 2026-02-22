@@ -347,27 +347,25 @@ export function Toasts() {
 /* ── Hint (Radix Tooltip) ──────────────────────────── */
 export function Hint({ text, className = '' }) {
   return (
-    <TooltipPrimitive.Provider delayDuration={200}>
-      <TooltipPrimitive.Root>
-        <TooltipPrimitive.Trigger asChild>
-          <span className={cn('inline-flex items-center', className)}>
-            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-zinc-600/60 text-[9px] leading-none font-bold text-zinc-500 cursor-help select-none hover:border-blue-500/50 hover:text-blue-400 transition-colors">
-              ?
-            </span>
+    <TooltipPrimitive.Root>
+      <TooltipPrimitive.Trigger asChild>
+        <span className={cn('inline-flex items-center', className)}>
+          <span className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-zinc-600/60 text-[9px] leading-none font-bold text-zinc-500 cursor-help select-none hover:border-blue-500/50 hover:text-blue-400 transition-colors">
+            ?
           </span>
-        </TooltipPrimitive.Trigger>
-        <TooltipPrimitive.Portal>
-          <TooltipPrimitive.Content
-            side="top"
-            sideOffset={6}
-            className="z-[60] w-56 rounded-lg glass border border-zinc-700/50 px-3 py-2.5 text-[11px] leading-relaxed text-zinc-300 shadow-xl animate-tooltip-in"
-          >
-            {text}
-            <TooltipPrimitive.Arrow className="fill-zinc-800" width={10} height={5} />
-          </TooltipPrimitive.Content>
-        </TooltipPrimitive.Portal>
-      </TooltipPrimitive.Root>
-    </TooltipPrimitive.Provider>
+        </span>
+      </TooltipPrimitive.Trigger>
+      <TooltipPrimitive.Portal>
+        <TooltipPrimitive.Content
+          side="top"
+          sideOffset={6}
+          className="z-[60] w-56 rounded-lg glass border border-zinc-700/50 px-3 py-2.5 text-[11px] leading-relaxed text-zinc-300 shadow-xl animate-tooltip-in"
+        >
+          {text}
+          <TooltipPrimitive.Arrow className="fill-zinc-800" width={10} height={5} />
+        </TooltipPrimitive.Content>
+      </TooltipPrimitive.Portal>
+    </TooltipPrimitive.Root>
   );
 }
 
