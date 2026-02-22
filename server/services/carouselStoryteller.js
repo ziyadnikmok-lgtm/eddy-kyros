@@ -20,6 +20,77 @@ const VALID_CTA_TYPES = [
   'custom',
 ];
 
+const VALID_OPTIMIZE_FOR = ['saves', 'shares', 'comments', 'reach', 'explore'];
+
+const OPTIMIZE_STRATEGIES = {
+  saves: {
+    label: 'Saves',
+    prompt: [
+      '[ENGAGEMENT OPTIMIZATION — maximize SAVES]',
+      'Your content strategy MUST maximize bookmark-worthy, save-for-later value:',
+      '  - Structure content as a reference: lists, frameworks, step-by-step, or checklists',
+      '  - Each slide should deliver standalone value worth revisiting',
+      '  - Use "save this for later" or "bookmark this" language naturally',
+      '  - Include at least one "screenshot slide" — valuable enough to screenshot on its own',
+      '  - Educational depth > surface entertainment. Teach something actionable.',
+      '  - End with a summary or key takeaway that rewards the full swipe',
+    ].join('\n'),
+  },
+  shares: {
+    label: 'Shares',
+    prompt: [
+      '[ENGAGEMENT OPTIMIZATION — maximize SHARES]',
+      'Your content strategy MUST maximize share-worthy, send-to-a-friend potential:',
+      '  - Write for RELATABILITY — universal experiences that make people say "this is so me"',
+      '  - Include identity signaling — content people share to say something about themselves',
+      '  - Use "tag someone who..." or "send this to..." framing naturally',
+      '  - Create emotional resonance: humor, nostalgia, validation, or solidarity',
+      '  - At least one slide should work as a standalone share (out of context still makes sense)',
+      '  - Strong opinions and bold takes > safe generic content',
+    ].join('\n'),
+  },
+  comments: {
+    label: 'Comments',
+    prompt: [
+      '[ENGAGEMENT OPTIMIZATION — maximize COMMENTS]',
+      'Your content strategy MUST maximize comment engagement and conversation:',
+      '  - End at least 2 slides with a direct question or debate prompt',
+      '  - Use "fill in the blank" or "unpopular opinion" or "hot take" framing',
+      '  - Present a slightly controversial or debatable perspective to spark replies',
+      '  - Ask for personal stories: "tell me about a time when..." or "what\'s your..."',
+      '  - Create a curiosity gap that people NEED to discuss in comments',
+      '  - Use polls/choices: "A or B?" or "which one are you?"',
+    ].join('\n'),
+  },
+  reach: {
+    label: 'Reach',
+    prompt: [
+      '[ENGAGEMENT OPTIMIZATION — maximize REACH]',
+      'Your content strategy MUST maximize algorithmic reach and new audience discovery:',
+      '  - Hook must stop scrollers in under 1.5 seconds — lead with shock value or curiosity',
+      '  - Optimize for dwell time: make people pause and read every slide',
+      '  - Broad appeal with niche depth — accessible to new followers but valuable to existing ones',
+      '  - Trending topic hooks or current cultural moments increase distribution',
+      '  - First 3 slides determine if people keep swiping — front-load the value',
+      '  - Encourage multiple engagement types (like + comment + save) for compound algorithmic boost',
+    ].join('\n'),
+  },
+  explore: {
+    label: 'Explore Page',
+    prompt: [
+      '[ENGAGEMENT OPTIMIZATION — maximize EXPLORE PAGE potential]',
+      'Your content strategy MUST hit Explore page quality thresholds:',
+      '  - Explore rewards high save-to-impression ratio above all else',
+      '  - Content must be niche-specific but accessible to adjacent audiences',
+      '  - Visual-text alignment must be tight — captions should directly reference images',
+      '  - Hook strength is critical — Explore users decide in <1 second whether to engage',
+      '  - Combine educational depth with aesthetic appeal',
+      '  - Avoid engagement bait ("like if you agree") — Explore penalizes it',
+      '  - Focus on genuine value delivery over manipulation tactics',
+    ].join('\n'),
+  },
+};
+
 const MAX_SLIDES = 10;
 const MAX_HASHTAGS = 25;
 const DEFAULT_HASHTAG_COUNT = 15;
@@ -36,7 +107,8 @@ class CarouselStoryteller {
    * @param {number}  [params.hashtagCount]    - Number of hashtags (default 15, max 25)
    * @param {string}  [params.ctaType]         - CTA type
    * @param {boolean} [params.viralMode]       - Enable viral writing techniques
-   * @returns {Promise<object>} { hook, slides, finalCTA, hashtags }
+   * @param {string}  [params.optimizeFor]     - Engagement goal: saves|shares|comments|reach|explore
+   * @returns {Promise<object>} { hook, slides, finalCTA, hashtags, engagementInsights, lifecycleTips }
    */
   async generateCarouselStory(params) {
     const {
@@ -47,6 +119,7 @@ class CarouselStoryteller {
       hashtagCount = DEFAULT_HASHTAG_COUNT,
       ctaType = 'follow',
       viralMode = false,
+      optimizeFor,
     } = params || {};
 
     // --- Validate ---
@@ -58,6 +131,7 @@ class CarouselStoryteller {
     const imageMetas = imageIds.map((id) => this._resolveImageMeta(id));
 
     // --- Build prompt ---
+    const useOptimize = VALID_OPTIMIZE_FOR.includes(optimizeFor) ? optimizeFor : null;
     const prompt = this._buildPrompt({
       niche,
       brandVoice,
@@ -67,6 +141,7 @@ class CarouselStoryteller {
       hashtagCount: Math.min(hashtagCount, MAX_HASHTAGS),
       ctaType,
       viralMode,
+      optimizeFor: useOptimize,
       slideCount: Math.min(imageMetas.length, MAX_SLIDES),
     });
 
@@ -131,6 +206,17 @@ class CarouselStoryteller {
       }
     }
 
+    // optimizeFor
+    if (params.optimizeFor !== undefined && params.optimizeFor !== null) {
+      if (!VALID_OPTIMIZE_FOR.includes(params.optimizeFor)) {
+        throw new AppError(
+          `optimizeFor must be one of: ${VALID_OPTIMIZE_FOR.join(', ')}`,
+          400,
+          'VALIDATION_ERROR'
+        );
+      }
+    }
+
     // toneOverride
     if (params.toneOverride !== undefined && params.toneOverride !== null) {
       if (typeof params.toneOverride !== 'string' || params.toneOverride.trim().length === 0) {
@@ -146,7 +232,7 @@ class CarouselStoryteller {
   // Prompt builder
   // =========================================================================
 
-  _buildPrompt({ niche, brandVoice, imageMetas, toneOverride, includeHashtags, hashtagCount, ctaType, viralMode, slideCount }) {
+  _buildPrompt({ niche, brandVoice, imageMetas, toneOverride, includeHashtags, hashtagCount, ctaType, viralMode, optimizeFor, slideCount }) {
     const sections = [];
 
     // --- Role ---
@@ -212,6 +298,31 @@ class CarouselStoryteller {
       ].join('\n'));
     }
 
+    // --- Engagement optimization ---
+    if (optimizeFor && OPTIMIZE_STRATEGIES[optimizeFor]) {
+      sections.push(OPTIMIZE_STRATEGIES[optimizeFor].prompt);
+    }
+
+    // --- IG Intelligence: engagement insights + lifecycle tips ---
+    sections.push([
+      '[IG INTELLIGENCE — also return these analysis fields]',
+      'After writing the carousel, analyze your own output and provide:',
+      '',
+      '1. engagementInsights — rate your own carousel honestly:',
+      '   - hookStrength (1-10): How likely to stop a scroller mid-feed',
+      '   - saveWorthiness (1-10): How likely someone bookmarks this for later',
+      '   - sharePotential (1-10): How likely someone sends this to a friend',
+      '   - commentLikelihood (1-10): How likely this sparks a comment/reply',
+      '   - exploreScore (1-100): Overall chance of reaching Explore page (considers save ratio, niche relevance, visual-text alignment, hook quality)',
+      `   - optimizedFor: "${optimizeFor || 'general'}"`,
+      '   - tips: 2-3 actionable tips to improve this specific carousel\'s performance',
+      '',
+      '2. lifecycleTips — posting strategy for each phase:',
+      '   - goldenHour (array of 2-3 strings): What to do in the first 30-60 minutes after posting',
+      '   - sustain (array of 2-3 strings): How to maintain momentum 1-24 hours after posting',
+      '   - archive (array of 2-3 strings): How to repurpose or leverage this content after 24+ hours',
+    ].join('\n'));
+
     // --- Output format ---
     const ctaDesc = this._ctaDescription(ctaType);
     const formatLines = [
@@ -233,10 +344,24 @@ class CarouselStoryteller {
     formatLines.push('  ],');
     formatLines.push(`  "finalCTA": "A compelling ${ctaDesc} call-to-action",`);
     if (includeHashtags) {
-      formatLines.push(`  "hashtags": ["exactly ${hashtagCount} relevant hashtags without #"]`);
+      formatLines.push(`  "hashtags": ["exactly ${hashtagCount} relevant hashtags without #"],`);
     } else {
-      formatLines.push('  "hashtags": []');
+      formatLines.push('  "hashtags": [],');
     }
+    formatLines.push('  "engagementInsights": {');
+    formatLines.push('    "hookStrength": 8,');
+    formatLines.push('    "saveWorthiness": 7,');
+    formatLines.push('    "sharePotential": 6,');
+    formatLines.push('    "commentLikelihood": 5,');
+    formatLines.push('    "exploreScore": 72,');
+    formatLines.push(`    "optimizedFor": "${optimizeFor || 'general'}",`);
+    formatLines.push('    "tips": ["tip 1", "tip 2"]');
+    formatLines.push('  },');
+    formatLines.push('  "lifecycleTips": {');
+    formatLines.push('    "goldenHour": ["action 1", "action 2"],');
+    formatLines.push('    "sustain": ["action 1", "action 2"],');
+    formatLines.push('    "archive": ["action 1", "action 2"]');
+    formatLines.push('  }');
     formatLines.push('}');
 
     sections.push(formatLines.join('\n'));
@@ -340,6 +465,8 @@ class CarouselStoryteller {
       slides: [],
       finalCTA: '',
       hashtags: [],
+      engagementInsights: null,
+      lifecycleTips: null,
     };
 
     if (typeof parsed.hook === 'string') {
@@ -371,11 +498,43 @@ class CarouselStoryteller {
       result.hook = result.slides[0].caption;
     }
 
+    // --- Parse engagement insights ---
+    if (parsed.engagementInsights && typeof parsed.engagementInsights === 'object') {
+      const ei = parsed.engagementInsights;
+      result.engagementInsights = {
+        hookStrength: this._clampScore(ei.hookStrength, 1, 10),
+        saveWorthiness: this._clampScore(ei.saveWorthiness, 1, 10),
+        sharePotential: this._clampScore(ei.sharePotential, 1, 10),
+        commentLikelihood: this._clampScore(ei.commentLikelihood, 1, 10),
+        exploreScore: this._clampScore(ei.exploreScore, 1, 100),
+        optimizedFor: typeof ei.optimizedFor === 'string' ? ei.optimizedFor : 'general',
+        tips: Array.isArray(ei.tips) ? ei.tips.filter((t) => typeof t === 'string').slice(0, 5) : [],
+      };
+    }
+
+    // --- Parse lifecycle tips ---
+    if (parsed.lifecycleTips && typeof parsed.lifecycleTips === 'object') {
+      const lt = parsed.lifecycleTips;
+      const extractList = (arr) => Array.isArray(arr) ? arr.filter((t) => typeof t === 'string').slice(0, 4) : [];
+      result.lifecycleTips = {
+        goldenHour: extractList(lt.goldenHour),
+        sustain: extractList(lt.sustain),
+        archive: extractList(lt.archive),
+      };
+    }
+
     return result;
+  }
+
+  _clampScore(value, min, max) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return min;
+    return Math.max(min, Math.min(max, Math.round(num)));
   }
 }
 
 CarouselStoryteller.VALID_CTA_TYPES = VALID_CTA_TYPES;
+CarouselStoryteller.VALID_OPTIMIZE_FOR = VALID_OPTIMIZE_FOR;
 CarouselStoryteller.MAX_SLIDES = MAX_SLIDES;
 CarouselStoryteller.MAX_HASHTAGS = MAX_HASHTAGS;
 

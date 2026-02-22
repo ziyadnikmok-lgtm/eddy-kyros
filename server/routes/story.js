@@ -18,14 +18,17 @@ const router = express.Router();
  *   includeHashtags?: boolean,
  *   hashtagCount?: number,
  *   ctaType?: "follow"|"like"|"comment"|"share"|"save"|"link"|"dm"|"custom",
- *   viralMode?: boolean
+ *   viralMode?: boolean,
+ *   optimizeFor?: "saves"|"shares"|"comments"|"reach"|"explore"
  * }
  *
  * Returns: {
  *   hook: string,
  *   slides: [{ slide: number, caption: string }],
  *   finalCTA: string,
- *   hashtags: string[]
+ *   hashtags: string[],
+ *   engagementInsights: { hookStrength, saveWorthiness, sharePotential, commentLikelihood, exploreScore, optimizedFor, tips },
+ *   lifecycleTips: { goldenHour, sustain, archive }
  * }
  */
 router.post('/generate', async (req, res, next) => {

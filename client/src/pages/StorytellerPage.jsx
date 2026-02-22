@@ -3,6 +3,7 @@ import { story as storyApi, niches as nichesApi, gallery as galleryApi } from '.
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
 import { useStepTimer } from '../hooks/useStepTimer';
+import { cn } from '../lib/utils';
 import { Card, Btn, Select, Toggle, Slider, Spinner, Badge, Empty, CopyBtn, StepProgress } from '../components/UI';
 
 const CTA_TYPES = [
@@ -16,6 +17,75 @@ const CTA_TYPES = [
   { value: 'custom', label: 'Custom' },
 ];
 
+const OPTIMIZE_OPTIONS = [
+  { value: '', label: 'General (balanced)' },
+  { value: 'saves', label: 'Saves' },
+  { value: 'shares', label: 'Shares' },
+  { value: 'comments', label: 'Comments' },
+  { value: 'reach', label: 'Reach' },
+  { value: 'explore', label: 'Explore Page' },
+];
+
+const LIFECYCLE_PHASES = [
+  { key: 'goldenHour', label: 'Golden Hour', sub: '0-60 min', color: 'text-amber-400', dot: 'bg-amber-400' },
+  { key: 'sustain', label: 'Sustain', sub: '1-24 hours', color: 'text-blue-400', dot: 'bg-blue-400' },
+  { key: 'archive', label: 'Archive', sub: '24+ hours', color: 'text-zinc-400', dot: 'bg-zinc-500' },
+];
+
+/* ── Score Bar ────────────────────────────────────── */
+
+function ScoreBar({ label, value, max = 10, color = 'blue' }) {
+  const pct = Math.round((value / max) * 100);
+  const colors = {
+    blue: 'bg-blue-500',
+    green: 'bg-green-500',
+    purple: 'bg-purple-500',
+    amber: 'bg-amber-500',
+    pink: 'bg-pink-500',
+  };
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[10px] text-zinc-500 w-28 shrink-0 text-right">{label}</span>
+      <div className="flex-1 h-1.5 rounded-full bg-zinc-800/80 overflow-hidden">
+        <div
+          className={cn('h-full rounded-full transition-all duration-700', colors[color] || colors.blue)}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="text-[10px] text-zinc-400 font-mono w-8">{value}/{max}</span>
+    </div>
+  );
+}
+
+/* ── Explore Score Ring ───────────────────────────── */
+
+function ExploreScoreRing({ score }) {
+  const radius = 36;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (score / 100) * circumference;
+  const color = score >= 75 ? '#22c55e' : score >= 50 ? '#3b82f6' : score >= 30 ? '#f59e0b' : '#ef4444';
+
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <svg width="88" height="88" className="transform -rotate-90">
+        <circle cx="44" cy="44" r={radius} fill="none" stroke="#27272a" strokeWidth="6" />
+        <circle
+          cx="44" cy="44" r={radius} fill="none"
+          stroke={color} strokeWidth="6" strokeLinecap="round"
+          strokeDasharray={circumference} strokeDashoffset={offset}
+          className="transition-all duration-1000"
+        />
+      </svg>
+      <div className="absolute flex flex-col items-center justify-center" style={{ width: 88, height: 88 }}>
+        <span className="text-xl font-bold text-zinc-100">{score}</span>
+        <span className="text-[8px] text-zinc-500 uppercase tracking-wider">/ 100</span>
+      </div>
+    </div>
+  );
+}
+
+/* ── Main Page ────────────────────────────────────── */
+
 export default function StorytellerPage() {
   const { notify } = useApp();
   const { loading, run } = useAsync();
@@ -28,13 +98,14 @@ export default function StorytellerPage() {
   const [hashtagCount, setHashtagCount] = useState(15);
   const [ctaType, setCtaType] = useState('follow');
   const [includeHashtags, setIncludeHashtags] = useState(true);
+  const [optimizeFor, setOptimizeFor] = useState('');
   const [result, setResult] = useState(null);
 
   const STORY_STEPS = useMemo(() => [
     'Uploading images to gallery',
     'Analyzing visual narrative',
     'Crafting story captions and hooks',
-    'Generating hashtags and CTA',
+    'Running IG Intelligence analysis',
   ], []);
   const STORY_THRESHOLDS = useMemo(() => [3, 8, 15], []);
   const { elapsedSec, stepIndex: storyStepIndex } = useStepTimer(loading, STORY_THRESHOLDS);
@@ -73,7 +144,6 @@ export default function StorytellerPage() {
   const removeSelectedImage = (idx) => {
     setSelectedImages((prev) => {
       const item = prev[idx];
-      // Defer revocation so the image element can finish its current render cycle
       if (item?.file && item.preview) {
         setTimeout(() => URL.revokeObjectURL(item.preview), 100);
       }
@@ -140,6 +210,7 @@ export default function StorytellerPage() {
       includeHashtags,
       hashtagCount,
       ctaType,
+      optimizeFor: optimizeFor || undefined,
     };
     const data = await storyApi.generate(payload);
 
@@ -151,11 +222,14 @@ export default function StorytellerPage() {
     ? [result.hook, ...result.slides.map((s) => s.caption), result.finalCTA, result.hashtags?.map((h) => `#${h}`).join(' ')].filter(Boolean).join('\n\n')
     : '';
 
+  const ei = result?.engagementInsights;
+  const lt = result?.lifecycleTips;
+
   return (
     <div className="space-y-6 animate-in">
       <div>
         <h1 className="text-3xl font-bold tracking-tight text-gradient">Storyteller</h1>
-        <p className="text-zinc-500 text-sm mt-1">AI-powered carousel captions with niche-specific voice and viral techniques.</p>
+        <p className="text-zinc-500 text-sm mt-1">AI-powered carousel captions with IG Intelligence — engagement optimization, Explore scoring, and post lifecycle strategy.</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -238,6 +312,28 @@ export default function StorytellerPage() {
               />
             )}
 
+            {/* ── IG Intelligence: Optimize For ── */}
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-zinc-400">Optimize For</label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {OPTIMIZE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setOptimizeFor(opt.value)}
+                    className={cn(
+                      'px-2 py-1.5 rounded-md text-[11px] font-medium transition cursor-pointer',
+                      optimizeFor === opt.value
+                        ? 'bg-blue-600/30 text-blue-300 border border-blue-500/50'
+                        : 'bg-zinc-800/60 text-zinc-400 border border-zinc-700/40 hover:border-zinc-600 hover:text-zinc-300',
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <Toggle checked={viralMode} onChange={setViralMode} label="Viral Mode" />
             <Toggle checked={includeHashtags} onChange={setIncludeHashtags} label="Include Hashtags" />
             {includeHashtags && (
@@ -251,7 +347,7 @@ export default function StorytellerPage() {
         </div>
 
         {/* Output */}
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-2 space-y-4">
           {!result && !loading ? (
             <Card className="flex items-center justify-center py-20">
               <Empty icon="Writer" title="No story yet" subtitle="Select images and a niche, then generate" />
@@ -259,55 +355,127 @@ export default function StorytellerPage() {
           ) : loading ? (
             <StepProgress steps={STORY_STEPS} currentIndex={storyStepIndex} elapsedSec={elapsedSec} className="min-h-[360px]" />
           ) : result ? (
-            <div className="space-y-4">
-              <div className="flex justify-end">
-                <CopyBtn text={allText} className="!text-sm" />
-              </div>
+            <>
+              {/* ── IG Intelligence Panel ── */}
+              {(ei || lt) && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Explore Score + Engagement Metrics */}
+                  {ei && (
+                    <Card className="animate-in space-y-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Badge color="purple">Explore Score</Badge>
+                        {ei.optimizedFor && ei.optimizedFor !== 'general' && (
+                          <span className="text-[10px] text-zinc-500">Optimized for {ei.optimizedFor}</span>
+                        )}
+                      </div>
 
-              {/* Hook */}
-              <Card className="animate-in border-l-4 !border-l-blue-500">
-                <div className="flex items-start justify-between">
-                  <Badge color="blue">Hook</Badge>
-                  <CopyBtn text={result.hook} />
+                      <div className="flex items-center gap-4">
+                        <div className="relative">
+                          <ExploreScoreRing score={ei.exploreScore} />
+                        </div>
+                        <div className="flex-1 space-y-1.5">
+                          <ScoreBar label="Hook Strength" value={ei.hookStrength} color="amber" />
+                          <ScoreBar label="Save Potential" value={ei.saveWorthiness} color="green" />
+                          <ScoreBar label="Share Potential" value={ei.sharePotential} color="blue" />
+                          <ScoreBar label="Comment Draw" value={ei.commentLikelihood} color="purple" />
+                        </div>
+                      </div>
+
+                      {ei.tips?.length > 0 && (
+                        <div className="pt-2 border-t border-zinc-800/60">
+                          <p className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider mb-1">Tips</p>
+                          <ul className="space-y-1">
+                            {ei.tips.map((tip, i) => (
+                              <li key={i} className="text-xs text-zinc-300 flex gap-1.5">
+                                <span className="text-blue-400 shrink-0">-</span>
+                                {tip}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </Card>
+                  )}
+
+                  {/* Post Lifecycle Strategy */}
+                  {lt && (
+                    <Card className="animate-in space-y-3" style={{ animationDelay: '80ms' }}>
+                      <Badge color="blue">Post Lifecycle Strategy</Badge>
+
+                      {LIFECYCLE_PHASES.map((phase) => {
+                        const tips = lt[phase.key];
+                        if (!tips || tips.length === 0) return null;
+                        return (
+                          <div key={phase.key}>
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <span className={cn('w-1.5 h-1.5 rounded-full', phase.dot)} />
+                              <span className={cn('text-xs font-medium', phase.color)}>{phase.label}</span>
+                              <span className="text-[10px] text-zinc-600">{phase.sub}</span>
+                            </div>
+                            <ul className="space-y-0.5 pl-3">
+                              {tips.map((tip, i) => (
+                                <li key={i} className="text-xs text-zinc-300">{tip}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        );
+                      })}
+                    </Card>
+                  )}
                 </div>
-                <p className="mt-2 text-zinc-100 font-medium leading-relaxed">{result.hook}</p>
-              </Card>
-
-              {/* Slides */}
-              {result.slides.map((s) => (
-                <Card key={s.slide} className="animate-in" style={{ animationDelay: `${s.slide * 60}ms` }}>
-                  <div className="flex items-start justify-between">
-                    <Badge color="zinc">Slide {s.slide}</Badge>
-                    <CopyBtn text={s.caption} />
-                  </div>
-                  <p className="mt-2 text-zinc-200 leading-relaxed">{s.caption}</p>
-                </Card>
-              ))}
-
-              {/* CTA */}
-              <Card className="animate-in border-l-4 !border-l-green-500">
-                <div className="flex items-start justify-between">
-                  <Badge color="green">Final CTA</Badge>
-                  <CopyBtn text={result.finalCTA} />
-                </div>
-                <p className="mt-2 text-zinc-100 font-medium leading-relaxed">{result.finalCTA}</p>
-              </Card>
-
-              {/* Hashtags */}
-              {result.hashtags?.length > 0 && (
-                <Card className="animate-in">
-                  <div className="flex items-start justify-between mb-3">
-                    <Badge color="blue">Hashtags ({result.hashtags.length})</Badge>
-                    <CopyBtn text={result.hashtags.map((h) => `#${h}`).join(' ')} />
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {result.hashtags.map((h, i) => (
-                      <Badge key={i} color="blue">#{h}</Badge>
-                    ))}
-                  </div>
-                </Card>
               )}
-            </div>
+
+              {/* ── Caption Results ── */}
+              <div className="space-y-4">
+                <div className="flex justify-end">
+                  <CopyBtn text={allText} className="!text-sm" />
+                </div>
+
+                {/* Hook */}
+                <Card className="animate-in border-l-4 !border-l-blue-500">
+                  <div className="flex items-start justify-between">
+                    <Badge color="blue">Hook</Badge>
+                    <CopyBtn text={result.hook} />
+                  </div>
+                  <p className="mt-2 text-zinc-100 font-medium leading-relaxed">{result.hook}</p>
+                </Card>
+
+                {/* Slides */}
+                {result.slides.map((s) => (
+                  <Card key={s.slide} className="animate-in" style={{ animationDelay: `${s.slide * 60}ms` }}>
+                    <div className="flex items-start justify-between">
+                      <Badge color="zinc">Slide {s.slide}</Badge>
+                      <CopyBtn text={s.caption} />
+                    </div>
+                    <p className="mt-2 text-zinc-200 leading-relaxed">{s.caption}</p>
+                  </Card>
+                ))}
+
+                {/* CTA */}
+                <Card className="animate-in border-l-4 !border-l-green-500">
+                  <div className="flex items-start justify-between">
+                    <Badge color="green">Final CTA</Badge>
+                    <CopyBtn text={result.finalCTA} />
+                  </div>
+                  <p className="mt-2 text-zinc-100 font-medium leading-relaxed">{result.finalCTA}</p>
+                </Card>
+
+                {/* Hashtags */}
+                {result.hashtags?.length > 0 && (
+                  <Card className="animate-in">
+                    <div className="flex items-start justify-between mb-3">
+                      <Badge color="blue">Hashtags ({result.hashtags.length})</Badge>
+                      <CopyBtn text={result.hashtags.map((h) => `#${h}`).join(' ')} />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {result.hashtags.map((h, i) => (
+                        <Badge key={i} color="blue">#{h}</Badge>
+                      ))}
+                    </div>
+                  </Card>
+                )}
+              </div>
+            </>
           ) : null}
         </div>
       </div>
