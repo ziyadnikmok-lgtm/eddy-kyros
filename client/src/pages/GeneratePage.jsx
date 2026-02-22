@@ -166,7 +166,7 @@ export default function GeneratePage() {
     setStyleAtomDetails(prev => prev.filter(x => x.id !== id));
   };
 
-  // Pick up atoms sent from Prompt Builder page
+  // Pick up atoms + format sent from Prompt Builder page
   useEffect(() => {
     const raw = sessionStorage.getItem('pb_atomIds');
     if (!raw) return;
@@ -175,6 +175,10 @@ export default function GeneratePage() {
       const ids = JSON.parse(raw);
       if (Array.isArray(ids) && ids.length > 0) handleApplyAtoms(ids);
     } catch { /* ignore */ }
+    const ar = sessionStorage.getItem('pb_aspectRatio');
+    const res = sessionStorage.getItem('pb_resolutionTier');
+    if (ar) { update({ aspectRatio: ar }); sessionStorage.removeItem('pb_aspectRatio'); }
+    if (res) { update({ resolutionTier: res }); sessionStorage.removeItem('pb_resolutionTier'); }
   }, []);
 
   useEffect(() => {

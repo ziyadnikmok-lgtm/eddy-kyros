@@ -4,6 +4,9 @@ import { styleLibrary as api } from '../services/api';
 import { Card, Btn, Badge, Spinner, Empty, Modal } from '../components/UI';
 
 const COMPOSE_ORDER = ['scene', 'lighting', 'camera', 'pose', 'expression', 'outfit', 'accessories', 'vibe', 'format'];
+const DEFAULT_DISABLED = new Set(['format']); // off by default, skipped by AI Fill
+const ASPECT_RATIOS = ['4:5', '9:16', '1:1', '16:9', '4:3', '3:4'];
+const RESOLUTION_TIERS = ['1K', '2K', '4K'];
 
 const SLOT_META = {
   scene: { icon: '\uD83C\uDFDE', color: 'blue', hint: 'Environment, setting, surfaces, spatial depth' },
@@ -33,6 +36,9 @@ export default function PromptBuilderPage() {
   const [composing, setComposing] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [pickerCat, setPickerCat] = useState(null); // category to filter picker by, or null
+  const [disabledSlots, setDisabledSlots] = useState(() => new Set(DEFAULT_DISABLED));
+  const [aspectRatio, setAspectRatio] = useState('4:5');
+  const [resolutionTier, setResolutionTier] = useState('2K');
 
   // Presets (saved compositions)
   const [presets, setPresets] = useState(() => {
@@ -41,19 +47,20 @@ export default function PromptBuilderPage() {
   const [presetName, setPresetName] = useState('');
   const [showPresets, setShowPresets] = useState(false);
 
-  // Compose prompt whenever slots change
+  // Compose prompt whenever slots change (exclude disabled slots)
   useEffect(() => {
-    const filledIds = COMPOSE_ORDER.map(c => slots[c]?.atomId).filter(Boolean);
+    const filledIds = COMPOSE_ORDER.filter(c => !disabledSlots.has(c)).map(c => slots[c]?.atomId).filter(Boolean);
     if (filledIds.length === 0) { setComposedPrompt(''); return; }
     setComposing(true);
     api.compose(filledIds)
       .then(r => setComposedPrompt(r.prompt || ''))
       .catch(() => setComposedPrompt(''))
       .finally(() => setComposing(false));
-  }, [slots]);
+  }, [slots, disabledSlots]);
 
-  const filledCount = COMPOSE_ORDER.filter(c => slots[c]).length;
-  const emptyCategories = COMPOSE_ORDER.filter(c => !slots[c]);
+  const activeSlots = COMPOSE_ORDER.filter(c => !disabledSlots.has(c));
+  const filledCount = activeSlots.filter(c => slots[c]).length;
+  const emptyCategories = activeSlots.filter(c => !slots[c]);
 
   // Set a slot from the picker
   const setSlot = (category, atom) => {
@@ -88,9 +95,10 @@ export default function PromptBuilderPage() {
         return;
       }
       // Save suggestions as new atoms and fill slots
-      const created = await api.bulkCreate(suggestions);
+      const result = await api.bulkCreate(suggestions);
+      const createdAtoms = result?.atoms || [];
       const newSlots = { ...slots };
-      for (const atom of (created || [])) {
+      for (const atom of createdAtoms) {
         if (!newSlots[atom.category]) {
           newSlots[atom.category] = { atomId: atom.id, category: atom.category, text: atom.text };
         }
@@ -137,9 +145,10 @@ export default function PromptBuilderPage() {
   // Send to generate page
   const sendToGenerate = () => {
     if (!composedPrompt) return;
-    // Store in sessionStorage so GeneratePage can pick it up
-    const atomIds = COMPOSE_ORDER.map(c => slots[c]?.atomId).filter(Boolean);
+    const atomIds = activeSlots.map(c => slots[c]?.atomId).filter(Boolean);
     sessionStorage.setItem('pb_atomIds', JSON.stringify(atomIds));
+    sessionStorage.setItem('pb_aspectRatio', aspectRatio);
+    sessionStorage.setItem('pb_resolutionTier', resolutionTier);
     navTo('generate');
     notify('Style atoms sent to Generate page', 'success');
   };
@@ -174,13 +183,23 @@ export default function PromptBuilderPage() {
         {COMPOSE_ORDER.map((cat, idx) => {
           const slot = slots[cat];
           const meta = SLOT_META[cat];
+          const disabled = disabledSlots.has(cat);
+          const toggleDisabled = () => {
+            setDisabledSlots(prev => {
+              const next = new Set(prev);
+              if (next.has(cat)) next.delete(cat); else { next.add(cat); clearSlot(cat); }
+              return next;
+            });
+          };
           return (
             <div
               key={cat}
               className={`group relative rounded-xl border p-3 transition-all ${
-                slot
-                  ? 'bg-zinc-800/60 border-zinc-600/50'
-                  : 'bg-zinc-900/40 border-zinc-700/30 border-dashed'
+                disabled
+                  ? 'bg-zinc-900/20 border-zinc-800/30 opacity-40'
+                  : slot
+                    ? 'bg-zinc-800/60 border-zinc-600/50'
+                    : 'bg-zinc-900/40 border-zinc-700/30 border-dashed'
               }`}
             >
               {/* Header */}
@@ -190,19 +209,30 @@ export default function PromptBuilderPage() {
                   <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">{cat}</span>
                   <span className="text-[9px] text-zinc-600 font-mono">#{idx + 1}</span>
                 </div>
-                {slot && (
+                <div className="flex items-center gap-1.5">
+                  {slot && !disabled && (
+                    <button
+                      onClick={() => clearSlot(cat)}
+                      className="text-zinc-600 hover:text-red-400 text-xs cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="Clear slot"
+                    >
+                      &times;
+                    </button>
+                  )}
                   <button
-                    onClick={() => clearSlot(cat)}
-                    className="text-zinc-600 hover:text-red-400 text-xs cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
-                    title="Clear slot"
+                    onClick={toggleDisabled}
+                    className={`w-7 h-4 rounded-full transition-colors cursor-pointer relative ${disabled ? 'bg-zinc-700/60' : 'bg-blue-600/40'}`}
+                    title={disabled ? 'Enable slot' : 'Disable slot'}
                   >
-                    &times;
+                    <span className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${disabled ? 'left-0.5 bg-zinc-500' : 'left-3.5 bg-blue-400'}`} />
                   </button>
-                )}
+                </div>
               </div>
 
               {/* Content */}
-              {slot ? (
+              {disabled ? (
+                <p className="text-[10px] text-zinc-700 text-center py-3">Off</p>
+              ) : slot ? (
                 <div>
                   <p className="text-xs text-zinc-300 leading-relaxed line-clamp-3">{slot.text}</p>
                   <button
@@ -226,12 +256,48 @@ export default function PromptBuilderPage() {
         })}
       </div>
 
+      {/* Format Options */}
+      <div className="flex items-center gap-6">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Ratio</span>
+          <div className="flex gap-1">
+            {ASPECT_RATIOS.map(ar => (
+              <button
+                key={ar}
+                onClick={() => setAspectRatio(ar)}
+                className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition cursor-pointer ${
+                  aspectRatio === ar
+                    ? 'bg-blue-600/20 text-blue-400 border border-blue-500/40'
+                    : 'bg-zinc-800/50 text-zinc-500 border border-zinc-700/40 hover:text-zinc-300'
+                }`}
+              >{ar}</button>
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Res</span>
+          <div className="flex gap-1">
+            {RESOLUTION_TIERS.map(tier => (
+              <button
+                key={tier}
+                onClick={() => setResolutionTier(tier)}
+                className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition cursor-pointer ${
+                  resolutionTier === tier
+                    ? 'bg-blue-600/20 text-blue-400 border border-blue-500/40'
+                    : 'bg-zinc-800/50 text-zinc-500 border border-zinc-700/40 hover:text-zinc-300'
+                }`}
+              >{tier}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+
       {/* Composed Preview */}
       <Card>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
             <h3 className="text-sm font-semibold text-zinc-200">Composed Prompt</h3>
-            <span className="text-[10px] text-zinc-500">{filledCount}/9 slots</span>
+            <span className="text-[10px] text-zinc-500">{filledCount}/{activeSlots.length} slots</span>
             {composing && <Spinner size={12} />}
           </div>
           <div className="flex gap-2">
