@@ -116,8 +116,8 @@ export default function StorytellerPage() {
       if (data.length > 0 && !nicheId) setNicheId(data[0].id);
     }).catch(() => {});
 
-    galleryApi.list().then((data) => {
-      setGalleryImages(data || []);
+    galleryApi.list().then((res) => {
+      setGalleryImages(res.images || res || []);
     }).catch(() => {});
   }, []);
 

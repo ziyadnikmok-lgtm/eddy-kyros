@@ -83,8 +83,8 @@ export default function CarouselPage() {
     const loadGallery = async () => {
       setLoadingGallery(true);
       try {
-        const list = await galleryApi.list();
-        if (!cancelled) setGalleryImages(list || []);
+        const res = await galleryApi.list();
+        if (!cancelled) setGalleryImages(res.images || res || []);
       } catch {
         if (!cancelled) setGalleryImages([]);
       } finally {

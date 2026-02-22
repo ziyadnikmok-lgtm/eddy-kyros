@@ -13,12 +13,16 @@ const parseMultipartIfNeeded = createMultipartParser({ fallback: parseImageUploa
 
 /**
  * GET /api/gallery
- * List all gallery images (newest first).
+ * List gallery images (newest first). Optional pagination: ?page=&limit=&tag=
  */
-router.get('/', (_req, res, next) => {
+router.get('/', (req, res, next) => {
   try {
-    const images = galleryManager.list();
-    res.json({ success: true, data: images });
+    const result = galleryManager.list({
+      page: req.query.page,
+      limit: req.query.limit,
+      tag: req.query.tag,
+    });
+    res.json({ success: true, data: result });
   } catch (err) {
     next(err);
   }

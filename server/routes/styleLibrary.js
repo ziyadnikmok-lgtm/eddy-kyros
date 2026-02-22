@@ -55,14 +55,15 @@ router.get('/duplicates', (_req, res, next) => {
 });
 
 /** GET /api/style-library/content-presets — OFM content type presets (40/30/20/10 mix) */
-router.get('/content-presets', (_req, res, next) => {
+const _contentPresets = (() => {
   try {
-    const presetsPath = require('node:path').join(__dirname, '..', 'data', 'contentTypePresets.json');
-    const presets = JSON.parse(require('node:fs').readFileSync(presetsPath, 'utf-8'));
-    res.json({ success: true, data: presets });
-  } catch (err) {
-    next(err);
-  }
+    return JSON.parse(require('node:fs').readFileSync(
+      require('node:path').join(__dirname, '..', 'data', 'contentTypePresets.json'), 'utf-8'
+    ));
+  } catch { return []; }
+})();
+router.get('/content-presets', (_req, res) => {
+  res.json({ success: true, data: _contentPresets });
 });
 
 /** GET /api/style-library/:id — single atom */

@@ -95,7 +95,7 @@ export default function GalleryPage() {
   // Load gallery
   const load = async () => {
     setLoadingList(true);
-    try { setImages(await galleryApi.list()); } catch { notify('Failed to load gallery. Check your server connection.', 'error'); }
+    try { const res = await galleryApi.list(); setImages(res.images || res || []); } catch { notify('Failed to load gallery. Check your server connection.', 'error'); }
     setLoadingList(false);
   };
 

@@ -42,6 +42,21 @@ class StyleLibraryService {
     this._ensureDataFile(PROFILES_FILE);
     this._store = this._loadFile(DATA_FILE);
     this._profiles = this._loadFile(PROFILES_FILE);
+    this._rebuildNormIndex();
+  }
+
+  /** Build category→Set<normalizedText> index for O(1) exact-match duplicate checks */
+  _rebuildNormIndex() {
+    this._normIndex = new Map();
+    for (const a of this._store) {
+      this._addToNormIndex(a.category, a.text);
+    }
+  }
+
+  _addToNormIndex(category, text) {
+    const key = text.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (!this._normIndex.has(category)) this._normIndex.set(category, new Set());
+    this._normIndex.get(category).add(key);
   }
 
   // ─── Quality Gate & Duplicate Detection ────────────────
@@ -54,17 +69,13 @@ class StyleLibraryService {
     const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ');
     if (normalized.length < 5) return true; // too short = treat as duplicate
 
-    const sameCategory = this._store.filter(a => a.category === category);
+    // O(1) exact match via pre-built index
+    if (this._normIndex.get(category)?.has(normalized)) return true;
 
-    // Exact match (normalized)
-    for (const a of sameCategory) {
-      const existing = a.text.trim().toLowerCase().replace(/\s+/g, ' ');
-      if (existing === normalized) return true;
-    }
-
-    // Jaccard similarity > 0.6
+    // Jaccard similarity > 0.6 (fuzzy match still requires scan)
     const wordsNew = new Set(normalized.split(/\s+/));
-    for (const a of sameCategory) {
+    for (const a of this._store) {
+      if (a.category !== category) continue;
       const wordsExisting = new Set(a.text.trim().toLowerCase().split(/\s+/));
       const intersection = new Set([...wordsNew].filter(w => wordsExisting.has(w)));
       const union = new Set([...wordsNew, ...wordsExisting]);
@@ -135,6 +146,7 @@ class StyleLibraryService {
     };
 
     this._store.push(atom);
+    this._addToNormIndex(atom.category, atom.text);
     this._persistStore();
     return { ...atom };
   }
@@ -170,6 +182,7 @@ class StyleLibraryService {
         favorite: false,
       };
       this._store.push(atom);
+      this._addToNormIndex(atom.category, atom.text);
       created.push({ ...atom });
     }
 
@@ -262,6 +275,7 @@ class StyleLibraryService {
     const idx = this._store.findIndex(a => a.id === id);
     if (idx === -1) throw new AppError('Atom not found', 404, 'ATOM_NOT_FOUND');
     this._store.splice(idx, 1);
+    this._rebuildNormIndex();
     this._persistStore();
     return { removed: true };
   }
@@ -273,6 +287,7 @@ class StyleLibraryService {
     const idSet = new Set(ids);
     const before = this._store.length;
     this._store = this._store.filter(a => !idSet.has(a.id));
+    this._rebuildNormIndex();
     this._persistStore();
     return { removed: before - this._store.length };
   }
@@ -280,6 +295,7 @@ class StyleLibraryService {
   deleteAll() {
     const count = this._store.length;
     this._store = [];
+    this._normIndex = new Map();
     this._persistStore();
     return { removed: count };
   }
@@ -325,6 +341,7 @@ class StyleLibraryService {
     if (removeIds.length === 0) return { removed: 0 };
     const idSet = new Set(removeIds);
     this._store = this._store.filter(a => !idSet.has(a.id));
+    this._rebuildNormIndex();
     this._persistStore();
     return { removed: duplicateCount };
   }
@@ -332,6 +349,7 @@ class StyleLibraryService {
   deleteBySource(username) {
     const before = this._store.length;
     this._store = this._store.filter(a => a.source?.profileUsername !== username);
+    this._rebuildNormIndex();
     this._persistStore();
     // Also remove from analyzed profiles
     this._profiles = this._profiles.filter(p => p.username !== username);

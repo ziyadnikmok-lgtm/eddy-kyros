@@ -57,7 +57,7 @@ class GalleryManager {
     return entry;
   }
 
-  list() {
+  list({ page, limit, tag } = {}) {
     // Rebuild the on-disk file set at most once per 30 seconds to avoid
     // N sync existsSync calls per request (can be thousands of images).
     const now = Date.now();
@@ -69,10 +69,26 @@ class GalleryManager {
       this._validFilesAt = now;
     }
 
-    return this._store
-      .filter((e) => this._validFiles.has(e.filename))
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-      .map((e) => this._toSafe(e));
+    let results = this._store
+      .filter((e) => this._validFiles.has(e.filename));
+
+    if (tag) {
+      const t = tag.toLowerCase();
+      results = results.filter(e => Array.isArray(e.tags) && e.tags.includes(t));
+    }
+
+    results.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const total = results.length;
+
+    // Paginate if page/limit provided
+    const pg = parseInt(page, 10);
+    const lim = parseInt(limit, 10);
+    if (lim > 0 && pg > 0) {
+      const start = (pg - 1) * lim;
+      results = results.slice(start, start + lim);
+    }
+
+    return { images: results.map((e) => this._toSafe(e)), total, page: pg || 1, pages: lim > 0 ? Math.ceil(total / lim) : 1 };
   }
 
   get(id) {

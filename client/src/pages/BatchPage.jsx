@@ -176,8 +176,8 @@ export default function BatchPage() {
       if (mode !== 'edit') return;
       update({ loadingEditGallery: true });
       try {
-        const list = await galleryApi.list();
-        if (!cancelled) update({ editGalleryImages: list || [] });
+        const res = await galleryApi.list();
+        if (!cancelled) update({ editGalleryImages: res.images || res || [] });
       } catch {
         if (!cancelled) update({ editGalleryImages: [] });
       } finally {

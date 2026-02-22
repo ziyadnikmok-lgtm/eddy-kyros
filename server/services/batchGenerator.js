@@ -22,6 +22,13 @@ const sceneModeEngine = require('./sceneModeEngine');
 
 const cfg = require('../config');
 
+// Cache content type presets at module load (avoids blocking readFileSync per request)
+const _contentPresets = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'contentTypePresets.json'), 'utf-8'));
+  } catch { return []; }
+})();
+
 // ---------------------------------------------------------------------------
 // Constants (from central config)
 // ---------------------------------------------------------------------------
@@ -543,14 +550,11 @@ class BatchGenerator extends EventEmitter {
       throw new AppError(`Distribution must sum to 100%, got ${total}%`, 400, 'VALIDATION_ERROR');
     }
 
-    // Load content type presets
-    const presetsPath = path.join(__dirname, '..', 'data', 'contentTypePresets.json');
-    let allPresets = [];
-    try {
-      allPresets = JSON.parse(fs.readFileSync(presetsPath, 'utf-8'));
-    } catch {
+    // Use cached content type presets (loaded once at module level)
+    if (!_contentPresets || _contentPresets.length === 0) {
       throw new AppError('Content type presets not available', 500, 'PRESETS_MISSING');
     }
+    const allPresets = _contentPresets;
 
     // Distribute count across categories (last category gets remainder)
     const catCounts = {};
