@@ -19,6 +19,115 @@ const {
 const router = express.Router();
 const TEMP_DIR = path.join(process.cwd(), 'temp');
 
+/**
+ * Extract content patterns (captions, hashtags, engagement, schedule) from raw Apify items.
+ */
+function _extractContentPatterns(items) {
+  const hashtagCounts = {};
+  const captions = [];
+  const engagements = [];
+  const postTypes = {};
+  const dayOfWeek = [0, 0, 0, 0, 0, 0, 0]; // Sun-Sat
+  const hourOfDay = new Array(24).fill(0);
+  const timestamps = [];
+
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+
+    // Caption
+    const caption = asText(
+      item.caption || item.text || item.edge_media_to_caption?.edges?.[0]?.node?.text || ''
+    );
+    if (caption) captions.push(caption);
+
+    // Hashtags — from caption or dedicated field
+    const rawTags = Array.isArray(item.hashtags)
+      ? item.hashtags
+      : (caption.match(/#[\w\u00C0-\u024F]+/g) || []);
+    for (const tag of rawTags) {
+      const t = (typeof tag === 'string' ? tag : '').replace(/^#/, '').toLowerCase().trim();
+      if (t) hashtagCounts[t] = (hashtagCounts[t] || 0) + 1;
+    }
+
+    // Engagement
+    const likes = item.likesCount ?? item.likes ?? item.edge_liked_by?.count ?? null;
+    const comments = item.commentsCount ?? item.comments ?? item.edge_media_to_comment?.count ?? null;
+    if (likes !== null || comments !== null) {
+      engagements.push({ likes: Number(likes) || 0, comments: Number(comments) || 0 });
+    }
+
+    // Post type
+    const pType = asText(item.type || item.__typename || item.productType || 'unknown').toLowerCase();
+    const normalizedType =
+      pType.includes('video') || pType.includes('reel') ? 'video'
+        : pType.includes('sidecar') || pType.includes('carousel') ? 'carousel'
+          : pType.includes('image') || pType.includes('graph') ? 'image'
+            : 'other';
+    postTypes[normalizedType] = (postTypes[normalizedType] || 0) + 1;
+
+    // Timestamp
+    const ts = item.timestamp || item.taken_at_timestamp || item.takenAtTimestamp || item.date || '';
+    if (ts) {
+      const d = new Date(typeof ts === 'number' && ts < 1e12 ? ts * 1000 : ts);
+      if (!isNaN(d.getTime())) {
+        timestamps.push(d.getTime());
+        dayOfWeek[d.getDay()]++;
+        hourOfDay[d.getHours()]++;
+      }
+    }
+  }
+
+  // Top hashtags sorted by frequency
+  const topHashtags = Object.entries(hashtagCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 30)
+    .map(([tag, count]) => ({ tag, count }));
+
+  // Caption stats
+  const captionLengths = captions.map(c => c.length);
+  const avgCaptionLen = captionLengths.length
+    ? Math.round(captionLengths.reduce((a, b) => a + b, 0) / captionLengths.length)
+    : 0;
+  const captionWithHashtags = captions.filter(c => c.includes('#')).length;
+
+  // Engagement stats
+  const totalLikes = engagements.reduce((a, e) => a + e.likes, 0);
+  const totalComments = engagements.reduce((a, e) => a + e.comments, 0);
+  const avgLikes = engagements.length ? Math.round(totalLikes / engagements.length) : 0;
+  const avgComments = engagements.length ? Math.round(totalComments / engagements.length) : 0;
+
+  // Posting frequency
+  timestamps.sort((a, b) => a - b);
+  let avgDaysBetween = null;
+  if (timestamps.length >= 2) {
+    const spanMs = timestamps[timestamps.length - 1] - timestamps[0];
+    avgDaysBetween = Math.round((spanMs / (timestamps.length - 1)) / 86400000 * 10) / 10;
+  }
+
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const peakDay = dayNames[dayOfWeek.indexOf(Math.max(...dayOfWeek))];
+  const peakHour = hourOfDay.indexOf(Math.max(...hourOfDay));
+
+  return {
+    postCount: items.length,
+    topHashtags,
+    captionStats: {
+      avgLength: avgCaptionLen,
+      withHashtags: captionWithHashtags,
+      total: captions.length,
+    },
+    engagement: { avgLikes, avgComments, totalPosts: engagements.length },
+    postTypes,
+    schedule: {
+      avgDaysBetween,
+      peakDay,
+      peakHour,
+      dayDistribution: dayNames.map((name, i) => ({ day: name, count: dayOfWeek[i] })),
+      hourDistribution: hourOfDay,
+    },
+  };
+}
+
 // Identity-agnostic extraction prompt for style atoms (Nano-Banana enriched)
 const STYLE_EXTRACTION_PROMPT = `You are a style analysis engine for an AI image generation system. Analyze this image and extract ONLY stylistic elements as natural language descriptions.
 
@@ -129,6 +238,10 @@ router.get('/analyze', async (req, res) => {
 
     const total = posts.length;
     send('progress', { current: 0, total, status: `Found ${total} posts, starting analysis...` });
+
+    // Extract content patterns from raw Apify data (captions, hashtags, engagement, schedule)
+    const contentPatterns = _extractContentPatterns(items);
+    send('contentPatterns', contentPatterns);
 
     ensureTempDir();
 

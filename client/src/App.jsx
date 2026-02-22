@@ -17,6 +17,7 @@ const ReelRecreatePage = lazy(() => import('./pages/ReelRecreatePage'));
 const PostClonePage = lazy(() => import('./pages/PostClonePage'));
 const StyleLibraryPage = lazy(() => import('./pages/StyleLibraryPage'));
 const ProfileAnalyzerPage = lazy(() => import('./pages/ProfileAnalyzerPage'));
+const PromptBuilderPage = lazy(() => import('./pages/PromptBuilderPage'));
 const ApiKeysPage = lazy(() => import('./pages/ApiKeysPage'));
 
 const NAV_SECTIONS = [
@@ -41,6 +42,7 @@ const NAV_SECTIONS = [
     label: 'Tools',
     items: [
       { id: 'styleLibrary', label: 'Style Library', icon: '\uD83C\uDFA8' },
+      { id: 'promptBuilder', label: 'Prompt Builder', icon: '\uD83E\uDDE9' },
       { id: 'profileAnalyzer', label: 'Profile Analyzer', icon: '\uD83D\uDD0D' },
       { id: 'storyteller', label: 'Storyteller', icon: '\u270D' },
     ],
@@ -67,6 +69,7 @@ const PAGE_DESCRIPTIONS = {
   reel: 'Recreate Instagram reels with your character',
   postClone: 'Clone Instagram posts with your character',
   styleLibrary: 'Manage reusable style building blocks',
+  promptBuilder: 'Visual prompt composition with Nano-Banana formula',
   profileAnalyzer: 'Extract style patterns from Instagram profiles',
   storyteller: 'Generate captions and hashtags for images',
   gallery: 'Browse and manage all generated images',
@@ -82,6 +85,7 @@ const PAGES = {
   reel: ReelRecreatePage,
   postClone: PostClonePage,
   styleLibrary: StyleLibraryPage,
+  promptBuilder: PromptBuilderPage,
   profileAnalyzer: ProfileAnalyzerPage,
   storyteller: StorytellerPage,
   auto: AutoGeneratorPage,

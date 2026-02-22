@@ -166,6 +166,17 @@ export default function GeneratePage() {
     setStyleAtomDetails(prev => prev.filter(x => x.id !== id));
   };
 
+  // Pick up atoms sent from Prompt Builder page
+  useEffect(() => {
+    const raw = sessionStorage.getItem('pb_atomIds');
+    if (!raw) return;
+    sessionStorage.removeItem('pb_atomIds');
+    try {
+      const ids = JSON.parse(raw);
+      if (Array.isArray(ids) && ids.length > 0) handleApplyAtoms(ids);
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
     if (selectedCharId) charApi.get(selectedCharId).then((d) => update({ selectedChar: d })).catch(() => update({ selectedChar: null }));
     else update({ selectedChar: null });

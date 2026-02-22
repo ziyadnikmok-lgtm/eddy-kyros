@@ -16,6 +16,7 @@ export default function ProfileAnalyzerPage() {
   const [checkedAtoms, setCheckedAtoms] = useState(new Set()); // "postIdx-atomIdx" keys
   const [saving, setSaving] = useState(false);
   const [profiles, setProfiles] = useState([]);
+  const [contentPatterns, setContentPatterns] = useState(null);
   const eventSourceRef = useRef(null);
   const analyzingRef = useRef(false);
 
@@ -65,6 +66,7 @@ export default function ProfileAnalyzerPage() {
     analyzingRef.current = true;
     setResults([]);
     setCheckedAtoms(new Set());
+    setContentPatterns(null);
     setProgress({ current: 0, total: 0, status: 'Starting...' });
 
     const es = analyzerApi.analyze(username.trim(), postLimit, {
@@ -99,6 +101,12 @@ export default function ProfileAnalyzerPage() {
           });
           return next;
         });
+      } catch { /* ignore */ }
+    });
+
+    es.addEventListener('contentPatterns', (e) => {
+      try {
+        setContentPatterns(JSON.parse(e.data));
       } catch { /* ignore */ }
     });
 
@@ -265,6 +273,9 @@ export default function ProfileAnalyzerPage() {
         </Card>
       )}
 
+      {/* Content Patterns */}
+      {contentPatterns && <ContentPatternsCard data={contentPatterns} />}
+
       {/* Results */}
       {results.length > 0 && (
         <div className="space-y-4">
@@ -384,6 +395,112 @@ export default function ProfileAnalyzerPage() {
           </div>
         </Card>
       )}
+    </div>
+  );
+}
+
+// ─── Content Patterns Card ────────────────────────────
+function ContentPatternsCard({ data }) {
+  const { topHashtags, captionStats, engagement, postTypes, schedule } = data;
+
+  const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const maxDayCount = Math.max(...(schedule?.dayDistribution?.map(d => d.count) || [1]));
+
+  return (
+    <Card>
+      <h3 className="text-sm font-semibold text-zinc-200 mb-4">Content Patterns</h3>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+        {/* Engagement */}
+        <div className="space-y-2">
+          <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Engagement</p>
+          <div className="flex gap-3">
+            <StatBox label="Avg Likes" value={engagement?.avgLikes?.toLocaleString() || '—'} />
+            <StatBox label="Avg Comments" value={engagement?.avgComments?.toLocaleString() || '—'} />
+            <StatBox label="Posts" value={engagement?.totalPosts || '—'} />
+          </div>
+        </div>
+
+        {/* Caption Stats */}
+        <div className="space-y-2">
+          <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Captions</p>
+          <div className="flex gap-3">
+            <StatBox label="Avg Length" value={`${captionStats?.avgLength || 0} chars`} />
+            <StatBox label="With #tags" value={`${captionStats?.withHashtags || 0}/${captionStats?.total || 0}`} />
+          </div>
+        </div>
+
+        {/* Post Types */}
+        {postTypes && Object.keys(postTypes).length > 0 && (
+          <div className="space-y-2">
+            <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Post Types</p>
+            <div className="flex gap-2 flex-wrap">
+              {Object.entries(postTypes).map(([type, count]) => (
+                <span key={type} className="px-2 py-0.5 text-[10px] rounded-full bg-zinc-800 border border-zinc-700/50 text-zinc-300">
+                  {type} <span className="text-zinc-500">{count}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Posting Schedule */}
+        <div className="space-y-2">
+          <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Schedule</p>
+          <div className="flex gap-3">
+            {schedule?.avgDaysBetween != null && (
+              <StatBox label="Frequency" value={`Every ${schedule.avgDaysBetween}d`} />
+            )}
+            {schedule?.peakDay && <StatBox label="Peak Day" value={schedule.peakDay} />}
+            {schedule?.peakHour != null && (
+              <StatBox label="Peak Hour" value={`${schedule.peakHour}:00`} />
+            )}
+          </div>
+          {/* Day-of-week mini bar chart */}
+          {schedule?.dayDistribution && (
+            <div className="flex items-end gap-1 h-10 mt-1">
+              {schedule.dayDistribution.map((d, i) => (
+                <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
+                  <div
+                    className="w-full rounded-sm bg-blue-500/40"
+                    style={{ height: `${Math.max(2, (d.count / maxDayCount) * 28)}px` }}
+                    title={`${d.day}: ${d.count} posts`}
+                  />
+                  <span className="text-[8px] text-zinc-600">{d.day}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Top Hashtags */}
+        {topHashtags && topHashtags.length > 0 && (
+          <div className="md:col-span-2 space-y-2">
+            <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
+              Top Hashtags <span className="text-zinc-600">({topHashtags.length})</span>
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {topHashtags.map(({ tag, count }) => (
+                <span
+                  key={tag}
+                  className="px-2 py-0.5 text-[10px] rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-300"
+                >
+                  #{tag} <span className="text-purple-500/60">{count}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function StatBox({ label, value }) {
+  return (
+    <div className="flex-1 p-2 rounded-lg bg-zinc-800/50 border border-zinc-700/40 text-center">
+      <p className="text-sm font-semibold text-zinc-200">{value}</p>
+      <p className="text-[9px] text-zinc-500">{label}</p>
     </div>
   );
 }
