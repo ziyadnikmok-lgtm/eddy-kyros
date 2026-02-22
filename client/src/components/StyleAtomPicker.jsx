@@ -42,7 +42,7 @@ export default function StyleAtomPicker({ selectedIds, onApply, onClose }) {
   };
 
   return (
-    <Modal title="Pick Style Atoms" onClose={onClose}>
+    <Modal open title="Pick Style Atoms" onClose={onClose}>
       <div className="space-y-3 max-h-[70vh] overflow-y-auto scroll-fade">
         {/* Category tabs */}
         <div className="flex gap-1 flex-wrap">

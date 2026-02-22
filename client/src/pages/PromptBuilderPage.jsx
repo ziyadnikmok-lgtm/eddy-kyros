@@ -290,7 +290,7 @@ export default function PromptBuilderPage() {
 
       {/* Presets Modal */}
       {showPresets && (
-        <Modal title="Saved Presets" onClose={() => setShowPresets(false)}>
+        <Modal open title="Saved Presets" onClose={() => setShowPresets(false)}>
           <div className="space-y-2 max-h-[60vh] overflow-y-auto scroll-fade">
             {presets.length === 0 ? (
               <p className="text-xs text-zinc-500 text-center py-4">No presets saved yet</p>
@@ -354,7 +354,7 @@ function SlotPicker({ category, currentAtomId, onSelect, onClose }) {
   useEffect(() => { fetchAtoms(); }, [fetchAtoms]);
 
   return (
-    <Modal title={`Pick ${category.charAt(0).toUpperCase() + category.slice(1)} Atom`} onClose={onClose}>
+    <Modal open title={`Pick ${category.charAt(0).toUpperCase() + category.slice(1)} Atom`} onClose={onClose}>
       <div className="space-y-3 max-h-[60vh] overflow-y-auto scroll-fade">
         <input
           type="text"
