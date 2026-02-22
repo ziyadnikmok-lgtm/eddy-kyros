@@ -45,6 +45,7 @@ export default function CarouselPage() {
   const [followUpLoading, setFollowUpLoading] = useState(false);
   const [executeJobIds, setExecuteJobIds] = useState([]);
   const [executeJobs, setExecuteJobs] = useState([]);
+  const [completedSlides, setCompletedSlides] = useState([]); // append-only — stable image refs
   const [followUpCount, setFollowUpCount] = useState(4);
   const [followUpDirection, setFollowUpDirection] = useState('');
   const [followUpMode, setFollowUpMode] = useState('manual');
@@ -61,6 +62,7 @@ export default function CarouselPage() {
   const [pollResults, setPollResults] = useState(null); // { polls, jobIds }
   const [pollJobs, setPollJobs] = useState([]);
   const [pollJobIds, setPollJobIds] = useState([]);
+  const [completedPollSlides, setCompletedPollSlides] = useState([]); // append-only
 
   const selectableImages = [...uploadedImages, ...galleryImages];
   const selectedImage = selectableImages.find((img) => img.id === selectedImageId);
@@ -68,9 +70,6 @@ export default function CarouselPage() {
     ? (selectedImage.src || `/api/gallery/${selectedImage.id}/image`)
     : null;
 
-  const generatedImages = executeJobs
-    .flatMap((job) => (job.results || []))
-    .filter((item) => item && item.success && item.image && item.image.base64Data);
   const isAnyJobRunning = executeJobs.some((job) => job?.status === 'running');
 
   useEffect(() => {
@@ -148,10 +147,41 @@ export default function CarouselPage() {
     return () => { cancelled = true; clearInterval(intervalId); };
   }, [pollJobIds]);
 
-  const pollGeneratedImages = pollJobs
-    .flatMap(job => (job.results || []))
-    .filter(item => item && item.success && item.image && item.image.base64Data);
   const isPollJobRunning = pollJobs.some(j => j?.status === 'running');
+
+  // Accumulate follow-up slides — append-only so images never flicker
+  useEffect(() => {
+    setCompletedSlides(prev => {
+      const existing = new Set(prev.map(s => s._key));
+      const additions = [];
+      for (const job of executeJobs) {
+        for (const r of (job.results || [])) {
+          if (!r?.success || !r?.image?.base64Data) continue;
+          const key = `${job.jobId}-${r.index}`;
+          if (existing.has(key)) continue;
+          additions.push({ _key: key, index: r.index, image: { ...r.image } });
+        }
+      }
+      return additions.length > 0 ? [...prev, ...additions] : prev;
+    });
+  }, [executeJobs]);
+
+  // Accumulate poll slides — same pattern
+  useEffect(() => {
+    setCompletedPollSlides(prev => {
+      const existing = new Set(prev.map(s => s._key));
+      const additions = [];
+      for (const job of pollJobs) {
+        for (const r of (job.results || [])) {
+          if (!r?.success || !r?.image?.base64Data) continue;
+          const key = `${job.jobId}-${r.index}`;
+          if (existing.has(key)) continue;
+          additions.push({ _key: key, index: r.index, image: { ...r.image } });
+        }
+      }
+      return additions.length > 0 ? [...prev, ...additions] : prev;
+    });
+  }, [pollJobs]);
 
   const FOLLOW_STEPS = useMemo(() => ['Analyzing source image', 'Generating follow-up variations'], []);
   const FOLLOW_THRESHOLDS = useMemo(() => [3], []);
@@ -189,6 +219,7 @@ export default function CarouselPage() {
     }
 
     // Start a fresh follow-up session: clear previous follow-up job cards/images.
+    setCompletedSlides([]);
     setExecuteJobs([]);
     setExecuteJobIds([]);
     setFollowUpLoading(true);
@@ -227,6 +258,7 @@ export default function CarouselPage() {
     if (!pollTopic.trim()) { notify('Enter a poll topic', 'error'); return; }
     setPollLoading(true);
     setPollResults(null);
+    setCompletedPollSlides([]);
     setPollJobs([]);
     setPollJobIds([]);
     try {
@@ -479,23 +511,25 @@ export default function CarouselPage() {
             </Card>
           )}
 
-          {generatedImages.length === 0 ? (
+          {completedSlides.length === 0 && !isAnyJobRunning ? (
             <Card className="flex items-center justify-center py-20">
               <Empty icon="Carousel" title="No generated slides yet" subtitle="Use Execute or Follow-up to start jobs" />
             </Card>
           ) : (
             <div className="space-y-4">
-              <h3 className="text-sm font-semibold text-zinc-400">Generated Slides ({generatedImages.length})</h3>
+              {completedSlides.length > 0 && (
+                <h3 className="text-sm font-semibold text-zinc-400">Generated Slides ({completedSlides.length})</h3>
+              )}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {generatedImages.map((v, i) => (
+                {completedSlides.map((v, i) => (
                   <ImageCard
-                    key={`${v.index}-${i}`}
-                    base64={v.image?.base64Data}
-                    mimeType={v.image?.mimeType}
-                    meta={{ identityConfidence: v.image?.validation?.identity_match_score }}
+                    key={v._key}
+                    base64={v.image.base64Data}
+                    mimeType={v.image.mimeType}
+                    meta={{ identityConfidence: v.image.validation?.identity_match_score }}
                     className="animate-in"
                     onSelect={() => openLightbox(
-                      generatedImages.map((img) => `data:${img.image?.mimeType || 'image/png'};base64,${img.image?.base64Data}`),
+                      completedSlides.map((img) => `data:${img.image.mimeType || 'image/png'};base64,${img.image.base64Data}`),
                       i
                     )}
                   />
@@ -614,12 +648,12 @@ export default function CarouselPage() {
             </Card>
           )}
 
-          {pollResults?.polls?.length > 0 && pollGeneratedImages.length > 0 ? (
+          {pollResults?.polls?.length > 0 && completedPollSlides.length > 0 ? (
             <div className="space-y-6">
               <h3 className="text-sm font-semibold text-zinc-400">Poll Results ({pollResults.polls.length} questions)</h3>
               {pollResults.polls.map((poll, pi) => {
-                const imgA = pollGeneratedImages[pi * 2];
-                const imgB = pollGeneratedImages[pi * 2 + 1];
+                const imgA = completedPollSlides[pi * 2];
+                const imgB = completedPollSlides[pi * 2 + 1];
                 return (
                   <Card key={pi} className="space-y-3 animate-in">
                     <div className="text-center">
@@ -632,11 +666,11 @@ export default function CarouselPage() {
                         </div>
                         {imgA ? (
                           <ImageCard
-                            base64={imgA.image?.base64Data}
-                            mimeType={imgA.image?.mimeType}
+                            base64={imgA.image.base64Data}
+                            mimeType={imgA.image.mimeType}
                             className="animate-in"
                             onSelect={() => openLightbox(
-                              pollGeneratedImages.map(img => `data:${img.image?.mimeType || 'image/png'};base64,${img.image?.base64Data}`),
+                              completedPollSlides.map(img => `data:${img.image.mimeType || 'image/png'};base64,${img.image.base64Data}`),
                               pi * 2
                             )}
                           />
@@ -652,11 +686,11 @@ export default function CarouselPage() {
                         </div>
                         {imgB ? (
                           <ImageCard
-                            base64={imgB.image?.base64Data}
-                            mimeType={imgB.image?.mimeType}
+                            base64={imgB.image.base64Data}
+                            mimeType={imgB.image.mimeType}
                             className="animate-in"
                             onSelect={() => openLightbox(
-                              pollGeneratedImages.map(img => `data:${img.image?.mimeType || 'image/png'};base64,${img.image?.base64Data}`),
+                              completedPollSlides.map(img => `data:${img.image.mimeType || 'image/png'};base64,${img.image.base64Data}`),
                               pi * 2 + 1
                             )}
                           />

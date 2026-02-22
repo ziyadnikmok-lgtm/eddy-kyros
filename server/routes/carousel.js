@@ -324,8 +324,8 @@ function extractWardrobeLock(baseMetadata) {
   return '';
 }
 
-function buildLockedModificationPrompt({ direction, strictContinuityLock = true, wardrobeLock = '' }) {
-  const variationRequest = normalizeDeltaDirection(direction)
+function buildLockedModificationPrompt({ direction, strictContinuityLock = true, wardrobeLock = '', rawDirection = false }) {
+  const variationRequest = (rawDirection ? asText(direction) : normalizeDeltaDirection(direction))
     || 'Viewer/subject angle change, hand change, head tilt change, pose change, expression change.';
   if (!strictContinuityLock) return variationRequest;
 
@@ -445,6 +445,7 @@ Return JSON only in this format:
     direction: item,
     strictContinuityLock,
     wardrobeLock,
+    rawDirection: true, // AI output is already delta-only — skip normalization
   }));
 
   if (modelPrompts.length >= safeCount) {
