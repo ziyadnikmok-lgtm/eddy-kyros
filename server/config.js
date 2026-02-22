@@ -38,7 +38,7 @@ module.exports = {
   // ── Batch / concurrency ─────────────────────────────────────────────
   BATCH_MAX_CONCURRENCY: 5,
   BATCH_MAX_SIZE: 20,
-  BATCH_MAX_RUNNING_JOBS: 3,
+  BATCH_MAX_RUNNING_JOBS: 10,
   MAX_BATCH_PROMPTS: 20,
   MAX_AUTO_DURATION_DAYS: 30,
 

@@ -868,7 +868,9 @@ export default function GeneratePage() {
 
         <div className="lg:col-span-2 space-y-4">
           {loading && (
-            <StepProgress steps={GENERATE_STEPS} currentIndex={generateStepIndex} elapsedSec={elapsedSec} className="min-h-[360px]" />
+            <div className="flex items-center justify-center min-h-[calc(100vh-10rem)]">
+              <StepProgress steps={GENERATE_STEPS} currentIndex={generateStepIndex} elapsedSec={elapsedSec} className="w-full max-w-md" />
+            </div>
           )}
 
           {result && (

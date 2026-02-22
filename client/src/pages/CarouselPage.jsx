@@ -101,60 +101,52 @@ export default function CarouselPage() {
     }
 
     let cancelled = false;
+    let intervalId = null;
     const fetchJobs = async () => {
       try {
         const jobs = await Promise.all(executeJobIds.map((jobId) => batchApi.get(jobId).catch(() => null)));
-        if (!cancelled) setExecuteJobs(jobs.filter(Boolean));
+        if (!cancelled) {
+          const filtered = jobs.filter(Boolean);
+          setExecuteJobs(filtered);
+          // Stop polling once every job has finished — data stays in state
+          if (filtered.length > 0 && filtered.every((j) => j.status !== 'running')) {
+            clearInterval(intervalId);
+          }
+        }
       } catch {
         // Keep previous job states during transient failures.
       }
     };
 
     fetchJobs();
-    const interval = setInterval(fetchJobs, 2000);
+    intervalId = setInterval(fetchJobs, 2000);
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      clearInterval(intervalId);
     };
   }, [executeJobIds]);
-
-  useEffect(() => {
-    if (!Array.isArray(executeJobs) || executeJobs.length === 0) return;
-
-    const runningIds = executeJobs
-      .filter((job) => job && job.status === 'running')
-      .map((job) => job.jobId);
-
-    // Functional update avoids stale closure over executeJobIds
-    setExecuteJobIds((prev) => {
-      if (runningIds.length === prev.length && runningIds.every((id) => prev.includes(id))) return prev;
-      return runningIds;
-    });
-  }, [executeJobs]);
 
   // Poll job polling
   useEffect(() => {
     if (!Array.isArray(pollJobIds) || pollJobIds.length === 0) return undefined;
     let cancelled = false;
+    let intervalId = null;
     const fetchPollJobs = async () => {
       try {
         const jobs = await Promise.all(pollJobIds.map(id => batchApi.get(id).catch(() => null)));
-        if (!cancelled) setPollJobs(jobs.filter(Boolean));
+        if (!cancelled) {
+          const filtered = jobs.filter(Boolean);
+          setPollJobs(filtered);
+          if (filtered.length > 0 && filtered.every(j => j.status !== 'running')) {
+            clearInterval(intervalId);
+          }
+        }
       } catch { /* keep previous */ }
     };
     fetchPollJobs();
-    const interval = setInterval(fetchPollJobs, 2000);
-    return () => { cancelled = true; clearInterval(interval); };
+    intervalId = setInterval(fetchPollJobs, 2000);
+    return () => { cancelled = true; clearInterval(intervalId); };
   }, [pollJobIds]);
-
-  useEffect(() => {
-    if (!Array.isArray(pollJobs) || pollJobs.length === 0) return;
-    const runningIds = pollJobs.filter(j => j && j.status === 'running').map(j => j.jobId);
-    setPollJobIds(prev => {
-      if (runningIds.length === prev.length && runningIds.every(id => prev.includes(id))) return prev;
-      return runningIds;
-    });
-  }, [pollJobs]);
 
   const pollGeneratedImages = pollJobs
     .flatMap(job => (job.results || []))
