@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
+const { atomicWriteJSON } = require('../utils/helpers');
 
 const CHARACTERS_DIR = path.join(__dirname, '..', '..', 'characters');
 const CHARACTER_JSON = 'character.json';
@@ -78,29 +79,35 @@ class ReferenceManager {
       throw new AppError(`Character "${sanitizedName}" already exists`, 409, 'DUPLICATE_CHARACTER');
     }
 
-    // --- Create directory structure ---
+    // --- Create directory structure (rollback on failure) ---
     fs.mkdirSync(charDir, { recursive: true });
     fs.mkdirSync(path.join(charDir, REFERENCES_DIR), { recursive: true });
 
-    // --- Write primary image ---
-    const primaryExt = this._extensionForMime(primaryImage.mimeType);
-    const primaryFileName = `primary${primaryExt}`;
-    const primaryFilePath = path.join(charDir, primaryFileName);
-    fs.writeFileSync(primaryFilePath, primaryImage.buffer);
+    try {
+      // --- Write primary image ---
+      const primaryExt = this._extensionForMime(primaryImage.mimeType);
+      const primaryFileName = `primary${primaryExt}`;
+      const primaryFilePath = path.join(charDir, primaryFileName);
+      fs.writeFileSync(primaryFilePath, primaryImage.buffer);
 
-    // --- Write character.json ---
-    const id = crypto.randomUUID();
-    const characterData = {
-      id,
-      name: sanitizedName,
-      masterPrompt: masterPrompt.trim(),
-      primaryImageFile: primaryFileName,
-      references: [],
-      createdAt: new Date().toISOString(),
-    };
-    this._writeCharacterJson(charDir, characterData);
+      // --- Write character.json ---
+      const id = crypto.randomUUID();
+      const characterData = {
+        id,
+        name: sanitizedName,
+        masterPrompt: masterPrompt.trim(),
+        primaryImageFile: primaryFileName,
+        references: [],
+        createdAt: new Date().toISOString(),
+      };
+      this._writeCharacterJson(charDir, characterData);
 
-    return this._toSafeCharacter(characterData);
+      return this._toSafeCharacter(characterData);
+    } catch (err) {
+      // Rollback: remove partially-created character directory
+      try { fs.rmSync(charDir, { recursive: true, force: true }); } catch { /* best-effort cleanup */ }
+      throw err;
+    }
   }
 
   /**
@@ -383,7 +390,7 @@ class ReferenceManager {
 
   _writeCharacterJson(charDir, data) {
     const jsonPath = path.join(charDir, CHARACTER_JSON);
-    fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2), 'utf8');
+    atomicWriteJSON(jsonPath, data);
     // Update cache
     _characterCache.set(data.id, { data, charDir });
   }

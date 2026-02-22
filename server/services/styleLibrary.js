@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
 const log = require('../utils/logger');
+const { atomicWriteJSON } = require('../utils/helpers');
 
 const DATA_FILE = path.join(__dirname, '..', 'data', 'styleLibrary.json');
 const PROFILES_FILE = path.join(__dirname, '..', 'data', 'analyzedProfiles.json');
@@ -876,11 +877,11 @@ class StyleLibraryService {
   }
 
   _persistStore() {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(this._store, null, 2), 'utf8');
+    atomicWriteJSON(DATA_FILE, this._store);
   }
 
   _persistProfiles() {
-    fs.writeFileSync(PROFILES_FILE, JSON.stringify(this._profiles, null, 2), 'utf8');
+    atomicWriteJSON(PROFILES_FILE, this._profiles);
   }
 }
 

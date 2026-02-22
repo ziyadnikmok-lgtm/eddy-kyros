@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
 const log = require('../utils/logger');
+const { atomicWriteJSON } = require('../utils/helpers');
 
 const DATA_FILE = path.join(__dirname, '..', 'data', 'sceneMemory.json');
 
@@ -116,7 +117,7 @@ class SceneMemoryService {
   }
 
   _persist() {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(this._store, null, 2), 'utf8');
+    atomicWriteJSON(DATA_FILE, this._store);
   }
 }
 

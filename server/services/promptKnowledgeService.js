@@ -2,7 +2,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
-const { asText } = require('../utils/helpers');
+const { asText, atomicWriteJSON } = require('../utils/helpers');
 const log = require('../utils/logger');
 
 const DATA_FILE = path.join(__dirname, '..', 'data', 'promptKnowledge.json');
@@ -102,7 +102,7 @@ class PromptKnowledgeService {
   }
 
   _persist() {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(this._store, null, 2), 'utf8');
+    atomicWriteJSON(DATA_FILE, this._store);
   }
 }
 

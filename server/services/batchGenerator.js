@@ -8,6 +8,7 @@ const { AppError } = require('../middleware/errorHandler');
 const apiKeyManager = require('./apiKeyManager');
 const geminiService = require('./geminiService');
 const referenceManager = require('./referenceManager');
+const { atomicWriteJSON } = require('../utils/helpers');
 const promptBuilder = require('./promptBuilder');
 const imageStore = require('./imageStore');
 const tweakBuilder = require('./tweakBuilder');
@@ -125,7 +126,7 @@ function _persistJobs() {
         delete lite._sharedBaseImage;
         entries.push(lite);
       }
-      fs.writeFileSync(JOB_STORE_PATH, JSON.stringify(entries), 'utf8');
+      atomicWriteJSON(JOB_STORE_PATH, entries, 0);
     } catch { /* persist best-effort — non-critical */ }
   });
 }
