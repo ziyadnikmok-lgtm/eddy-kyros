@@ -1,10 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
-import { postClone as postCloneApi, availability as availabilityApi, keys as keysApi } from '../services/api';
+import { postClone as postCloneApi, styleFocus as styleFocusApi, availability as availabilityApi, keys as keysApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
 import { useStepTimer } from '../hooks/useStepTimer';
-import { Card, Btn, Input, Badge, Slider, Spinner, Empty, Toggle, StepProgress } from '../components/UI';
+import { cn } from '../lib/utils';
+import { Card, Btn, Input, Badge, Slider, Spinner, Empty, Toggle, StepProgress, Section } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
+
+const DNA_LABELS = {
+  lighting: { label: 'Lighting', color: 'text-amber-400', dot: 'bg-amber-400' },
+  camera: { label: 'Camera', color: 'text-blue-400', dot: 'bg-blue-400' },
+  pose: { label: 'Pose', color: 'text-purple-400', dot: 'bg-purple-400' },
+  expression: { label: 'Expression', color: 'text-pink-400', dot: 'bg-pink-400' },
+  outfit: { label: 'Outfit', color: 'text-green-400', dot: 'bg-green-400' },
+  scene: { label: 'Scene', color: 'text-cyan-400', dot: 'bg-cyan-400' },
+  accessories: { label: 'Accessories', color: 'text-orange-400', dot: 'bg-orange-400' },
+  details: { label: 'Details', color: 'text-rose-400', dot: 'bg-rose-400' },
+  format: { label: 'Format', color: 'text-zinc-400', dot: 'bg-zinc-400' },
+};
 
 export default function PostClonePage() {
   const { notify, characters: chars } = useApp();
@@ -19,6 +32,8 @@ export default function PostClonePage() {
   const [mode, setMode] = useState('exact'); // exact | creative
   const [result, setResult] = useState([]);
   const [availability, setAvailability] = useState(null);
+  const [savingFocus, setSavingFocus] = useState(null); // index of post being saved
+  const [focusName, setFocusName] = useState('');
 
   // IG session quick-edit + live status
   const [showSession, setShowSession] = useState(false);
@@ -52,6 +67,42 @@ export default function PostClonePage() {
     } catch (err) {
       notify(err.message || 'Auto-refresh failed', 'error');
     } finally { setAutoRefreshing(false); }
+  };
+
+  const handleSaveStyleFocus = async (postIdx) => {
+    const post = result[postIdx];
+    if (!post) return;
+    // Use the first recreated image's structured data
+    const firstRec = (post.recreatedImages || [])[0];
+    const structured = firstRec?.structured;
+    if (!structured) {
+      notify('No visual DNA found for this post', 'error');
+      return;
+    }
+    const name = focusName.trim() || `Style from ${post.sourceUrl || `Post ${postIdx + 1}`}`.slice(0, 100);
+    try {
+      await styleFocusApi.save({
+        name,
+        sourceUrl: post.sourceUrl || '',
+        attributes: {
+          lighting: structured.lighting || '',
+          camera: structured.camera || '',
+          pose: structured.pose || '',
+          expression: structured.expression || '',
+          outfit: structured.outfit || '',
+          scene: structured.scene || '',
+          accessories: structured.accessories || '',
+          details: structured.details || '',
+          format: structured.format || '',
+        },
+        fullPrompt: structured.full_prompt || '',
+      });
+      notify(`Style Focus "${name}" saved`, 'success');
+      setSavingFocus(null);
+      setFocusName('');
+    } catch (err) {
+      notify(err.message || 'Failed to save Style Focus', 'error');
+    }
   };
 
   const LIVE_STEPS = useMemo(() => inputMode === 'profile'
@@ -302,48 +353,101 @@ export default function PostClonePage() {
             <StepProgress steps={LIVE_STEPS} currentIndex={liveStepIndex} elapsedSec={elapsedSec} className="min-h-[360px]" />
           )}
 
-          {!loading && Array.isArray(result) && result.length > 0 && result.map((post, idx) => (
-            <Card key={`${post.sourceUrl || 'post'}-${idx}`} className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-zinc-300">Post {idx + 1}</h3>
-                <Badge color="zinc">{post.type}</Badge>
-              </div>
-              {post.sourceUrl && <p className="text-[11px] text-zinc-500 truncate">{post.sourceUrl}</p>}
+          {!loading && Array.isArray(result) && result.length > 0 && result.map((post, idx) => {
+            const firstStructured = (post.recreatedImages || [])[0]?.structured;
+            const hasDna = firstStructured && Object.values(DNA_LABELS).some((_, i) => firstStructured[Object.keys(DNA_LABELS)[i]]);
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <p className="text-xs text-zinc-500">Original</p>
-                  {(post.originalImages || []).map((img, i) => {
-                    const src = img.base64Data ? `data:${img.mimeType || 'image/jpeg'};base64,${img.base64Data}` : img.url;
-                    return (
-                      <img
-                        key={`orig-${i}`}
-                        src={src}
-                        alt=""
-                        className="w-full rounded-lg cursor-pointer"
-                        onClick={() => openLightbox((post.originalImages || []).map((item) => item.base64Data ? `data:${item.mimeType || 'image/jpeg'};base64,${item.base64Data}` : item.url), i)}
-                      />
-                    );
-                  })}
+            return (
+              <Card key={`${post.sourceUrl || 'post'}-${idx}`} className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-zinc-300">Post {idx + 1}</h3>
+                  <div className="flex items-center gap-2">
+                    {hasDna && (
+                      <Btn
+                        variant="ghost"
+                        className="!px-2 !py-1 text-[10px]"
+                        onClick={() => setSavingFocus(savingFocus === idx ? null : idx)}
+                      >
+                        {savingFocus === idx ? 'Cancel' : 'Save Style Focus'}
+                      </Btn>
+                    )}
+                    <Badge color="zinc">{post.type}</Badge>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <p className="text-xs text-zinc-500">Recreated</p>
-                  {(post.recreatedImages || []).map((img, i) => {
-                    const src = img.base64Data ? `data:${img.mimeType || 'image/png'};base64,${img.base64Data}` : '';
-                    return (
-                      <img
-                        key={`recreate-${i}`}
-                        src={src}
-                        alt=""
-                        className="w-full rounded-lg cursor-pointer"
-                        onClick={() => openLightbox((post.recreatedImages || []).map((item) => `data:${item.mimeType || 'image/png'};base64,${item.base64Data}`), i)}
-                      />
-                    );
-                  })}
+                {post.sourceUrl && <p className="text-[11px] text-zinc-500 truncate">{post.sourceUrl}</p>}
+
+                {/* Save Style Focus inline form */}
+                {savingFocus === idx && (
+                  <div className="flex items-center gap-2 bg-zinc-800/50 rounded-lg p-2">
+                    <input
+                      type="text"
+                      placeholder="Style Focus name..."
+                      value={focusName}
+                      onChange={(e) => setFocusName(e.target.value)}
+                      className="flex-1 h-8 rounded-md border border-zinc-700/60 bg-zinc-900/50 px-2.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-blue-500/70"
+                    />
+                    <Btn className="!px-3 !py-1 text-xs" onClick={() => handleSaveStyleFocus(idx)}>
+                      Save
+                    </Btn>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <p className="text-xs text-zinc-500">Original</p>
+                    {(post.originalImages || []).map((img, i) => {
+                      const src = img.base64Data ? `data:${img.mimeType || 'image/jpeg'};base64,${img.base64Data}` : img.url;
+                      return (
+                        <img
+                          key={`orig-${i}`}
+                          src={src}
+                          alt=""
+                          className="w-full rounded-lg cursor-pointer"
+                          onClick={() => openLightbox((post.originalImages || []).map((item) => item.base64Data ? `data:${item.mimeType || 'image/jpeg'};base64,${item.base64Data}` : item.url), i)}
+                        />
+                      );
+                    })}
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-xs text-zinc-500">Recreated</p>
+                    {(post.recreatedImages || []).map((img, i) => {
+                      const src = img.base64Data ? `data:${img.mimeType || 'image/png'};base64,${img.base64Data}` : '';
+                      return (
+                        <img
+                          key={`recreate-${i}`}
+                          src={src}
+                          alt=""
+                          className="w-full rounded-lg cursor-pointer"
+                          onClick={() => openLightbox((post.recreatedImages || []).map((item) => `data:${item.mimeType || 'image/png'};base64,${item.base64Data}`), i)}
+                        />
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            </Card>
-          ))}
+
+                {/* Visual DNA Breakdown */}
+                {hasDna && (
+                  <Section title="Visual DNA" badge={<Badge color="purple">Extracted</Badge>}>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {Object.entries(DNA_LABELS).map(([key, meta]) => {
+                        const value = firstStructured[key];
+                        if (!value) return null;
+                        return (
+                          <div key={key} className="bg-zinc-800/40 rounded-lg p-2">
+                            <div className="flex items-center gap-1.5 mb-0.5">
+                              <span className={cn('w-1.5 h-1.5 rounded-full', meta.dot)} />
+                              <span className={cn('text-[10px] font-medium uppercase tracking-wider', meta.color)}>{meta.label}</span>
+                            </div>
+                            <p className="text-[11px] text-zinc-300 leading-relaxed line-clamp-3">{value}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </Section>
+                )}
+              </Card>
+            );
+          })}
         </div>
       </div>
       <LightboxComponent />

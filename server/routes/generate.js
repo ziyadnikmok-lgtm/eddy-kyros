@@ -14,6 +14,7 @@ const sceneModeEngine = require('../services/sceneModeEngine');
 const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
 const styleLibrary = require('../services/styleLibrary');
+const styleFocusStore = require('../services/styleFocusStore');
 const { AppError } = require('../middleware/errorHandler');
 
 const router = express.Router();
@@ -133,6 +134,7 @@ router.post('/', async (req, res, next) => {
       extraReferenceImage,
       customReferenceImages,
       styleAtomIds,
+      styleFocusId,
       contentType,
     } = req.body;
     const finalAspectRatio = VALID_ASPECT_RATIOS.includes(aspectRatio) ? aspectRatio : '1:1';
@@ -227,10 +229,27 @@ router.post('/', async (req, res, next) => {
       } catch { /* skip if atoms not found */ }
     }
 
+    // Resolve style focus (visual DNA from post-clone analysis)
+    let styleFocusBlock = '';
+    if (typeof styleFocusId === 'string' && styleFocusId.trim()) {
+      try {
+        const focus = styleFocusStore.get(styleFocusId);
+        const attrs = Object.entries(focus.attributes || {})
+          .filter(([, v]) => v)
+          .map(([k, v]) => `${k}: ${v}`);
+        if (attrs.length > 0) {
+          styleFocusBlock = `[STYLE FOCUS — Visual DNA]\n${attrs.join('\n')}\n[END STYLE FOCUS]`;
+        }
+      } catch { /* not found — skip */ }
+    }
+
     // Style blocks ordered following Nano-Banana formula:
     // Environment/Scene → Lighting/Memory → Composition/Camera → Subject Pose → Expression → Outfit → Style Library (includes format)
-    if (sceneMemory || outfit || cameraProfile || poseFromMode || expressionFromMode || sceneFromMode || styleLibraryBlock) {
+    if (sceneMemory || outfit || cameraProfile || poseFromMode || expressionFromMode || sceneFromMode || styleLibraryBlock || styleFocusBlock) {
       const styleBlocks = [];
+      if (styleFocusBlock) {
+        styleBlocks.push(styleFocusBlock);
+      }
       if (sceneFromMode) {
         styleBlocks.push(['SCENE MODE', sceneFromMode].join('\n'));
       }

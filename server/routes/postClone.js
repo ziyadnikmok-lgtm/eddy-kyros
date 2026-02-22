@@ -1015,6 +1015,31 @@ router.post('/', async (req, res, next) => {
   }
 });
 
+// ---------------------
+// Style Focus CRUD
+// ---------------------
+const styleFocusStore = require('../services/styleFocusStore');
+
+router.get('/style-focus', (_req, res, next) => {
+  try { res.json({ success: true, data: styleFocusStore.list() }); }
+  catch (err) { next(err); }
+});
+
+router.get('/style-focus/:id', (req, res, next) => {
+  try { res.json({ success: true, data: styleFocusStore.get(req.params.id) }); }
+  catch (err) { next(err); }
+});
+
+router.post('/style-focus', (req, res, next) => {
+  try { res.status(201).json({ success: true, data: styleFocusStore.save(req.body) }); }
+  catch (err) { next(err); }
+});
+
+router.delete('/style-focus/:id', (req, res, next) => {
+  try { res.json({ success: true, data: styleFocusStore.remove(req.params.id) }); }
+  catch (err) { next(err); }
+});
+
 module.exports = router;
 module.exports.handleClone = handleClone;
 module.exports.runPostActor = runPostActor;

@@ -232,6 +232,14 @@ export const postClone = {
   cloneProfile: (body) => request('/profile-clone', { method: 'POST', body }),
 };
 
+// --- Style Focus ---
+export const styleFocus = {
+  list: () => request('/post-clone/style-focus'),
+  get: (id) => request(`/post-clone/style-focus/${id}`),
+  save: (data) => request('/post-clone/style-focus', { method: 'POST', body: data }),
+  remove: (id) => request(`/post-clone/style-focus/${id}`, { method: 'DELETE' }),
+};
+
 // --- Prompt Knowledge ---
 export const promptKnowledge = {
   list: (query = '') => request(`/prompt-knowledge${query ? `?${query}` : ''}`),

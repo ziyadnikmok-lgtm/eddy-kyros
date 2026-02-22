@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useReducer, useRef, lazy, Suspense } from 'react';
-import { generate as genApi, characters as charApi, templates as templatesApi, styleLibrary as styleApi, captionTemplates as captionApi } from '../services/api';
+import { generate as genApi, characters as charApi, templates as templatesApi, styleLibrary as styleApi, captionTemplates as captionApi, styleFocus as styleFocusApi } from '../services/api';
 // characters, sceneMemories, outfits come from AppContext (fetched once on app load)
 import { useAsync } from '../hooks/useAsync';
 import { useStepTimer } from '../hooks/useStepTimer';
@@ -105,6 +105,15 @@ export default function GeneratePage() {
   const [showAtomPicker, setShowAtomPicker] = useState(false);
   const [stylePreview, setStylePreview] = useState('');
 
+  // Style Focus (visual DNA presets from Post Clone)
+  const [styleFocusList, setStyleFocusList] = useState([]);
+  const [selectedFocusId, setSelectedFocusId] = useState('');
+  const [selectedFocusData, setSelectedFocusData] = useState(null);
+  useEffect(() => {
+    if (!selectedFocusId) { setSelectedFocusData(null); return; }
+    styleFocusApi.get(selectedFocusId).then(setSelectedFocusData).catch(() => setSelectedFocusData(null));
+  }, [selectedFocusId]);
+
   // Authenticity modifiers
   const [activeMods, setActiveMods] = useState(new Set());
 
@@ -119,6 +128,7 @@ export default function GeneratePage() {
   const [captionDraft, setCaptionDraft] = useState({ title: '', body: '', category: 'general', hashtags: '', cta: '' });
 
   useEffect(() => { templatesApi.list('generate').then(setTplList).catch(() => {}); }, []);
+  useEffect(() => { styleFocusApi.list().then(setStyleFocusList).catch(() => {}); }, []);
   useEffect(() => { styleApi.contentPresets().then(setContentPresets).catch(() => {}); }, []);
   useEffect(() => { captionApi.list().then(setCaptionList).catch(() => {}); }, []);
 
@@ -230,6 +240,7 @@ export default function GeneratePage() {
       expressionMode: useExpressionMode ? expressionMode : 'none',
       sceneMode: useSceneMode ? sceneMode : 'none',
       styleAtomIds: styleAtomIds.length > 0 ? styleAtomIds : undefined,
+      styleFocusId: selectedFocusId || undefined,
       contentType: state.quickContentType || contentTab || undefined,
     };
     if (useCharacter && selectedCharId) {
@@ -635,6 +646,36 @@ export default function GeneratePage() {
                 </div>
               )}
             </Section>
+
+            {/* ── Collapsible: Style Focus ── */}
+            {styleFocusList.length > 0 && (
+            <Section title="Style Focus" badge={selectedFocusId ? <Badge color="purple">1</Badge> : null}
+              hint="Apply a saved visual DNA snapshot from Post Clone analysis. Overrides camera, lighting, pose, and expression settings.">
+              <div className="space-y-2">
+                <select value={selectedFocusId} onChange={(e) => setSelectedFocusId(e.target.value)}
+                  className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-purple-500/70 focus:ring-1 focus:ring-purple-500/20 cursor-pointer">
+                  <option value="">None</option>
+                  {styleFocusList.map(sf => (
+                    <option key={sf.id} value={sf.id}>{sf.name} ({sf.attributeCount} attrs)</option>
+                  ))}
+                </select>
+                {selectedFocusData && (
+                  <div className="space-y-1.5">
+                    <div className="grid grid-cols-2 gap-1">
+                      {Object.entries(selectedFocusData.attributes || {}).filter(([, v]) => v).map(([key, val]) => (
+                        <div key={key} className="bg-purple-500/10 border border-purple-500/20 rounded-md px-2 py-1">
+                          <div className="text-[9px] text-purple-400 uppercase tracking-wider">{key}</div>
+                          <div className="text-[11px] text-zinc-300 line-clamp-1">{val}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <button onClick={() => setSelectedFocusId('')}
+                      className="text-xs text-zinc-500 hover:text-zinc-300 cursor-pointer">Clear</button>
+                  </div>
+                )}
+              </div>
+            </Section>
+            )}
 
             {/* ── Collapsible: Content Type Presets ── */}
             <Section title="Content Type Presets" hint="Quick-start prompt presets organized by content category. Click one to fill your prompt instantly.">
