@@ -717,4 +717,132 @@ router.post('/follow-up', async (req, res, next) => {
   }
 });
 
+/**
+ * POST /api/carousel/polls
+ * Generate "This or That" engagement poll carousel content.
+ *
+ * Body: {
+ *   topic: string,               — poll theme (e.g. "beach vs city", "morning vs night")
+ *   characterId?: string,
+ *   activeReferenceIds?: string[],
+ *   pollCount?: number,          — number of poll questions (1-5, default 3)
+ *   aspectRatio?: string,
+ *   resolutionTier?: string,
+ * }
+ *
+ * Returns: { polls: [{question, optionA, optionB}], jobIds, totalImages }
+ */
+router.post('/polls', async (req, res, next) => {
+  try {
+    const {
+      topic,
+      characterId,
+      activeReferenceIds,
+      pollCount = 3,
+      aspectRatio,
+      resolutionTier,
+    } = req.body || {};
+
+    if (!topic || typeof topic !== 'string' || topic.trim().length === 0) {
+      throw new AppError('"topic" is required', 400, 'VALIDATION_ERROR');
+    }
+    const safePollCount = Math.max(1, Math.min(5, Number.isInteger(pollCount) ? pollCount : 3));
+
+    const finalAspectRatio = VALID_ASPECT_RATIOS.includes(aspectRatio) ? aspectRatio : '4:5';
+    const finalImageSize = VALID_IMAGE_SIZES.includes(resolutionTier) ? resolutionTier : '2K';
+
+    let character = null;
+    let resolvedActiveReferenceIds = [];
+    if (characterId && typeof characterId === 'string') {
+      character = referenceManager.getCharacter(characterId);
+      resolvedActiveReferenceIds = resolveActiveReferenceIds(activeReferenceIds, character);
+    }
+
+    // Generate poll questions + contrasting image prompts via Gemini
+    const pollPrompt = `You generate "This or That" engagement poll content for Instagram carousels.
+
+Topic: ${topic.trim()}
+
+Task:
+- Generate exactly ${safePollCount} poll questions.
+- Each poll has a question and two contrasting visual options (A and B).
+- Each option needs a short label (2-5 words) and a detailed image generation prompt.
+- Image prompts should describe the same person in contrasting scenarios/styles/settings.
+- Keep the same single female subject identity across all prompts.
+- Make prompts vivid and specific for AI image generation.
+- No couples, no male interaction.
+
+Return JSON only:
+{
+  "polls": [
+    {
+      "question": "Which vibe are you?",
+      "optionA": { "label": "Beach Day", "prompt": "detailed image prompt for option A..." },
+      "optionB": { "label": "City Night", "prompt": "detailed image prompt for option B..." }
+    }
+  ]
+}`;
+
+    const apiKey = apiKeyManager.getActiveKey();
+    let parsed = null;
+    try {
+      const raw = await geminiService.generateText(apiKey, pollPrompt, {
+        temperature: 0.6,
+        responseMimeType: 'application/json',
+      });
+      parsed = parseJsonFromText(raw);
+    } catch {
+      parsed = null;
+    }
+
+    const polls = (parsed && Array.isArray(parsed.polls) ? parsed.polls : [])
+      .filter(p => p && p.question && p.optionA?.prompt && p.optionB?.prompt)
+      .slice(0, safePollCount);
+
+    if (polls.length === 0) {
+      throw new AppError('Failed to generate poll content. Try a different topic.', 500, 'GENERATION_FAILED');
+    }
+
+    // Build image entries from poll options (2 images per poll)
+    const entries = [];
+    for (const poll of polls) {
+      entries.push({
+        type: 'carousel',
+        prompt: withImageQualityLock(poll.optionA.prompt),
+        sceneMemoryId: null,
+        outfitId: null,
+        cameraProfileId: 'iphone_selfie',
+      });
+      entries.push({
+        type: 'carousel',
+        prompt: withImageQualityLock(poll.optionB.prompt),
+        sceneMemoryId: null,
+        outfitId: null,
+        cameraProfileId: 'iphone_selfie',
+      });
+    }
+
+    const jobIds = startMultiBatches(
+      entries,
+      { aspectRatio: finalAspectRatio, imageSize: finalImageSize },
+      { characterId: characterId || null, activeReferenceIds: resolvedActiveReferenceIds }
+    );
+
+    res.status(202).json({
+      success: true,
+      data: {
+        polls,
+        jobIds,
+        totalImages: entries.length,
+        formatLock: {
+          aspectRatio: finalAspectRatio,
+          imageSize: finalImageSize,
+        },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

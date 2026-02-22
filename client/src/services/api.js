@@ -219,6 +219,7 @@ export const carousel = {
   plan: (body) => request('/carousel/plan', { method: 'POST', body }),
   execute: (body) => request('/carousel/execute', { method: 'POST', body }),
   followUp: (body) => request('/carousel/follow-up', { method: 'POST', body }),
+  polls: (body) => request('/carousel/polls', { method: 'POST', body }),
 };
 
 // --- Reel Recreate ---

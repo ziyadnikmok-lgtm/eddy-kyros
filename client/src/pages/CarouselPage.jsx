@@ -7,9 +7,14 @@ import {
 } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useStepTimer } from '../hooks/useStepTimer';
-import { Card, Btn, Spinner, ImageCard, Empty, Badge, Toggle, StepProgress } from '../components/UI';
+import { Card, Btn, Spinner, ImageCard, Empty, Badge, Toggle, StepProgress, CopyBtn } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 import { RESOLUTION_TIERS, ASPECT_RATIOS_COMPACT as ASPECT_RATIOS } from '../config/photoModes';
+
+const CAROUSEL_MODES = [
+  { key: 'follow-up', label: 'Follow-Up' },
+  { key: 'polls', label: 'Polls' },
+];
 
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
@@ -45,6 +50,17 @@ export default function CarouselPage() {
   const [followUpMode, setFollowUpMode] = useState('manual');
   const [strictContinuityLock, setStrictContinuityLock] = useState(true);
   const [useCharacterRefsInFollowUp, setUseCharacterRefsInFollowUp] = useState(false);
+
+  // Carousel mode toggle (follow-up vs polls)
+  const [carouselMode, setCarouselMode] = useState('follow-up');
+
+  // Polls state
+  const [pollTopic, setPollTopic] = useState('');
+  const [pollCount, setPollCount] = useState(3);
+  const [pollLoading, setPollLoading] = useState(false);
+  const [pollResults, setPollResults] = useState(null); // { polls, jobIds }
+  const [pollJobs, setPollJobs] = useState([]);
+  const [pollJobIds, setPollJobIds] = useState([]);
 
   const selectableImages = [...uploadedImages, ...galleryImages];
   const selectedImage = selectableImages.find((img) => img.id === selectedImageId);
@@ -116,6 +132,35 @@ export default function CarouselPage() {
     });
   }, [executeJobs]);
 
+  // Poll job polling
+  useEffect(() => {
+    if (!Array.isArray(pollJobIds) || pollJobIds.length === 0) return undefined;
+    let cancelled = false;
+    const fetchPollJobs = async () => {
+      try {
+        const jobs = await Promise.all(pollJobIds.map(id => batchApi.get(id).catch(() => null)));
+        if (!cancelled) setPollJobs(jobs.filter(Boolean));
+      } catch { /* keep previous */ }
+    };
+    fetchPollJobs();
+    const interval = setInterval(fetchPollJobs, 2000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [pollJobIds]);
+
+  useEffect(() => {
+    if (!Array.isArray(pollJobs) || pollJobs.length === 0) return;
+    const runningIds = pollJobs.filter(j => j && j.status === 'running').map(j => j.jobId);
+    setPollJobIds(prev => {
+      if (runningIds.length === prev.length && runningIds.every(id => prev.includes(id))) return prev;
+      return runningIds;
+    });
+  }, [pollJobs]);
+
+  const pollGeneratedImages = pollJobs
+    .flatMap(job => (job.results || []))
+    .filter(item => item && item.success && item.image && item.image.base64Data);
+  const isPollJobRunning = pollJobs.some(j => j?.status === 'running');
+
   const FOLLOW_STEPS = useMemo(() => ['Analyzing source image', 'Generating follow-up variations'], []);
   const FOLLOW_THRESHOLDS = useMemo(() => [3], []);
   const JOBS_THRESHOLDS = useMemo(() => [5], []);
@@ -186,13 +231,60 @@ export default function CarouselPage() {
     }
   };
 
+  const handleGeneratePolls = async () => {
+    if (!pollTopic.trim()) { notify('Enter a poll topic', 'error'); return; }
+    setPollLoading(true);
+    setPollResults(null);
+    setPollJobs([]);
+    setPollJobIds([]);
+    try {
+      const data = await carouselApi.polls({
+        topic: pollTopic.trim(),
+        characterId: characterId || undefined,
+        activeReferenceIds: characterDetail?.references?.filter(r => r.isActive).map(r => r.id) || undefined,
+        pollCount,
+        aspectRatio,
+        resolutionTier,
+      });
+      setPollResults(data);
+      const returnedJobIds = Array.isArray(data?.jobIds) ? data.jobIds : [];
+      if (returnedJobIds.length > 0) setPollJobIds(returnedJobIds);
+      notify(`${data.polls?.length || 0} poll questions generated, ${data.totalImages} images queued`, 'success');
+    } catch (err) {
+      notify(err.message || 'Failed to generate polls', 'error');
+    } finally {
+      setPollLoading(false);
+    }
+  };
+
+  const POLL_STEPS = useMemo(() => ['Generating poll questions', 'Creating contrasting image prompts', 'Submitting image jobs'], []);
+  const POLL_THRESHOLDS = useMemo(() => [3, 6], []);
+  const { elapsedSec: pollElapsedSec, stepIndex: pollStepIndex } = useStepTimer(pollLoading, POLL_THRESHOLDS);
+
   return (
     <div className="space-y-6 animate-in">
       <div>
         <h1 className="text-3xl font-bold tracking-tight text-gradient">Carousel Generator</h1>
-        <p className="text-zinc-500 text-sm mt-1">Select a base image and generate follow-up carousel variations.</p>
+        <p className="text-zinc-500 text-sm mt-1">
+          {carouselMode === 'polls'
+            ? 'Create "This or That" engagement polls with AI-generated contrasting images.'
+            : 'Select a base image and generate follow-up carousel variations.'}
+        </p>
       </div>
 
+      {/* Mode Toggle */}
+      <div className="flex rounded-lg bg-zinc-800/60 p-0.5 w-fit">
+        {CAROUSEL_MODES.map(m => (
+          <button key={m.key} onClick={() => setCarouselMode(m.key)}
+            className={`rounded-md px-4 py-1.5 text-xs font-medium transition cursor-pointer ${
+              carouselMode === m.key ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-zinc-200'
+            }`}>
+            {m.label}
+          </button>
+        ))}
+      </div>
+
+      {carouselMode === 'follow-up' && (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-1 space-y-4">
           <Card className="space-y-3">
@@ -421,6 +513,181 @@ export default function CarouselPage() {
           )}
         </div>
       </div>
+      )}
+
+      {carouselMode === 'polls' && (
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-1 space-y-4">
+          <Card className="space-y-3">
+            <h3 className="text-sm font-semibold text-zinc-300">Poll Settings</h3>
+            <div>
+              <span className="text-xs text-zinc-400 font-medium block mb-1.5">Character (optional)</span>
+              <select value={characterId} onChange={(e) => setCharacterId(e.target.value)}
+                className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer">
+                <option value="">No character</option>
+                {chars.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <span className="text-xs text-zinc-400 font-medium block mb-2">Aspect Ratio</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {ASPECT_RATIOS.map(ar => (
+                    <button key={ar} onClick={() => setAspectRatio(ar)}
+                      className={`rounded-md px-2 py-1 text-xs font-medium transition cursor-pointer ${aspectRatio === ar ? 'bg-blue-600 text-white' : 'bg-zinc-700/60 text-zinc-400 hover:bg-zinc-600'}`}>
+                      {ar}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <span className="text-xs text-zinc-400 font-medium block mb-2">Resolution</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {RESOLUTION_TIERS.map(tier => (
+                    <button key={tier} onClick={() => setResolutionTier(tier)}
+                      className={`rounded-md px-2 py-1 text-xs font-medium transition cursor-pointer ${resolutionTier === tier ? 'bg-blue-500 text-white' : 'bg-zinc-700/60 text-zinc-200 hover:bg-zinc-600'}`}>
+                      {tier}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="space-y-3">
+            <h3 className="text-sm font-semibold text-zinc-300">Poll Builder</h3>
+            <label className="text-xs text-zinc-400 block">
+              Topic / Theme
+              <input value={pollTopic} onChange={(e) => setPollTopic(e.target.value)}
+                placeholder="e.g. beach vs city, morning routine vs night routine..."
+                className="mt-1 w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70" />
+            </label>
+            <label className="text-xs text-zinc-400 block">
+              Number of Questions
+              <select value={pollCount} onChange={(e) => setPollCount(Number(e.target.value))}
+                className="mt-1 w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-500/70">
+                {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n} question{n > 1 ? 's' : ''} ({n * 2} images)</option>)}
+              </select>
+            </label>
+            <Btn onClick={handleGeneratePolls} disabled={pollLoading || !pollTopic.trim()} className="w-full">
+              {pollLoading ? <><Spinner size={14} /> Generating Polls...</> : 'Generate Poll Carousel'}
+            </Btn>
+          </Card>
+
+          {/* Poll questions preview */}
+          {pollResults?.polls?.length > 0 && (
+            <Card className="space-y-2">
+              <h3 className="text-sm font-semibold text-zinc-300">Poll Questions</h3>
+              {pollResults.polls.map((poll, i) => (
+                <div key={i} className="rounded-lg border border-zinc-700/40 bg-zinc-800/40 p-2.5 space-y-1.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-xs text-zinc-200 font-medium">{poll.question}</p>
+                    <CopyBtn text={poll.question} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <div className="rounded-md bg-blue-500/10 border border-blue-500/20 px-2 py-1">
+                      <span className="text-[9px] text-blue-400 uppercase tracking-wider">A</span>
+                      <p className="text-[11px] text-zinc-300">{poll.optionA?.label}</p>
+                    </div>
+                    <div className="rounded-md bg-purple-500/10 border border-purple-500/20 px-2 py-1">
+                      <span className="text-[9px] text-purple-400 uppercase tracking-wider">B</span>
+                      <p className="text-[11px] text-zinc-300">{poll.optionB?.label}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </Card>
+          )}
+        </div>
+
+        <div className="lg:col-span-2 space-y-4">
+          {pollLoading && (
+            <StepProgress steps={POLL_STEPS} currentIndex={pollStepIndex} elapsedSec={pollElapsedSec} className="min-h-[360px]" />
+          )}
+
+          {pollJobs.length > 0 && (
+            <Card className="space-y-3">
+              <h3 className="text-sm font-semibold text-zinc-300">Poll Image Jobs</h3>
+              {isPollJobRunning && <p className="text-xs text-zinc-500 font-mono">{pollElapsedSec}s</p>}
+              <div className="space-y-2">
+                {pollJobs.map(job => (
+                  <div key={job.jobId} className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+                    <div className="flex items-center justify-between text-xs text-zinc-400">
+                      <span className="font-mono">{job.jobId}</span>
+                      <span>{job.status} - {job.completed + job.failed}/{job.total}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          {pollResults?.polls?.length > 0 && pollGeneratedImages.length > 0 ? (
+            <div className="space-y-6">
+              <h3 className="text-sm font-semibold text-zinc-400">Poll Results ({pollResults.polls.length} questions)</h3>
+              {pollResults.polls.map((poll, pi) => {
+                const imgA = pollGeneratedImages[pi * 2];
+                const imgB = pollGeneratedImages[pi * 2 + 1];
+                return (
+                  <Card key={pi} className="space-y-3 animate-in">
+                    <div className="text-center">
+                      <p className="text-sm font-semibold text-zinc-200">{poll.question}</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <div className="text-center">
+                          <Badge color="blue">{poll.optionA?.label || 'Option A'}</Badge>
+                        </div>
+                        {imgA ? (
+                          <ImageCard
+                            base64={imgA.image?.base64Data}
+                            mimeType={imgA.image?.mimeType}
+                            className="animate-in"
+                            onSelect={() => openLightbox(
+                              pollGeneratedImages.map(img => `data:${img.image?.mimeType || 'image/png'};base64,${img.image?.base64Data}`),
+                              pi * 2
+                            )}
+                          />
+                        ) : (
+                          <div className="aspect-square rounded-lg bg-zinc-800/60 border border-zinc-700/40 flex items-center justify-center">
+                            <Spinner size={20} />
+                          </div>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <div className="text-center">
+                          <Badge color="purple">{poll.optionB?.label || 'Option B'}</Badge>
+                        </div>
+                        {imgB ? (
+                          <ImageCard
+                            base64={imgB.image?.base64Data}
+                            mimeType={imgB.image?.mimeType}
+                            className="animate-in"
+                            onSelect={() => openLightbox(
+                              pollGeneratedImages.map(img => `data:${img.image?.mimeType || 'image/png'};base64,${img.image?.base64Data}`),
+                              pi * 2 + 1
+                            )}
+                          />
+                        ) : (
+                          <div className="aspect-square rounded-lg bg-zinc-800/60 border border-zinc-700/40 flex items-center justify-center">
+                            <Spinner size={20} />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          ) : !pollLoading && (
+            <Card className="flex items-center justify-center py-20">
+              <Empty icon="Carousel" title="No polls generated yet" subtitle="Enter a topic and generate your first poll carousel" />
+            </Card>
+          )}
+        </div>
+      </div>
+      )}
+
       <LightboxComponent />
     </div>
   );
