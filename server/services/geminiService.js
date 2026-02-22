@@ -152,7 +152,7 @@ class GeminiService {
 
   } catch (err) {
     if (err instanceof AppError) throw err;
-    return this._handleApiError(err);
+    this._handleApiError(err);
   }
   }
 
@@ -353,10 +353,10 @@ class GeminiService {
           throw innerErr;
         }
       }
-      if (lastErr) return this._handleApiError(lastErr);
+      if (lastErr) this._handleApiError(lastErr);
     } catch (err) {
       if (err instanceof AppError) throw err;
-      return this._handleApiError(err);
+      this._handleApiError(err);
     }
   }
 
@@ -431,7 +431,7 @@ class GeminiService {
       return parsed;
     } catch (err) {
       if (err instanceof AppError) throw err;
-      return this._handleApiError(err);
+      this._handleApiError(err);
     }
   }
 
@@ -479,7 +479,7 @@ class GeminiService {
       return text;
     } catch (err) {
       if (err instanceof AppError) throw err;
-      return this._handleApiError(err);
+      this._handleApiError(err);
     }
   }
 
@@ -529,7 +529,7 @@ class GeminiService {
       return text;
     } catch (err) {
       if (err instanceof AppError) throw err;
-      return this._handleApiError(err);
+      this._handleApiError(err);
     }
   }
 

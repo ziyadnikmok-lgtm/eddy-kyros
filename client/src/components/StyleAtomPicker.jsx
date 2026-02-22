@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { styleLibrary as api } from '../services/api';
 import { Modal, Btn, Badge, Spinner } from './UI';
 
@@ -16,20 +16,29 @@ export default function StyleAtomPicker({ selectedIds, onApply, onClose }) {
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [selected, setSelected] = useState(new Set(selectedIds || []));
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const debounceRef = useRef(null);
+
+  // Debounce search input — 300ms delay prevents rapid API calls
+  useEffect(() => {
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setDebouncedSearch(searchQ), 300);
+    return () => clearTimeout(debounceRef.current);
+  }, [searchQ]);
 
   const fetchAtoms = useCallback(async () => {
     setLoading(true);
     try {
       const params = { page, limit: 30 };
       if (category !== 'all') params.category = category;
-      if (searchQ.trim()) params.q = searchQ.trim();
+      if (debouncedSearch.trim()) params.q = debouncedSearch.trim();
       const result = await api.list(params);
       setAtoms(result.atoms || []);
       setPages(result.pages || 1);
     } catch { /* ignore */ } finally {
       setLoading(false);
     }
-  }, [page, category, searchQ]);
+  }, [page, category, debouncedSearch]);
 
   useEffect(() => { fetchAtoms(); }, [fetchAtoms]);
 

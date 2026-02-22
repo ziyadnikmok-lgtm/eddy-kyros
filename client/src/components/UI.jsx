@@ -25,7 +25,7 @@ export function Btn({ children, variant = 'primary', className = '', disabled, .
     ghost: 'bg-transparent hover:bg-zinc-800/60 text-zinc-400 hover:text-zinc-200',
   };
   return (
-    <button className={cn(base, variants[variant] || variants.primary, className)} disabled={disabled} {...props}>
+    <button type="button" className={cn(base, variants[variant] || variants.primary, className)} disabled={disabled} {...props}>
       {children}
     </button>
   );
@@ -82,7 +82,7 @@ export function Textarea({ label, required, className = '', ...props }) {
 }
 
 /* ── Select ─────────────────────────────────────────── */
-export function Select({ label, options, className = '', ...props }) {
+export function Select({ label, options = [], className = '', ...props }) {
   return (
     <label className="flex flex-col gap-1.5 text-sm">
       {label && <span className="text-zinc-400 font-medium">{label}</span>}
@@ -257,6 +257,7 @@ export function ImageCard({ src, mimeType, base64, meta, onSelect, selected, cla
             {meta?.seed != null && <div className="font-mono opacity-70">seed: {meta.seed}</div>}
           </div>
           <button
+            type="button"
             onClick={(e) => { e.stopPropagation(); download(); }}
             className="rounded-md bg-zinc-800/90 px-2 py-1.5 hover:bg-zinc-700 transition text-zinc-200 cursor-pointer"
           >
@@ -417,6 +418,9 @@ export function ConfirmDialog({ open, onClose, onConfirm, title, message, confir
     try {
       await Promise.resolve(onConfirm?.());
       onClose?.();
+    } catch {
+      // Error handled by caller; still close dialog
+      onClose?.();
     } finally {
       setSubmitting(false);
     }
@@ -473,6 +477,7 @@ export function CopyBtn({ text, className = '' }) {
   };
   return (
     <button
+      type="button"
       onClick={copy} title="Copy"
       className={cn(
         'inline-flex items-center gap-1 text-xs transition-colors cursor-pointer',

@@ -89,18 +89,25 @@ router.post('/', parseMultipartIfNeeded, (req, res, next) => {
         });
         normalizedConfig = { ...config, imageId: imported.imageId };
       } else if (config.imageId && typeof config.imageId === 'string') {
+        let inMemory = false;
         try {
           imageStore.get(config.imageId);
+          inMemory = true;
         } catch (storeErr) {
-          if (storeErr instanceof AppError && storeErr.code === 'NOT_FOUND') {
-            // not in memory store — fall through to gallery import
-          } else if (storeErr instanceof AppError) {
+          if (storeErr instanceof AppError && storeErr.code !== 'NOT_FOUND') {
             throw storeErr;
           }
-          // else unknown error — try gallery as fallback
+        }
+        if (!inMemory) {
+          // Not in memory store — import from gallery
           const galleryEntry = galleryManager.get(config.imageId);
           const { filePath, mimeType } = galleryManager.getFilePath(config.imageId);
-          const buffer = fs.readFileSync(filePath);
+          let buffer;
+          try {
+            buffer = fs.readFileSync(filePath);
+          } catch {
+            throw new AppError('Gallery image file not found on disk', 404, 'FILE_NOT_FOUND');
+          }
           const imported = imageStore.store({
             basePrompt: galleryEntry.prompt || 'Gallery image',
             characterId: galleryEntry.characterId || null,
@@ -225,11 +232,11 @@ router.get('/:jobId/progress', (req, res, next) => {
       batchGenerator.removeListener('done', onDone);
     }
 
+    // Register close handler BEFORE listeners to prevent race condition
+    req.on('close', cleanup);
+
     batchGenerator.on('task', onTask);
     batchGenerator.on('done', onDone);
-
-    // Client disconnect
-    req.on('close', cleanup);
   } catch (err) {
     next(err);
   }
