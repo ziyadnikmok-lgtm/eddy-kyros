@@ -139,6 +139,21 @@ router.post('/', parseMultipartIfNeeded, (req, res, next) => {
 });
 
 /**
+ * GET /api/batch/stats
+ *
+ * Queue stats + job counts for the dashboard header.
+ */
+router.get('/stats', (req, res, next) => {
+  try {
+    const stats = batchGenerator.jobStats();
+    const queue = batchGenerator.queueStatus();
+    res.json({ success: true, data: { ...stats, ...queue } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * GET /api/batch
  *
  * List all batch jobs (newest first). Optional ?status= filter.
@@ -229,6 +244,35 @@ router.post('/:jobId/cancel', (req, res, next) => {
   try {
     const job = batchGenerator.cancelJob(req.params.jobId);
     res.json({ success: true, data: job });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/batch/:jobId/retry
+ *
+ * Retry failed tasks from a completed/failed job.
+ * Creates a new job with only the failed tasks.
+ */
+router.post('/:jobId/retry', (req, res, next) => {
+  try {
+    const newJob = batchGenerator.retryFailed(req.params.jobId);
+    res.status(202).json({ success: true, data: newJob });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * DELETE /api/batch/:jobId
+ *
+ * Remove a finished job from history.
+ */
+router.delete('/:jobId', (req, res, next) => {
+  try {
+    const result = batchGenerator.removeJob(req.params.jobId);
+    res.json({ success: true, data: result });
   } catch (err) {
     next(err);
   }

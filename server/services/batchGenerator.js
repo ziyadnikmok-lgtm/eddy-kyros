@@ -1181,6 +1181,84 @@ class BatchGenerator extends EventEmitter {
   }
 
   /**
+   * Retry all failed tasks in a completed/failed job.
+   * Creates a new job with only the failed tasks' original config.
+   */
+  retryFailed(jobId) {
+    if (!jobId || typeof jobId !== 'string') {
+      throw new AppError('Job ID is required', 400, 'VALIDATION_ERROR');
+    }
+    const job = jobs.get(jobId);
+    if (!job) throw new AppError('Job not found', 404, 'JOB_NOT_FOUND');
+    if (job.status === 'running') throw new AppError('Cannot retry a running job', 400, 'INVALID_STATE');
+
+    const failedIndices = [];
+    for (let i = 0; i < (job.results || []).length; i++) {
+      const r = job.results[i];
+      if (r && !r.success) failedIndices.push(i);
+    }
+    if (failedIndices.length === 0) throw new AppError('No failed tasks to retry', 400, 'NO_FAILED_TASKS');
+
+    // Re-create from stored config
+    const config = job._config || {};
+    const mode = job.mode;
+    const genOpts = { aspectRatio: job.aspectRatio || '1:1', imageSize: job.imageSize || '1K' };
+
+    // For multi mode, extract only failed prompts
+    if (mode === 'multi' && Array.isArray(config.prompts)) {
+      const retryConfig = { ...config, prompts: failedIndices.map(i => config.prompts[i]).filter(Boolean) };
+      return this.startBatch(mode, retryConfig, genOpts);
+    }
+
+    // For variation mode, retry with same count of failed
+    if (mode === 'variation') {
+      const retryConfig = { ...config, count: failedIndices.length };
+      return this.startBatch(mode, retryConfig, genOpts);
+    }
+
+    // For edit/content-mix, retry with failed count
+    if (mode === 'edit') {
+      const retryConfig = { ...config, count: failedIndices.length };
+      return this.startBatch(mode, retryConfig, genOpts);
+    }
+
+    if (mode === 'content-mix') {
+      const retryConfig = { ...config, totalCount: failedIndices.length };
+      return this.startBatch(mode, retryConfig, genOpts);
+    }
+
+    // Fallback: re-run entire job config
+    return this.startBatch(mode, config, genOpts);
+  }
+
+  /**
+   * Remove a completed/failed/cancelled job from history.
+   */
+  removeJob(jobId) {
+    if (!jobId || typeof jobId !== 'string') {
+      throw new AppError('Job ID is required', 400, 'VALIDATION_ERROR');
+    }
+    const job = jobs.get(jobId);
+    if (!job) throw new AppError('Job not found', 404, 'JOB_NOT_FOUND');
+    if (job.status === 'running') throw new AppError('Cannot remove a running job — cancel it first', 400, 'INVALID_STATE');
+    jobs.delete(jobId);
+    _persistJobs();
+    return { removed: true };
+  }
+
+  /**
+   * Queue status — how many tasks are pending in the global queue.
+   */
+  queueStatus() {
+    return {
+      queueDepth: globalQueue._queue.length,
+      activeWorkers: globalQueue._running,
+      maxConcurrency: MAX_CONCURRENCY,
+      maxRunningJobs: MAX_RUNNING_JOBS,
+    };
+  }
+
+  /**
    * List all jobs, newest first. Optional status filter.
    */
   listJobs(statusFilter) {

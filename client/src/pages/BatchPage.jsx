@@ -112,14 +112,20 @@ export default function BatchPage() {
     } catch (err) { notify(err.message || 'Failed to delete template', 'error'); }
   };
 
-  // Job history
+  // Job history + queue dashboard
   const [jobHistory, setJobHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [expandedJobId, setExpandedJobId] = useState(null);
+  const [queueStats, setQueueStats] = useState(null);
+  const [statusFilter, setStatusFilter] = useState('');
 
   const fetchHistory = async () => {
     setHistoryLoading(true);
-    try { setJobHistory(await batchApi.list()); } catch { /* ignore */ }
+    try {
+      const [jobs, stats] = await Promise.all([batchApi.list(), batchApi.stats()]);
+      setJobHistory(jobs);
+      setQueueStats(stats);
+    } catch { /* ignore */ }
     setHistoryLoading(false);
   };
 
@@ -138,6 +144,22 @@ export default function BatchPage() {
     if (!historyJob.config) { notify('No config saved for this job', 'error'); return; }
     update({ ...INITIAL_STATE, ...historyJob.config, mode: historyJob.mode || 'variation' });
     notify('Config loaded from history', 'info');
+  };
+
+  const handleRetryFailed = async (jobId) => {
+    try {
+      const newJob = await batchApi.retry(jobId);
+      notify(`Retry started — new job ${newJob.jobId?.slice(0, 8)}`, 'success');
+      fetchHistory();
+    } catch (err) { notify(err.message || 'Failed to retry', 'error'); }
+  };
+
+  const handleRemoveJob = async (jobId) => {
+    try {
+      await batchApi.remove(jobId);
+      setJobHistory(prev => prev.filter(j => j.jobId !== jobId));
+      notify('Job removed', 'success');
+    } catch (err) { notify(err.message || 'Failed to remove', 'error'); }
   };
 
   useEffect(() => {
@@ -732,23 +754,58 @@ export default function BatchPage() {
           )}
         </Card>
       )}
-      {/* Job History */}
-      <Card className="space-y-3">
+      {/* Queue Dashboard */}
+      <Card className="space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium text-zinc-300">Job History</h3>
+          <h3 className="text-sm font-medium text-zinc-300">Queue Dashboard</h3>
           <Btn variant="secondary" onClick={fetchHistory} disabled={historyLoading} className="!py-1 !px-3 !text-xs">
             {historyLoading ? 'Loading...' : 'Refresh'}
           </Btn>
         </div>
+
+        {/* Stats row */}
+        {queueStats && (
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+            {[
+              { label: 'Running', value: queueStats.running, color: 'text-blue-400' },
+              { label: 'Completed', value: queueStats.completed, color: 'text-green-400' },
+              { label: 'Failed', value: queueStats.failed, color: 'text-red-400' },
+              { label: 'Cancelled', value: queueStats.cancelled, color: 'text-yellow-400' },
+              { label: 'Queue', value: queueStats.queueDepth, color: 'text-purple-400' },
+              { label: 'Workers', value: `${queueStats.activeWorkers}/${queueStats.maxConcurrency}`, color: 'text-zinc-300' },
+            ].map(s => (
+              <div key={s.label} className="text-center rounded-lg bg-zinc-800/60 py-2">
+                <div className={`text-lg font-bold ${s.color}`}>{s.value}</div>
+                <div className="text-[10px] text-zinc-500">{s.label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Status filter tabs */}
+        <div className="flex gap-1">
+          {['', 'running', 'completed', 'failed', 'cancelled'].map(f => (
+            <button key={f} onClick={() => setStatusFilter(f)}
+              className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition cursor-pointer ${
+                statusFilter === f ? 'bg-blue-600 text-white' : 'bg-zinc-800/60 text-zinc-400 hover:text-zinc-200'
+              }`}>
+              {f || 'All'}
+            </button>
+          ))}
+        </div>
+
+        {/* Job list */}
         {jobHistory.length === 0 ? (
           <p className="text-xs text-zinc-500 py-2">No job history yet.</p>
         ) : (
-          <div className="space-y-1.5 max-h-80 overflow-y-auto">
-            {jobHistory.map((h) => {
+          <div className="space-y-1.5 max-h-[28rem] overflow-y-auto">
+            {jobHistory.filter(h => !statusFilter || h.status === statusFilter).map((h) => {
               const isExpanded = expandedJobId === h.jobId;
               const duration = h.completedAt && h.createdAt
                 ? Math.round((new Date(h.completedAt) - new Date(h.createdAt)) / 1000)
                 : null;
+              const failedCount = h.failed || 0;
+              const successRate = h.total > 0 ? Math.round((h.completed / h.total) * 100) : 0;
               return (
                 <div key={h.jobId} className="rounded-lg border border-zinc-700/50 bg-zinc-800/40">
                   <button
@@ -761,6 +818,7 @@ export default function BatchPage() {
                       </Badge>
                       <span className="text-xs text-zinc-400 truncate">{h.mode}</span>
                       <span className="text-[10px] text-zinc-600">{h.completed}/{h.total}</span>
+                      {failedCount > 0 && <span className="text-[10px] text-red-400">{failedCount} failed</span>}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {duration !== null && <span className="text-[10px] text-zinc-600">{duration}s</span>}
@@ -769,22 +827,46 @@ export default function BatchPage() {
                         {' '}
                         {new Date(h.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
                       </span>
-                      <span className="text-zinc-600 text-xs">{isExpanded ? '▲' : '▼'}</span>
+                      <span className="text-zinc-600 text-xs">{isExpanded ? '\u25B2' : '\u25BC'}</span>
                     </div>
                   </button>
-                  {isExpanded && h.config && (
+                  {isExpanded && (
                     <div className="px-3 pb-2.5 border-t border-zinc-700/30 pt-2 space-y-2">
-                      <div className="text-xs text-zinc-400 space-y-0.5">
-                        {h.config.prompt && <div><span className="text-zinc-500">Prompt:</span> {h.config.prompt}</div>}
-                        {h.config.modificationPrompt && <div><span className="text-zinc-500">Edit prompt:</span> {h.config.modificationPrompt}</div>}
-                        {h.config.count && <div><span className="text-zinc-500">Count:</span> {h.config.count}</div>}
-                        {h.config.prompts && <div><span className="text-zinc-500">Prompts:</span> {h.config.prompts.length} lines</div>}
-                        {h.aspectRatio && <div><span className="text-zinc-500">Ratio:</span> {h.aspectRatio}</div>}
-                        {h.config.characterId && <div><span className="text-zinc-500">Character:</span> {h.config.characterId.slice(0, 8)}...</div>}
+                      {/* Progress bar */}
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-1.5 bg-zinc-700/50 rounded-full overflow-hidden">
+                          <div className="h-full bg-green-500/70 rounded-full transition-all" style={{ width: `${successRate}%` }} />
+                        </div>
+                        <span className="text-[10px] text-zinc-500">{successRate}%</span>
                       </div>
-                      <Btn variant="secondary" onClick={() => handleRerun(h)} className="!py-1 !px-3 !text-xs">
-                        Re-run with this config
-                      </Btn>
+                      {h.config && (
+                        <div className="text-xs text-zinc-400 space-y-0.5">
+                          {h.config.prompt && <div><span className="text-zinc-500">Prompt:</span> {h.config.prompt}</div>}
+                          {h.config.modificationPrompt && <div><span className="text-zinc-500">Edit prompt:</span> {h.config.modificationPrompt}</div>}
+                          {h.config.count && <div><span className="text-zinc-500">Count:</span> {h.config.count}</div>}
+                          {h.config.prompts && <div><span className="text-zinc-500">Prompts:</span> {h.config.prompts.length} lines</div>}
+                          {h.aspectRatio && <div><span className="text-zinc-500">Ratio:</span> {h.aspectRatio}</div>}
+                          {h.config.characterId && <div><span className="text-zinc-500">Character:</span> {h.config.characterId.slice(0, 8)}...</div>}
+                        </div>
+                      )}
+                      <div className="flex gap-2">
+                        {h.config && (
+                          <Btn variant="secondary" onClick={() => handleRerun(h)} className="!py-1 !px-3 !text-xs">
+                            Re-run
+                          </Btn>
+                        )}
+                        {failedCount > 0 && h.status !== 'running' && (
+                          <Btn variant="secondary" onClick={() => handleRetryFailed(h.jobId)} className="!py-1 !px-3 !text-xs !border-red-500/30 !text-red-400 hover:!bg-red-500/10">
+                            Retry {failedCount} failed
+                          </Btn>
+                        )}
+                        {h.status !== 'running' && (
+                          <button onClick={() => handleRemoveJob(h.jobId)}
+                            className="text-[10px] text-zinc-600 hover:text-red-400 cursor-pointer ml-auto">
+                            Remove
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

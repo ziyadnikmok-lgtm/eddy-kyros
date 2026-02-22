@@ -139,6 +139,9 @@ export const batch = {
   start: (body) => request('/batch', { method: 'POST', body }),
   get: (jobId) => request(`/batch/${jobId}`),
   cancel: (jobId) => request(`/batch/${jobId}/cancel`, { method: 'POST' }),
+  retry: (jobId) => request(`/batch/${jobId}/retry`, { method: 'POST' }),
+  remove: (jobId) => request(`/batch/${jobId}`, { method: 'DELETE' }),
+  stats: () => request('/batch/stats'),
   /** Returns an EventSource for real-time progress. Caller must close it. */
   progress: (jobId) => new EventSource(`${BASE}/batch/${jobId}/progress`),
 };
