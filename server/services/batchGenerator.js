@@ -667,28 +667,28 @@ class BatchGenerator extends EventEmitter {
           if (task.characterId) {
             character = characterCache.get(task.characterId) || await this.getCharacterById(task.characterId);
             if (!task.disableCharacterReferenceImages) {
+              // Always include primary image first — it's the strongest identity anchor
+              const profileImage = this._resolveProfileImage(task.characterId);
+              if (profileImage) referenceImages.push(profileImage);
+
               const requestedRefIds = Array.isArray(task.activeReferenceIds)
                 ? task.activeReferenceIds.filter((id) => typeof id === 'string' && id.trim().length > 0)
                 : null;
 
               if (requestedRefIds && requestedRefIds.length > 0) {
                 for (const refId of requestedRefIds) {
-                  if (refId === '__profile__') {
-                    const profileImage = this._resolveProfileImage(task.characterId);
-                    if (profileImage) referenceImages.push(profileImage);
-                    continue;
-                  }
-
-                  const found = Array.isArray(character.references)
-                    ? character.references.find((r) => r.id === refId)
-                    : null;
-                  if (found) referenceImages.push(found);
+                  if (refId === '__profile__') continue; // already added above
+                  // Resolve to buffer immediately instead of pushing metadata
+                  const resolved = this._resolveReferenceImage(task.characterId, { id: refId });
+                  if (resolved) referenceImages.push(resolved);
                 }
-              } else if (character.references && character.references.length > 0) {
-                referenceImages = character.references;
               } else {
-                const profileImage = this._resolveProfileImage(task.characterId);
-                if (profileImage) referenceImages = [profileImage];
+                // No explicit IDs — use all active references
+                const refs = Array.isArray(character.references) ? character.references.filter((r) => r.isActive) : [];
+                for (const ref of refs) {
+                  const resolved = this._resolveReferenceImage(task.characterId, ref);
+                  if (resolved) referenceImages.push(resolved);
+                }
               }
             }
           }

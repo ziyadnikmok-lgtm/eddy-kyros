@@ -442,7 +442,7 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
   let lastPath = '';
   const deadline = Date.now() + ROUTE_TIMEOUT_MS;
   try {
-    const { reelUrl, characterId, apifyApiKey } = req.body || {};
+    const { reelUrl, characterId, apifyApiKey, activeReferenceIds: clientRefIds } = req.body || {};
     const uploadedVideo = req.file && req.file.buffer ? req.file : null;
     const cleanUrl = asText(reelUrl);
     const sourceFrames = parseJsonMaybe(req.body?.sourceFrames);
@@ -486,7 +486,10 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
     }
 
     referenceManager.getCharacter(characterId);
-    const activeRefs = referenceManager.getActiveReferences(characterId, null);
+    const normalizedClientRefIds = Array.isArray(clientRefIds)
+      ? clientRefIds.filter((id) => typeof id === 'string' && id.trim().length > 0)
+      : null;
+    const activeRefs = referenceManager.getActiveReferences(characterId, normalizedClientRefIds && normalizedClientRefIds.length > 0 ? normalizedClientRefIds : null);
     const activeReferenceIds = activeRefs.map((r) => r.id);
     const referenceImages = buildCharacterReferenceImages(characterId, activeRefs);
     const apiKey = apiKeyManager.getActiveKey();

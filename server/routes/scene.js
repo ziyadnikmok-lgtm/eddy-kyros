@@ -4,9 +4,11 @@ const express = require('express');
 const apiKeyManager = require('../services/apiKeyManager');
 const geminiService = require('../services/geminiService');
 const sceneAnalyzer = require('../services/sceneAnalyzer');
+const referenceManager = require('../services/referenceManager');
 const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
 const { resolveDimensions } = require('../services/dimensionResolver');
+const { buildCharacterReferenceImages } = require('./postClone');
 const { AppError } = require('../middleware/errorHandler');
 
 const router = express.Router();
@@ -67,9 +69,16 @@ router.post('/recreate', async (req, res, next) => {
     });
 
     const apiKey = apiKeyManager.getActiveKey();
+    const activeRefs = referenceManager.getActiveReferences(
+      characterId,
+      Array.isArray(activeReferenceIds) ? activeReferenceIds : null
+    );
+    const referenceImages = buildCharacterReferenceImages(characterId, activeRefs);
+
     const result = await geminiService.generateImage(apiKey, recreationPrompt, {
       aspectRatio,
       imageSize: resolutionTier,
+      referenceImages,
     });
 
     // Store in imageStore

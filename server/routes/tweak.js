@@ -10,6 +10,7 @@ const tweakBuilder = require('../services/tweakBuilder');
 const referenceManager = require('../services/referenceManager');
 const promptBuilder = require('../services/promptBuilder');
 const { resolveDimensions } = require('../services/dimensionResolver');
+const { buildCharacterReferenceImages } = require('./postClone');
 const { AppError } = require('../middleware/errorHandler');
 const { createMultipartParser } = require('../middleware/multipartParser');
 
@@ -126,6 +127,8 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
       modifications: modifications || {},
     });
 
+    let referenceImages = [];
+
     if (characterId && typeof characterId === 'string') {
       const character = referenceManager.getCharacter(characterId);
       const activeRefs = referenceManager.getActiveReferences(
@@ -137,6 +140,15 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
         activeReferences: activeRefs,
         userPrompt: tweakPrompt,
       });
+      referenceImages = buildCharacterReferenceImages(characterId, activeRefs);
+    }
+
+    // Include the original image as a visual reference for controlled variation
+    if (original.image?.base64Data) {
+      referenceImages.push({
+        mimeType: original.image.mimeType || 'image/png',
+        base64Data: original.image.base64Data,
+      });
     }
 
     // --- Generate via Gemini ---
@@ -144,6 +156,7 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
     const result = await geminiService.generateImage(apiKey, tweakPrompt, {
       aspectRatio,
       imageSize: resolutionTier,
+      referenceImages,
     });
 
     // --- Store the new image with parent linkage ---

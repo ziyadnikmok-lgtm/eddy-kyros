@@ -7,6 +7,7 @@ const geminiService = require('../services/geminiService');
 const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
 const reelReferenceService = require('../services/reelReferenceService');
+const { buildCharacterReferenceImages } = require('./postClone');
 
 const router = express.Router();
 
@@ -16,7 +17,7 @@ function normalizeRefIds(activeReferenceIds) {
     : null;
 }
 
-async function analyzeAndRecreateFrame({ frame, characterId, activeReferenceIds, apiKey }) {
+async function analyzeAndRecreateFrame({ frame, characterId, activeReferenceIds, apiKey, referenceImages }) {
   const sceneData = await sceneAnalyzer.analyzeScene(frame.base64Data, frame.mimeType);
   const prompt = sceneAnalyzer.buildRecreationPrompt({
     sceneData,
@@ -27,6 +28,7 @@ async function analyzeAndRecreateFrame({ frame, characterId, activeReferenceIds,
   const result = await geminiService.generateImage(apiKey, prompt, {
     aspectRatio: '9:16',
     imageSize: '2K',
+    referenceImages,
   });
 
   const stored = imageStore.store({
@@ -86,6 +88,8 @@ router.post('/recreate', async (req, res, next) => {
     referenceManager.getCharacter(characterId);
     const refIds = normalizeRefIds(activeReferenceIds);
     const apiKey = apiKeyManager.getActiveKey();
+    const activeRefs = referenceManager.getActiveReferences(characterId, refIds);
+    const charRefImages = buildCharacterReferenceImages(characterId, activeRefs);
 
     const { frames, videoUrl } = await reelReferenceService.resolveReelFrames(reelUrl, {
       apifyToken: apifyApiKey,
@@ -96,12 +100,14 @@ router.post('/recreate', async (req, res, next) => {
         characterId,
         activeReferenceIds: refIds,
         apiKey,
+        referenceImages: charRefImages,
       }),
       analyzeAndRecreateFrame({
         frame: frames.last,
         characterId,
         activeReferenceIds: refIds,
         apiKey,
+        referenceImages: charRefImages,
       }),
     ]);
 

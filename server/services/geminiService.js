@@ -73,8 +73,12 @@ class GeminiService {
     throw new AppError('Prompt must be 10,000 characters or fewer', 400, 'VALIDATION_ERROR');
   }
 
-  // Deduplicate concurrent identical requests (e.g. double-click)
-  const dedupKey = `img:${crypto.createHash('md5').update(prompt.trim() + (options.aspectRatio || '') + (options.imageSize || '')).digest('hex')}`;
+  // Deduplicate concurrent identical requests (e.g. double-click).
+  // Include a hash of reference image count + first ref's length to distinguish different characters.
+  const refSig = Array.isArray(options.referenceImages) && options.referenceImages.length > 0
+    ? `:refs${options.referenceImages.length}:${(options.referenceImages[0]?.base64Data || '').length}`
+    : ':noref';
+  const dedupKey = `img:${crypto.createHash('md5').update(prompt.trim() + (options.aspectRatio || '') + (options.imageSize || '') + refSig).digest('hex')}`;
   return dedupRequest(dedupKey, () => this._generateImageInner(apiKey, prompt, options));
   }
 
@@ -118,17 +122,9 @@ class GeminiService {
           const reason = parsed.blockReason ? 'safety_block' : parsed.isImageOther ? 'IMAGE_OTHER' : 'empty_response';
           console.warn(`[gemini] attempt ${attempt}/${maxAttempts} failed: ${reason}`);
           if (attempt < maxAttempts) {
-            if (parsed.isImageOther) {
-              // IMAGE_OTHER: reference images may be causing the issue.
-              // Strip them on retry so Gemini generates from prompt only.
-              if (options.referenceImages?.length) {
-                console.log(`[gemini] IMAGE_OTHER — stripping ${options.referenceImages.length} reference image(s) for retry`);
-                options = { ...options, referenceImages: [] };
-              }
-              currentPrompt = this._sanitizePromptForRetry(currentPrompt, attempt);
-            } else {
-              currentPrompt = this._sanitizePromptForRetry(currentPrompt, attempt);
-            }
+            // Never strip reference images — they carry identity anchoring.
+            // Stripping them silently produces a different person.
+            currentPrompt = this._sanitizePromptForRetry(currentPrompt, attempt);
             await this._sleep(500 * attempt);
             continue;
           }
