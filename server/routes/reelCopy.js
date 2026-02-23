@@ -8,6 +8,7 @@ const execFileAsync = promisify(execFile);
 const { ApifyClient } = require('apify-client');
 const { AppError } = require('../middleware/errorHandler');
 const { createMultipartParser } = require('../middleware/multipartParser');
+const { sharedHttpsAgent } = require('../utils/httpAgent');
 const { asText } = require('../utils/helpers');
 const { buildLoginCookies } = require('../utils/instagramCookies');
 const apiKeyManager = require('../services/apiKeyManager');
@@ -195,6 +196,7 @@ async function downloadVideo(videoUrls, targetPath) {
           const response = await axios.get(url, {
             responseType: 'stream',
             timeout: 120000,
+            httpsAgent: sharedHttpsAgent,
             headers,
             maxRedirects: 5,
             validateStatus: (status) => status >= 200 && status < 400,

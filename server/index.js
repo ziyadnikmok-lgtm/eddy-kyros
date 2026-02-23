@@ -21,6 +21,7 @@ process.on('uncaughtException', (err) => {
 const express = require('express');
 const cors = require('cors');
 const { errorHandler, AppError } = require('./middleware/errorHandler');
+const compressionMiddleware = require('./middleware/compression');
 const keysRouter = require('./routes/keys');
 const generateRouter = require('./routes/generate');
 const charactersRouter = require('./routes/characters');
@@ -80,6 +81,7 @@ app.use(
 );
 
 app.use(express.json({ limit: cfg.JSON_BODY_LIMIT }));
+app.use(compressionMiddleware(cfg.COMPRESSION_MIN_BYTES));
 
 // Request logging with timing, request IDs (skip noisy health checks)
 app.use((req, res, next) => {

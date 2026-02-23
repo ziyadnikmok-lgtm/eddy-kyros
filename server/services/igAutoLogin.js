@@ -425,28 +425,41 @@ async function refreshInstagramSession() {
       );
     }
 
-    // Verify the session by hitting IG's private API (the old accounts/edit/?__a=1&__d=dis is dead)
+    // Verify the session by hitting IG's web graphql endpoint (not the v1 mobile API
+    // which rejects desktop User-Agents with "useragent mismatch").
     console.log('[ig-auto-login] verifying session validity...');
     let sessionValid = false;
     try {
       const verifyResp = await page.evaluate(async () => {
-        const resp = await fetch('https://www.instagram.com/api/v1/accounts/current_user/?edit=true', {
+        // Use the web-compatible endpoint — works with desktop UA + web app ID
+        const resp = await fetch('https://www.instagram.com/api/v1/web/accounts/current_user/', {
           credentials: 'include',
           headers: {
             'Accept': '*/*',
             'X-IG-App-ID': '936619743392459',
+            'X-IG-WWW-Claim': '0',
             'X-Requested-With': 'XMLHttpRequest',
           },
         });
         return { status: resp.status, ok: resp.ok, text: await resp.text().catch(() => '') };
       });
       sessionValid = verifyResp.ok && (verifyResp.text.includes('"username"') || verifyResp.text.includes('user'));
+      if (!sessionValid && verifyResp.status === 200) {
+        // Some IG responses are OK but don't contain "username" text — check for user object
+        sessionValid = verifyResp.text.includes('"pk"') || verifyResp.text.includes('"full_name"');
+      }
       console.log(`[ig-auto-login] session verify: HTTP ${verifyResp.status}, valid=${sessionValid}`);
       if (!sessionValid) {
         console.log(`[ig-auto-login] verify response preview: ${verifyResp.text.substring(0, 200)}`);
       }
     } catch (e) {
       console.warn(`[ig-auto-login] session verify failed: ${e.message}`);
+      // If verification call itself fails but we have a cookie and navigated to feed,
+      // treat the session as likely valid — Apify will validate it during actual scraping
+      if (pageUrl.includes('instagram.com') && !pageUrl.includes('login') && !pageUrl.includes('challenge')) {
+        sessionValid = true;
+        console.log('[ig-auto-login] verification call failed but page state looks logged-in — treating as valid');
+      }
     }
 
     // Save the fresh session

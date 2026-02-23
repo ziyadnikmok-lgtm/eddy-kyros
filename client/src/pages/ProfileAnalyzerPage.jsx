@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useApp } from '../context/AppContext';
 import { profileAnalyzer as analyzerApi, styleLibrary as libraryApi } from '../services/api';
 import { Card, Btn, Input, Select, Badge, Spinner, Empty, ProgressBar } from '../components/UI';
 
 export default function ProfileAnalyzerPage() {
-  const { notify } = useApp();
+  const { notify, navigateTo } = useApp();
 
   const [username, setUsername] = useState('');
   const [postLimit, setPostLimit] = useState(12);
@@ -198,6 +198,16 @@ export default function ProfileAnalyzerPage() {
     }
   };
 
+  const handleReanalyze = useCallback((profileUsername) => {
+    setUsername(profileUsername);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    notify(`Username set to @${profileUsername} — click Analyze to start`, 'info');
+  }, [notify]);
+
+  const handleViewAtoms = useCallback((profileUsername) => {
+    navigateTo('styleLibrary', { usernameFilter: profileUsername });
+  }, [navigateTo]);
+
   // ─── Render ───────────────────────────────────────────
   return (
     <div className="space-y-6 animate-in">
@@ -373,28 +383,89 @@ export default function ProfileAnalyzerPage() {
           <h3 className="text-xs font-medium text-zinc-400 mb-3">Previously Analyzed Profiles</h3>
           <div className="space-y-2">
             {profiles.map(p => (
-              <div key={p.username} className="flex items-center justify-between p-2 rounded-lg bg-zinc-800/40">
-                <div>
-                  <span className="text-sm text-zinc-300">@{p.username}</span>
-                  <span className="text-xs text-zinc-500 ml-2">{p.atomCount || 0} atoms</span>
-                </div>
-                <div className="flex gap-2 items-center">
-                  <span className="text-[10px] text-zinc-600">
-                    {new Date(p.analyzedAt).toLocaleDateString()}
-                  </span>
-                  <button
-                    onClick={() => handleDeleteProfile(p.username)}
-                    className="text-xs text-zinc-600 hover:text-red-400 cursor-pointer"
-                    title="Delete all atoms from this profile"
-                  >
-                    {'\u2715'}
-                  </button>
-                </div>
-              </div>
+              <ProfileRow
+                key={p.username}
+                profile={p}
+                onReanalyze={handleReanalyze}
+                onViewAtoms={handleViewAtoms}
+                onDelete={handleDeleteProfile}
+              />
             ))}
           </div>
         </Card>
       )}
+    </div>
+  );
+}
+
+// ─── Profile Row with dropdown ────────────────────────
+function ProfileRow({ profile, onReanalyze, onViewAtoms, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const p = profile;
+
+  return (
+    <div className="flex items-center justify-between p-2 rounded-lg bg-zinc-800/40 group">
+      <div>
+        <span className="text-sm text-zinc-300">@{p.username}</span>
+        <span className="text-xs text-zinc-500 ml-2">{p.atomCount || 0} atoms</span>
+      </div>
+      <div className="flex gap-2 items-center">
+        <span className="text-[10px] text-zinc-600">
+          {new Date(p.analyzedAt).toLocaleDateString()}
+        </span>
+        {/* Dropdown trigger */}
+        <div className="relative" ref={menuRef}>
+          <button
+            onClick={() => setOpen(v => !v)}
+            className="p-1 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50 cursor-pointer transition-colors"
+            title="Actions"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <circle cx="8" cy="3" r="1.5" />
+              <circle cx="8" cy="8" r="1.5" />
+              <circle cx="8" cy="13" r="1.5" />
+            </svg>
+          </button>
+          {open && (
+            <div className="absolute right-0 top-full mt-1 z-50 w-44 rounded-lg border border-zinc-700/60 bg-zinc-900 shadow-xl shadow-black/40 py-1 animate-in">
+              <button
+                onClick={() => { setOpen(false); onReanalyze(p.username); }}
+                className="flex items-center gap-2 w-full px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 cursor-pointer transition-colors"
+              >
+                <span className="w-4 text-center opacity-60">🔄</span>
+                Re-analyze
+              </button>
+              <button
+                onClick={() => { setOpen(false); onViewAtoms(p.username); }}
+                className="flex items-center gap-2 w-full px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 cursor-pointer transition-colors"
+              >
+                <span className="w-4 text-center opacity-60">🎨</span>
+                View Atoms
+              </button>
+              <div className="my-1 h-px bg-zinc-800" />
+              <button
+                onClick={() => { setOpen(false); onDelete(p.username); }}
+                className="flex items-center gap-2 w-full px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300 cursor-pointer transition-colors"
+              >
+                <span className="w-4 text-center opacity-60">✕</span>
+                Delete All Atoms
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

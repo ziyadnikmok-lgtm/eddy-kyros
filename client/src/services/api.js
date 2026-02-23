@@ -3,18 +3,25 @@ const BASE = '/api';
 // Default timeouts by operation type (ms)
 const DEFAULT_TIMEOUT_MS = 30_000;       // 30s for standard CRUD
 const LONG_TIMEOUT_MS = 5 * 60_000;     // 5 min for generation/clone ops
+const PROFILE_TIMEOUT_MS = 15 * 60_000; // 15 min for profile scrape (many slides)
 
 // Paths that are known long-running operations
 const LONG_RUNNING_PATHS = [
   '/generate', '/batch', '/tweak',
-  '/post-clone', '/profile-clone', '/reel-copy',
+  '/post-clone', '/reel-copy',
   '/carousel/execute', '/carousel/follow-up',
   '/scene/recreate', '/story/generate',
   '/auto/plan', '/auto/execute',
 ];
 
+// Extra-long paths (profile scrape processes many carousels)
+const EXTRA_LONG_PATHS = ['/profile-clone'];
+
 function getTimeoutForPath(path, method) {
   if (method === 'GET') return DEFAULT_TIMEOUT_MS;
+  for (const prefix of EXTRA_LONG_PATHS) {
+    if (path.startsWith(prefix)) return PROFILE_TIMEOUT_MS;
+  }
   for (const prefix of LONG_RUNNING_PATHS) {
     if (path.startsWith(prefix)) return LONG_TIMEOUT_MS;
   }
@@ -234,6 +241,17 @@ export const reel = {
 export const postClone = {
   clonePost: (body) => request('/post-clone', { method: 'POST', body }),
   cloneProfile: (body) => request('/profile-clone', { method: 'POST', body }),
+  fetchProfile: (body) => request('/profile-clone/fetch', { method: 'POST', body }),
+  recreateSelected: (body) => request('/profile-clone/recreate', { method: 'POST', body }),
+  proxyImageUrl: (url) => `${BASE}/post-clone/proxy-image?url=${encodeURIComponent(url)}`,
+  thumbUrl: (filename) => filename ? `${BASE}/post-clone/thumb/${filename}` : '',
+};
+
+// --- Clone History ---
+export const postCloneHistory = {
+  list: () => request('/post-clone/history'),
+  remove: (id) => request(`/post-clone/history/${id}`, { method: 'DELETE' }),
+  imageUrl: (galleryId) => `${BASE}/gallery/${galleryId}/image`,
 };
 
 // --- Style Focus ---

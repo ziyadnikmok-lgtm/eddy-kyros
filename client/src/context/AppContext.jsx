@@ -16,6 +16,19 @@ export function AppProvider({ children }) {
   const [toasts, setToasts] = useState([]);
   const timers = useRef({});
 
+  // Navigation — allows any page to trigger page changes with optional params
+  const [page, setPage] = useState('generate');
+  const [pageParams, setPageParams] = useState({});
+  const navigateTo = useCallback((pageId, params = {}) => {
+    setPage(pageId);
+    setPageParams(params);
+  }, []);
+  const consumePageParams = useCallback(() => {
+    const p = pageParams;
+    if (Object.keys(p).length > 0) setPageParams({});
+    return p;
+  }, [pageParams]);
+
   // Shared data — fetched once, consumed by all pages
   const [characters, setCharacters] = useState([]);
   const [sceneMemories, setSceneMemories] = useState([]);
@@ -61,10 +74,12 @@ export function AppProvider({ children }) {
 
   const value = useMemo(() => ({
     activeKey, setActiveKey, toasts, notify, dismissToast,
+    page, navigateTo, consumePageParams,
     characters, refreshCharacters,
     sceneMemories, refreshSceneMemories,
     outfits, refreshOutfits,
   }), [activeKey, setActiveKey, toasts, notify, dismissToast,
+    page, navigateTo, consumePageParams,
     characters, refreshCharacters, sceneMemories, refreshSceneMemories,
     outfits, refreshOutfits]);
 

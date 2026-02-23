@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const axios = require('axios');
@@ -8,6 +9,7 @@ const execFileAsync = promisify(execFile);
 const { ApifyClient } = require('apify-client');
 const { AppError } = require('../middleware/errorHandler');
 const { asText } = require('../utils/helpers');
+const { sharedHttpsAgent } = require('../utils/httpAgent');
 const { buildLoginCookies } = require('../utils/instagramCookies');
 const apiKeyManager = require('../services/apiKeyManager');
 const referenceManager = require('../services/referenceManager');
@@ -17,17 +19,74 @@ const galleryManager = require('../services/galleryManager');
 const promptKnowledgeService = require('../services/promptKnowledgeService');
 const styleLibrary = require('../services/styleLibrary');
 const { checkPostAvailability } = require('../services/instagramAvailabilityService');
+const postCloneHistoryStore = require('../services/postCloneHistoryStore');
 
 const router = express.Router();
 const TEMP_DIR = path.join(process.cwd(), 'temp');
-const ROUTE_TIMEOUT_MS = 5 * 60_000; // 5 min hard ceiling per clone request
+const THUMB_DIR = path.join(TEMP_DIR, 'thumbs');
+const ROUTE_TIMEOUT_MS = 5 * 60_000; // 5 min hard ceiling for single post
+const PROFILE_ROUTE_TIMEOUT_MS = 15 * 60_000; // 15 min for profile scrape (many slides)
 const DEFAULT_ACTOR_ID = process.env.APIFY_POST_ACTOR_ID || 'apify/instagram-post-scraper';
 const FALLBACK_ACTOR_ID = process.env.APIFY_POST_FALLBACK_ACTOR_ID || 'apify/instagram-scraper';
 const ANALYSIS_KEYS = ['lighting', 'camera', 'pose', 'expression', 'outfit', 'scene', 'accessories', 'details', 'full_prompt'];
+const THUMB_MAX_AGE_MS = 30 * 60_000; // 30 min — auto-cleanup stale thumbnails
 
 function ensureTempDir() {
   fs.mkdirSync(TEMP_DIR, { recursive: true });
 }
+
+function ensureThumbDir() {
+  fs.mkdirSync(THUMB_DIR, { recursive: true });
+}
+
+/**
+ * Download a single thumbnail image server-side (while CDN URL is fresh).
+ * Returns the filename on success, or '' on failure.
+ */
+async function cacheThumbnail(imageUrl) {
+  if (!isHttpUrl(imageUrl)) return '';
+  const id = crypto.randomUUID();
+  const ext = '.jpg'; // IG images are always JPEG
+  const filename = `${id}${ext}`;
+  const filePath = path.join(THUMB_DIR, filename);
+  try {
+    const response = await axios.get(imageUrl, {
+      responseType: 'arraybuffer',
+      timeout: 15000,
+      httpsAgent: sharedHttpsAgent,
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'image/*,*/*;q=0.8',
+        'Referer': 'https://www.instagram.com/',
+      },
+      validateStatus: (s) => s >= 200 && s < 400,
+    });
+    const buffer = Buffer.from(response.data);
+    const ct = (response.headers['content-type'] || '').toLowerCase();
+    if (ct.includes('text/html') || buffer.length < 100) return '';
+    fs.writeFileSync(filePath, buffer);
+    return filename;
+  } catch {
+    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch { /* */ }
+    return '';
+  }
+}
+
+/** Periodically clean stale thumbnails */
+function cleanStaleThumbs() {
+  try {
+    if (!fs.existsSync(THUMB_DIR)) return;
+    const now = Date.now();
+    for (const f of fs.readdirSync(THUMB_DIR)) {
+      const fp = path.join(THUMB_DIR, f);
+      try {
+        const stat = fs.statSync(fp);
+        if (now - stat.mtimeMs > THUMB_MAX_AGE_MS) fs.unlinkSync(fp);
+      } catch { /* best-effort */ }
+    }
+  } catch { /* */ }
+}
+setInterval(cleanStaleThumbs, 5 * 60_000); // run every 5 min
 
 function isHttpUrl(value) {
   return /^https?:\/\//i.test(asText(value));
@@ -137,16 +196,16 @@ function buildStructuredAnalysisPrompt(mode) {
     'Describe like you are briefing a human photographer. Be specific about relationships, cause-and-effect, and visual interactions.',
     'Each field should be at least 10 words. Use directive tone (NOT "she is" or "the woman").',
     '',
-    'lighting: Describe light source type, direction, quality, color temperature, and shadow character as a flowing description. Example: "Soft diffused natural light from a large window camera-left, creating gentle wrap-around illumination with subtle warm undertones"',
+    'lighting: CRITICAL FIELD — Describe the OVERALL BRIGHTNESS LEVEL first (dark/dim/medium/bright/high-key), then light source type, direction, quality, color temperature, shadow character, and time-of-day feel. Be extremely precise about how dark or bright the scene is. A dimly lit room with one lamp is NOT the same as natural daylight. Example for dark scene: "Low-key dim interior, mostly shadows with a single warm bedside lamp camera-right casting localized golden glow, deep shadows across most of the frame, intimate nighttime mood". Example for bright scene: "Bright natural daylight flooding from a large window camera-left, high-key even illumination with soft shadows"',
     'camera: Describe shot type, lens perspective, estimated focal length, shooting angle, and depth of field. Example: "Medium portrait framing at eye level with an estimated 50mm focal length, shallow depth of field softly blurring the background"',
     'pose: Describe full body positioning — weight distribution, limb placement, torso angle, hand placement and what they interact with. Directive tone. Example: "Standing with weight shifted to the right hip, left hand resting on a railing, torso turned slightly camera-left with relaxed shoulders"',
     'expression: Describe facial mood, gaze direction and intensity, mouth position, emotional read. Example: "Calm direct gaze into the lens with softly parted lips and relaxed brow, conveying quiet confidence"',
-    'outfit: Describe all garments with fit, fabric, color, texture, and body interaction. Example: "White ribbed off-shoulder crop top with a relaxed drape, paired with high-waisted dark wash straight-leg jeans and chunky white platform sneakers"',
+    'outfit: Describe all garments with EXACT fit, fabric, color, texture, coverage level, and body interaction. Be precise about how tight/loose the clothing fits, how much skin is showing, neckline depth, hemline position, and whether clothing is form-fitting or relaxed. Do NOT make clothing more conservative than it actually is — describe the actual coverage faithfully. Example: "Fitted beige ribbed tank top with racerback cut showing shoulders, snug fit highlighting figure, paired with light-wash high-waisted denim shorts with frayed hem sitting mid-thigh"',
     'scene: Describe the environment — setting type, architecture, surfaces, textures, color palette, spatial depth, background and foreground',
     'accessories: Describe all visible accessories with type, material, placement, and visual effect',
     'details: Describe color grading, film stock look, grain, contrast style, saturation, visual filters',
-    'format: Describe the visual rendering style — photography type, post-processing aesthetic, visual treatment',
-    'full_prompt: Write an optimal identity-agnostic image generation prompt following Nano-Banana formula: SCENE → LIGHTING → CAMERA → POSE → EXPRESSION → OUTFIT → ACCESSORIES → DETAILS → FORMAT. No identity descriptors. Directive tone. One flowing natural language paragraph.',
+    'format: Describe the visual rendering style — photography type, post-processing aesthetic, visual treatment. IMPORTANT: Note the photo quality level — is it a casual phone photo, candid snapshot, amateur selfie, or professional studio shot? Include this in the description.',
+    'full_prompt: Write an optimal identity-agnostic image generation prompt following Nano-Banana formula: SCENE → LIGHTING → CAMERA → POSE → EXPRESSION → OUTFIT → ACCESSORIES → DETAILS → FORMAT. No identity descriptors (face, ethnicity, hair color, skin tone). Directive tone. One flowing natural language paragraph. START the prompt with the overall brightness level (e.g. "Dark moody interior..." or "Bright daylight...") so the lighting mood is established first. IMPORTANT: Include the EXACT outfit description with accurate coverage/fit — do NOT make clothing more modest or conservative than the original. CRITICAL: If the original is a casual/candid phone photo, explicitly state "casual phone photo quality" or "candid snapshot aesthetic" — do NOT describe it as a professional/studio shot.',
     '',
     creativeLine,
     'Output strictly valid JSON object only.',
@@ -181,6 +240,14 @@ function buildGenerationPrompt({ character, activeRefs, mode, structured, isDelt
     isDelta
       ? 'This is a carousel follow-up delta prompt relative to slide 1 continuity anchor.'
       : 'This is a base prompt for the first image/standalone post.',
+    // Prevent Gemini from over-polishing casual/candid photos into studio shots
+    'IMPORTANT VISUAL QUALITY DIRECTION: Match the casual, authentic quality of the original source photo. If the source looks like a casual phone photo or candid snapshot, the recreation should have that same relaxed, natural, slightly imperfect feel — NOT hyper-polished studio lighting or commercial retouching. Preserve the raw/real energy. Avoid making it look like a professional photoshoot unless the original clearly is one.',
+    // Prevent Gemini from brightening dark scenes
+    'LIGHTING FIDELITY: Match the EXACT brightness level and mood of the source. If the scene is dark, dimly lit, or moody — the output MUST be equally dark with deep shadows. Do NOT brighten, add fill light, or illuminate dark scenes. A nighttime photo with one lamp must stay dark with one lamp — do NOT turn it into daylight.',
+    // Reinforce identity anchor from reference images
+    'IDENTITY ANCHORING: The reference images provided show the EXACT person to depict. The generated face, body proportions, skin tone, and all physical features MUST match these reference photos precisely. Do NOT substitute, blend, or drift from the person shown in the references.',
+    // Prevent body proportion drift and clothing conservatism
+    'BODY & OUTFIT FIDELITY: Maintain the character\'s exact body proportions as shown in reference images — do NOT reduce or minimize any body features. The outfit description must be rendered exactly as written — do NOT add extra fabric, raise necklines, lengthen hemlines, or make clothing more conservative than described. If the prompt says form-fitting, render it form-fitting.',
     structured.full_prompt || '',
   ].filter(Boolean).join('\n');
 
@@ -360,11 +427,18 @@ function extractImageUrlFromMedia(item) {
     const clean = asText(item);
     return looksLikeDirectImageUrl(clean) ? clean : '';
   }
+  // image_versions2 is common in newer Apify actors — pick highest resolution
+  const iv2 = item?.image_versions2?.candidates;
+  const iv2Best = Array.isArray(iv2) && iv2.length > 0
+    ? iv2.reduce((best, c) => ((c.width || 0) > (best.width || 0) ? c : best), iv2[0])?.url
+    : undefined;
   const candidates = [
     item?.displayUrl,
     item?.display_url,
     item?.imageUrl,
     item?.image_url,
+    item?.image,
+    iv2Best,
     item?.thumbnailUrl,
     item?.thumbnail_url,
     item?.url,
@@ -384,13 +458,24 @@ function isVideoItem(item) {
   }
   if (!item || typeof item !== 'object') return false;
   if (item.isVideo === true || item.video === true) return true;
-  if (isHttpUrl(item.videoUrl) || isHttpUrl(item.video_url)) return true;
-  const typeName = asText(item.type || item.__typename).toLowerCase();
-  return typeName.includes('video') || typeName.includes('reel');
+  if (item.is_video === true) return true;
+  // Instagram media_type: 1=image, 2=video, 8=carousel
+  if (item.media_type === 2 || item.mediaType === 2) return true;
+  if (isHttpUrl(item.videoUrl) || isHttpUrl(item.video_url) || isHttpUrl(item.video_versions?.[0]?.url)) return true;
+  const typeName = asText(item.type || item.__typename || item.productType || '').toLowerCase();
+  return typeName.includes('video') || typeName.includes('reel') || typeName === 'graphvideo';
 }
 
 function extractPostImages(postItem) {
   if (!postItem || typeof postItem !== 'object') return null;
+
+  // Skip pure video posts early (not carousels that may contain some images)
+  const itemTypeName = asText(postItem.type || postItem.__typename || postItem.productType || '').toLowerCase();
+  const isCarouselType = itemTypeName.includes('sidecar') || itemTypeName.includes('carousel')
+    || postItem.media_type === 8 || postItem.mediaType === 8 || (postItem.mediaCount || 0) > 1;
+  if (!isCarouselType && isVideoItem(postItem)) {
+    return null;
+  }
 
   const sidecarCandidates = []
     .concat(Array.isArray(postItem.images) ? postItem.images : [])
@@ -436,16 +521,32 @@ function extractPostImages(postItem) {
     }
   }
 
+  // Last resort for mixed carousels: extract video thumbnails so we still have *something*
+  if (carouselImages.length === 0 && sidecarCandidates.length > 0) {
+    for (const child of sidecarCandidates) {
+      if (!child) continue;
+      const thumbUrl = asText(child.thumbnailUrl || child.thumbnail_url || child.displayUrl || child.display_url);
+      if (isHttpUrl(thumbUrl)) carouselImages.push(thumbUrl);
+    }
+  }
+
+  // Always capture the post-level display image as a fallback thumbnail
+  const postLevelImage = extractImageUrlFromMedia(postItem);
+
   if (carouselImages.length > 1) {
+    const deduped = Array.from(new Set(carouselImages));
+    // Append post-level image as last-resort fallback (if not already in the list)
+    if (postLevelImage && isHttpUrl(postLevelImage) && !deduped.includes(postLevelImage)) {
+      deduped.push(postLevelImage);
+    }
     return {
       type: 'carousel',
       sourceUrl: asText(postItem.url || postItem.inputUrl || postItem.shortCodeUrl || ''),
-      imageUrls: Array.from(new Set(carouselImages)),
+      imageUrls: deduped,
     };
   }
 
-  const singleImage = extractImageUrlFromMedia(postItem);
-  if (singleImage && !isVideoItem(postItem)) {
+  if (postLevelImage && !isVideoItem(postItem)) {
     // Log when we expected a carousel but only got 1 image
     const typeName = asText(postItem.type || postItem.__typename || postItem.productType || '').toLowerCase();
     if (typeName.includes('sidecar') || typeName.includes('carousel') || postItem.mediaCount > 1) {
@@ -455,12 +556,120 @@ function extractPostImages(postItem) {
     }
     return {
       type: 'single',
-      sourceUrl: asText(postItem.url || postItem.inputUrl || postItem.shortCodeUrl || singleImage),
-      imageUrls: [singleImage],
+      sourceUrl: asText(postItem.url || postItem.inputUrl || postItem.shortCodeUrl || postLevelImage),
+      imageUrls: [postLevelImage],
     };
   }
 
   return null;
+}
+
+/**
+ * Resolve the owner username from a post/reel URL.
+ * Strategies (in order):
+ *  1. oEmbed API (no auth — works for non-restricted posts)
+ *  2. Authenticated HTML fetch (uses session cookie — works for restricted)
+ *  3. Parse from Apify restricted-item metadata (title / description fields)
+ *
+ * @param {string} postUrl   Full IG post URL
+ * @param {object[]} [restrictedItems]  The Apify items that triggered the restricted error
+ */
+async function resolveUsernameFromPostUrl(postUrl, restrictedItems) {
+  const IG_USERNAME_RE = /[A-Za-z0-9._]{1,30}/;
+  const RESERVED_SEGS = ['p', 'reel', 'tv', 'explore', 'accounts', 'stories', 'direct', 'about'];
+  const isValidUsername = (u) => u && IG_USERNAME_RE.test(u) && !RESERVED_SEGS.includes(u.toLowerCase());
+
+  // --- Strategy 1: oEmbed (fast, no auth) ---
+  try {
+    const oembed = await axios.get('https://api.instagram.com/oembed/', {
+      params: { url: postUrl },
+      timeout: 10000,
+      httpsAgent: sharedHttpsAgent,
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      validateStatus: (s) => s >= 200 && s < 400,
+    });
+    const authorName = asText(oembed.data?.author_name);
+    if (isValidUsername(authorName)) {
+      console.log(`[post-clone] oEmbed resolved username: ${authorName}`);
+      return authorName;
+    }
+  } catch (e) {
+    console.warn(`[post-clone] oEmbed failed: ${e.message}`);
+  }
+
+  // --- Strategy 2: Fetch post page WITH session cookie ---
+  const sessionid = asText(apiKeyManager.getInstagramSessionId());
+  if (sessionid) {
+    try {
+      const res = await axios.get(postUrl, {
+        timeout: 15000,
+        httpsAgent: sharedHttpsAgent,
+        responseType: 'text',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml',
+          'Cookie': `sessionid=${sessionid}`,
+        },
+        validateStatus: (s) => s >= 200 && s < 400,
+      });
+      const html = asText(res.data);
+      // Try multiple patterns found in IG HTML:
+      // "owner":{"username":"xxx"}  (JSON in script tag)
+      const ownerMatch = html.match(/"owner"\s*:\s*\{[^}]*"username"\s*:\s*"([^"]+)"/);
+      if (ownerMatch && isValidUsername(ownerMatch[1])) {
+        console.log(`[post-clone] authenticated HTML resolved username (owner JSON): ${ownerMatch[1]}`);
+        return ownerMatch[1];
+      }
+      // <meta property="og:description" content="... @username ..." />
+      const ogDesc = html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)/i);
+      if (ogDesc) {
+        const atMatch = ogDesc[1].match(/@([A-Za-z0-9._]+)/);
+        if (atMatch && isValidUsername(atMatch[1])) {
+          console.log(`[post-clone] authenticated HTML resolved username (og:desc): ${atMatch[1]}`);
+          return atMatch[1];
+        }
+      }
+      // instagram.com/username in any link or canonical
+      const linkMatch = html.match(/instagram\.com\/([A-Za-z0-9._]+)\/?["'\s]/);
+      if (linkMatch && isValidUsername(linkMatch[1])) {
+        console.log(`[post-clone] authenticated HTML resolved username (link): ${linkMatch[1]}`);
+        return linkMatch[1];
+      }
+    } catch (e) {
+      console.warn(`[post-clone] authenticated HTML fetch failed: ${e.message}`);
+    }
+  }
+
+  // --- Strategy 3: Parse from Apify restricted-item metadata ---
+  if (Array.isArray(restrictedItems)) {
+    for (const item of restrictedItems) {
+      // Some scrapers set ownerUsername/username even on error items
+      for (const key of ['ownerUsername', 'username', 'owner', 'userName']) {
+        const val = asText(typeof item[key] === 'object' ? item[key]?.username : item[key]);
+        if (isValidUsername(val)) {
+          console.log(`[post-clone] item metadata resolved username (${key}): ${val}`);
+          return val;
+        }
+      }
+      // title/description may contain "@username" or "username on Instagram"
+      for (const key of ['title', 'description']) {
+        const text = asText(item[key]);
+        if (!text) continue;
+        const atMatch = text.match(/@([A-Za-z0-9._]+)/);
+        if (atMatch && isValidUsername(atMatch[1])) {
+          console.log(`[post-clone] item ${key} resolved username: ${atMatch[1]}`);
+          return atMatch[1];
+        }
+        const onIg = text.match(/([A-Za-z0-9._]+)\s+on\s+Instagram/i);
+        if (onIg && isValidUsername(onIg[1])) {
+          console.log(`[post-clone] item ${key} resolved username: ${onIg[1]}`);
+          return onIg[1];
+        }
+      }
+    }
+  }
+
+  return '';
 }
 
 async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
@@ -477,51 +686,84 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
   const firstSeg = (segments[0] || '').toLowerCase();
   const isPostLike = ['p', 'reel', 'tv'].includes(firstSeg);
   const profileUsername = !isPostLike ? asText(segments[0]) : '';
+  // Extract shortcode from post URLs like /p/ABC123/ or /reel/ABC123/
+  const shortCode = isPostLike && segments[1] ? asText(segments[1]) : '';
 
   async function callActor(actorId, input) {
     return client.actor(actorId).call(input);
   }
 
+  console.log(`[post-clone] session cookies: ${loginCookies ? 'present' : 'MISSING'}, shortCode=${shortCode || 'none'}, profileUsername=${profileUsername || 'none'}`);
+
   let run;
   let actorUsed = DEFAULT_ACTOR_ID;
-  try {
-    if (profileUsername) {
-      const input = {
-        username: profileUsername,
+
+  // Build input payloads for the primary actor — try multiple shapes to handle
+  // schema differences across actor versions.
+  const primaryPayloads = [];
+  if (profileUsername) {
+    primaryPayloads.push({
+      username: profileUsername,
+      resultsLimit: boundedLimit,
+      directUrls: [url],
+      startUrls: [{ url }],
+      expandSlideshowImages: true,
+      ...(loginCookies ? { loginCookies } : {}),
+      ...(onlyPostsNewerThan ? { onlyPostsNewerThan } : {}),
+    });
+    primaryPayloads.push({
+      username: profileUsername,
+      resultsLimit: boundedLimit,
+      ...(loginCookies ? { loginCookies } : {}),
+    });
+  } else {
+    // Post URL — try multiple input shapes that different actor versions accept.
+    // Shape 1: shortcodes array (most post-scraper actors prefer this)
+    if (shortCode) {
+      primaryPayloads.push({
+        shortcodes: [shortCode],
         resultsLimit: boundedLimit,
-        directUrls: [url],
-        startUrls: [{ url }],
         expandSlideshowImages: true,
         ...(loginCookies ? { loginCookies } : {}),
-        ...(onlyPostsNewerThan ? { onlyPostsNewerThan } : {}),
-      };
-      console.log(`[post-clone] calling actor ${DEFAULT_ACTOR_ID} (profile) input: ${JSON.stringify({ ...input, loginCookies: input.loginCookies ? '[set]' : undefined })}`);
-      run = await callActor(DEFAULT_ACTOR_ID, input);
-    } else {
-      const input = {
-        directUrls: [url],
-        startUrls: [{ url }],
-        resultsLimit: boundedLimit,
-        resultsType: 'posts',
-        expandSlideshowImages: true,
-        ...(loginCookies ? { loginCookies } : {}),
-      };
-      console.log(`[post-clone] calling actor ${DEFAULT_ACTOR_ID} (post) input: ${JSON.stringify({ ...input, loginCookies: input.loginCookies ? '[set]' : undefined })}`);
-      run = await callActor(DEFAULT_ACTOR_ID, input);
+      });
     }
-  } catch (err) {
-    // Fallback for actor schema mismatch (common for single post URLs).
-    const message = asText(err?.message).toLowerCase();
-    const shouldFallback =
-      message.includes('username is required')
-      || message.includes('input is not valid')
-      || message.includes('schema')
-      || message.includes('validation');
-    if (!shouldFallback) {
-      throw new AppError(`Apify actor run failed (${DEFAULT_ACTOR_ID}): ${err.message}`, 502, 'APIFY_ERROR');
-    }
+    // Shape 2: directUrls + startUrls (generic format)
+    primaryPayloads.push({
+      directUrls: [url],
+      startUrls: [{ url }],
+      resultsLimit: boundedLimit,
+      resultsType: 'posts',
+      expandSlideshowImages: true,
+      ...(loginCookies ? { loginCookies } : {}),
+    });
+    // Shape 3: postUrls array
+    primaryPayloads.push({
+      postUrls: [url],
+      resultsLimit: boundedLimit,
+      expandSlideshowImages: true,
+      ...(loginCookies ? { loginCookies } : {}),
+    });
+  }
+
+  // Try primary actor with multiple input shapes
+  let primaryErr = null;
+  for (let i = 0; i < primaryPayloads.length; i++) {
     try {
-      actorUsed = FALLBACK_ACTOR_ID;
+      console.log(`[post-clone] trying ${DEFAULT_ACTOR_ID} payload #${i + 1}: ${JSON.stringify({ ...primaryPayloads[i], loginCookies: primaryPayloads[i].loginCookies ? '[set]' : undefined })}`);
+      run = await callActor(DEFAULT_ACTOR_ID, primaryPayloads[i]);
+      console.log(`[post-clone] ${DEFAULT_ACTOR_ID} payload #${i + 1} succeeded`);
+      break;
+    } catch (err) {
+      console.warn(`[post-clone] ${DEFAULT_ACTOR_ID} payload #${i + 1} failed: ${err.message}`);
+      primaryErr = err;
+    }
+  }
+
+  // Fallback to generic scraper only if primary actor failed entirely
+  if (!run) {
+    console.warn(`[post-clone] primary actor failed, falling back to ${FALLBACK_ACTOR_ID}`);
+    actorUsed = FALLBACK_ACTOR_ID;
+    try {
       run = await callActor(FALLBACK_ACTOR_ID, {
         directUrls: [url],
         startUrls: [{ url }],
@@ -544,7 +786,7 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
         // keep original fallbackErr
       }
       throw new AppError(
-        `Apify actor run failed (${DEFAULT_ACTOR_ID}) and fallback (${FALLBACK_ACTOR_ID}): ${fallbackErr.message}`,
+        `Apify actor run failed (${DEFAULT_ACTOR_ID}): ${primaryErr?.message || 'unknown'} — fallback (${FALLBACK_ACTOR_ID}): ${fallbackErr.message}`,
         502,
         'APIFY_ERROR'
       );
@@ -574,6 +816,7 @@ async function downloadImageToTemp(imageUrl, filePath) {
       const response = await axios.get(imageUrl, {
         responseType: 'arraybuffer',
         timeout: 60000,
+        httpsAgent: sharedHttpsAgent,
         headers: {
           'User-Agent': 'Mozilla/5.0',
           'Accept': 'image/*,*/*;q=0.8',
@@ -616,6 +859,7 @@ async function resolveDownloadableImageUrl(url) {
     const res = await axios.get(clean, {
       responseType: 'text',
       timeout: 45000,
+      httpsAgent: sharedHttpsAgent,
       headers: {
         'User-Agent': 'Mozilla/5.0',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -650,6 +894,106 @@ async function safeJpegFromAnyImage(inputPath, tempFiles) {
   return outputPath;
 }
 
+async function processOneSlide({
+  post, i, apiKey, character, activeRefs, mode, baseReferenceImages,
+  characterId, tempFiles, firstSlideOriginal, firstSlideRecreated,
+}) {
+  const rawUrl = post.imageUrls[i];
+  const imageUrl = await resolveDownloadableImageUrl(rawUrl);
+  const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${i}`;
+  const ext = path.extname(new URL(imageUrl).pathname) || '.jpg';
+  const filePath = path.join(TEMP_DIR, `post-clone-${unique}${ext}`);
+  tempFiles.push(filePath);
+  await downloadImageToTemp(imageUrl, filePath);
+  let resolvedPath = filePath;
+  let buffer = fs.readFileSync(resolvedPath);
+  let mimeType = mimeFromExt(resolvedPath);
+  let base64Data = buffer.toString('base64');
+
+  const original = { url: imageUrl || rawUrl, mimeType, base64Data };
+
+  const sourceMeta = {
+    source_url: post.sourceUrl || imageUrl || rawUrl,
+    source_type: post.type,
+    carousel_position: post.type === 'carousel' ? i + 1 : null,
+  };
+
+  let structured;
+  let referenceImages = [...baseReferenceImages];
+  let generationPrompt = '';
+
+  if (post.type === 'carousel' && i > 0 && firstSlideOriginal && firstSlideRecreated) {
+    let delta;
+    try {
+      delta = await analyzeCarouselDelta(
+        apiKey, firstSlideOriginal.base64Data, firstSlideOriginal.mimeType,
+        base64Data, mimeType, mode, sourceMeta, characterId
+      );
+    } catch (err) {
+      const msg = asText(err?.message).toLowerCase();
+      if (!msg.includes('unable to process input image') && !msg.includes('invalid_argument')) throw err;
+      resolvedPath = await safeJpegFromAnyImage(filePath, tempFiles);
+      buffer = fs.readFileSync(resolvedPath);
+      mimeType = 'image/jpeg';
+      base64Data = buffer.toString('base64');
+      delta = await analyzeCarouselDelta(
+        apiKey, firstSlideOriginal.base64Data, firstSlideOriginal.mimeType,
+        base64Data, mimeType, mode, sourceMeta, characterId
+      );
+    }
+    structured = delta.parsed;
+    generationPrompt = buildGenerationPrompt({ character, activeRefs, mode, structured, isDelta: true });
+    referenceImages = [
+      { mimeType: firstSlideRecreated.mimeType, base64Data: firstSlideRecreated.base64Data },
+    ];
+  } else {
+    let analysis;
+    try {
+      analysis = await analyzeImageStructured(apiKey, base64Data, mimeType, mode, sourceMeta, characterId);
+    } catch (err) {
+      const msg = asText(err?.message).toLowerCase();
+      if (!msg.includes('unable to process input image') && !msg.includes('invalid_argument')) throw err;
+      resolvedPath = await safeJpegFromAnyImage(filePath, tempFiles);
+      buffer = fs.readFileSync(resolvedPath);
+      mimeType = 'image/jpeg';
+      base64Data = buffer.toString('base64');
+      analysis = await analyzeImageStructured(apiKey, base64Data, mimeType, mode, sourceMeta, characterId);
+    }
+    structured = analysis.parsed;
+    generationPrompt = buildGenerationPrompt({ character, activeRefs, mode, structured, isDelta: false });
+  }
+
+  const generated = await geminiService.generateImage(apiKey, generationPrompt, {
+    aspectRatio: '4:5',
+    imageSize: '2K',
+    referenceImages,
+  });
+
+  const galleryEntry = galleryManager.save({
+    base64Data: generated.image.base64Data,
+    mimeType: generated.image.mimeType,
+    prompt: structured.full_prompt || 'Post Clone recreation',
+    source: 'post-clone',
+    characterId,
+    aspectRatio: '4:5',
+    seed: null,
+  });
+
+  return {
+    original,
+    recreated: {
+      mimeType: generated.image.mimeType,
+      base64Data: generated.image.base64Data,
+      text: generated.text || null,
+      prompt: generationPrompt,
+      structured,
+    },
+    slideOriginal: { mimeType, base64Data },
+    slideRecreated: { mimeType: generated.image.mimeType, base64Data: generated.image.base64Data },
+    galleryId: galleryEntry?.id || null,
+  };
+}
+
 async function processPostClone({
   post,
   characterId,
@@ -662,140 +1006,53 @@ async function processPostClone({
 }) {
   const recreatedImages = [];
   const originalImages = [];
+  const galleryIds = [];
+  const isCarousel = post.type === 'carousel' && post.imageUrls.length > 1;
+  const slideArgs = { post, apiKey, character, activeRefs, mode, baseReferenceImages, characterId, tempFiles };
 
+  // --- Slide 0: always processed first (serves as reference for subsequent slides) ---
   let firstSlideOriginal = null;
   let firstSlideRecreated = null;
 
-  for (let i = 0; i < post.imageUrls.length; i += 1) {
-    try {
-    const rawUrl = post.imageUrls[i];
-    const imageUrl = await resolveDownloadableImageUrl(rawUrl);
-    const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${i}`;
-    const ext = path.extname(new URL(imageUrl).pathname) || '.jpg';
-    const filePath = path.join(TEMP_DIR, `post-clone-${unique}${ext}`);
-    tempFiles.push(filePath);
-    await downloadImageToTemp(imageUrl, filePath);
-    let resolvedPath = filePath;
-    let buffer = fs.readFileSync(resolvedPath);
-    let mimeType = mimeFromExt(resolvedPath);
-    let base64Data = buffer.toString('base64');
-
-    originalImages.push({ url: imageUrl || rawUrl, mimeType, base64Data });
-
-    const sourceMeta = {
-      source_url: post.sourceUrl || imageUrl || rawUrl,
-      source_type: post.type,
-      carousel_position: post.type === 'carousel' ? i + 1 : null,
-    };
-
-    let structured;
-    let referenceImages = [...baseReferenceImages];
-    let generationPrompt = '';
-
-    if (post.type === 'carousel' && i > 0 && firstSlideOriginal && firstSlideRecreated) {
-      let delta;
-      try {
-        delta = await analyzeCarouselDelta(
-          apiKey,
-          firstSlideOriginal.base64Data,
-          firstSlideOriginal.mimeType,
-          base64Data,
-          mimeType,
-          mode,
-          sourceMeta,
-          characterId
-        );
-      } catch (err) {
-        const msg = asText(err?.message).toLowerCase();
-        if (!msg.includes('unable to process input image') && !msg.includes('invalid_argument')) throw err;
-        resolvedPath = await safeJpegFromAnyImage(filePath, tempFiles);
-        buffer = fs.readFileSync(resolvedPath);
-        mimeType = 'image/jpeg';
-        base64Data = buffer.toString('base64');
-        delta = await analyzeCarouselDelta(
-          apiKey,
-          firstSlideOriginal.base64Data,
-          firstSlideOriginal.mimeType,
-          base64Data,
-          mimeType,
-          mode,
-          sourceMeta,
-          characterId
-        );
-      }
-      structured = delta.parsed;
-      generationPrompt = buildGenerationPrompt({
-        character,
-        activeRefs,
-        mode,
-        structured,
-        isDelta: true,
-      });
-      referenceImages = [
-        { mimeType: firstSlideRecreated.mimeType, base64Data: firstSlideRecreated.base64Data },
-      ];
+  try {
+    const r0 = await processOneSlide({ ...slideArgs, i: 0, firstSlideOriginal: null, firstSlideRecreated: null });
+    originalImages.push(r0.original);
+    recreatedImages.push(r0.recreated);
+    if (r0.galleryId) galleryIds.push(r0.galleryId);
+    firstSlideOriginal = r0.slideOriginal;
+    firstSlideRecreated = r0.slideRecreated;
+  } catch (slideErr) {
+    if (isCarousel) {
+      console.warn(`[post-clone] carousel slide 1/${post.imageUrls.length} failed: ${slideErr.message} — skipping`);
     } else {
-      let analysis;
-      try {
-        analysis = await analyzeImageStructured(apiKey, base64Data, mimeType, mode, sourceMeta, characterId);
-      } catch (err) {
-        const msg = asText(err?.message).toLowerCase();
-        if (!msg.includes('unable to process input image') && !msg.includes('invalid_argument')) throw err;
-        resolvedPath = await safeJpegFromAnyImage(filePath, tempFiles);
-        buffer = fs.readFileSync(resolvedPath);
-        mimeType = 'image/jpeg';
-        base64Data = buffer.toString('base64');
-        analysis = await analyzeImageStructured(apiKey, base64Data, mimeType, mode, sourceMeta, characterId);
-      }
-      structured = analysis.parsed;
-      generationPrompt = buildGenerationPrompt({
-        character,
-        activeRefs,
-        mode,
-        structured,
-        isDelta: false,
-      });
-    }
-
-    const generated = await geminiService.generateImage(apiKey, generationPrompt, {
-      aspectRatio: '4:5',
-      imageSize: '2K',
-      referenceImages,
-    });
-
-    galleryManager.save({
-      base64Data: generated.image.base64Data,
-      mimeType: generated.image.mimeType,
-      prompt: structured.full_prompt || 'Post Clone recreation',
-      source: 'post-clone',
-      characterId,
-      aspectRatio: '4:5',
-      seed: null,
-    });
-
-    recreatedImages.push({
-      mimeType: generated.image.mimeType,
-      base64Data: generated.image.base64Data,
-      text: generated.text || null,
-      prompt: generationPrompt,
-      structured,
-    });
-
-    if (i === 0) {
-      firstSlideOriginal = { mimeType, base64Data };
-      firstSlideRecreated = {
-        mimeType: generated.image.mimeType,
-        base64Data: generated.image.base64Data,
-      };
-    }
-    } catch (slideErr) {
-      // For carousels, skip failed slides and continue with the rest
-      if (post.type === 'carousel' && post.imageUrls.length > 1) {
-        console.warn(`[post-clone] carousel slide ${i + 1}/${post.imageUrls.length} failed: ${slideErr.message} — skipping`);
-        continue;
-      }
-      // Single post — re-throw
       throw slideErr;
+    }
+  }
+
+  // --- Slides 1+: run concurrently (they all use slide 0 as reference, independent of each other) ---
+  if (post.imageUrls.length > 1) {
+    const remainingIndices = [];
+    for (let i = 1; i < post.imageUrls.length; i++) remainingIndices.push(i);
+
+    console.log(`[post-clone] processing ${remainingIndices.length} remaining slides concurrently`);
+    const slidePromises = remainingIndices.map(i =>
+      processOneSlide({ ...slideArgs, i, firstSlideOriginal, firstSlideRecreated })
+        .then(r => ({ ok: true, i, r }))
+        .catch(err => {
+          console.warn(`[post-clone] carousel slide ${i + 1}/${post.imageUrls.length} failed: ${err.message} — skipping`);
+          return { ok: false, i };
+        })
+    );
+
+    const settled = await Promise.all(slidePromises);
+    // Insert in order so carousel slide order is preserved
+    settled.sort((a, b) => a.i - b.i);
+    for (const s of settled) {
+      if (s.ok) {
+        originalImages.push(s.r.original);
+        recreatedImages.push(s.r.recreated);
+        if (s.r.galleryId) galleryIds.push(s.r.galleryId);
+      }
     }
   }
 
@@ -804,6 +1061,7 @@ async function processPostClone({
     sourceUrl: post.sourceUrl || null,
     originalImages,
     recreatedImages,
+    galleryIds,
   };
 }
 
@@ -879,19 +1137,42 @@ function normalizePostsFromItems(items) {
     console.log(`[post-clone] item[${i}] arrays: images=${hasImages || 0}, carouselMedia=${hasCarouselMedia || 0}, children=${hasChildren || 0}, sideCar=${hasSideCar || 0}, edgeSidecar=${hasEdgeSidecar}`);
   }
 
-  const restricted = (items || []).find((item) => {
-    const err = asText(item?.error).toLowerCase();
-    if (err === 'restricted_page' || err === 'restricted' || err.includes('restricted')) return true;
+  // Check for error items returned by Apify (restricted pages, login walls, etc.)
+  const errorItem = (items || []).find((item) => {
     if (item?.restricted === true || item?.isRestricted === true) return true;
-    return false;
+    const err = asText(item?.error).toLowerCase();
+    if (!err) return false;
+    return true;
   });
-  if (restricted) {
-    const url = asText(restricted?.url || restricted?.inputUrl || '');
-    throw new AppError(
-      `Post is restricted — Apify could only get partial data${url ? ` (${url})` : ''}. Your IG session may be expired, or this post requires age-verified access.`,
-      422,
-      'INSTAGRAM_RESTRICTED'
-    );
+  if (errorItem) {
+    const err = asText(errorItem?.error).toLowerCase();
+    const desc = asText(errorItem?.errorDescription || errorItem?.error || '');
+    const url = asText(errorItem?.url || errorItem?.inputUrl || '');
+    const isRestricted = err.includes('restricted') || errorItem?.restricted === true || errorItem?.isRestricted === true;
+
+    console.warn(`[post-clone] Apify returned error item: error="${err}", desc="${desc}", url="${url}"`);
+    console.warn(`[post-clone] error item full keys: ${Object.keys(errorItem).join(', ')}`);
+
+    if (isRestricted) {
+      const hasSession = !!buildLoginCookies();
+      throw new AppError(
+        hasSession
+          ? `Post is restricted${url ? ` (${url})` : ''}. Session cookies were sent but the post-scraper returned only a thumbnail. Will retry via profile scrape.`
+          : `Post is restricted${url ? ` (${url})` : ''}. Add your Instagram sessionid in API Keys to access age-restricted or sensitive content.`,
+        422,
+        'INSTAGRAM_RESTRICTED'
+      );
+    } else {
+      // For non-restricted errors, only throw if there's no extractable image
+      const hasImage = extractImageUrlFromMedia(errorItem);
+      if (!hasImage) {
+        throw new AppError(
+          `Instagram scraper error: ${desc || err || 'unknown'}${url ? ` (${url})` : ''}. Try a different URL or check your IG session cookies.`,
+          422,
+          'INSTAGRAM_SCRAPER_ERROR'
+        );
+      }
+    }
   }
 
   // Group items by shortcode to merge carousel slides returned as separate items
@@ -910,7 +1191,7 @@ function normalizePostsFromItems(items) {
 }
 
 async function handleClone({ url, characterId, mode, postLimit = 1, apifyApiKey, profileMode = false }) {
-  const deadline = Date.now() + ROUTE_TIMEOUT_MS;
+  const deadline = Date.now() + (profileMode ? PROFILE_ROUTE_TIMEOUT_MS : ROUTE_TIMEOUT_MS);
   const cleanUrl = asText(url);
   if (!cleanUrl || !isHttpUrl(cleanUrl)) {
     throw new AppError('A valid Instagram URL is required', 400, 'VALIDATION_ERROR');
@@ -937,12 +1218,90 @@ async function handleClone({ url, characterId, mode, postLimit = 1, apifyApiKey,
 
     // Use limit 10 for single posts — Instagram carousels can have up to 10 slides,
     // and some actors return each slide as a separate dataset item.
-    const items = await runPostActor({
+    let items = await runPostActor({
       url: cleanUrl,
       limit: profileMode ? postLimit : 10,
       apifyToken: apifyApiKey,
     });
-    const posts = normalizePostsFromItems(items);
+
+    let posts;
+    try {
+      posts = normalizePostsFromItems(items);
+    } catch (normErr) {
+      // For restricted posts with a session, fall back to scraping via profile URL.
+      // The profile-scraper properly uses session cookies and returns full carousel data.
+      if (normErr.code === 'INSTAGRAM_RESTRICTED' && buildLoginCookies()) {
+        console.log(`[post-clone] restricted — attempting profile-based fallback`);
+        const ownerUsername = await resolveUsernameFromPostUrl(cleanUrl, items);
+        if (ownerUsername) {
+          // Extract shortcode from the post URL to find the matching post
+          const parsedUrl = new URL(cleanUrl);
+          const segs = parsedUrl.pathname.split('/').filter(Boolean);
+          const targetShortcode = ['p', 'reel', 'tv'].includes(segs[0]?.toLowerCase()) ? segs[1] || '' : '';
+
+          const profileUrl = `https://www.instagram.com/${ownerUsername}/`;
+          console.log(`[post-clone] fallback: scraping profile ${profileUrl} (looking for shortcode=${targetShortcode})`);
+          const profileItems = await runPostActor({
+            url: profileUrl,
+            limit: 30,
+            apifyToken: apifyApiKey,
+          });
+
+          // Find matching post by shortcode or URL
+          if (targetShortcode && profileItems.length > 0) {
+            // Match by shortcode field
+            let matching = profileItems.filter(it => getItemShortcode(it) === targetShortcode);
+            // Also match by URL containing the shortcode
+            if (matching.length === 0) {
+              matching = profileItems.filter(it => {
+                const itemUrl = asText(it?.url || it?.inputUrl || it?.shortCodeUrl || '');
+                return itemUrl.includes(targetShortcode);
+              });
+            }
+            if (matching.length > 0) {
+              console.log(`[post-clone] fallback: found ${matching.length} item(s) matching shortcode=${targetShortcode}`);
+              items = matching;
+            } else {
+              // Log available shortcodes for debugging
+              const available = profileItems.map(it => getItemShortcode(it)).filter(Boolean).join(', ');
+              console.warn(`[post-clone] fallback: shortcode ${targetShortcode} not found. Available: ${available}`);
+
+              // Retry once with higher limit in case the post is older
+              console.log(`[post-clone] fallback: retrying profile scrape with limit=50`);
+              const retryItems = await runPostActor({
+                url: profileUrl,
+                limit: 50,
+                apifyToken: apifyApiKey,
+              });
+              matching = retryItems.filter(it =>
+                getItemShortcode(it) === targetShortcode ||
+                asText(it?.url || it?.inputUrl || '').includes(targetShortcode)
+              );
+              if (matching.length > 0) {
+                console.log(`[post-clone] fallback retry: found ${matching.length} item(s) matching shortcode=${targetShortcode}`);
+                items = matching;
+              } else {
+                throw new AppError(
+                  `Could not find post ${targetShortcode} in @${ownerUsername}'s profile (${retryItems.length} posts scraped). The post may have been deleted or the scraper missed it — try again.`,
+                  422,
+                  'POST_NOT_FOUND_IN_PROFILE'
+                );
+              }
+            }
+          } else {
+            items = profileItems;
+          }
+
+          posts = normalizePostsFromItems(items);
+        } else {
+          console.warn(`[post-clone] fallback: could not resolve username from ${cleanUrl}`);
+          throw normErr;
+        }
+      } else {
+        throw normErr;
+      }
+    }
+
     const selected = profileMode ? posts.slice(0, Math.max(1, Math.min(20, Number(postLimit) || 1))) : posts.slice(0, 1);
 
     if (selected.length === 0) {
@@ -951,14 +1310,24 @@ async function handleClone({ url, characterId, mode, postLimit = 1, apifyApiKey,
 
     const results = [];
     const errors = [];
-    for (let idx = 0; idx < selected.length; idx++) {
-      const post = selected[idx];
+    const timeoutSec = profileMode ? PROFILE_ROUTE_TIMEOUT_MS / 1000 : ROUTE_TIMEOUT_MS / 1000;
+
+    // Profile mode: process 2 posts concurrently to cut wall-clock time roughly in half.
+    const CONCURRENCY = profileMode ? 2 : 1;
+
+    for (let batchStart = 0; batchStart < selected.length; batchStart += CONCURRENCY) {
       if (Date.now() > deadline) {
-        errors.push({ index: idx, sourceUrl: post.sourceUrl || '', error: `Timed out after ${ROUTE_TIMEOUT_MS / 1000}s` });
+        const remaining = selected.slice(batchStart);
+        for (let r = 0; r < remaining.length; r++) {
+          errors.push({ index: batchStart + r, sourceUrl: remaining[r].sourceUrl || '', error: `Timed out after ${timeoutSec}s` });
+        }
         break;
       }
-      try {
-        const processed = await processPostClone({
+
+      const batch = selected.slice(batchStart, batchStart + CONCURRENCY);
+      const batchPromises = batch.map((post, bi) => {
+        const idx = batchStart + bi;
+        return processPostClone({
           post,
           characterId,
           mode,
@@ -967,16 +1336,27 @@ async function handleClone({ url, characterId, mode, postLimit = 1, apifyApiKey,
           activeRefs,
           baseReferenceImages,
           tempFiles,
-        });
-        results.push(processed);
-      } catch (postErr) {
-        console.warn(`[post-clone] post ${idx + 1}/${selected.length} failed: ${postErr.message}`);
-        errors.push({ index: idx, sourceUrl: post.sourceUrl || '', error: postErr.message });
-        // For single-post mode, surface the error directly
-        if (!profileMode) throw postErr;
-        // For profile mode, continue with remaining posts
+        }).then(processed => ({ ok: true, idx, processed }))
+          .catch(postErr => {
+            console.warn(`[post-clone] post ${idx + 1}/${selected.length} failed: ${postErr.message}`);
+            return { ok: false, idx, sourceUrl: post.sourceUrl || '', error: postErr.message };
+          });
+      });
+
+      const settled = await Promise.all(batchPromises);
+      for (const r of settled) {
+        if (r.ok) {
+          results.push(r.processed);
+        } else {
+          errors.push({ index: r.idx, sourceUrl: r.sourceUrl, error: r.error });
+          // For single-post mode, surface the error directly
+          if (!profileMode) {
+            throw new AppError(r.error, 502, 'POST_CLONE_FAILED');
+          }
+        }
       }
     }
+
     if (results.length === 0 && errors.length > 0) {
       throw new AppError(
         `All ${errors.length} post(s) failed to clone. Last error: ${errors[errors.length - 1].error}`,
@@ -984,6 +1364,23 @@ async function handleClone({ url, characterId, mode, postLimit = 1, apifyApiKey,
         'ALL_POSTS_FAILED'
       );
     }
+    console.log(`[post-clone] profile scrape done: ${results.length} succeeded, ${errors.length} failed`);
+
+    // Save history entries (non-critical — never break clone on failure)
+    for (const processed of results) {
+      try {
+        postCloneHistoryStore.save({
+          sourceUrl: processed.sourceUrl || cleanUrl,
+          type: processed.type || 'single',
+          mode,
+          characterId,
+          galleryIds: processed.galleryIds || [],
+        });
+      } catch (histErr) {
+        console.warn('[post-clone] history save failed:', histErr.message);
+      }
+    }
+
     return results;
   } finally {
     for (const filePath of tempFiles) {
@@ -1040,12 +1437,92 @@ router.delete('/style-focus/:id', (req, res, next) => {
   catch (err) { next(err); }
 });
 
+// ---------------------
+// Clone History
+// ---------------------
+
+router.get('/history', (_req, res, next) => {
+  try { res.json({ success: true, data: postCloneHistoryStore.list() }); }
+  catch (err) { next(err); }
+});
+
+router.delete('/history/:id', (req, res, next) => {
+  try { res.json({ success: true, data: postCloneHistoryStore.remove(req.params.id) }); }
+  catch (err) { next(err); }
+});
+
+// ---------------------
+// Image Proxy (IG CDN → browser)
+// ---------------------
+
+router.get('/proxy-image', async (req, res, next) => {
+  try {
+    const url = asText(req.query.url);
+    if (!url || !isHttpUrl(url)) {
+      return res.status(400).json({ error: 'Missing or invalid url param' });
+    }
+    // Only proxy known IG CDN domains
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (!host.includes('fbcdn.net') && !host.includes('cdninstagram.com') && !host.includes('instagram.com')) {
+      return res.status(403).json({ error: 'Only Instagram CDN URLs can be proxied' });
+    }
+    const response = await axios.get(url, {
+      responseType: 'stream',
+      timeout: 30000,
+      httpsAgent: sharedHttpsAgent,
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'image/*,*/*;q=0.8',
+        'Referer': 'https://www.instagram.com/',
+      },
+      validateStatus: (s) => s >= 200 && s < 400,
+    });
+    const ct = (response.headers['content-type'] || '').toLowerCase();
+    // Reject non-image responses (HTML error pages, login redirects, video streams)
+    if (ct && !ct.startsWith('image/') && !ct.includes('octet-stream')) {
+      response.data.destroy();
+      return res.status(502).json({ error: `Upstream returned non-image: ${ct}` });
+    }
+    res.set('Content-Type', ct || 'image/jpeg');
+    res.set('Cache-Control', 'public, max-age=3600');
+    response.data.pipe(res);
+  } catch (err) {
+    next(new AppError(`Image proxy failed: ${err.message}`, 502, 'PROXY_ERROR'));
+  }
+});
+
+// ---------------------
+// Cached Thumbnails (downloaded during /fetch, served locally)
+// ---------------------
+
+router.get('/thumb/:filename', (req, res, next) => {
+  try {
+    const filename = path.basename(req.params.filename); // sanitize
+    if (!/^[a-f0-9-]+\.jpg$/i.test(filename)) {
+      return res.status(400).json({ error: 'Invalid thumbnail filename' });
+    }
+    const filePath = path.join(THUMB_DIR, filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Thumbnail not found or expired' });
+    }
+    res.set('Content-Type', 'image/jpeg');
+    res.set('Cache-Control', 'public, max-age=1800');
+    fs.createReadStream(filePath).pipe(res);
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
 module.exports.handleClone = handleClone;
 module.exports.runPostActor = runPostActor;
 module.exports.normalizePostsFromItems = normalizePostsFromItems;
+module.exports.processPostClone = processPostClone;
 module.exports.downloadImageToTemp = downloadImageToTemp;
 module.exports.parseStructuredAnalysis = parseStructuredAnalysis;
 module.exports.buildStructuredAnalysisPrompt = buildStructuredAnalysisPrompt;
 module.exports.mimeFromExt = mimeFromExt;
 module.exports.ensureTempDir = ensureTempDir;
+module.exports.cacheThumbnail = cacheThumbnail;
+module.exports.ensureThumbDir = ensureThumbDir;

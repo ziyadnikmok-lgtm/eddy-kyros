@@ -1,7 +1,9 @@
 // server/services/geminiService.js
 
 const { GoogleGenAI, Modality } = require('@google/genai');
+const crypto = require('node:crypto');
 const { AppError } = require('../middleware/errorHandler');
+const { dedupRequest } = require('../utils/dedup');
 const cfg = require('../config');
 
 // Hard-locked models — Nano Banana Pro for images, Flash for text/analysis
@@ -71,6 +73,12 @@ class GeminiService {
     throw new AppError('Prompt must be 10,000 characters or fewer', 400, 'VALIDATION_ERROR');
   }
 
+  // Deduplicate concurrent identical requests (e.g. double-click)
+  const dedupKey = `img:${crypto.createHash('md5').update(prompt.trim() + (options.aspectRatio || '') + (options.imageSize || '')).digest('hex')}`;
+  return dedupRequest(dedupKey, () => this._generateImageInner(apiKey, prompt, options));
+  }
+
+  async _generateImageInner(apiKey, prompt, options) {
   try {
     const genAI = getClient(apiKey);
     const config = {

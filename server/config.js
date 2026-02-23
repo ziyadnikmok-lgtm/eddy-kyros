@@ -61,4 +61,7 @@ module.exports = {
   // ── Gemini cache ────────────────────────────────────────────────────
   GEMINI_CLIENT_CACHE_SIZE: 5,
   AVAILABILITY_CACHE_MAX_SIZE: 100,
+
+  // ── Compression ───────────────────────────────────────────────────
+  COMPRESSION_MIN_BYTES: 1024,  // gzip responses larger than 1 KB
 };

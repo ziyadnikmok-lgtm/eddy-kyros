@@ -5,6 +5,7 @@ const { ApifyClient } = require('apify-client');
 const apiKeyManager = require('../services/apiKeyManager');
 const geminiService = require('../services/geminiService');
 const { AppError } = require('../middleware/errorHandler');
+const { sharedHttpsAgent } = require('../utils/httpAgent');
 
 const router = express.Router();
 const HEALTH_TIMEOUT_MS = Number.parseInt(process.env.KEY_HEALTH_TIMEOUT_MS, 10) || 12000;
@@ -271,6 +272,7 @@ async function checkInstagramSessionHealth() {
           'Accept': 'text/html',
         },
         timeout: 8000,
+        httpsAgent: sharedHttpsAgent,
         maxRedirects: 0,
         validateStatus: () => true,
       }),

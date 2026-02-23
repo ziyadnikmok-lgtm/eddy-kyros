@@ -12,7 +12,10 @@ const CAT_LABEL = c => c.charAt(0).toUpperCase() + c.slice(1);
 const humanTag = t => t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
 export default function StyleLibraryPage() {
-  const { notify } = useApp();
+  const { notify, consumePageParams } = useApp();
+
+  // Accept navigation params (e.g. sourceFilter from Profile Analyzer → View Atoms)
+  const initParams = useMemo(() => consumePageParams(), []);
 
   const [atoms, setAtoms] = useState([]);
   const [total, setTotal] = useState(0);
@@ -24,7 +27,8 @@ export default function StyleLibraryPage() {
   const [activeCategory, setActiveCategory] = useState('all');
   const [searchQ, setSearchQ] = useState('');
   const [favOnly, setFavOnly] = useState(false);
-  const [sourceFilter, setSourceFilter] = useState('');
+  const [sourceFilter, setSourceFilter] = useState(initParams.sourceFilter || '');
+  const [usernameFilter, setUsernameFilter] = useState(initParams.usernameFilter || '');
 
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [composedPrompt, setComposedPrompt] = useState('');
@@ -47,13 +51,14 @@ export default function StyleLibraryPage() {
       if (searchQ.trim()) params.q = searchQ.trim();
       if (favOnly) params.favorite = 'true';
       if (sourceFilter) params.source = sourceFilter;
+      if (usernameFilter) params.username = usernameFilter;
       const result = await api.list(params);
       setAtoms(result.atoms || []);
       setTotal(result.total || 0);
       setPages(result.pages || 1);
     } catch (err) { notify(err.message, 'error'); }
     finally { setLoading(false); }
-  }, [page, activeCategory, searchQ, favOnly, sourceFilter, notify]);
+  }, [page, activeCategory, searchQ, favOnly, sourceFilter, usernameFilter, notify]);
 
   useEffect(() => { fetchAtoms(); }, [fetchAtoms]);
   useEffect(() => { api.stats().then(setStats).catch(() => {}); }, [atoms.length]);
@@ -219,6 +224,17 @@ export default function StyleLibraryPage() {
             >
               {favOnly ? '\u2605 Favs' : '\u2606 Favs'}
             </button>
+            {usernameFilter && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                @{usernameFilter}
+                <button
+                  onClick={() => { setUsernameFilter(''); setPage(1); }}
+                  className="hover:text-blue-200 cursor-pointer"
+                >
+                  {'\u2715'}
+                </button>
+              </span>
+            )}
           </div>
 
           {/* Atom Grid */}

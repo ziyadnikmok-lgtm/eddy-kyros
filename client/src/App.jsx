@@ -127,8 +127,7 @@ function StatusDot({ active, label, sublabel, offLabel, onClick }) {
 }
 
 export default function App() {
-  const { activeKey, setActiveKey } = useApp();
-  const [page, setPage] = useState('generate');
+  const { activeKey, setActiveKey, page, navigateTo } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [apifyConnected, setApifyConnected] = useState(false);
 
@@ -177,7 +176,7 @@ export default function App() {
               </div>
               <div className="space-y-0.5">
                 {section.items.map((item) => (
-                  <button key={item.id} onClick={() => { setPage(item.id); setSidebarOpen(false); }}
+                  <button key={item.id} onClick={() => { navigateTo(item.id); setSidebarOpen(false); }}
                     className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150 cursor-pointer group ${
                       page === item.id
                         ? 'bg-blue-600/12 text-blue-400 shadow-[inset_2px_0_0_0_#3b82f6]'
@@ -210,8 +209,8 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            <StatusDot active={!!activeKey} label={activeKey?.name} sublabel={activeKey?.maskedKey} offLabel="No API key" onClick={() => setPage('keys')} />
-            <StatusDot active={apifyConnected} label="Apify connected" offLabel="Apify not set" onClick={() => setPage('keys')} />
+            <StatusDot active={!!activeKey} label={activeKey?.name} sublabel={activeKey?.maskedKey} offLabel="No API key" onClick={() => navigateTo('keys')} />
+            <StatusDot active={apifyConnected} label="Apify connected" offLabel="Apify not set" onClick={() => navigateTo('keys')} />
           </div>
         </header>
 

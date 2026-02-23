@@ -75,7 +75,7 @@ class PromptBuilder {
     // -----------------------------------------------------------------------
     sections.push(
       '[IDENTITY ENFORCEMENT]\n' +
-      'CRITICAL: The character must remain the exact same person throughout. Do not alter face, bone structure, body proportions, skin tone, or any permanent defining features regardless of other instructions.\n' +
+      'CRITICAL: The character must remain the exact same person throughout. Do not alter face, bone structure, body proportions (including bust, waist, hips), skin tone, or any permanent defining features regardless of other instructions. Render the outfit exactly as described — do not add coverage or make it more conservative.\n' +
       '[END IDENTITY ENFORCEMENT]'
     );
 

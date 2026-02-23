@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { postClone as postCloneApi, styleFocus as styleFocusApi, availability as availabilityApi, keys as keysApi } from '../services/api';
+import { useEffect, useMemo, useState, useCallback } from 'react';
+import { postClone as postCloneApi, postCloneHistory as historyApi, styleFocus as styleFocusApi, availability as availabilityApi, keys as keysApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
 import { useStepTimer } from '../hooks/useStepTimer';
@@ -27,19 +27,34 @@ export default function PostClonePage() {
   const [inputMode, setInputMode] = useState('single'); // single | profile
   const [postUrl, setPostUrl] = useState('');
   const [profileUrl, setProfileUrl] = useState('');
-  const [postLimit, setPostLimit] = useState(5);
+  const [postLimit, setPostLimit] = useState(9);
   const [charId, setCharId] = useState('');
   const [mode, setMode] = useState('exact'); // exact | creative
   const [result, setResult] = useState([]);
   const [availability, setAvailability] = useState(null);
-  const [savingFocus, setSavingFocus] = useState(null); // index of post being saved
+  const [savingFocus, setSavingFocus] = useState(null);
   const [focusName, setFocusName] = useState('');
+
+  // Profile scrape: two-step state
+  const [fetchedPosts, setFetchedPosts] = useState([]); // previews from fetch
+  const [selected, setSelected] = useState(new Set());   // selected indices
+  const [fetching, setFetching] = useState(false);
+
+  // Clone history
+  const [history, setHistory] = useState([]);
+  const loadHistory = async () => {
+    try {
+      const data = await historyApi.list();
+      setHistory(Array.isArray(data) ? data : []);
+    } catch { /* silent */ }
+  };
+  useEffect(() => { loadHistory(); }, []);
 
   // IG session quick-edit + live status
   const [showSession, setShowSession] = useState(false);
   const [sessionInput, setSessionInput] = useState('');
   const [sessionInfo, setSessionInfo] = useState(null);
-  const [sessionStatus, setSessionStatus] = useState(null); // from health-check
+  const [sessionStatus, setSessionStatus] = useState(null);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [igLoginInfo, setIgLoginInfo] = useState(null);
   const [autoRefreshing, setAutoRefreshing] = useState(false);
@@ -72,7 +87,6 @@ export default function PostClonePage() {
   const handleSaveStyleFocus = async (postIdx) => {
     const post = result[postIdx];
     if (!post) return;
-    // Use the first recreated image's structured data
     const firstRec = (post.recreatedImages || [])[0];
     const structured = firstRec?.structured;
     if (!structured) {
@@ -105,59 +119,131 @@ export default function PostClonePage() {
     }
   };
 
-  const LIVE_STEPS = useMemo(() => inputMode === 'profile'
-    ? [
-      'Fetching posts from profile via Apify',
-      'Downloading images and filtering carousels',
-      'Analyzing post visuals with Gemini',
-      'Recreating with selected character',
-    ]
-    : [
-      'Fetching post from Apify',
-      'Downloading post images',
-      'Analyzing visual structure with Gemini',
-      'Recreating with selected character',
-    ],
-  [inputMode]);
+  // Step timer for single mode and recreate phase
+  const LIVE_STEPS = useMemo(() => [
+    'Fetching post from Apify',
+    'Downloading post images',
+    'Analyzing visual structure with Gemini',
+    'Recreating with selected character',
+  ], []);
+  const RECREATE_STEPS = useMemo(() => [
+    'Downloading original images',
+    'Analyzing post visuals with Gemini',
+    'Recreating with selected character',
+  ], []);
+  const activeSteps = inputMode === 'profile' && fetchedPosts.length > 0 ? RECREATE_STEPS : LIVE_STEPS;
   const POST_THRESHOLDS = useMemo(() =>
-    inputMode === 'profile' ? [45, 60, 90] : [35, 45, 65],
+    inputMode === 'profile' ? [30, 60, 90] : [35, 45, 65],
   [inputMode]);
   const { elapsedSec, stepIndex: liveStepIndex } = useStepTimer(loading, POST_THRESHOLDS);
 
-  const canRun = useMemo(() => {
-    if (!charId) return false;
-    if (inputMode === 'single') return !!postUrl.trim();
-    return !!profileUrl.trim() && postLimit >= 1 && postLimit <= 20;
-  }, [charId, inputMode, postUrl, profileUrl, postLimit]);
+  // Single mode validation
+  const canRunSingle = useMemo(() => {
+    return !!charId && !!postUrl.trim();
+  }, [charId, postUrl]);
 
-  const handleRun = () => run(async () => {
-    if (!canRun) return;
-    const checkUrl = inputMode === 'single' ? postUrl.trim() : profileUrl.trim();
-    const check = await availabilityApi.check(checkUrl);
-    setAvailability(check);
-    if (!check?.allowed) {
-      notify(check?.label || 'Profile/post not available for scraping', 'error');
-      return;
-    }
+  // Profile fetch validation
+  const canFetch = useMemo(() => {
+    return !!profileUrl.trim() && postLimit >= 1;
+  }, [profileUrl, postLimit]);
 
-    let data;
-    if (inputMode === 'single') {
-      data = await postCloneApi.clonePost({
-        postUrl: postUrl.trim(),
-        characterId: charId,
-        mode,
-      });
-    } else {
-      data = await postCloneApi.cloneProfile({
+  // Profile recreate validation
+  const canRecreate = useMemo(() => {
+    return !!charId && selected.size > 0;
+  }, [charId, selected]);
+
+  // Toggle selection
+  const toggleSelect = useCallback((idx) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  }, []);
+
+  const selectAll = useCallback(() => {
+    setSelected(new Set(fetchedPosts.map((_, i) => i)));
+  }, [fetchedPosts]);
+
+  const deselectAll = useCallback(() => {
+    setSelected(new Set());
+  }, []);
+
+  // Fetch profile posts (step 1)
+  const handleFetch = async () => {
+    setFetching(true);
+    setFetchedPosts([]);
+    setSelected(new Set());
+    setResult([]);
+    try {
+      const check = await availabilityApi.check(profileUrl.trim());
+      setAvailability(check);
+      if (!check?.allowed) {
+        notify(check?.label || 'Profile not available for scraping', 'error');
+        return;
+      }
+      const data = await postCloneApi.fetchProfile({
         profileUrl: profileUrl.trim(),
-        characterId: charId,
-        postLimit: Math.max(1, Math.min(20, Math.round(postLimit))),
-        mode,
+        postLimit: Math.max(1, Math.min(30, Math.round(postLimit))),
       });
+      const posts = Array.isArray(data) ? data : [];
+      setFetchedPosts(posts);
+      // Auto-select all
+      setSelected(new Set(posts.map((_, i) => i)));
+      if (posts.length === 0) {
+        notify('No posts found for this profile', 'error');
+      } else {
+        notify(`Found ${posts.length} post(s)`, 'success');
+      }
+    } catch (err) {
+      notify(err.message || 'Failed to fetch profile', 'error');
+    } finally {
+      setFetching(false);
     }
+  };
+
+  // Recreate selected posts (step 2)
+  const handleRecreate = () => run(async () => {
+    if (!canRecreate) return;
+    const postsToClone = fetchedPosts.filter((_, i) => selected.has(i));
+    const data = await postCloneApi.recreateSelected({
+      posts: postsToClone,
+      characterId: charId,
+      mode,
+    });
     setResult(Array.isArray(data) ? data : []);
     notify('Post Clone completed', 'success');
+    loadHistory();
   });
+
+  // Single post clone (unchanged)
+  const handleRunSingle = () => run(async () => {
+    if (!canRunSingle) return;
+    const check = await availabilityApi.check(postUrl.trim());
+    setAvailability(check);
+    if (!check?.allowed) {
+      notify(check?.label || 'Post not available for scraping', 'error');
+      return;
+    }
+    const data = await postCloneApi.clonePost({
+      postUrl: postUrl.trim(),
+      characterId: charId,
+      mode,
+    });
+    setResult(Array.isArray(data) ? data : []);
+    notify('Post Clone completed', 'success');
+    loadHistory();
+  });
+
+  const handleBack = () => {
+    setFetchedPosts([]);
+    setSelected(new Set());
+    setResult([]);
+  };
+
+  // --- Profile mode: selection grid in right panel ---
+  const isProfileSelecting = inputMode === 'profile' && fetchedPosts.length > 0 && result.length === 0 && !loading;
 
   return (
     <div className="space-y-6 animate-in">
@@ -172,19 +258,44 @@ export default function PostClonePage() {
             <div className="space-y-2">
               <span className="text-xs text-zinc-400 font-medium block">Input Mode</span>
               <div className="grid grid-cols-2 gap-2">
-                <Btn type="button" variant={inputMode === 'single' ? 'primary' : 'secondary'} onClick={() => setInputMode('single')}>Single/Carousel</Btn>
-                <Btn type="button" variant={inputMode === 'profile' ? 'primary' : 'secondary'} onClick={() => setInputMode('profile')}>Profile Scrape</Btn>
+                <Btn type="button" variant={inputMode === 'single' ? 'primary' : 'secondary'} onClick={() => { setInputMode('single'); handleBack(); }}>Single/Carousel</Btn>
+                <Btn type="button" variant={inputMode === 'profile' ? 'primary' : 'secondary'} onClick={() => { setInputMode('profile'); setResult([]); }}>Profile Scrape</Btn>
               </div>
             </div>
 
             {inputMode === 'single' ? (
-              <Input
-                label="Instagram Post URL"
-                placeholder="https://www.instagram.com/p/..."
-                value={postUrl}
-                onChange={(e) => setPostUrl(e.target.value)}
-              />
-            ) : (
+              <>
+                <Input
+                  label="Instagram Post URL"
+                  placeholder="https://www.instagram.com/p/..."
+                  value={postUrl}
+                  onChange={(e) => setPostUrl(e.target.value)}
+                />
+                <div>
+                  <span className="text-xs text-zinc-400 font-medium block mb-1.5">Character</span>
+                  <select
+                    value={charId}
+                    onChange={(e) => setCharId(e.target.value)}
+                    className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
+                  >
+                    <option value="">Select character...</option>
+                    {chars.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <Toggle
+                  checked={mode === 'exact'}
+                  onChange={(next) => setMode(next ? 'exact' : 'creative')}
+                  label={mode === 'exact' ? 'Exact Scene Recreate' : 'Creative Reinterpretation'}
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Badge color="blue">Locked: 2K</Badge>
+                  <Badge color="blue">Locked: 4:5</Badge>
+                </div>
+                <Btn onClick={handleRunSingle} disabled={loading || !canRunSingle} className="w-full">
+                  {loading ? <><Spinner size={16} /> Cloning... {elapsedSec}s</> : 'Fetch + Recreate'}
+                </Btn>
+              </>
+            ) : fetchedPosts.length === 0 ? (
               <>
                 <Input
                   label="Instagram Profile URL"
@@ -193,33 +304,50 @@ export default function PostClonePage() {
                   onChange={(e) => setProfileUrl(e.target.value)}
                 />
                 <Slider
-                  label="Number of Posts"
+                  label="Posts to Fetch"
                   value={postLimit}
                   min={1}
-                  max={20}
+                  max={30}
                   step={1}
                   onChange={(v) => setPostLimit(Math.round(v))}
                 />
+                <Btn onClick={handleFetch} disabled={fetching || !canFetch} className="w-full">
+                  {fetching ? <><Spinner size={16} /> Fetching...</> : 'Fetch Posts'}
+                </Btn>
+              </>
+            ) : (
+              <>
+                <div className="text-xs text-zinc-400">
+                  <span className="font-medium text-zinc-300">{fetchedPosts.length}</span> posts fetched from profile
+                </div>
+                <div>
+                  <span className="text-xs text-zinc-400 font-medium block mb-1.5">Character</span>
+                  <select
+                    value={charId}
+                    onChange={(e) => setCharId(e.target.value)}
+                    className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
+                  >
+                    <option value="">Select character...</option>
+                    {chars.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <Toggle
+                  checked={mode === 'exact'}
+                  onChange={(next) => setMode(next ? 'exact' : 'creative')}
+                  label={mode === 'exact' ? 'Exact Scene Recreate' : 'Creative Reinterpretation'}
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Badge color="blue">Locked: 2K</Badge>
+                  <Badge color="blue">Locked: 4:5</Badge>
+                </div>
+                <Btn onClick={handleRecreate} disabled={loading || !canRecreate} className="w-full">
+                  {loading ? <><Spinner size={16} /> Recreating... {elapsedSec}s</> : `Recreate Selected (${selected.size})`}
+                </Btn>
+                <Btn variant="secondary" onClick={handleBack} disabled={loading} className="w-full">
+                  Back
+                </Btn>
               </>
             )}
-
-            <div>
-              <span className="text-xs text-zinc-400 font-medium block mb-1.5">Character</span>
-              <select
-                value={charId}
-                onChange={(e) => setCharId(e.target.value)}
-                className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
-              >
-                <option value="">Select character...</option>
-                {chars.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-
-            <Toggle
-              checked={mode === 'exact'}
-              onChange={(next) => setMode(next ? 'exact' : 'creative')}
-              label={mode === 'exact' ? 'Exact Scene Recreate' : 'Creative Reinterpretation'}
-            />
 
             {availability && (
               <div className={`rounded-lg border px-3 py-2 text-xs ${
@@ -232,15 +360,6 @@ export default function PostClonePage() {
                 {availability.label}
               </div>
             )}
-
-            <div className="flex flex-wrap gap-2">
-              <Badge color="blue">Locked: 2K</Badge>
-              <Badge color="blue">Locked: 4:5</Badge>
-            </div>
-
-            <Btn onClick={handleRun} disabled={loading || !canRun} className="w-full">
-              {loading ? <><Spinner size={16} /> Fetching... {elapsedSec}s</> : 'Fetch + Recreate'}
-            </Btn>
           </Card>
 
           {/* IG Session quick-edit with live status */}
@@ -343,16 +462,103 @@ export default function PostClonePage() {
         </div>
 
         <div className="lg:col-span-2 space-y-4">
-          {!loading && (!Array.isArray(result) || result.length === 0) && (
-            <Card className="min-h-[360px] flex items-center justify-center">
-              <Empty icon="Cl" title="No clone results yet" subtitle="Run a post clone and results will appear here." />
+          {/* Profile fetch: selection grid */}
+          {isProfileSelecting && (
+            <Card className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-zinc-300">Select Posts to Recreate</h3>
+                <div className="flex items-center gap-2">
+                  <button type="button" onClick={selectAll} className="text-[11px] text-blue-400 hover:text-blue-300 transition-colors cursor-pointer">Select All</button>
+                  <span className="text-zinc-700">|</span>
+                  <button type="button" onClick={deselectAll} className="text-[11px] text-zinc-500 hover:text-zinc-400 transition-colors cursor-pointer">Deselect All</button>
+                  <Badge color="zinc">{selected.size}/{fetchedPosts.length}</Badge>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                {fetchedPosts.map((post, idx) => {
+                  const isSelected = selected.has(idx);
+                  // Prefer server-cached thumbnail (downloaded while CDN was fresh)
+                  const cachedThumb = postCloneApi.thumbUrl(post.thumbnail);
+                  const hasSrc = !!(cachedThumb || (post.imageUrls || [])[0]);
+                  return (
+                    <button
+                      key={`${post.sourceUrl}-${idx}`}
+                      type="button"
+                      onClick={() => toggleSelect(idx)}
+                      className={cn(
+                        'relative rounded-lg overflow-hidden border-2 transition-all cursor-pointer group',
+                        isSelected
+                          ? 'border-blue-500 ring-1 ring-blue-500/30'
+                          : 'border-zinc-700/60 hover:border-zinc-600',
+                      )}
+                    >
+                      {hasSrc ? (
+                        <img
+                          src={cachedThumb || postCloneApi.proxyImageUrl((post.imageUrls || [])[0])}
+                          alt=""
+                          className="w-full aspect-[4/5] object-cover bg-zinc-800"
+                          loading="lazy"
+                          onError={(e) => {
+                            // Hide broken image, show placeholder
+                            e.target.style.display = 'none';
+                            e.target.nextElementSibling?.classList?.remove('hidden');
+                          }}
+                        />
+                      ) : null}
+                      <div className={cn(
+                        'w-full aspect-[4/5] bg-zinc-800 flex items-center justify-center text-xs text-zinc-500',
+                        hasSrc ? 'hidden' : '',
+                      )}>
+                        No preview
+                      </div>
+                      {/* Checkbox overlay */}
+                      <div className={cn(
+                        'absolute top-1.5 right-1.5 w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold transition-colors',
+                        isSelected
+                          ? 'bg-blue-500 text-white'
+                          : 'bg-zinc-900/70 border border-zinc-600 text-transparent group-hover:border-zinc-500',
+                      )}>
+                        {isSelected && '✓'}
+                      </div>
+                      {/* Info overlay */}
+                      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1.5 pt-4">
+                        <div className="flex items-center gap-1">
+                          <Badge color="zinc" className="!text-[9px] !px-1 !py-0">{post.type}</Badge>
+                          {post.slideCount > 1 && (
+                            <span className="text-[9px] text-zinc-400">{post.slideCount} slides</span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </Card>
           )}
 
-          {loading && (
-            <StepProgress steps={LIVE_STEPS} currentIndex={liveStepIndex} elapsedSec={elapsedSec} className="min-h-[360px]" />
+          {/* Fetching spinner */}
+          {fetching && (
+            <Card className="min-h-[360px] flex items-center justify-center">
+              <div className="flex flex-col items-center gap-3">
+                <Spinner size={24} />
+                <p className="text-sm text-zinc-400">Fetching posts from profile...</p>
+              </div>
+            </Card>
           )}
 
+          {/* Empty state */}
+          {!loading && !fetching && !isProfileSelecting && (!Array.isArray(result) || result.length === 0) && (
+            <Card className="min-h-[360px] flex items-center justify-center">
+              <Empty icon="Cl" title="No clone results yet" subtitle={inputMode === 'profile' ? 'Fetch posts from a profile, select which ones to recreate.' : 'Run a post clone and results will appear here.'} />
+            </Card>
+          )}
+
+          {/* Loading (recreate phase) */}
+          {loading && (
+            <StepProgress steps={activeSteps} currentIndex={liveStepIndex} elapsedSec={elapsedSec} className="min-h-[360px]" />
+          )}
+
+          {/* Results */}
           {!loading && Array.isArray(result) && result.length > 0 && result.map((post, idx) => {
             const firstStructured = (post.recreatedImages || [])[0]?.structured;
             const hasDna = firstStructured && Object.values(DNA_LABELS).some((_, i) => firstStructured[Object.keys(DNA_LABELS)[i]]);
@@ -376,7 +582,6 @@ export default function PostClonePage() {
                 </div>
                 {post.sourceUrl && <p className="text-[11px] text-zinc-500 truncate">{post.sourceUrl}</p>}
 
-                {/* Save Style Focus inline form */}
                 {savingFocus === idx && (
                   <div className="flex items-center gap-2 bg-zinc-800/50 rounded-lg p-2">
                     <input
@@ -425,7 +630,6 @@ export default function PostClonePage() {
                   </div>
                 </div>
 
-                {/* Visual DNA Breakdown */}
                 {hasDna && (
                   <Section title="Visual DNA" badge={<Badge color="purple">Extracted</Badge>}>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -450,6 +654,74 @@ export default function PostClonePage() {
           })}
         </div>
       </div>
+
+      {/* Clone History */}
+      {history.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Clone History</h2>
+            <Badge color="zinc">{history.length}</Badge>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {history.map((entry) => (
+              <Card key={entry.id} className="!p-3 space-y-2">
+                <div className="flex gap-1.5 overflow-x-auto pb-1">
+                  {(entry.galleryIds || []).slice(0, 4).map((gid) => (
+                    <img
+                      key={gid}
+                      src={historyApi.imageUrl(gid)}
+                      alt=""
+                      className="w-14 h-[70px] object-cover rounded-md bg-zinc-800 flex-shrink-0 cursor-pointer"
+                      onClick={() => openLightbox((entry.galleryIds || []).map((id) => historyApi.imageUrl(id)), (entry.galleryIds || []).indexOf(gid))}
+                    />
+                  ))}
+                  {(entry.galleryIds || []).length > 4 && (
+                    <div className="w-14 h-[70px] rounded-md bg-zinc-800/60 border border-zinc-700/40 flex items-center justify-center flex-shrink-0">
+                      <span className="text-[10px] text-zinc-500">+{entry.galleryIds.length - 4}</span>
+                    </div>
+                  )}
+                </div>
+                {entry.sourceUrl && (
+                  <a
+                    href={entry.sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-[11px] text-blue-400 hover:text-blue-300 truncate transition-colors"
+                  >
+                    {entry.sourceUrl}
+                  </a>
+                )}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Badge color="zinc">{entry.type}</Badge>
+                    {entry.slideCount > 1 && (
+                      <span className="text-[10px] text-zinc-500">{entry.slideCount} slides</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-zinc-600">{new Date(entry.createdAt).toLocaleDateString()}</span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await historyApi.remove(entry.id);
+                          setHistory((prev) => prev.filter((h) => h.id !== entry.id));
+                        } catch (err) {
+                          notify(err.message || 'Failed to remove', 'error');
+                        }
+                      }}
+                      className="text-[10px] text-zinc-600 hover:text-red-400 transition-colors cursor-pointer"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
       <LightboxComponent />
     </div>
   );
