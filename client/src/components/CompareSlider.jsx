@@ -50,7 +50,7 @@ export default function CompareSlider({
       ref={containerRef}
       className={cn(
         'relative select-none overflow-hidden rounded-xl border border-zinc-700/60',
-        dragging ? 'cursor-ew-resize' : 'cursor-ew-resize',
+        dragging ? 'cursor-grabbing' : 'cursor-ew-resize',
         className,
       )}
       onPointerDown={onPointerDown}

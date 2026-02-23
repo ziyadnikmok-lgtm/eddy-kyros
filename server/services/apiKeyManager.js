@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
+const { atomicWriteJSON } = require('../utils/helpers');
 const log = require('../utils/logger');
 
 const ALGORITHM = 'aes-256-gcm';
@@ -403,8 +404,7 @@ class ApiKeyManager {
   }
 
   _saveStore() {
-    const serialized = JSON.stringify(this._store, null, 2);
-    fs.writeFileSync(DATA_FILE, serialized, 'utf8');
+    atomicWriteJSON(DATA_FILE, this._store);
   }
 }
 

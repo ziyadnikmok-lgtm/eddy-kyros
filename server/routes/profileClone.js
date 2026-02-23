@@ -130,21 +130,8 @@ router.post('/recreate', async (req, res, next) => {
     const activeRefs = referenceManager.getActiveReferences(characterId, null);
     const apiKey = apiKeyManager.getActiveKey();
 
-    // Build reference images from character (same as handleClone)
-    const baseReferenceImages = [];
-    const charDir = path.join(process.cwd(), 'uploads', 'references', characterId);
-    for (const ref of activeRefs) {
-      const refPath = path.join(charDir, ref.filename);
-      try {
-        if (fs.existsSync(refPath)) {
-          const buffer = fs.readFileSync(refPath);
-          baseReferenceImages.push({
-            mimeType: postCloneRoute.mimeFromExt(refPath),
-            base64Data: buffer.toString('base64'),
-          });
-        }
-      } catch { /* skip broken ref */ }
-    }
+    // Build reference images — includes primary image + active refs (same as single post clone)
+    const baseReferenceImages = postCloneRoute.buildCharacterReferenceImages(characterId, activeRefs);
 
     const deadline = Date.now() + RECREATE_TIMEOUT_MS;
     const tempFiles = [];

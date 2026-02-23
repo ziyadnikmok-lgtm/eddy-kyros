@@ -331,7 +331,7 @@ async function analyzeImageStructured(apiKey, imageBase64, mimeType, mode, sourc
         });
       }
     }
-  } catch { /* non-critical — don't break clone flow */ }
+  } catch (err) { console.warn('[post-clone] style library auto-feed failed:', err.message); }
 
   return { parsed, raw };
 }
@@ -416,7 +416,7 @@ async function analyzeCarouselDelta(apiKey, firstBase64, firstMimeType, currentB
         });
       }
     }
-  } catch { /* non-critical — don't break clone flow */ }
+  } catch (err) { console.warn('[post-clone] style library auto-feed failed:', err.message); }
 
   return { parsed, raw };
 }
@@ -1080,15 +1080,6 @@ function groupItemsByShortcode(items) {
   for (const item of items) {
     const sc = getItemShortcode(item);
     if (!sc) { noCode.push(item); continue; }
-    if (!byCode.has(sc)) { byCode.set(sc, []); continue; }
-    byCode.get(sc).push(item);
-  }
-
-  // First pass added first occurrence as the only entry — re-scan to build properly
-  byCode.clear();
-  for (const item of items) {
-    const sc = getItemShortcode(item);
-    if (!sc) continue;
     if (!byCode.has(sc)) byCode.set(sc, []);
     byCode.get(sc).push(item);
   }
@@ -1464,7 +1455,7 @@ router.get('/proxy-image', async (req, res, next) => {
     // Only proxy known IG CDN domains
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
-    if (!host.includes('fbcdn.net') && !host.includes('cdninstagram.com') && !host.includes('instagram.com')) {
+    if (!host.endsWith('fbcdn.net') && !host.endsWith('cdninstagram.com') && !host.endsWith('instagram.com')) {
       return res.status(403).json({ error: 'Only Instagram CDN URLs can be proxied' });
     }
     const response = await axios.get(url, {
@@ -1486,6 +1477,7 @@ router.get('/proxy-image', async (req, res, next) => {
     }
     res.set('Content-Type', ct || 'image/jpeg');
     res.set('Cache-Control', 'public, max-age=3600');
+    response.data.on('error', () => { if (!res.headersSent) res.status(502).end(); else res.end(); });
     response.data.pipe(res);
   } catch (err) {
     next(new AppError(`Image proxy failed: ${err.message}`, 502, 'PROXY_ERROR'));
@@ -1508,7 +1500,9 @@ router.get('/thumb/:filename', (req, res, next) => {
     }
     res.set('Content-Type', 'image/jpeg');
     res.set('Cache-Control', 'public, max-age=1800');
-    fs.createReadStream(filePath).pipe(res);
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', (err) => { if (!res.headersSent) next(err); else res.end(); });
+    stream.pipe(res);
   } catch (err) {
     next(err);
   }
@@ -1526,3 +1520,4 @@ module.exports.mimeFromExt = mimeFromExt;
 module.exports.ensureTempDir = ensureTempDir;
 module.exports.cacheThumbnail = cacheThumbnail;
 module.exports.ensureThumbDir = ensureThumbDir;
+module.exports.buildCharacterReferenceImages = buildCharacterReferenceImages;
