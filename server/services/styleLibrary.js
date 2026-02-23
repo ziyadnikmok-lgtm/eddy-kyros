@@ -5,8 +5,9 @@ const { AppError } = require('../middleware/errorHandler');
 const log = require('../utils/logger');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const DATA_FILE = path.join(__dirname, '..', 'data', 'styleLibrary.json');
-const PROFILES_FILE = path.join(__dirname, '..', 'data', 'analyzedProfiles.json');
+const { DATA_DIR } = require('../paths');
+const DATA_FILE = path.join(DATA_DIR, 'styleLibrary.json');
+const PROFILES_FILE = path.join(DATA_DIR, 'analyzedProfiles.json');
 
 const VALID_CATEGORIES = ['pose', 'expression', 'outfit', 'scene', 'lighting', 'camera', 'vibe', 'accessories', 'format'];
 const VALID_SOURCE_TYPES = ['profile_analysis', 'post_clone', 'manual', 'json_import', 'backfill'];
@@ -797,7 +798,7 @@ class StyleLibraryService {
   // ─── Backfill from promptKnowledge ─────────────────────
 
   backfillFromPromptKnowledge() {
-    const pkFile = path.join(__dirname, '..', 'data', 'promptKnowledge.json');
+    const pkFile = path.join(DATA_DIR, 'promptKnowledge.json');
     if (!fs.existsSync(pkFile)) return { imported: 0 };
 
     let pkData;

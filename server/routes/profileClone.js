@@ -10,7 +10,7 @@ const postCloneHistoryStore = require('../services/postCloneHistoryStore');
 const postCloneRoute = require('./postClone');
 
 const router = express.Router();
-const TEMP_DIR = path.join(process.cwd(), 'temp');
+const { TEMP_DIR } = require('../paths');
 const RECREATE_TIMEOUT_MS = 15 * 60_000; // 15 min for recreate (matches profile timeout)
 
 /**

@@ -6,8 +6,8 @@ const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads', 'generated');
-const DATA_FILE = path.join(__dirname, '..', 'data', 'gallery.json');
+const { DATA_DIR, UPLOADS_DIR } = require('../paths');
+const DATA_FILE = path.join(DATA_DIR, 'gallery.json');
 
 class GalleryManager {
   constructor() {

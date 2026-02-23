@@ -6,7 +6,8 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 
 // Load environment variables before anything else
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+const dotenvPath = process.env.DOTENV_CONFIG_PATH || path.join(__dirname, '..', '.env');
+require('dotenv').config({ path: dotenvPath });
 
 // Catch unhandled rejections and uncaught exceptions — prevent silent crashes
 process.on('unhandledRejection', (reason) => {
@@ -149,6 +150,17 @@ app.use('/api/style-library', styleLibraryRouter);
 app.use('/api/profile-analyzer', profileAnalyzerRouter);
 app.use('/api/caption-templates', captionTemplatesRouter);
 
+// ---------------------
+// Static file serving (production / Electron)
+// ---------------------
+const { CLIENT_DIST } = require('./paths');
+if (fs.existsSync(CLIENT_DIST)) {
+  app.use(express.static(CLIENT_DIST));
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(CLIENT_DIST, 'index.html'));
+  });
+}
+
 // 404 catch-all
 app.use((req, _res, next) => {
   next(new AppError(`Route not found: ${req.method} ${req.path}`, 404, 'NOT_FOUND'));
@@ -179,8 +191,9 @@ app.use(errorHandler);
 // ---------------------
 
 (function cleanStaleTempFiles() {
+  const { TEMP_DIR } = require('./paths');
   const tempDirs = [
-    path.join(process.cwd(), 'temp'),
+    TEMP_DIR,
     path.join(os.tmpdir(), 'ai-content-studio-reels'),
   ];
   let cleaned = 0;

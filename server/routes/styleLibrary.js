@@ -58,7 +58,7 @@ router.get('/duplicates', (_req, res, next) => {
 const _contentPresets = (() => {
   try {
     return JSON.parse(require('node:fs').readFileSync(
-      require('node:path').join(__dirname, '..', 'data', 'contentTypePresets.json'), 'utf-8'
+      require('node:path').join(require('../paths').DATA_DIR, 'contentTypePresets.json'), 'utf-8'
     ));
   } catch { return []; }
 })();

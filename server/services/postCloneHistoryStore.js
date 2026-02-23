@@ -7,7 +7,8 @@ const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const DATA_FILE = path.join(__dirname, '..', 'data', 'post-clone-history.json');
+const { DATA_DIR } = require('../paths');
+const DATA_FILE = path.join(DATA_DIR, 'post-clone-history.json');
 const MAX_ITEMS = 50;
 
 class PostCloneHistoryStore {

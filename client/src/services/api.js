@@ -131,7 +131,10 @@ export const characters = {
   addReference: (id, data) => request(`/characters/${id}/references`, { method: 'POST', body: data }),
   toggleReference: (id, refId) => request(`/characters/${id}/references/${refId}/toggle`, { method: 'PATCH' }),
   removeReference: (id, refId) => request(`/characters/${id}/references/${refId}`, { method: 'DELETE' }),
+  addPrimaryImage: (id, data) => request(`/characters/${id}/primary-images`, { method: 'POST', body: data }),
+  removePrimaryImage: (id, index) => request(`/characters/${id}/primary-images/${index}`, { method: 'DELETE' }),
   imageUrl: (id) => `${BASE}/characters/${id}/image`,
+  primaryImageUrl: (id, index) => `${BASE}/characters/${id}/primary-images/${index}`,
   refImageUrl: (id, refId) => `${BASE}/characters/${id}/references/${refId}/image`,
 };
 

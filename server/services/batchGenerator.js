@@ -25,7 +25,7 @@ const cfg = require('../config');
 // Cache content type presets at module load (avoids blocking readFileSync per request)
 const _contentPresets = (() => {
   try {
-    return JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'contentTypePresets.json'), 'utf-8'));
+    return JSON.parse(fs.readFileSync(path.join(require('../paths').DATA_DIR, 'contentTypePresets.json'), 'utf-8'));
   } catch { return []; }
 })();
 
@@ -89,7 +89,7 @@ const globalQueue = new TaskQueue(MAX_CONCURRENCY);
 const jobs = new Map();
 
 // Persistent job store — saves completed job metadata (no image data) to survive restarts
-const JOB_STORE_PATH = path.join(process.cwd(), 'data', 'batch-jobs.json');
+const JOB_STORE_PATH = require('../paths').BATCH_STORE;
 
 function _loadPersistedJobs() {
   try {
@@ -667,9 +667,9 @@ class BatchGenerator extends EventEmitter {
           if (task.characterId) {
             character = characterCache.get(task.characterId) || await this.getCharacterById(task.characterId);
             if (!task.disableCharacterReferenceImages) {
-              // Always include primary image first — it's the strongest identity anchor
-              const profileImage = this._resolveProfileImage(task.characterId);
-              if (profileImage) referenceImages.push(profileImage);
+              // Always include primary images first — they're the strongest identity anchors
+              const profileImages = this._resolveProfileImage(task.characterId);
+              if (profileImages) referenceImages.push(...profileImages);
 
               const requestedRefIds = Array.isArray(task.activeReferenceIds)
                 ? task.activeReferenceIds.filter((id) => typeof id === 'string' && id.trim().length > 0)
@@ -1059,8 +1059,8 @@ class BatchGenerator extends EventEmitter {
 
   _resolveProfileImage(characterId) {
     try {
-      const { buffer, mimeType } = referenceManager.getPrimaryImage(characterId);
-      return { buffer, mimeType };
+      const images = referenceManager.getPrimaryImages(characterId);
+      return images.length > 0 ? images : [referenceManager.getPrimaryImage(characterId)];
     } catch {
       return null;
     }

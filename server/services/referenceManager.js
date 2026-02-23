@@ -6,7 +6,7 @@ const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const CHARACTERS_DIR = path.join(__dirname, '..', '..', 'characters');
+const { CHARACTERS_DIR } = require('../paths');
 const CHARACTER_JSON = 'character.json';
 const PRIMARY_IMAGE = 'primary.png';
 const REFERENCES_DIR = 'references';
@@ -86,7 +86,7 @@ class ReferenceManager {
     try {
       // --- Write primary image ---
       const primaryExt = this._extensionForMime(primaryImage.mimeType);
-      const primaryFileName = `primary${primaryExt}`;
+      const primaryFileName = `primary_${crypto.randomUUID().slice(0, 8)}${primaryExt}`;
       const primaryFilePath = path.join(charDir, primaryFileName);
       fs.writeFileSync(primaryFilePath, primaryImage.buffer);
 
@@ -97,6 +97,7 @@ class ReferenceManager {
         name: sanitizedName,
         masterPrompt: masterPrompt.trim(),
         primaryImageFile: primaryFileName,
+        primaryImageFiles: [primaryFileName],
         references: [],
         createdAt: new Date().toISOString(),
       };
@@ -299,11 +300,70 @@ class ReferenceManager {
   }
 
   // =========================================================================
+  // Primary image management
+  // =========================================================================
+
+  /**
+   * Add an additional primary reference image to a character.
+   */
+  addPrimaryImage(characterId, image) {
+    const { data, charDir } = this._findCharacterById(characterId);
+
+    this._validateImage(image, 'Primary image');
+
+    // Migrate legacy single-file format
+    this._migratePrimaryImages(data);
+
+    if (data.primaryImageFiles.length >= 10) {
+      throw new AppError('Maximum 10 primary images per character', 400, 'VALIDATION_ERROR');
+    }
+
+    const ext = this._extensionForMime(image.mimeType);
+    const fileName = `primary_${crypto.randomUUID().slice(0, 8)}${ext}`;
+    fs.writeFileSync(path.join(charDir, fileName), image.buffer);
+
+    data.primaryImageFiles.push(fileName);
+    // Keep legacy field pointing to first image
+    data.primaryImageFile = data.primaryImageFiles[0];
+    this._writeCharacterJson(charDir, data);
+
+    return this._toSafeCharacter(data);
+  }
+
+  /**
+   * Remove a primary image by index (cannot remove the last one).
+   */
+  removePrimaryImage(characterId, imageIndex) {
+    const { data, charDir } = this._findCharacterById(characterId);
+
+    this._migratePrimaryImages(data);
+
+    if (typeof imageIndex !== 'number' || imageIndex < 0 || imageIndex >= data.primaryImageFiles.length) {
+      throw new AppError('Invalid image index', 400, 'VALIDATION_ERROR');
+    }
+    if (data.primaryImageFiles.length <= 1) {
+      throw new AppError('Cannot remove the only primary image', 400, 'VALIDATION_ERROR');
+    }
+
+    const [removed] = data.primaryImageFiles.splice(imageIndex, 1);
+
+    // Delete file from disk
+    const filePath = path.join(charDir, removed);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+    // Keep legacy field in sync
+    data.primaryImageFile = data.primaryImageFiles[0];
+    this._writeCharacterJson(charDir, data);
+
+    return this._toSafeCharacter(data);
+  }
+
+  // =========================================================================
   // Primary image serving (returns buffer + mime for route handlers)
   // =========================================================================
 
   /**
-   * Get primary image buffer for a character.
+   * Get first primary image buffer for a character (backwards compat).
    */
   getPrimaryImage(characterId) {
     const { data, charDir } = this._findCharacterById(characterId);
@@ -316,6 +376,26 @@ class ReferenceManager {
       buffer: fs.readFileSync(filePath),
       mimeType: this._mimeForExtension(ext),
     };
+  }
+
+  /**
+   * Get ALL primary images for a character.
+   */
+  getPrimaryImages(characterId) {
+    const { data, charDir } = this._findCharacterById(characterId);
+    this._migratePrimaryImages(data);
+
+    const images = [];
+    for (const fileName of data.primaryImageFiles) {
+      const filePath = path.join(charDir, fileName);
+      if (!fs.existsSync(filePath)) continue;
+      const ext = path.extname(fileName).toLowerCase();
+      images.push({
+        buffer: fs.readFileSync(filePath),
+        mimeType: this._mimeForExtension(ext),
+      });
+    }
+    return images;
   }
 
   /**
@@ -510,14 +590,25 @@ class ReferenceManager {
   }
 
   /**
+   * Migrate legacy single primaryImageFile to primaryImageFiles array.
+   */
+  _migratePrimaryImages(data) {
+    if (!data.primaryImageFiles) {
+      data.primaryImageFiles = data.primaryImageFile ? [data.primaryImageFile] : [];
+    }
+  }
+
+  /**
    * Strip internal file paths from character data for API responses.
    */
   _toSafeCharacter(data) {
+    this._migratePrimaryImages(data);
     return {
       id: data.id,
       name: data.name,
       masterPrompt: data.masterPrompt,
       hasPrimaryImage: !!data.primaryImageFile,
+      primaryImageCount: data.primaryImageFiles.length,
       references: (data.references || []).map((r) => this._toSafeReference(r)),
       createdAt: data.createdAt,
     };

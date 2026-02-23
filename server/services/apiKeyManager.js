@@ -12,7 +12,8 @@ const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
 const SALT_LENGTH = 32;
 const KEY_DERIVATION_ITERATIONS = 100000;
-const DATA_FILE = path.join(__dirname, '..', 'data', 'keys.enc');
+const { DATA_DIR } = require('../paths');
+const DATA_FILE = path.join(DATA_DIR, 'keys.enc');
 
 class ApiKeyManager {
   constructor() {

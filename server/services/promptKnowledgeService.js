@@ -5,7 +5,8 @@ const { AppError } = require('../middleware/errorHandler');
 const { asText, atomicWriteJSON } = require('../utils/helpers');
 const log = require('../utils/logger');
 
-const DATA_FILE = path.join(__dirname, '..', 'data', 'promptKnowledge.json');
+const { DATA_DIR } = require('../paths');
+const DATA_FILE = path.join(DATA_DIR, 'promptKnowledge.json');
 
 const TEXT_FIELDS = [
   'lighting',

@@ -6,7 +6,8 @@ const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const DATA_FILE = path.join(__dirname, '..', 'data', 'caption-templates.json');
+const { DATA_DIR } = require('../paths');
+const DATA_FILE = path.join(DATA_DIR, 'caption-templates.json');
 const VALID_CATEGORIES = ['lifestyle', 'personality', 'teasing', 'engagement', 'general'];
 const MAX_TEMPLATES = 200;
 

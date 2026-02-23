@@ -17,7 +17,7 @@ const {
 } = require('./postClone');
 
 const router = express.Router();
-const TEMP_DIR = path.join(process.cwd(), 'temp');
+const { TEMP_DIR } = require('../paths');
 
 /**
  * Extract content patterns (captions, hashtags, engagement, schedule) from raw Apify items.

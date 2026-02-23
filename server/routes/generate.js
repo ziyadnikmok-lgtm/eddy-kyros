@@ -90,12 +90,15 @@ function parseCustomReferenceImages(value) {
 function buildCharacterReferenceImages(characterId, activeRefs) {
   const parts = [];
 
-  const primary = referenceManager.getPrimaryImage(characterId);
-  if (primary?.buffer?.length) {
-    parts.push({
-      mimeType: primary.mimeType,
-      base64Data: primary.buffer.toString('base64'),
-    });
+  // Include ALL primary reference images
+  const primaries = referenceManager.getPrimaryImages(characterId);
+  for (const primary of primaries) {
+    if (primary?.buffer?.length) {
+      parts.push({
+        mimeType: primary.mimeType,
+        base64Data: primary.buffer.toString('base64'),
+      });
+    }
   }
 
   for (const ref of activeRefs || []) {

@@ -7,7 +7,8 @@ const { AppError } = require('../middleware/errorHandler');
 const log = require('../utils/logger');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const DATA_FILE = path.join(__dirname, '..', 'data', 'niches.json');
+const { DATA_DIR } = require('../paths');
+const DATA_FILE = path.join(DATA_DIR, 'niches.json');
 
 // ============================================================================
 // Built-in niche definitions

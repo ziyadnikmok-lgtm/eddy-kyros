@@ -21,7 +21,7 @@ const { checkPostAvailability } = require('../services/instagramAvailabilityServ
 const logger = require('../utils/logger');
 
 const router = express.Router();
-const TEMP_DIR = path.join(process.cwd(), 'temp');
+const { TEMP_DIR } = require('../paths');
 const ROUTE_TIMEOUT_MS = 5 * 60_000; // 5 min hard ceiling
 const DEFAULT_ACTOR_ID = process.env.APIFY_REEL_ACTOR_ID || 'apify/instagram-scraper';
 const MATCH_STRENGTHS = new Set(['soft', 'medium', 'strict']);
@@ -242,12 +242,14 @@ async function extractFrames(videoPath, firstPath, lastPath) {
 
 function buildCharacterReferenceImages(characterId, activeRefs) {
   const parts = [];
-  const primary = referenceManager.getPrimaryImage(characterId);
-  if (primary?.buffer?.length) {
-    parts.push({
-      mimeType: primary.mimeType,
-      base64Data: primary.buffer.toString('base64'),
-    });
+  const primaries = referenceManager.getPrimaryImages(characterId);
+  for (const primary of primaries) {
+    if (primary?.buffer?.length) {
+      parts.push({
+        mimeType: primary.mimeType,
+        base64Data: primary.buffer.toString('base64'),
+      });
+    }
   }
 
   for (const ref of activeRefs || []) {

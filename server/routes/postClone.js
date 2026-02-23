@@ -22,7 +22,7 @@ const { checkPostAvailability } = require('../services/instagramAvailabilityServ
 const postCloneHistoryStore = require('../services/postCloneHistoryStore');
 
 const router = express.Router();
-const TEMP_DIR = path.join(process.cwd(), 'temp');
+const { TEMP_DIR } = require('../paths');
 const THUMB_DIR = path.join(TEMP_DIR, 'thumbs');
 const ROUTE_TIMEOUT_MS = 5 * 60_000; // 5 min hard ceiling for single post
 const PROFILE_ROUTE_TIMEOUT_MS = 15 * 60_000; // 15 min for profile scrape (many slides)
@@ -170,9 +170,11 @@ function parseStructuredAnalysis(rawText) {
 
 function buildCharacterReferenceImages(characterId, activeRefs) {
   const refs = [];
-  const primary = referenceManager.getPrimaryImage(characterId);
-  if (primary?.buffer?.length) {
-    refs.push({ mimeType: primary.mimeType, base64Data: primary.buffer.toString('base64') });
+  const primaries = referenceManager.getPrimaryImages(characterId);
+  for (const primary of primaries) {
+    if (primary?.buffer?.length) {
+      refs.push({ mimeType: primary.mimeType, base64Data: primary.buffer.toString('base64') });
+    }
   }
   for (const ref of activeRefs || []) {
     const data = referenceManager.getReferenceImage(characterId, ref.id);

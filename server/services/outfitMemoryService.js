@@ -5,7 +5,8 @@ const { AppError } = require('../middleware/errorHandler');
 const log = require('../utils/logger');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const DATA_FILE = path.join(__dirname, '..', 'data', 'outfits.json');
+const { DATA_DIR } = require('../paths');
+const DATA_FILE = path.join(DATA_DIR, 'outfits.json');
 
 class OutfitMemoryService {
   constructor() {

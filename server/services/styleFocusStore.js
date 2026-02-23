@@ -7,7 +7,8 @@ const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const DATA_FILE = path.join(__dirname, '..', 'data', 'style-focuses.json');
+const { DATA_DIR } = require('../paths');
+const DATA_FILE = path.join(DATA_DIR, 'style-focuses.json');
 const MAX_ITEMS = 100;
 
 const ATTRIBUTE_KEYS = ['lighting', 'camera', 'pose', 'expression', 'outfit', 'scene', 'accessories', 'details', 'format'];

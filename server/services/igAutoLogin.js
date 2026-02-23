@@ -9,7 +9,8 @@ const apiKeyManager = require('./apiKeyManager');
 
 const LOGIN_TIMEOUT_MS = 90_000;
 const LOGIN_URL = 'https://www.instagram.com/accounts/login/';
-const DEBUG_DIR = path.join(__dirname, '..', 'data', 'ig-debug');
+const { DATA_DIR } = require('../paths');
+const DEBUG_DIR = path.join(DATA_DIR, 'ig-debug');
 
 /**
  * Generate a 6-digit TOTP code from a base32 secret.

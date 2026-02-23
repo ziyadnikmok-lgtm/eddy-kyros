@@ -72,6 +72,21 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
   const { loading, run } = useAsync();
   const [confirmDelete, setConfirmDelete] = useState(null);
 
+  const addPrimaryImage = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    run(async () => {
+      const dataUri = await fileToBase64(f);
+      await charApi.addPrimaryImage(char.id, { image: dataUri });
+      notify('Primary image added', 'success');
+      onUpdate();
+    });
+  };
+  const removePrimaryImage = (index) => run(async () => {
+    await charApi.removePrimaryImage(char.id, index);
+    notify('Primary image removed', 'success');
+    onUpdate();
+  });
   const toggleRef = (refId) => run(async () => {
     await charApi.toggleReference(char.id, refId);
     onUpdate();
@@ -87,6 +102,8 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
     onDelete();
   });
 
+  const imgCount = char.primaryImageCount || 1;
+
   return (
     <Card className="animate-in space-y-4">
       <div className="flex items-start justify-between">
@@ -99,6 +116,32 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
           <Btn variant="danger" className="!text-xs !py-1.5" onClick={() => setConfirmDelete({ type: 'character' })} disabled={loading}>Delete</Btn>
         </div>
       </div>
+
+      {/* Primary reference images */}
+      <div>
+        <span className="text-sm text-zinc-400 font-medium block mb-2">Primary Images ({imgCount}/10)</span>
+        <div className="flex gap-3 flex-wrap">
+          {Array.from({ length: imgCount }, (_, i) => (
+            <div key={i} className="relative group w-20 h-20 rounded-lg overflow-hidden bg-zinc-900 border border-zinc-700/40">
+              <img src={charApi.primaryImageUrl(char.id, i)} alt={`Primary ${i + 1}`} className="w-full h-full object-cover" loading="lazy" />
+              {imgCount > 1 && (
+                <button onClick={() => setConfirmDelete({ type: 'primary', index: i })}
+                  className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/70 text-red-400 text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer">
+                  ✕
+                </button>
+              )}
+            </div>
+          ))}
+          {imgCount < 10 && (
+            <label className="w-20 h-20 rounded-lg border-2 border-dashed border-zinc-700/60 hover:border-blue-500/40 flex items-center justify-center cursor-pointer transition">
+              <span className="text-zinc-500 text-lg">+</span>
+              <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={addPrimaryImage} />
+            </label>
+          )}
+        </div>
+      </div>
+
+      {/* Style override references */}
       {char.references?.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {char.references.map((r) => (
@@ -124,12 +167,21 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
         onClose={() => setConfirmDelete(null)}
         onConfirm={() => {
           if (confirmDelete?.type === 'character') deleteChar();
+          else if (confirmDelete?.type === 'primary') removePrimaryImage(confirmDelete.index);
           else if (confirmDelete?.type === 'reference') deleteRef(confirmDelete.id);
         }}
-        title={confirmDelete?.type === 'character' ? `Delete "${char.name}"?` : `Remove ${confirmDelete?.label || ''} reference?`}
-        message={confirmDelete?.type === 'character'
-          ? 'This will permanently delete the character and all its references. This cannot be undone.'
-          : 'This will remove the reference image from this character.'}
+        title={
+          confirmDelete?.type === 'character' ? `Delete "${char.name}"?`
+            : confirmDelete?.type === 'primary' ? 'Remove primary image?'
+              : `Remove ${confirmDelete?.label || ''} reference?`
+        }
+        message={
+          confirmDelete?.type === 'character'
+            ? 'This will permanently delete the character and all its references. This cannot be undone.'
+            : confirmDelete?.type === 'primary'
+              ? 'This will remove this primary reference image from the character.'
+              : 'This will remove the reference image from this character.'
+        }
         confirmLabel={confirmDelete?.type === 'character' ? 'Delete Character' : 'Remove'}
       />
     </Card>
