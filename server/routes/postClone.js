@@ -86,7 +86,7 @@ function cleanStaleThumbs() {
     }
   } catch { /* */ }
 }
-setInterval(cleanStaleThumbs, 5 * 60_000); // run every 5 min
+setInterval(cleanStaleThumbs, 5 * 60_000).unref(); // don't block graceful shutdown
 
 function isHttpUrl(value) {
   return /^https?:\/\//i.test(asText(value));
@@ -1455,7 +1455,11 @@ router.get('/proxy-image', async (req, res, next) => {
     // Only proxy known IG CDN domains
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
-    if (!host.endsWith('fbcdn.net') && !host.endsWith('cdninstagram.com') && !host.endsWith('instagram.com')) {
+    const domainParts = host.split('.');
+    const top2 = domainParts.slice(-2).join('.');
+    const top3 = domainParts.slice(-3).join('.');
+    const isAllowed = top2 === 'fbcdn.net' || top2 === 'instagram.com' || top3 === 'cdninstagram.com';
+    if (!isAllowed) {
       return res.status(403).json({ error: 'Only Instagram CDN URLs can be proxied' });
     }
     const response = await axios.get(url, {

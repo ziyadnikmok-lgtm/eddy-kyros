@@ -34,7 +34,7 @@ const RETRY_BASE_MS = 500;
 
 function _isRetryable(err) {
   if (err.code === 'TIMEOUT') return true;
-  if (err.name === 'TypeError') return true; // fetch network failure
+  if (err.name === 'TypeError' && err.message?.includes('fetch')) return true; // network failure only
   if (err.status >= 500) return true;
   return false;
 }

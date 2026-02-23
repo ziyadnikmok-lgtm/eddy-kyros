@@ -41,6 +41,21 @@ async function findButtonsByText(page, texts) {
   return matches;
 }
 
+const DEBUG_MAX_FILES = 20; // keep only the most recent debug files
+
+/** Clean old debug files, keeping only the newest DEBUG_MAX_FILES. */
+function cleanOldDebugFiles() {
+  try {
+    if (!fs.existsSync(DEBUG_DIR)) return;
+    const files = fs.readdirSync(DEBUG_DIR)
+      .map((f) => ({ name: f, mtime: fs.statSync(path.join(DEBUG_DIR, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    for (const file of files.slice(DEBUG_MAX_FILES)) {
+      try { fs.unlinkSync(path.join(DEBUG_DIR, file.name)); } catch { /* best-effort */ }
+    }
+  } catch { /* best-effort */ }
+}
+
 /** Save a debug screenshot + HTML dump. */
 async function debugSnapshot(page, label) {
   try {
@@ -50,6 +65,7 @@ async function debugSnapshot(page, label) {
     const html = await page.content();
     fs.writeFileSync(path.join(DEBUG_DIR, `${label}-${ts}.html`), html, 'utf8');
     console.log(`[ig-auto-login] debug snapshot saved: ${label}-${ts}`);
+    cleanOldDebugFiles();
   } catch (e) {
     console.warn(`[ig-auto-login] failed to save debug snapshot: ${e.message}`);
   }

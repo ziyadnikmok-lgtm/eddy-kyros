@@ -94,7 +94,7 @@ router.post('/', parseMultipartIfNeeded, (req, res, next) => {
           imageStore.get(config.imageId);
           inMemory = true;
         } catch (storeErr) {
-          if (storeErr instanceof AppError && storeErr.code !== 'NOT_FOUND') {
+          if (!(storeErr instanceof AppError) || storeErr.code !== 'IMAGE_NOT_FOUND') {
             throw storeErr;
           }
         }

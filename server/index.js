@@ -10,8 +10,8 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 // Catch unhandled rejections and uncaught exceptions — prevent silent crashes
 process.on('unhandledRejection', (reason) => {
-  // Logger may not be loaded yet — use raw console for fatal bootstrap errors
-  console.error('[FATAL] Unhandled promise rejection:', reason?.message || reason);
+  console.error('[FATAL] Unhandled promise rejection:', reason?.stack || reason?.message || reason);
+  process.exit(1);
 });
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught exception:', err.message);

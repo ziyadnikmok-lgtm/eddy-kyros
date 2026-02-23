@@ -416,9 +416,9 @@ export function ConfirmDialog({ open, onClose, onConfirm, title, message, confir
     try {
       await Promise.resolve(onConfirm?.());
       onClose?.();
-    } catch {
-      // Error handled by caller; still close dialog
-      onClose?.();
+    } catch (err) {
+      console.warn('[ConfirmDialog] action failed:', err?.message || err);
+      // Keep dialog open on error so user sees something went wrong
     } finally {
       setSubmitting(false);
     }

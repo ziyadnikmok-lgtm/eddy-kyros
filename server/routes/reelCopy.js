@@ -521,6 +521,7 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
 
       if (uploadedVideo) {
         fs.writeFileSync(videoPath, uploadedVideo.buffer);
+        uploadedVideo.buffer = null; // release ~200MB from memory
       } else {
         const { videoUrls } = await resolveVideoUrlFromApify(cleanUrl, apifyApiKey);
         const downloaded = await downloadVideo(videoUrls, videoPath);

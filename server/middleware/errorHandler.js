@@ -41,6 +41,10 @@ function errorHandler(err, req, res, _next) {
     log.error('request_error', meta);
   }
 
+  if (res.headersSent) {
+    return res.end();
+  }
+
   res.status(statusCode).json({
     success: false,
     error: {

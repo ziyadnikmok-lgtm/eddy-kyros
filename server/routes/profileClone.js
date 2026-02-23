@@ -141,47 +141,49 @@ router.post('/recreate', async (req, res, next) => {
     const errors = [];
     const CONCURRENCY = 2;
 
-    for (let batchStart = 0; batchStart < selected.length; batchStart += CONCURRENCY) {
-      if (Date.now() > deadline) {
-        const remaining = selected.slice(batchStart);
-        for (let r = 0; r < remaining.length; r++) {
-          errors.push({ index: batchStart + r, error: `Timed out after ${RECREATE_TIMEOUT_MS / 1000}s` });
+    try {
+      for (let batchStart = 0; batchStart < selected.length; batchStart += CONCURRENCY) {
+        if (Date.now() > deadline) {
+          const remaining = selected.slice(batchStart);
+          for (let r = 0; r < remaining.length; r++) {
+            errors.push({ index: batchStart + r, error: `Timed out after ${RECREATE_TIMEOUT_MS / 1000}s` });
+          }
+          break;
         }
-        break;
-      }
 
-      const batch = selected.slice(batchStart, batchStart + CONCURRENCY);
-      const batchPromises = batch.map((post, bi) => {
-        const idx = batchStart + bi;
-        return postCloneRoute.processPostClone({
-          post,
-          characterId,
-          mode: cleanMode,
-          apiKey,
-          character,
-          activeRefs,
-          baseReferenceImages,
-          tempFiles,
-        }).then((processed) => ({ ok: true, idx, processed }))
-          .catch((err) => {
-            console.warn(`[profile-clone/recreate] post ${idx + 1}/${selected.length} failed: ${err.message}`);
-            return { ok: false, idx, error: err.message };
-          });
-      });
+        const batch = selected.slice(batchStart, batchStart + CONCURRENCY);
+        const batchPromises = batch.map((post, bi) => {
+          const idx = batchStart + bi;
+          return postCloneRoute.processPostClone({
+            post,
+            characterId,
+            mode: cleanMode,
+            apiKey,
+            character,
+            activeRefs,
+            baseReferenceImages,
+            tempFiles,
+          }).then((processed) => ({ ok: true, idx, processed }))
+            .catch((err) => {
+              console.warn(`[profile-clone/recreate] post ${idx + 1}/${selected.length} failed: ${err.message}`);
+              return { ok: false, idx, error: err.message };
+            });
+        });
 
-      const settled = await Promise.all(batchPromises);
-      for (const r of settled) {
-        if (r.ok) {
-          results.push(r.processed);
-        } else {
-          errors.push({ index: r.idx, error: r.error });
+        const settled = await Promise.all(batchPromises);
+        for (const r of settled) {
+          if (r.ok) {
+            results.push(r.processed);
+          } else {
+            errors.push({ index: r.idx, error: r.error });
+          }
         }
       }
-    }
-
-    // Cleanup temp files
-    for (const filePath of tempFiles) {
-      try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch { /* best-effort */ }
+    } finally {
+      // Cleanup temp files — always runs even if an unexpected error escapes
+      for (const filePath of tempFiles) {
+        try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch { /* best-effort */ }
+      }
     }
 
     if (results.length === 0 && errors.length > 0) {

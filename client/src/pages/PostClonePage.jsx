@@ -172,6 +172,7 @@ export default function PostClonePage() {
 
   // Fetch profile posts (step 1)
   const handleFetch = async () => {
+    if (fetching) return; // prevent double-click
     setFetching(true);
     setFetchedPosts([]);
     setSelected(new Set());

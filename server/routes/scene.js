@@ -48,12 +48,7 @@ router.post('/analyze', async (req, res, next) => {
 router.post('/recreate', async (req, res, next) => {
   try {
     const { sceneData, characterId, activeReferenceIds } = req.body;
-    const { aspectRatio, resolutionTier: resolvedResolutionTier, width, height } = resolveDimensions(req.body);
-    const allowedResolutions = ['1K', '2K', '4K'];
-    const resolutionTier =
-      allowedResolutions.includes(req.body.resolutionTier)
-        ? req.body.resolutionTier
-        : '1K';
+    const { aspectRatio, resolutionTier, width, height } = resolveDimensions(req.body);
 
     if (!sceneData || typeof sceneData !== 'object') {
       throw new AppError('"sceneData" object is required', 400, 'VALIDATION_ERROR');
@@ -111,7 +106,7 @@ router.post('/recreate', async (req, res, next) => {
         imageId: stored.imageId,
         image: { mimeType: result.image.mimeType, base64Data: result.image.base64Data },
         text: result.text,
-        dimensions: { aspectRatio, resolutionTier: resolvedResolutionTier || resolutionTier, width, height },
+        dimensions: { aspectRatio, resolutionTier, width, height },
         generatedAt: new Date().toISOString(),
       },
     });

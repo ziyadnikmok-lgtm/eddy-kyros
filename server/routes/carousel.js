@@ -176,7 +176,8 @@ function ensureImageInStore(imageId) {
   try {
     imageStore.get(imageId);
     return imageId;
-  } catch {
+  } catch (err) {
+    if (!(err instanceof AppError) || err.code !== 'IMAGE_NOT_FOUND') throw err;
     const galleryEntry = galleryManager.get(imageId);
     const { filePath, mimeType } = galleryManager.getFilePath(imageId);
     const buffer = fs.readFileSync(filePath);

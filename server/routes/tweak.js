@@ -42,17 +42,14 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
   try {
     let { imageId, modifications, characterId, activeReferenceIds } = req.body || {};
     if (typeof modifications === 'string') {
-      try { modifications = JSON.parse(modifications); } catch { /* use raw string */ }
+      try { modifications = JSON.parse(modifications); } catch {
+        throw new AppError('"modifications" must be valid JSON', 400, 'VALIDATION_ERROR');
+      }
     }
     if (typeof activeReferenceIds === 'string') {
       try { activeReferenceIds = JSON.parse(activeReferenceIds); } catch { /* use raw string */ }
     }
-    const { aspectRatio, resolutionTier: resolvedResolutionTier, width, height } = resolveDimensions(req.body);
-    const allowedResolutions = ['1K', '2K', '4K'];
-    const resolutionTier =
-      allowedResolutions.includes(req.body.resolutionTier)
-        ? req.body.resolutionTier
-        : '1K';
+    const { aspectRatio, resolutionTier, width, height } = resolveDimensions(req.body);
 
     const uploadedFile = req.file && req.file.buffer
       ? req.file
@@ -186,7 +183,7 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
         image: stored.image,
         text: result.text,
         modifications,
-        dimensions: { aspectRatio, resolutionTier: resolvedResolutionTier || resolutionTier, width, height },
+        dimensions: { aspectRatio, resolutionTier, width, height },
         createdAt: stored.createdAt,
       },
     });
