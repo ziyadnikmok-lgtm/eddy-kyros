@@ -76,12 +76,25 @@ function formReducer(state, action) {
   return { ...state, ...action };
 }
 
+// Module-level session cache — survives unmount/remount when navigating away and back
+const _cache = {
+  formState: null,
+  result: null,
+  history: [],
+  styleAtomIds: [],
+  styleAtomDetails: [],
+  activeMods: new Set(),
+  contentTab: 'lifestyle',
+  selectedFocusId: '',
+  captionDraft: { title: '', body: '', category: 'general', hashtags: '', cta: '' },
+};
+
 export default function GeneratePage() {
   const { notify, activeKey, characters: chars, sceneMemories, outfits } = useApp();
   const { loading, run } = useAsync();
   const busyRef = useRef(false);
   const { openLightbox, LightboxComponent } = useImageLightbox();
-  const [state, update] = useReducer(formReducer, INITIAL_STATE);
+  const [state, update] = useReducer(formReducer, _cache.formState || INITIAL_STATE);
   const {
     prompt, aspectRatio, resolutionTier,
     useCharacter, selectedCharId, selectedChar,
@@ -90,8 +103,8 @@ export default function GeneratePage() {
     useExtraReference, extraReference, extraReferencePreview,
     specificOutfitRef, specificItemRef, specificSceneRef,
   } = state;
-  const [result, setResult] = useState(null);
-  const [history, setHistory] = useState([]);
+  const [result, setResult] = useState(_cache.result);
+  const [history, setHistory] = useState(_cache.history);
   const recentHistory = history.slice(1, 9).filter((h) => h?.imageId);
 
   // Templates
@@ -100,14 +113,14 @@ export default function GeneratePage() {
   const [showSaveTpl, setShowSaveTpl] = useState(false);
 
   // Style Library
-  const [styleAtomIds, setStyleAtomIds] = useState([]);
-  const [styleAtomDetails, setStyleAtomDetails] = useState([]); // [{id, category, text}]
+  const [styleAtomIds, setStyleAtomIds] = useState(_cache.styleAtomIds);
+  const [styleAtomDetails, setStyleAtomDetails] = useState(_cache.styleAtomDetails); // [{id, category, text}]
   const [showAtomPicker, setShowAtomPicker] = useState(false);
   const [stylePreview, setStylePreview] = useState('');
 
   // Style Focus (visual DNA presets from Post Clone)
   const [styleFocusList, setStyleFocusList] = useState([]);
-  const [selectedFocusId, setSelectedFocusId] = useState('');
+  const [selectedFocusId, setSelectedFocusId] = useState(_cache.selectedFocusId);
   const [selectedFocusData, setSelectedFocusData] = useState(null);
   useEffect(() => {
     if (!selectedFocusId) { setSelectedFocusData(null); return; }
@@ -115,17 +128,28 @@ export default function GeneratePage() {
   }, [selectedFocusId]);
 
   // Authenticity modifiers
-  const [activeMods, setActiveMods] = useState(new Set());
+  const [activeMods, setActiveMods] = useState(_cache.activeMods);
 
   // Content type presets
   const [contentPresets, setContentPresets] = useState([]);
-  const [contentTab, setContentTab] = useState('lifestyle');
+  const [contentTab, setContentTab] = useState(_cache.contentTab);
 
   // Caption templates
   const [captionList, setCaptionList] = useState([]);
   const [suggestedCaptions, setSuggestedCaptions] = useState([]);
   const [showCaptionComposer, setShowCaptionComposer] = useState(false);
-  const [captionDraft, setCaptionDraft] = useState({ title: '', body: '', category: 'general', hashtags: '', cta: '' });
+  const [captionDraft, setCaptionDraft] = useState(_cache.captionDraft);
+
+  // ── Session cache sync ──
+  useEffect(() => { _cache.formState = state; }, [state]);
+  useEffect(() => { _cache.result = result; }, [result]);
+  useEffect(() => { _cache.history = history; }, [history]);
+  useEffect(() => { _cache.styleAtomIds = styleAtomIds; }, [styleAtomIds]);
+  useEffect(() => { _cache.styleAtomDetails = styleAtomDetails; }, [styleAtomDetails]);
+  useEffect(() => { _cache.activeMods = activeMods; }, [activeMods]);
+  useEffect(() => { _cache.contentTab = contentTab; }, [contentTab]);
+  useEffect(() => { _cache.selectedFocusId = selectedFocusId; }, [selectedFocusId]);
+  useEffect(() => { _cache.captionDraft = captionDraft; }, [captionDraft]);
 
   useEffect(() => { templatesApi.list('generate').then(setTplList).catch(() => {}); }, []);
   useEffect(() => { styleFocusApi.list().then(setStyleFocusList).catch(() => {}); }, []);

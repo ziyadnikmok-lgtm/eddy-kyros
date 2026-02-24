@@ -19,29 +19,42 @@ const DNA_LABELS = {
   format: { label: 'Format', color: 'text-zinc-400', dot: 'bg-zinc-400' },
 };
 
+// Module-level session cache — survives unmount/remount when navigating away and back
+const _cache = {
+  inputMode: 'single',
+  postUrl: '',
+  profileUrl: '',
+  charId: '',
+  mode: 'exact',
+  result: [],
+  fetchedPosts: [],
+  selected: new Set(),
+  history: [],
+};
+
 export default function PostClonePage() {
   const { notify, characters: chars } = useApp();
   const { loading, run } = useAsync();
   const { openLightbox, LightboxComponent } = useImageLightbox();
 
-  const [inputMode, setInputMode] = useState('single'); // single | profile
-  const [postUrl, setPostUrl] = useState('');
-  const [profileUrl, setProfileUrl] = useState('');
+  const [inputMode, setInputMode] = useState(_cache.inputMode); // single | profile
+  const [postUrl, setPostUrl] = useState(_cache.postUrl);
+  const [profileUrl, setProfileUrl] = useState(_cache.profileUrl);
   const [postLimit, setPostLimit] = useState(9);
-  const [charId, setCharId] = useState('');
-  const [mode, setMode] = useState('exact'); // exact | creative
-  const [result, setResult] = useState([]);
+  const [charId, setCharId] = useState(_cache.charId);
+  const [mode, setMode] = useState(_cache.mode); // exact | creative
+  const [result, setResult] = useState(_cache.result);
   const [availability, setAvailability] = useState(null);
   const [savingFocus, setSavingFocus] = useState(null);
   const [focusName, setFocusName] = useState('');
 
   // Profile scrape: two-step state
-  const [fetchedPosts, setFetchedPosts] = useState([]); // previews from fetch
-  const [selected, setSelected] = useState(new Set());   // selected indices
+  const [fetchedPosts, setFetchedPosts] = useState(_cache.fetchedPosts); // previews from fetch
+  const [selected, setSelected] = useState(_cache.selected);   // selected indices
   const [fetching, setFetching] = useState(false);
 
   // Clone history
-  const [history, setHistory] = useState([]);
+  const [history, setHistory] = useState(_cache.history);
   const loadHistory = async () => {
     try {
       const data = await historyApi.list();
@@ -49,6 +62,17 @@ export default function PostClonePage() {
     } catch { /* silent */ }
   };
   useEffect(() => { loadHistory(); }, []);
+
+  // ── Session cache sync ──
+  useEffect(() => { _cache.inputMode = inputMode; }, [inputMode]);
+  useEffect(() => { _cache.postUrl = postUrl; }, [postUrl]);
+  useEffect(() => { _cache.profileUrl = profileUrl; }, [profileUrl]);
+  useEffect(() => { _cache.charId = charId; }, [charId]);
+  useEffect(() => { _cache.mode = mode; }, [mode]);
+  useEffect(() => { _cache.result = result; }, [result]);
+  useEffect(() => { _cache.fetchedPosts = fetchedPosts; }, [fetchedPosts]);
+  useEffect(() => { _cache.selected = selected; }, [selected]);
+  useEffect(() => { _cache.history = history; }, [history]);
 
   // IG session quick-edit + live status
   const [showSession, setShowSession] = useState(false);

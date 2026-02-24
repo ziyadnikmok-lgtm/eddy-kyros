@@ -22,7 +22,6 @@ const seedFiles = {
   'outfits.json': [],
   'post-clone-history.json': [],
   'promptKnowledge.json': [],
-  'styleLibrary.json': [],
   'analyzedProfiles.json': [],
   'niches.json': [],
   'caption-templates.json': [],
@@ -50,6 +49,14 @@ if (fs.existsSync(presetsSource)) {
   fs.copyFileSync(presetsSource, path.join(SEED_DIR, 'contentTypePresets.json'));
 } else {
   fs.writeFileSync(path.join(SEED_DIR, 'contentTypePresets.json'), '[]\n');
+}
+
+// Copy style library from server/data if it exists (ships as starter base)
+const styleLibSource = path.join(__dirname, '..', 'server', 'data', 'styleLibrary.json');
+if (fs.existsSync(styleLibSource)) {
+  fs.copyFileSync(styleLibSource, path.join(SEED_DIR, 'styleLibrary.json'));
+} else {
+  fs.writeFileSync(path.join(SEED_DIR, 'styleLibrary.json'), '[]\n');
 }
 
 console.log(`[clean-build] Generated ${Object.keys(seedFiles).length + 1} seed files in ${SEED_DIR}`);

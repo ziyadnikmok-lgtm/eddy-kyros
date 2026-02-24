@@ -6,23 +6,36 @@ import { useStepTimer } from '../hooks/useStepTimer';
 import { Card, Btn, Input, Badge, Spinner, ImageCard, Empty, StepProgress } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 
+// Module-level session cache — survives unmount/remount when navigating away and back
+const _cache = {
+  reelUrl: '',
+  charId: '',
+  result: null,
+  recreationHistory: [],
+  poseMatchStrength: 'medium',
+  environmentMatchStrength: 'medium',
+  poseMatchEnabled: true,
+  environmentMatchEnabled: true,
+  useSourceFrameReference: false,
+};
+
 export default function ReelRecreatePage() {
   const { notify, characters: chars } = useApp();
   const { loading, run } = useAsync();
   const { openLightbox, LightboxComponent } = useImageLightbox();
 
-  const [reelUrl, setReelUrl] = useState('');
+  const [reelUrl, setReelUrl] = useState(_cache.reelUrl);
   const [localVideoFile, setLocalVideoFile] = useState(null);
-  const [charId, setCharId] = useState('');
+  const [charId, setCharId] = useState(_cache.charId);
   const [charDetail, setCharDetail] = useState(null);
-  const [result, setResult] = useState(null);
-  const [recreationHistory, setRecreationHistory] = useState([]);
+  const [result, setResult] = useState(_cache.result);
+  const [recreationHistory, setRecreationHistory] = useState(_cache.recreationHistory);
   const [runSourceType, setRunSourceType] = useState('apify');
-  const [poseMatchStrength, setPoseMatchStrength] = useState('medium');
-  const [environmentMatchStrength, setEnvironmentMatchStrength] = useState('medium');
-  const [poseMatchEnabled, setPoseMatchEnabled] = useState(true);
-  const [environmentMatchEnabled, setEnvironmentMatchEnabled] = useState(true);
-  const [useSourceFrameReference, setUseSourceFrameReference] = useState(false);
+  const [poseMatchStrength, setPoseMatchStrength] = useState(_cache.poseMatchStrength);
+  const [environmentMatchStrength, setEnvironmentMatchStrength] = useState(_cache.environmentMatchStrength);
+  const [poseMatchEnabled, setPoseMatchEnabled] = useState(_cache.poseMatchEnabled);
+  const [environmentMatchEnabled, setEnvironmentMatchEnabled] = useState(_cache.environmentMatchEnabled);
+  const [useSourceFrameReference, setUseSourceFrameReference] = useState(_cache.useSourceFrameReference);
   const [availability, setAvailability] = useState(null);
 
   const STRENGTH_LEVELS = ['soft', 'medium', 'strict'];
@@ -31,6 +44,17 @@ export default function ReelRecreatePage() {
     return idx >= 0 ? idx : 1;
   };
   const indexToStrength = (value) => STRENGTH_LEVELS[Math.max(0, Math.min(2, Number(value) || 1))];
+
+  // ── Session cache sync ──
+  useEffect(() => { _cache.reelUrl = reelUrl; }, [reelUrl]);
+  useEffect(() => { _cache.charId = charId; }, [charId]);
+  useEffect(() => { _cache.result = result; }, [result]);
+  useEffect(() => { _cache.recreationHistory = recreationHistory; }, [recreationHistory]);
+  useEffect(() => { _cache.poseMatchStrength = poseMatchStrength; }, [poseMatchStrength]);
+  useEffect(() => { _cache.environmentMatchStrength = environmentMatchStrength; }, [environmentMatchStrength]);
+  useEffect(() => { _cache.poseMatchEnabled = poseMatchEnabled; }, [poseMatchEnabled]);
+  useEffect(() => { _cache.environmentMatchEnabled = environmentMatchEnabled; }, [environmentMatchEnabled]);
+  useEffect(() => { _cache.useSourceFrameReference = useSourceFrameReference; }, [useSourceFrameReference]);
 
   const LIVE_STEPS = useMemo(() => runSourceType === 'cached'
     ? ['Reusing cached source frames', 'Analyzing scenes with Gemini', 'Recreating first frame', 'Recreating follow-up frame']

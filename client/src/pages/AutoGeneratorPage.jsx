@@ -178,42 +178,65 @@ function DayDetail({ day }) {
   );
 }
 
+// Module-level session cache — survives unmount/remount when navigating away and back
+const _cache = {
+  theme: '',
+  personaMode: 'luxury',
+  customPersona: '',
+  spicinessLevel: 30,
+  duration: 7,
+  characterId: '',
+  includeReels: true,
+  includeStories: false,
+  carouselCount: 3,
+  reelCount: 1,
+  storyCount: 1,
+  result: null,
+  executeJobs: [],
+  styleAtomIds: [],
+  styleAtomDetails: [],
+  activePlan: null,
+  savedPlans: [],
+  startDate: null,
+  expandedDay: null,
+};
+
 /* ── Main Page ────────────────────────────────────── */
 
 export default function AutoGeneratorPage() {
   const { notify, characters } = useApp();
 
   // ── Form state (unchanged) ──
-  const [theme, setTheme] = useState('');
-  const [personaMode, setPersonaMode] = useState('luxury');
-  const [customPersona, setCustomPersona] = useState('');
-  const [spicinessLevel, setSpicinessLevel] = useState(30);
-  const [duration, setDuration] = useState(7);
-  const [characterId, setCharacterId] = useState('');
-  const [includeReels, setIncludeReels] = useState(true);
-  const [includeStories, setIncludeStories] = useState(false);
-  const [carouselCount, setCarouselCount] = useState(3);
-  const [reelCount, setReelCount] = useState(1);
-  const [storyCount, setStoryCount] = useState(1);
+  const [theme, setTheme] = useState(_cache.theme);
+  const [personaMode, setPersonaMode] = useState(_cache.personaMode);
+  const [customPersona, setCustomPersona] = useState(_cache.customPersona);
+  const [spicinessLevel, setSpicinessLevel] = useState(_cache.spicinessLevel);
+  const [duration, setDuration] = useState(_cache.duration);
+  const [characterId, setCharacterId] = useState(_cache.characterId);
+  const [includeReels, setIncludeReels] = useState(_cache.includeReels);
+  const [includeStories, setIncludeStories] = useState(_cache.includeStories);
+  const [carouselCount, setCarouselCount] = useState(_cache.carouselCount);
+  const [reelCount, setReelCount] = useState(_cache.reelCount);
+  const [storyCount, setStoryCount] = useState(_cache.storyCount);
   const [similarityCooldown, setSimilarityCooldown] = useState('on');
   const [footwearLock, setFootwearLock] = useState('');
   const [autoExecute, setAutoExecute] = useState(false);
   const [loading, setLoading] = useState(false);
 
   // ── Execute mode state (unchanged) ──
-  const [result, setResult] = useState(null);
-  const [executeJobs, setExecuteJobs] = useState([]);
+  const [result, setResult] = useState(_cache.result);
+  const [executeJobs, setExecuteJobs] = useState(_cache.executeJobs);
 
   // ── Style Library (unchanged) ──
-  const [styleAtomIds, setStyleAtomIds] = useState([]);
-  const [styleAtomDetails, setStyleAtomDetails] = useState([]);
+  const [styleAtomIds, setStyleAtomIds] = useState(_cache.styleAtomIds);
+  const [styleAtomDetails, setStyleAtomDetails] = useState(_cache.styleAtomDetails);
   const [showAtomPicker, setShowAtomPicker] = useState(false);
 
   // ── Calendar view state ──
-  const [activePlan, setActivePlan] = useState(null);
-  const [savedPlans, setSavedPlans] = useState([]);
-  const [startDate, setStartDate] = useState(todayStr);
-  const [expandedDay, setExpandedDay] = useState(null);
+  const [activePlan, setActivePlan] = useState(_cache.activePlan);
+  const [savedPlans, setSavedPlans] = useState(_cache.savedPlans);
+  const [startDate, setStartDate] = useState(_cache.startDate || todayStr());
+  const [expandedDay, setExpandedDay] = useState(_cache.expandedDay);
   const [executingDay, setExecutingDay] = useState(null);
 
   // Auto-select first character
@@ -222,6 +245,27 @@ export default function AutoGeneratorPage() {
       setCharacterId(characters[0].id);
     }
   }, [characters, characterId]);
+
+  // ── Session cache sync ──
+  useEffect(() => { _cache.theme = theme; }, [theme]);
+  useEffect(() => { _cache.personaMode = personaMode; }, [personaMode]);
+  useEffect(() => { _cache.customPersona = customPersona; }, [customPersona]);
+  useEffect(() => { _cache.spicinessLevel = spicinessLevel; }, [spicinessLevel]);
+  useEffect(() => { _cache.duration = duration; }, [duration]);
+  useEffect(() => { _cache.characterId = characterId; }, [characterId]);
+  useEffect(() => { _cache.includeReels = includeReels; }, [includeReels]);
+  useEffect(() => { _cache.includeStories = includeStories; }, [includeStories]);
+  useEffect(() => { _cache.carouselCount = carouselCount; }, [carouselCount]);
+  useEffect(() => { _cache.reelCount = reelCount; }, [reelCount]);
+  useEffect(() => { _cache.storyCount = storyCount; }, [storyCount]);
+  useEffect(() => { _cache.result = result; }, [result]);
+  useEffect(() => { _cache.executeJobs = executeJobs; }, [executeJobs]);
+  useEffect(() => { _cache.styleAtomIds = styleAtomIds; }, [styleAtomIds]);
+  useEffect(() => { _cache.styleAtomDetails = styleAtomDetails; }, [styleAtomDetails]);
+  useEffect(() => { _cache.activePlan = activePlan; }, [activePlan]);
+  useEffect(() => { _cache.savedPlans = savedPlans; }, [savedPlans]);
+  useEffect(() => { _cache.startDate = startDate; }, [startDate]);
+  useEffect(() => { _cache.expandedDay = expandedDay; }, [expandedDay]);
 
   // Load saved plans on mount
   useEffect(() => {

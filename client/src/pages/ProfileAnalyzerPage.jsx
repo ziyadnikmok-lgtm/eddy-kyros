@@ -3,26 +3,50 @@ import { useApp } from '../context/AppContext';
 import { profileAnalyzer as analyzerApi, styleLibrary as libraryApi } from '../services/api';
 import { Card, Btn, Input, Select, Badge, Spinner, Empty, ProgressBar } from '../components/UI';
 
+// Module-level session cache — survives unmount/remount when navigating away and back
+const _cache = {
+  username: '',
+  postLimit: 12,
+  sort: 'newest',
+  newerThan: '',
+  results: [],
+  checkedAtoms: new Set(),
+  progress: null,
+  contentPatterns: null,
+  profiles: [],
+};
+
 export default function ProfileAnalyzerPage() {
   const { notify, navigateTo } = useApp();
 
-  const [username, setUsername] = useState('');
-  const [postLimit, setPostLimit] = useState(12);
-  const [sort, setSort] = useState('newest');   // 'newest' | 'oldest'
-  const [newerThan, setNewerThan] = useState(''); // e.g. "30 days", "2025-01-01"
+  const [username, setUsername] = useState(_cache.username);
+  const [postLimit, setPostLimit] = useState(_cache.postLimit);
+  const [sort, setSort] = useState(_cache.sort);   // 'newest' | 'oldest'
+  const [newerThan, setNewerThan] = useState(_cache.newerThan); // e.g. "30 days", "2025-01-01"
   const [analyzing, setAnalyzing] = useState(false);
-  const [progress, setProgress] = useState(null); // { current, total, status }
-  const [results, setResults] = useState([]); // [{postIndex, postUrl, atoms: [{category, text, tags}]}]
-  const [checkedAtoms, setCheckedAtoms] = useState(new Set()); // "postIdx-atomIdx" keys
+  const [progress, setProgress] = useState(_cache.progress); // { current, total, status }
+  const [results, setResults] = useState(_cache.results); // [{postIndex, postUrl, atoms: [{category, text, tags}]}]
+  const [checkedAtoms, setCheckedAtoms] = useState(_cache.checkedAtoms); // "postIdx-atomIdx" keys
   const [saving, setSaving] = useState(false);
-  const [profiles, setProfiles] = useState([]);
-  const [contentPatterns, setContentPatterns] = useState(null);
+  const [profiles, setProfiles] = useState(_cache.profiles);
+  const [contentPatterns, setContentPatterns] = useState(_cache.contentPatterns);
   const eventSourceRef = useRef(null);
   const analyzingRef = useRef(false);
 
   useEffect(() => {
     analyzingRef.current = analyzing;
   }, [analyzing]);
+
+  // ── Session cache sync ──
+  useEffect(() => { _cache.username = username; }, [username]);
+  useEffect(() => { _cache.postLimit = postLimit; }, [postLimit]);
+  useEffect(() => { _cache.sort = sort; }, [sort]);
+  useEffect(() => { _cache.newerThan = newerThan; }, [newerThan]);
+  useEffect(() => { _cache.results = results; }, [results]);
+  useEffect(() => { _cache.checkedAtoms = checkedAtoms; }, [checkedAtoms]);
+  useEffect(() => { _cache.progress = progress; }, [progress]);
+  useEffect(() => { _cache.contentPatterns = contentPatterns; }, [contentPatterns]);
+  useEffect(() => { _cache.profiles = profiles; }, [profiles]);
 
   // Fetch analyzed profiles on mount
   useEffect(() => {

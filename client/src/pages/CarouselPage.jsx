@@ -25,44 +25,85 @@ function fileToDataUrl(file) {
   });
 }
 
+// Module-level session cache — survives unmount/remount when navigating away and back
+const _cache = {
+  executeJobIds: [],
+  executeJobs: [],
+  completedSlides: [],
+  pollJobIds: [],
+  pollJobs: [],
+  completedPollSlides: [],
+  pollResults: null,
+  selectedImageId: null,
+  uploadedImages: [],
+  characterId: '',
+  aspectRatio: '4:5',
+  resolutionTier: '2K',
+  followUpDirection: '',
+  followUpMode: 'manual',
+  followUpCount: 4,
+  carouselMode: 'follow-up',
+  pollTopic: '',
+  pollCount: 3,
+};
+
 export default function CarouselPage() {
   const { notify, characters: chars } = useApp();
   const { openLightbox, LightboxComponent } = useImageLightbox();
 
-  const [selectedImageId, setSelectedImageId] = useState(null);
+  const [selectedImageId, setSelectedImageId] = useState(_cache.selectedImageId);
   const [galleryImages, setGalleryImages] = useState([]);
-  const [uploadedImages, setUploadedImages] = useState([]);
+  const [uploadedImages, setUploadedImages] = useState(_cache.uploadedImages);
   const [loadingGallery, setLoadingGallery] = useState(true);
 
-  const [aspectRatio, setAspectRatio] = useState('4:5');
-  const [resolutionTier, setResolutionTier] = useState('2K');
+  const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
+  const [resolutionTier, setResolutionTier] = useState(_cache.resolutionTier);
   const [kineticMotionBlur, setKineticMotionBlur] = useState('off');
 
-  const [characterId, setCharacterId] = useState('');
+  const [characterId, setCharacterId] = useState(_cache.characterId);
   const [characterDetail, setCharacterDetail] = useState(null);
 
-
   const [followUpLoading, setFollowUpLoading] = useState(false);
-  const [executeJobIds, setExecuteJobIds] = useState([]);
-  const [executeJobs, setExecuteJobs] = useState([]);
-  const [completedSlides, setCompletedSlides] = useState([]); // append-only — stable image refs
-  const [followUpCount, setFollowUpCount] = useState(4);
-  const [followUpDirection, setFollowUpDirection] = useState('');
-  const [followUpMode, setFollowUpMode] = useState('manual');
+  const [executeJobIds, setExecuteJobIds] = useState(_cache.executeJobIds);
+  const [executeJobs, setExecuteJobs] = useState(_cache.executeJobs);
+  const [completedSlides, setCompletedSlides] = useState(_cache.completedSlides);
+  const [followUpCount, setFollowUpCount] = useState(_cache.followUpCount);
+  const [followUpDirection, setFollowUpDirection] = useState(_cache.followUpDirection);
+  const [followUpMode, setFollowUpMode] = useState(_cache.followUpMode);
   const [strictContinuityLock, setStrictContinuityLock] = useState(true);
   const [useCharacterRefsInFollowUp, setUseCharacterRefsInFollowUp] = useState(false);
 
   // Carousel mode toggle (follow-up vs polls)
-  const [carouselMode, setCarouselMode] = useState('follow-up');
+  const [carouselMode, setCarouselMode] = useState(_cache.carouselMode);
 
   // Polls state
-  const [pollTopic, setPollTopic] = useState('');
-  const [pollCount, setPollCount] = useState(3);
+  const [pollTopic, setPollTopic] = useState(_cache.pollTopic);
+  const [pollCount, setPollCount] = useState(_cache.pollCount);
   const [pollLoading, setPollLoading] = useState(false);
-  const [pollResults, setPollResults] = useState(null); // { polls, jobIds }
-  const [pollJobs, setPollJobs] = useState([]);
-  const [pollJobIds, setPollJobIds] = useState([]);
-  const [completedPollSlides, setCompletedPollSlides] = useState([]); // append-only
+  const [pollResults, setPollResults] = useState(_cache.pollResults);
+  const [pollJobs, setPollJobs] = useState(_cache.pollJobs);
+  const [pollJobIds, setPollJobIds] = useState(_cache.pollJobIds);
+  const [completedPollSlides, setCompletedPollSlides] = useState(_cache.completedPollSlides);
+
+  // Sync state back to cache on changes
+  useEffect(() => { _cache.executeJobIds = executeJobIds; }, [executeJobIds]);
+  useEffect(() => { _cache.executeJobs = executeJobs; }, [executeJobs]);
+  useEffect(() => { _cache.completedSlides = completedSlides; }, [completedSlides]);
+  useEffect(() => { _cache.pollJobIds = pollJobIds; }, [pollJobIds]);
+  useEffect(() => { _cache.pollJobs = pollJobs; }, [pollJobs]);
+  useEffect(() => { _cache.completedPollSlides = completedPollSlides; }, [completedPollSlides]);
+  useEffect(() => { _cache.pollResults = pollResults; }, [pollResults]);
+  useEffect(() => { _cache.selectedImageId = selectedImageId; }, [selectedImageId]);
+  useEffect(() => { _cache.uploadedImages = uploadedImages; }, [uploadedImages]);
+  useEffect(() => { _cache.characterId = characterId; }, [characterId]);
+  useEffect(() => { _cache.aspectRatio = aspectRatio; }, [aspectRatio]);
+  useEffect(() => { _cache.resolutionTier = resolutionTier; }, [resolutionTier]);
+  useEffect(() => { _cache.followUpDirection = followUpDirection; }, [followUpDirection]);
+  useEffect(() => { _cache.followUpMode = followUpMode; }, [followUpMode]);
+  useEffect(() => { _cache.followUpCount = followUpCount; }, [followUpCount]);
+  useEffect(() => { _cache.carouselMode = carouselMode; }, [carouselMode]);
+  useEffect(() => { _cache.pollTopic = pollTopic; }, [pollTopic]);
+  useEffect(() => { _cache.pollCount = pollCount; }, [pollCount]);
 
   const selectableImages = [...uploadedImages, ...galleryImages];
   const selectedImage = selectableImages.find((img) => img.id === selectedImageId);
@@ -499,14 +540,23 @@ export default function CarouselPage() {
               <h3 className="text-sm font-semibold text-zinc-300">Live Carousel Jobs</h3>
               {isAnyJobRunning && <p className="text-xs text-zinc-500 font-mono">{jobsElapsedSec}s elapsed</p>}
               <div className="space-y-2">
-                {executeJobs.map((job) => (
-                  <div key={job.jobId} className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+                {executeJobs.map((job) => {
+                  const errors = (job.results || []).filter(r => r && !r.success && r.error);
+                  return (
+                  <div key={job.jobId} className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2 space-y-1">
                     <div className="flex items-center justify-between text-xs text-zinc-400">
                       <span className="font-mono">{job.jobId}</span>
-                      <span>{job.status} - {job.completed + job.failed}/{job.total}</span>
+                      <span>{job.status} — {job.completed} ok / {job.failed} failed / {job.total}</span>
                     </div>
+                    {errors.length > 0 && (
+                      <div className="text-[10px] text-red-400/80 space-y-0.5 mt-1">
+                        {errors.slice(0, 3).map((e, i) => <p key={i}>#{e.index + 1}: {e.error}</p>)}
+                        {errors.length > 3 && <p>...and {errors.length - 3} more</p>}
+                      </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </Card>
           )}

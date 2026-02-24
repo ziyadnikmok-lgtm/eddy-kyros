@@ -16,6 +16,17 @@ function fileToBase64(file) {
   });
 }
 
+// Module-level session cache — survives unmount/remount when navigating away and back
+const _cache = {
+  sceneData: null,
+  editableScene: '',
+  charId: '',
+  aspectRatio: '4:5',
+  resolutionTier: '2K',
+  result: null,
+  history: [],
+};
+
 export default function SceneRecreatePage() {
   const { notify, characters: chars } = useApp();
   const { loading: analyzing, run: runAnalyze } = useAsync();
@@ -23,14 +34,23 @@ export default function SceneRecreatePage() {
   const { openLightbox, LightboxComponent } = useImageLightbox();
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
-  const [sceneData, setSceneData] = useState(null);
-  const [editableScene, setEditableScene] = useState('');
-  const [charId, setCharId] = useState('');
+  const [sceneData, setSceneData] = useState(_cache.sceneData);
+  const [editableScene, setEditableScene] = useState(_cache.editableScene);
+  const [charId, setCharId] = useState(_cache.charId);
   const [charDetail, setCharDetail] = useState(null);
-  const [aspectRatio, setAspectRatio] = useState('4:5');
-  const [resolutionTier, setResolutionTier] = useState('2K');
-  const [result, setResult] = useState(null);
-  const [history, setHistory] = useState([]);
+  const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
+  const [resolutionTier, setResolutionTier] = useState(_cache.resolutionTier);
+  const [result, setResult] = useState(_cache.result);
+  const [history, setHistory] = useState(_cache.history);
+
+  // ── Session cache sync ──
+  useEffect(() => { _cache.sceneData = sceneData; }, [sceneData]);
+  useEffect(() => { _cache.editableScene = editableScene; }, [editableScene]);
+  useEffect(() => { _cache.charId = charId; }, [charId]);
+  useEffect(() => { _cache.aspectRatio = aspectRatio; }, [aspectRatio]);
+  useEffect(() => { _cache.resolutionTier = resolutionTier; }, [resolutionTier]);
+  useEffect(() => { _cache.result = result; }, [result]);
+  useEffect(() => { _cache.history = history; }, [history]);
 
   const ANALYZE_THRESHOLDS = useMemo(() => [2, 5], []);
   const RECREATE_STEPS = useMemo(() => [

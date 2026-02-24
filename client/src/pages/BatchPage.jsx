@@ -55,12 +55,22 @@ function formReducer(state, action) {
   return { ...state, ...action };
 }
 
+// Module-level session cache — survives unmount/remount when navigating away and back
+const _cache = {
+  formState: null,
+  job: null,
+  jobHistory: [],
+  expandedJobId: null,
+  queueStats: null,
+  statusFilter: '',
+};
+
 export default function BatchPage() {
   const { notify, characters: chars, sceneMemories, outfits } = useApp();
   const { loading, run } = useAsync();
   const busyRef = useRef(false);
   const { openLightbox, LightboxComponent } = useImageLightbox();
-  const [state, update] = useReducer(formReducer, INITIAL_STATE);
+  const [state, update] = useReducer(formReducer, _cache.formState || INITIAL_STATE);
   const {
     mode, aspectRatio, resolutionTier, prompt, count, randomSeed, tempMin, tempMax,
     multiPrompts, charId, charDetail, overrideSets,
@@ -73,6 +83,8 @@ export default function BatchPage() {
   } = state;
 
   const { job, setJob, subscribe, cleanup: cleanupProgress } = useBatchProgress();
+  // Restore cached job on mount
+  useEffect(() => { if (_cache.job) setJob(_cache.job); }, []);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   // Templates
@@ -113,11 +125,19 @@ export default function BatchPage() {
   };
 
   // Job history + queue dashboard
-  const [jobHistory, setJobHistory] = useState([]);
+  const [jobHistory, setJobHistory] = useState(_cache.jobHistory);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [expandedJobId, setExpandedJobId] = useState(null);
-  const [queueStats, setQueueStats] = useState(null);
-  const [statusFilter, setStatusFilter] = useState('');
+  const [expandedJobId, setExpandedJobId] = useState(_cache.expandedJobId);
+  const [queueStats, setQueueStats] = useState(_cache.queueStats);
+  const [statusFilter, setStatusFilter] = useState(_cache.statusFilter);
+
+  // ── Session cache sync ──
+  useEffect(() => { _cache.formState = state; }, [state]);
+  useEffect(() => { _cache.job = job; }, [job]);
+  useEffect(() => { _cache.jobHistory = jobHistory; }, [jobHistory]);
+  useEffect(() => { _cache.expandedJobId = expandedJobId; }, [expandedJobId]);
+  useEffect(() => { _cache.queueStats = queueStats; }, [queueStats]);
+  useEffect(() => { _cache.statusFilter = statusFilter; }, [statusFilter]);
 
   const fetchHistory = async () => {
     setHistoryLoading(true);
