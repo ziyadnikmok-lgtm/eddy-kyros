@@ -12,6 +12,7 @@ const { createMultipartParser } = require('../middleware/multipartParser');
 const { sharedHttpsAgent } = require('../utils/httpAgent');
 const { asText } = require('../utils/helpers');
 const { buildLoginCookies } = require('../utils/instagramCookies');
+const cfg = require('../config');
 const apiKeyManager = require('../services/apiKeyManager');
 const referenceManager = require('../services/referenceManager');
 const sceneAnalyzer = require('../services/sceneAnalyzer');
@@ -397,9 +398,24 @@ async function recreateFrame({
     characterId,
     activeReferenceIds,
   });
-  const prompt = extraLockText
+  const MAX_PROMPT = cfg.PROMPT_MAX_LENGTH;
+  let prompt = extraLockText
     ? `${promptBase}\n\n${extraLockText}`
     : promptBase;
+
+  // Trim base prompt if combined length exceeds Gemini's 10K limit,
+  // keeping the lock text intact since it drives recreation accuracy.
+  if (prompt.trim().length > MAX_PROMPT && extraLockText) {
+    const lockLen = extraLockText.length + 2; // +2 for the \n\n separator
+    const maxBase = MAX_PROMPT - lockLen - 50; // 50 char safety margin
+    if (maxBase > 500) {
+      prompt = `${promptBase.slice(0, maxBase).trimEnd()}\n\n${extraLockText}`;
+    } else {
+      // Lock text alone is near the limit — trim it too
+      prompt = `${promptBase.slice(0, 2000).trimEnd()}\n\n${extraLockText.slice(0, MAX_PROMPT - 2050).trimEnd()}`;
+    }
+    logger.info(`[reel-copy] Prompt trimmed from ${promptBase.length + lockLen} to ${prompt.length} chars`);
+  }
 
   const generated = await geminiService.generateImage(apiKey, prompt, {
     aspectRatio: '9:16',

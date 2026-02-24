@@ -52,7 +52,7 @@ module.exports = {
   STALE_TEMP_FILE_AGE_MS: 60 * 60 * 1000,  // 1 hour
 
   // ── Content limits ──────────────────────────────────────────────────
-  PROMPT_MAX_LENGTH: 10_000,
+  PROMPT_MAX_LENGTH: 15_000,
   API_KEY_MAX_LENGTH: 200,
   MAX_CAROUSEL_SLIDES: 10,
   MAX_HASHTAGS: 25,

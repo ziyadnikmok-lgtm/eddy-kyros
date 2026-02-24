@@ -10,7 +10,7 @@ const REALISM_DIRECTIVE = require('../utils/realismDirective');
 const SCENE_FIELDS = [
   'environment', 'lighting', 'cameraAngle', 'composition',
   'mood', 'objects', 'depth', 'timeOfDay', 'perspective', 'framingStyle',
-  'outfit', 'hair', 'format',
+  'pose', 'expression', 'outfit', 'hair', 'format',
 ];
 
 class SceneAnalyzer {
@@ -75,6 +75,8 @@ class SceneAnalyzer {
       `  - Mood: ${sceneData.mood || 'as described'}`,
       sceneData.outfit ? `  - Outfit (EXACT match required): ${sceneData.outfit}` : null,
       sceneData.hair ? `  - Hair: ${sceneData.hair}` : null,
+      sceneData.pose ? `  - POSE LOCK — MANDATORY: ${sceneData.pose}. The character MUST be in this exact body position. Do NOT default to standing or sitting if the pose describes lying down, reclining, or any other non-upright position.` : null,
+      sceneData.expression ? `  - EXPRESSION LOCK: ${sceneData.expression}` : null,
       'The character must be placed naturally within this scene.',
       'Do not alter the character identity in any way.',
       '[END SCENE PRESERVATION]',
@@ -102,6 +104,8 @@ class SceneAnalyzer {
     if (sceneData.composition) parts.push(`Composition: ${sceneData.composition}.`);
     if (sceneData.depth) parts.push(`Depth: ${sceneData.depth}.`);
     if (sceneData.objects) parts.push(`Key elements: ${sceneData.objects}.`);
+    if (sceneData.pose) parts.push(`Pose: ${sceneData.pose}.`);
+    if (sceneData.expression) parts.push(`Expression: ${sceneData.expression}.`);
     if (sceneData.outfit) parts.push(`Outfit: ${sceneData.outfit}.`);
     if (sceneData.hair) parts.push(`Hair: ${sceneData.hair}.`);
     if (sceneData.format) parts.push(`Photo quality: ${sceneData.format}.`);

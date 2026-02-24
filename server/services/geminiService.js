@@ -69,8 +69,8 @@ class GeminiService {
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
     throw new AppError('A text prompt is required', 400, 'VALIDATION_ERROR');
   }
-  if (prompt.trim().length > 10000) {
-    throw new AppError('Prompt must be 10,000 characters or fewer', 400, 'VALIDATION_ERROR');
+  if (prompt.trim().length > cfg.PROMPT_MAX_LENGTH) {
+    throw new AppError(`Prompt must be ${cfg.PROMPT_MAX_LENGTH.toLocaleString()} characters or fewer`, 400, 'VALIDATION_ERROR');
   }
 
   // Deduplicate concurrent identical requests (e.g. double-click).
@@ -162,7 +162,7 @@ class GeminiService {
 
   _buildRetryPrompt(prompt, attempt) {
     // Cap prompt length to prevent unbounded growth across retries
-    const base = prompt.trim().slice(0, 10000);
+    const base = prompt.trim().slice(0, cfg.PROMPT_MAX_LENGTH);
     if (attempt <= 1) return base;
     if (attempt === 2) {
       return `${base}\n\nOutput requirement: return exactly one image.`;
@@ -392,6 +392,8 @@ class GeminiService {
   "timeOfDay": "estimated time of day based on lighting",
   "perspective": "wide, medium, close-up, macro, etc.",
   "framingStyle": "centered, off-center, environmental portrait, etc.",
+  "pose": "full body position and posture — standing/sitting/lying down/reclining/kneeling, weight distribution, torso angle, limb placement, hand positions and what they interact with (phone, face, hair, prop). Directive tone. Example: 'Lying face-up on bed, left arm extended above head, right hand resting on stomach, knees slightly bent, head tilted left toward camera'",
+  "expression": "facial mood, gaze direction and intensity, mouth position, emotional read. Directive tone. Example: 'Soft direct gaze into lens, lips slightly parted, relaxed brow, subtle pout conveying quiet confidence'",
   "outfit": "EXTREMELY detailed clothing description — garment type (dress/top/skirt/shorts/pants), fabric material (sequin/silk/cotton/leather), color, pattern, neckline shape (V-neck/plunging/round), sleeve style, length (mini/midi/maxi), fit (tight/loose/bodycon), any cutouts, zippers, buttons, pockets. Describe EVERY visible garment piece separately. Do NOT make clothing more conservative than it actually is.",
   "hair": "hair color, length, texture (straight/wavy/curly), styling (down/up/ponytail/braid), parting, any hair accessories, volume, how it falls around face and shoulders",
   "format": "photo quality level — casual phone photo, candid snapshot, amateur selfie, semi-professional, or professional studio shot. Include post-processing aesthetic (raw/edited/filtered/grain/color grading). Be honest about the quality level."

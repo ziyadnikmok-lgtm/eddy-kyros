@@ -273,6 +273,13 @@ function buildGenerationPrompt({ character, activeRefs, mode, structured, isDelt
     // Prevent body proportion drift and clothing conservatism
     'BODY & OUTFIT FIDELITY: Maintain the character\'s exact body proportions as shown in reference images — do NOT reduce or minimize any body features. The outfit description must be rendered exactly as written — do NOT add extra fabric, raise necklines, lengthen hemlines, or make clothing more conservative than described. If the prompt says form-fitting, render it form-fitting.',
     REALISM_DIRECTIVE,
+    // Explicitly reinforce pose and expression so body position (lying down, sitting, etc.) isn't lost
+    structured.pose && structured.pose !== 'same as slide 1'
+      ? `POSE LOCK — MANDATORY: ${structured.pose}. The character MUST be in this exact body position. Do NOT default to standing or sitting if the pose describes lying down, reclining, or any other non-upright position.`
+      : null,
+    structured.expression && structured.expression !== 'same as slide 1'
+      ? `EXPRESSION LOCK: ${structured.expression}`
+      : null,
     structured.full_prompt || '',
   ].filter(Boolean).join('\n');
 
