@@ -30,7 +30,7 @@ const ROUTE_TIMEOUT_MS = 5 * 60_000; // 5 min hard ceiling for single post
 const PROFILE_ROUTE_TIMEOUT_MS = 15 * 60_000; // 15 min for profile scrape (many slides)
 const DEFAULT_ACTOR_ID = process.env.APIFY_POST_ACTOR_ID || 'apify/instagram-post-scraper';
 const FALLBACK_ACTOR_ID = process.env.APIFY_POST_FALLBACK_ACTOR_ID || 'apify/instagram-scraper';
-const ANALYSIS_KEYS = ['lighting', 'camera', 'pose', 'expression', 'outfit', 'scene', 'accessories', 'details', 'full_prompt'];
+const ANALYSIS_KEYS = ['lighting', 'camera', 'pose', 'expression', 'outfit', 'scene', 'accessories', 'details', 'format', 'full_prompt'];
 const THUMB_MAX_AGE_MS = 30 * 60_000; // 30 min — auto-cleanup stale thumbnails
 
 function ensureTempDir() {
@@ -113,6 +113,7 @@ function parseStructuredAnalysis(rawText) {
     scene: '',
     accessories: '',
     details: '',
+    format: '',
     full_prompt: '',
   };
   const raw = asText(rawText);
@@ -200,7 +201,14 @@ function buildStructuredAnalysisPrompt(mode) {
     'Describe like you are briefing a human photographer. Be specific about relationships, cause-and-effect, and visual interactions.',
     'Each field should be at least 10 words. Use directive tone (NOT "she is" or "the woman").',
     '',
-    'lighting: CRITICAL FIELD — Describe the OVERALL BRIGHTNESS LEVEL first (dark/dim/medium/bright/high-key), then light source type, direction, quality, color temperature, shadow character, and time-of-day feel. Be extremely precise about how dark or bright the scene is. A dimly lit room with one lamp is NOT the same as natural daylight. Example for dark scene: "Low-key dim interior, mostly shadows with a single warm bedside lamp camera-right casting localized golden glow, deep shadows across most of the frame, intimate nighttime mood". Example for bright scene: "Bright natural daylight flooding from a large window camera-left, high-key even illumination with soft shadows"',
+    'lighting: MOST CRITICAL FIELD — You MUST include ALL of the following in this exact order:',
+    '  1) BRIGHTNESS SCORE: Rate overall scene brightness 1-10 (1=near-black, 3=very dark/nighttime, 5=medium, 7=bright, 10=blown-out white). Be brutally honest — most nighttime/flash photos are 2-4.',
+    '  2) SHADOW COVERAGE: Estimate what percentage of the frame is in shadow (e.g. "70% of frame in deep shadow").',
+    '  3) KEY LIGHT: Describe the primary light source — type (flash, streetlight, lamp, sun, etc.), direction, intensity, color temperature (warm/cool/neutral + estimated Kelvin if possible).',
+    '  4) FILL LIGHT: Describe ambient/fill light level — is it nearly absent (dark scene) or present? How much do shadows get filled?',
+    '  5) SHADOW CHARACTER: Hard-edged or soft? How black are the deepest shadows (crushed black vs. visible detail)?',
+    '  6) MOOD SUMMARY: One sentence — e.g. "Dark gritty nighttime rooftop, direct flash on subject, city barely visible in background".',
+    '  Example for dark flash photo: "Brightness 3/10. 65% of frame in deep shadow. Direct camera-mounted flash as key light hitting subject face and torso, harsh and cool around 5500K. Virtually no fill light — ambient city glow provides faint rim on edges only. Hard-edged shadows with crushed blacks behind subject. Dark gritty nighttime fire escape, flash-lit subject against near-black urban backdrop."',
     'camera: Describe shot type, lens perspective, estimated focal length, shooting angle, and depth of field. Example: "Medium portrait framing at eye level with an estimated 50mm focal length, shallow depth of field softly blurring the background"',
     'pose: Describe full body positioning — weight distribution, limb placement, torso angle, hand placement and what they interact with. Directive tone. Example: "Standing with weight shifted to the right hip, left hand resting on a railing, torso turned slightly camera-left with relaxed shoulders"',
     'expression: Describe facial mood, gaze direction and intensity, mouth position, emotional read. Example: "Calm direct gaze into the lens with softly parted lips and relaxed brow, conveying quiet confidence"',
@@ -209,7 +217,7 @@ function buildStructuredAnalysisPrompt(mode) {
     'accessories: Describe all visible accessories with type, material, placement, and visual effect',
     'details: Describe color grading, film stock look, grain, contrast style, saturation, visual filters',
     'format: Describe the visual rendering style — photography type, post-processing aesthetic, visual treatment. IMPORTANT: Note the photo quality level — is it a casual phone photo, candid snapshot, amateur selfie, or professional studio shot? Include this in the description.',
-    'full_prompt: Write an optimal identity-agnostic image generation prompt following Nano-Banana formula: SCENE → LIGHTING → CAMERA → POSE → EXPRESSION → OUTFIT → ACCESSORIES → DETAILS → FORMAT. No identity descriptors (face, ethnicity, hair color, skin tone). Directive tone. One flowing natural language paragraph. START the prompt with the overall brightness level (e.g. "Dark moody interior..." or "Bright daylight...") so the lighting mood is established first. IMPORTANT: Include the EXACT outfit description with accurate coverage/fit — do NOT make clothing more modest or conservative than the original. CRITICAL: If the original is a casual/candid phone photo, explicitly state "casual phone photo quality" or "candid snapshot aesthetic" — do NOT describe it as a professional/studio shot.',
+    'full_prompt: Write an optimal identity-agnostic image generation prompt following Nano-Banana formula: SCENE → LIGHTING → CAMERA → POSE → EXPRESSION → OUTFIT → ACCESSORIES → DETAILS → FORMAT. No identity descriptors (face, ethnicity, hair color, skin tone). Directive tone. One flowing natural language paragraph. START with "BRIGHTNESS X/10." where X is the score from your lighting analysis, then describe the scene. Weave the brightness score, shadow coverage percentage, and key/fill light details directly into the prompt text so the generator cannot ignore them. Example start: "BRIGHTNESS 3/10. Dark nighttime fire escape, 65% of frame in deep shadow, direct camera flash..." IMPORTANT: Include the EXACT outfit description with accurate coverage/fit — do NOT make clothing more modest or conservative than the original. CRITICAL: If the original is a casual/candid phone photo, explicitly state "casual phone photo quality" or "candid snapshot aesthetic" — do NOT describe it as a professional/studio shot.',
     '',
     creativeLine,
     'Output strictly valid JSON object only.',
@@ -227,11 +235,23 @@ function buildCarouselDeltaPrompt(mode) {
     '',
     'Describe ONLY what changed from slide 1.',
     "For unchanged fields, write exactly: same as slide 1",
+    'EXCEPTION — outfit, accessories, and lighting MUST always be described in FULL even if unchanged. Never write "same as slide 1" for these fields.',
     'IMPORTANT: For each changed field, write a DESCRIPTIVE NATURAL LANGUAGE sentence — NOT comma-separated tags.',
     'Describe like briefing a photographer. Use directive tone (not "she is" or "the woman"). At least 8 words per changed field.',
-    'For each changed field describe: lighting (source/direction/quality/temperature), camera (shot type/angle/focal length/DOF), pose (weight distribution/limbs/torso/hands), expression (mood/gaze/mouth/eyebrows), outfit (garment/fit/fabric/color), format (rendering style/visual treatment).',
+    '',
+    'lighting: MUST include ALL of the following even if unchanged from slide 1:',
+    '  1) BRIGHTNESS SCORE: Rate overall scene brightness 1-10 (1=near-black, 3=very dark/nighttime, 5=medium, 7=bright, 10=blown-out white).',
+    '  2) SHADOW COVERAGE: Estimate what percentage of the frame is in shadow.',
+    '  3) KEY LIGHT: Primary light source type, direction, intensity, color temperature.',
+    '  4) FILL LIGHT: Ambient/fill light level.',
+    '  5) SHADOW CHARACTER: Hard-edged or soft? How black are the deepest shadows?',
+    '  6) MOOD SUMMARY: One sentence.',
+    'outfit: Always provide the COMPLETE outfit description with garment type, fit, fabric, color, and coverage.',
+    'accessories: Always describe all visible accessories in full.',
+    '',
+    'For other changed fields describe: camera (shot type/angle/focal length/DOF), pose (weight distribution/limbs/torso/hands), expression (mood/gaze/mouth/eyebrows), format (rendering style/visual treatment).',
     sceneLine,
-    'full_prompt: write an identity-agnostic delta prompt following SCENE → LIGHTING → CAMERA → POSE → EXPRESSION → OUTFIT → ACCESSORIES → DETAILS → FORMAT order. Describe only changes from slide 1. No identity/body descriptors. Keep expression. Directive tone. One flowing natural language paragraph.',
+    'full_prompt: write an identity-agnostic delta prompt following SCENE → LIGHTING → CAMERA → POSE → EXPRESSION → OUTFIT → ACCESSORIES → DETAILS → FORMAT order. Describe only changes from slide 1 EXCEPT always include FULL lighting (with BRIGHTNESS X/10 score, shadow coverage %), outfit, and accessories. START with "BRIGHTNESS X/10." No identity/body descriptors. Keep expression. Directive tone. One flowing natural language paragraph.',
     'Output strictly valid JSON object only.',
   ].join('\n');
 }
@@ -247,7 +267,7 @@ function buildGenerationPrompt({ character, activeRefs, mode, structured, isDelt
     // Prevent Gemini from over-polishing casual/candid photos into studio shots
     'IMPORTANT VISUAL QUALITY DIRECTION: Match the casual, authentic quality of the original source photo. If the source looks like a casual phone photo or candid snapshot, the recreation should have that same relaxed, natural, slightly imperfect feel — NOT hyper-polished studio lighting or commercial retouching. Preserve the raw/real energy. Avoid making it look like a professional photoshoot unless the original clearly is one.',
     // Prevent Gemini from brightening dark scenes
-    'LIGHTING FIDELITY: Match the EXACT brightness level and mood of the source. If the scene is dark, dimly lit, or moody — the output MUST be equally dark with deep shadows. Do NOT brighten, add fill light, or illuminate dark scenes. A nighttime photo with one lamp must stay dark with one lamp — do NOT turn it into daylight.',
+    'LIGHTING FIDELITY — MANDATORY: The prompt contains a BRIGHTNESS X/10 score and shadow coverage percentage. You MUST honor these numbers precisely. A score of 3/10 means the image must be DARK — mostly shadows with localized light only. Do NOT brighten, add fill light, soften shadows, or illuminate dark scenes. If the prompt says "65% deep shadow" then 65% of your output frame must be in deep shadow. A nighttime flash photo must stay dark with harsh flash — do NOT turn it into soft twilight or blue hour. Match the described color temperature exactly.',
     // Reinforce identity anchor from reference images
     'IDENTITY ANCHORING: The reference images provided show the EXACT person to depict. The generated face, body proportions, skin tone, and all physical features MUST match these reference photos precisely. Do NOT substitute, blend, or drift from the person shown in the references.',
     // Prevent body proportion drift and clothing conservatism

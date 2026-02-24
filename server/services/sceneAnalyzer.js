@@ -79,6 +79,10 @@ class SceneAnalyzer {
       'Do not alter the character identity in any way.',
       '[END SCENE PRESERVATION]',
       '',
+      'LIGHTING FIDELITY — MANDATORY: If the lighting description contains a BRIGHTNESS X/10 score and shadow coverage percentage, honor them precisely. A score of 3/10 means the image must be DARK. Do NOT brighten, add fill light, or soften shadows beyond what is described.',
+      'VISUAL QUALITY: Match the photo quality of the source. If it is a casual phone photo, candid snapshot, or amateur selfie — keep that natural, unpolished feel. Do NOT upgrade to professional studio lighting or commercial retouching unless the source is clearly a professional shot.',
+      'BODY & OUTFIT FIDELITY: Render the outfit exactly as described — do NOT add extra fabric, raise necklines, lengthen hemlines, or make clothing more conservative.',
+      '',
       REALISM_DIRECTIVE,
     ].filter(Boolean).join('\n');
 
@@ -100,6 +104,7 @@ class SceneAnalyzer {
     if (sceneData.objects) parts.push(`Key elements: ${sceneData.objects}.`);
     if (sceneData.outfit) parts.push(`Outfit: ${sceneData.outfit}.`);
     if (sceneData.hair) parts.push(`Hair: ${sceneData.hair}.`);
+    if (sceneData.format) parts.push(`Photo quality: ${sceneData.format}.`);
 
     return parts.join(' ') || 'A detailed scene.';
   }

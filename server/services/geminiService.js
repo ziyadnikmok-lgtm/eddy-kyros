@@ -90,7 +90,6 @@ class GeminiService {
       imageConfig: {
         aspectRatio: options.aspectRatio || "1:1",
         imageSize: options.imageSize || "1K",
-        personGeneration: "ALLOW_ADULT",
       },
     };
 
@@ -380,12 +379,12 @@ class GeminiService {
     try {
       const genAI = getClient(apiKey);
 
-      const prompt = `Analyze this image and extract the scene details as structured JSON. Be extremely detailed and specific — especially for clothing/outfit, accessories, and hair. Return ONLY valid JSON with no markdown fences or extra text.
+      const prompt = `Analyze this image and extract the scene details as structured JSON. Be extremely detailed and specific. Use directive tone (NOT "she is" or "the woman"). Return ONLY valid JSON with no markdown fences or extra text.
 
 {
   "environment": "detailed description of the environment/setting — room type, wall material/color, visible furniture, fixtures, mirrors, doors, tiles, etc.",
-  "lighting": "lighting direction, color temperature, intensity, quality, any visible light sources, shadows, highlights, warm/cool balance",
-  "cameraAngle": "camera position, angle, height relative to subject, tilt, distance, selfie vs third-person",
+  "lighting": "CRITICAL FIELD — include ALL: 1) BRIGHTNESS SCORE 1-10 (1=near-black, 3=dark/nighttime, 5=medium, 7=bright, 10=blown-out). 2) SHADOW COVERAGE: percentage of frame in shadow. 3) KEY LIGHT: source type (flash/lamp/sun/window/etc.), direction, intensity, color temperature (estimated Kelvin). 4) FILL LIGHT: ambient level, how much shadows get filled. 5) SHADOW CHARACTER: hard/soft edges, how black are deepest shadows. 6) MOOD: one sentence summary. Example: 'Brightness 3/10. 65% deep shadow. Direct camera flash, cool 5500K. No fill light. Hard shadows, crushed blacks. Dark gritty nighttime with flash-lit subject.'",
+  "cameraAngle": "camera position, angle, height relative to subject, tilt, distance, estimated focal length, depth of field, selfie vs third-person",
   "composition": "layout, rule of thirds placement, leading lines, visual flow, subject positioning within frame",
   "mood": "overall mood and emotional tone",
   "objects": "every visible object — phone, jewelry, necklaces, rings, earrings, bags, furniture, decorations, etc. Be specific about each item",
@@ -393,8 +392,9 @@ class GeminiService {
   "timeOfDay": "estimated time of day based on lighting",
   "perspective": "wide, medium, close-up, macro, etc.",
   "framingStyle": "centered, off-center, environmental portrait, etc.",
-  "outfit": "EXTREMELY detailed clothing description — garment type (dress/top/skirt/shorts/pants), fabric material (sequin/silk/cotton/leather), color, pattern, neckline shape (V-neck/plunging/round), sleeve style, length (mini/midi/maxi), fit (tight/loose/bodycon), any cutouts, zippers, buttons, pockets. Describe EVERY visible garment piece separately.",
-  "hair": "hair color, length, texture (straight/wavy/curly), styling (down/up/ponytail/braid), parting, any hair accessories, volume, how it falls around face and shoulders"
+  "outfit": "EXTREMELY detailed clothing description — garment type (dress/top/skirt/shorts/pants), fabric material (sequin/silk/cotton/leather), color, pattern, neckline shape (V-neck/plunging/round), sleeve style, length (mini/midi/maxi), fit (tight/loose/bodycon), any cutouts, zippers, buttons, pockets. Describe EVERY visible garment piece separately. Do NOT make clothing more conservative than it actually is.",
+  "hair": "hair color, length, texture (straight/wavy/curly), styling (down/up/ponytail/braid), parting, any hair accessories, volume, how it falls around face and shoulders",
+  "format": "photo quality level — casual phone photo, candid snapshot, amateur selfie, semi-professional, or professional studio shot. Include post-processing aesthetic (raw/edited/filtered/grain/color grading). Be honest about the quality level."
 }`;
 
       const response = await withTimeout(

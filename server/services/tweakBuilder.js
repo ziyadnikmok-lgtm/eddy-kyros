@@ -2,6 +2,7 @@
 
 const { AppError } = require('../middleware/errorHandler');
 const referenceManager = require('./referenceManager');
+const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 // Valid modification fields
 const VALID_MODIFICATIONS = ['pose', 'expression', 'clothing', 'cameraAngle', 'mood'];
@@ -53,6 +54,11 @@ class TweakBuilder {
     // 4. ANTI-DRIFT REINFORCEMENT
     // -------------------------------------------------------------------
     sections.push(this._buildAntiDriftSection(originalMetadata));
+
+    // -------------------------------------------------------------------
+    // 5. PHOTOGRAPHY REALISM
+    // -------------------------------------------------------------------
+    sections.push(REALISM_DIRECTIVE);
 
     return sections.join('\n\n');
   }
