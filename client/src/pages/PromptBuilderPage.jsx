@@ -26,7 +26,7 @@ const CATEGORY_COLORS = {
 };
 
 export default function PromptBuilderPage() {
-  const { notify, setPage: navTo } = useApp();
+  const { notify, navigateTo: navTo } = useApp();
 
   // Each slot: { atomId, category, text } or null
   const [slots, setSlots] = useState(() =>

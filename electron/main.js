@@ -131,11 +131,12 @@ function waitForServer(port, timeoutMs = 30_000) {
         return reject(new Error('Backend did not start in time'));
       }
       const req = http.get(`http://127.0.0.1:${port}/api/health`, (res) => {
+        res.resume(); // drain response to free socket
         if (res.statusCode === 200) return resolve();
         setTimeout(check, 300);
       });
       req.on('error', () => setTimeout(check, 300));
-      req.end();
+      req.setTimeout(5000, () => { req.destroy(); });
     }
     check();
   });
@@ -167,6 +168,11 @@ async function startBackend() {
   serverProcess.on('exit', (code) => {
     console.log(`[electron] Backend exited with code ${code}`);
     serverProcess = null;
+    if (mainWindow && code !== 0 && code !== null) {
+      const { dialog } = require('electron');
+      dialog.showErrorBox('Backend Crashed', `The server process exited unexpectedly (code ${code}).`);
+      app.quit();
+    }
   });
 
   await waitForServer(serverPort);
@@ -204,6 +210,11 @@ app.whenReady().then(async () => {
   ensureUserData();
   await startBackend();
   createWindow();
+}).catch((err) => {
+  console.error('[electron] Fatal startup error:', err);
+  const { dialog } = require('electron');
+  dialog.showErrorBox('Startup Error', `Backend failed to start:\n${err.message}`);
+  app.quit();
 });
 
 app.on('window-all-closed', () => {

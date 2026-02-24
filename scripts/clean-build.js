@@ -28,6 +28,7 @@ const seedFiles = {
   'caption-templates.json': [],
   'templates.json': [],
   'style-focuses.json': [],
+  'batch-jobs.json': [],
 };
 
 // Copy contentTypePresets.json from server/data if it exists (it's app config, not personal data)

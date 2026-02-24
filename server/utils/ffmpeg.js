@@ -4,7 +4,8 @@
 
 let ffmpegPath = 'ffmpeg';
 try {
-  ffmpegPath = require('ffmpeg-static');
+  const resolved = require('ffmpeg-static');
+  if (resolved) ffmpegPath = resolved;
 } catch {
   // ffmpeg-static not installed — rely on system PATH
 }

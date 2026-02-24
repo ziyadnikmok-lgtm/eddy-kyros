@@ -203,10 +203,16 @@ async function downloadVideo(videoUrls, targetPath) {
             validateStatus: (status) => status >= 200 && status < 400,
           });
           await new Promise((resolve, reject) => {
-            response.data.on('error', reject);
+            response.data.on('error', (err) => {
+              writer.destroy();
+              reject(err);
+            });
             response.data.pipe(writer);
             writer.on('finish', resolve);
-            writer.on('error', reject);
+            writer.on('error', (err) => {
+              response.data.destroy();
+              reject(err);
+            });
           });
           return { videoUrl: url };
         } catch (err) {
