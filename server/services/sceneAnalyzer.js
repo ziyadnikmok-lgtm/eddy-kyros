@@ -77,6 +77,10 @@ class SceneAnalyzer {
       'The character must be placed naturally within this scene.',
       'Do not alter the character identity in any way.',
       '[END SCENE PRESERVATION]',
+      '',
+      '[PHOTOGRAPHY REALISM DIRECTIVE]',
+      'Render this as a REAL photograph taken with a handheld phone or consumer camera. The output MUST look like an authentic casual/amateur photo — NOT a professional studio shot, NOT digital art, NOT anime, NOT 3D render. Include subtle natural imperfections: slight sensor grain, minor focus softness on edges, authentic white balance shifts, natural skin texture with pores and unevenness. Avoid: airbrushed skin, perfect symmetry, overly saturated colors, anime/cartoon stylization, HDR over-processing, studio-perfect lighting. The image should be indistinguishable from a real phone photo posted on Instagram.',
+      '[END PHOTOGRAPHY REALISM DIRECTIVE]',
     ].filter(Boolean).join('\n');
 
     return basePrompt + preservationRules;

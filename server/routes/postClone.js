@@ -244,6 +244,8 @@ function buildGenerationPrompt({ character, activeRefs, mode, structured, isDelt
       : 'This is a base prompt for the first image/standalone post.',
     // Prevent Gemini from over-polishing casual/candid photos into studio shots
     'IMPORTANT VISUAL QUALITY DIRECTION: Match the casual, authentic quality of the original source photo. If the source looks like a casual phone photo or candid snapshot, the recreation should have that same relaxed, natural, slightly imperfect feel — NOT hyper-polished studio lighting or commercial retouching. Preserve the raw/real energy. Avoid making it look like a professional photoshoot unless the original clearly is one.',
+    // Hard anti-anime/anti-render directive
+    'PHOTOGRAPHY REALISM DIRECTIVE: The output MUST look like a REAL photograph from a phone or consumer camera — NOT digital art, NOT anime, NOT 3D render, NOT illustration. Include subtle natural imperfections: slight sensor grain, minor focus softness on edges, authentic white balance shifts, natural skin texture with pores and unevenness. Avoid: airbrushed skin, perfect symmetry, overly saturated colors, anime/cartoon stylization, HDR over-processing. The image should be indistinguishable from a real photo posted on Instagram.',
     // Prevent Gemini from brightening dark scenes
     'LIGHTING FIDELITY: Match the EXACT brightness level and mood of the source. If the scene is dark, dimly lit, or moody — the output MUST be equally dark with deep shadows. Do NOT brighten, add fill light, or illuminate dark scenes. A nighttime photo with one lamp must stay dark with one lamp — do NOT turn it into daylight.',
     // Reinforce identity anchor from reference images
