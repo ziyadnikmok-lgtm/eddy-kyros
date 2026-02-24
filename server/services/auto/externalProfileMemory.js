@@ -1,9 +1,6 @@
 const fs = require('node:fs');
 
-const DEFAULT_PROFILE_FILES = [
-  'C:\\Users\\X\\Downloads\\AyuGram Desktop\\subject (2).json',
-  'C:\\Users\\X\\Downloads\\AyuGram Desktop\\subject (3).json',
-];
+const DEFAULT_PROFILE_FILES = [];
 
 // Preset style memory from removed Generate UI presets.
 const PRESET_STYLE_MEMORY = [

@@ -9,6 +9,23 @@ const crypto = require('node:crypto');
 const dotenvPath = process.env.DOTENV_CONFIG_PATH || path.join(__dirname, '..', '.env');
 require('dotenv').config({ path: dotenvPath });
 
+// Auto-generate ENCRYPTION_SECRET if missing (first launch from source)
+if (!process.env.ENCRYPTION_SECRET || process.env.ENCRYPTION_SECRET.length < 32) {
+  const secret = crypto.randomBytes(32).toString('hex');
+  process.env.ENCRYPTION_SECRET = secret;
+  try {
+    if (fs.existsSync(dotenvPath)) {
+      let envContent = fs.readFileSync(dotenvPath, 'utf8');
+      if (/^ENCRYPTION_SECRET=\s*$/m.test(envContent)) {
+        envContent = envContent.replace(/^ENCRYPTION_SECRET=\s*$/m, `ENCRYPTION_SECRET=${secret}`);
+      } else if (!envContent.includes('ENCRYPTION_SECRET=')) {
+        envContent += `\nENCRYPTION_SECRET=${secret}\n`;
+      }
+      fs.writeFileSync(dotenvPath, envContent);
+    }
+  } catch { /* non-fatal — secret is in process.env for this session */ }
+}
+
 // Catch unhandled rejections and uncaught exceptions — prevent silent crashes
 process.on('unhandledRejection', (reason) => {
   console.error('[FATAL] Unhandled promise rejection:', reason?.stack || reason?.message || reason);

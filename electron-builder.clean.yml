@@ -5,6 +5,7 @@ directories:
 
 files:
   - server/**/*
+  - "!server/data/**/*"
   - electron/**/*
   - client/dist/**/*
   - package.json
