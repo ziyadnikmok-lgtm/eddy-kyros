@@ -12,6 +12,8 @@ const REALISM_DIRECTIVE = [
   '',
   'LIGHTING PRESERVATION: If the prompt specifies a BRIGHTNESS score or shadow percentages, honor them exactly. Dark scenes must stay dark. Do NOT brighten, add fill light, or soften shadows beyond what is described. Match the described color temperature.',
   '',
+  'BODY LOCK: Clothing fits realistically without altering the underlying anatomical scale.',
+  '',
   'NEVER use these aesthetics: hyper-realistic, 8k, masterpiece, ultra HD, sharp focus, cinematic lighting, perfect bokeh, studio lighting, symmetrical face, anime, cartoon, CGI, digital painting.',
   'The image should look like a natural photo posted on Instagram.',
   '[END PHOTOGRAPHY REALISM DIRECTIVE]',
