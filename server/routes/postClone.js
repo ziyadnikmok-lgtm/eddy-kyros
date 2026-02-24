@@ -6,6 +6,7 @@ const axios = require('axios');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
+const ffmpegPath = require('../utils/ffmpeg');
 const { ApifyClient } = require('apify-client');
 const { AppError } = require('../middleware/errorHandler');
 const { asText } = require('../utils/helpers');
@@ -20,6 +21,7 @@ const promptKnowledgeService = require('../services/promptKnowledgeService');
 const styleLibrary = require('../services/styleLibrary');
 const { checkPostAvailability } = require('../services/instagramAvailabilityService');
 const postCloneHistoryStore = require('../services/postCloneHistoryStore');
+const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 const router = express.Router();
 const { TEMP_DIR } = require('../paths');
@@ -244,14 +246,13 @@ function buildGenerationPrompt({ character, activeRefs, mode, structured, isDelt
       : 'This is a base prompt for the first image/standalone post.',
     // Prevent Gemini from over-polishing casual/candid photos into studio shots
     'IMPORTANT VISUAL QUALITY DIRECTION: Match the casual, authentic quality of the original source photo. If the source looks like a casual phone photo or candid snapshot, the recreation should have that same relaxed, natural, slightly imperfect feel — NOT hyper-polished studio lighting or commercial retouching. Preserve the raw/real energy. Avoid making it look like a professional photoshoot unless the original clearly is one.',
-    // Hard anti-anime/anti-render directive
-    'PHOTOGRAPHY REALISM DIRECTIVE: The output MUST look like a REAL photograph from a phone or consumer camera — NOT digital art, NOT anime, NOT 3D render, NOT illustration. Include subtle natural imperfections: slight sensor grain, minor focus softness on edges, authentic white balance shifts, natural skin texture with pores and unevenness. Avoid: airbrushed skin, perfect symmetry, overly saturated colors, anime/cartoon stylization, HDR over-processing. The image should be indistinguishable from a real photo posted on Instagram.',
     // Prevent Gemini from brightening dark scenes
     'LIGHTING FIDELITY: Match the EXACT brightness level and mood of the source. If the scene is dark, dimly lit, or moody — the output MUST be equally dark with deep shadows. Do NOT brighten, add fill light, or illuminate dark scenes. A nighttime photo with one lamp must stay dark with one lamp — do NOT turn it into daylight.',
     // Reinforce identity anchor from reference images
     'IDENTITY ANCHORING: The reference images provided show the EXACT person to depict. The generated face, body proportions, skin tone, and all physical features MUST match these reference photos precisely. Do NOT substitute, blend, or drift from the person shown in the references.',
     // Prevent body proportion drift and clothing conservatism
     'BODY & OUTFIT FIDELITY: Maintain the character\'s exact body proportions as shown in reference images — do NOT reduce or minimize any body features. The outfit description must be rendered exactly as written — do NOT add extra fabric, raise necklines, lengthen hemlines, or make clothing more conservative than described. If the prompt says form-fitting, render it form-fitting.',
+    REALISM_DIRECTIVE,
     structured.full_prompt || '',
   ].filter(Boolean).join('\n');
 
@@ -892,7 +893,7 @@ function mimeFromExt(filePath) {
 async function safeJpegFromAnyImage(inputPath, tempFiles) {
   const outputPath = path.join(TEMP_DIR, `post-clone-xcode-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.jpg`);
   tempFiles.push(outputPath);
-  await execFileAsync('ffmpeg', ['-y', '-i', inputPath, '-frames:v', '1', outputPath], {
+  await execFileAsync(ffmpegPath, ['-y', '-i', inputPath, '-frames:v', '1', outputPath], {
     timeout: 30000,
   });
   return outputPath;

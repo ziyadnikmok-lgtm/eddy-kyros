@@ -5,6 +5,7 @@ const axios = require('axios');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
+const ffmpegPath = require('../utils/ffmpeg');
 const { ApifyClient } = require('apify-client');
 const { AppError } = require('../middleware/errorHandler');
 const { createMultipartParser } = require('../middleware/multipartParser');
@@ -225,10 +226,10 @@ async function downloadVideo(videoUrls, targetPath) {
 
 async function extractFrames(videoPath, firstPath, lastPath) {
   try {
-    await execFileAsync('ffmpeg', ['-y', '-i', videoPath, '-vframes', '1', firstPath], {
+    await execFileAsync(ffmpegPath, ['-y', '-i', videoPath, '-vframes', '1', firstPath], {
       timeout: 30000,
     });
-    await execFileAsync('ffmpeg', ['-y', '-sseof', '-1', '-i', videoPath, '-vframes', '1', lastPath], {
+    await execFileAsync(ffmpegPath, ['-y', '-sseof', '-1', '-i', videoPath, '-vframes', '1', lastPath], {
       timeout: 30000,
     });
   } catch (err) {

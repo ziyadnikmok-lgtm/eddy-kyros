@@ -10,6 +10,7 @@ const { buildLoginCookies } = require('../utils/instagramCookies');
 const apiKeyManager = require('./apiKeyManager');
 
 const execFileAsync = promisify(execFile);
+const ffmpegPath = require('../utils/ffmpeg');
 const APIFY_BASE_URL = 'https://api.apify.com/v2/acts/apify~instagram-scraper/run-sync-get-dataset-items';
 const MAX_VIDEO_BYTES = 120 * 1024 * 1024; // 120MB
 
@@ -136,8 +137,8 @@ async function extractFirstAndLastFrame(videoPath) {
   const lastFramePath = path.join(tempDir, `last-${crypto.randomUUID()}.jpg`);
 
   try {
-    await execFileAsync('ffmpeg', ['-y', '-i', videoPath, '-frames:v', '1', firstFramePath]);
-    await execFileAsync('ffmpeg', ['-y', '-sseof', '-0.35', '-i', videoPath, '-frames:v', '1', lastFramePath]);
+    await execFileAsync(ffmpegPath, ['-y', '-i', videoPath, '-frames:v', '1', firstFramePath]);
+    await execFileAsync(ffmpegPath, ['-y', '-sseof', '-0.35', '-i', videoPath, '-frames:v', '1', lastFramePath]);
   } catch (err) {
     throw new AppError(
       `Frame extraction failed. Ensure ffmpeg is installed and in PATH. ${err.message}`,

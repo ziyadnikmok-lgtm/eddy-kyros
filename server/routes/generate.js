@@ -16,6 +16,7 @@ const galleryManager = require('../services/galleryManager');
 const styleLibrary = require('../services/styleLibrary');
 const styleFocusStore = require('../services/styleFocusStore');
 const { AppError } = require('../middleware/errorHandler');
+const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 const router = express.Router();
 const VALID_ASPECT_RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '4:5'];
@@ -284,7 +285,7 @@ router.post('/', async (req, res, next) => {
     }
 
     // Global casual/amateur realism directive — prevent over-polished or anime-like output
-    finalPrompt = `${finalPrompt}\n\n[PHOTOGRAPHY REALISM DIRECTIVE]\nRender this as a REAL photograph taken with a handheld phone or consumer camera. The output MUST look like an authentic casual/amateur photo — NOT a professional studio shot, NOT digital art, NOT anime, NOT 3D render. Include subtle natural imperfections: slight sensor grain, minor focus softness on edges, authentic white balance shifts, natural skin texture with pores and unevenness. Avoid: airbrushed skin, perfect symmetry, overly saturated colors, anime/cartoon stylization, HDR over-processing, studio-perfect lighting. The image should be indistinguishable from a real phone photo posted on Instagram.\n[END PHOTOGRAPHY REALISM DIRECTIVE]`;
+    finalPrompt = `${finalPrompt}\n\n${REALISM_DIRECTIVE}`;
 
     const apiKey = apiKeyManager.getActiveKey();
     const result = await geminiService.generateImage(apiKey, finalPrompt, {

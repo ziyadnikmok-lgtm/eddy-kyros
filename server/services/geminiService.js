@@ -90,6 +90,7 @@ class GeminiService {
       imageConfig: {
         aspectRatio: options.aspectRatio || "1:1",
         imageSize: options.imageSize || "1K",
+        personGeneration: "ALLOW_ADULT",
       },
     };
 
