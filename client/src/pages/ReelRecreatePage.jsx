@@ -17,6 +17,7 @@ const _cache = {
   poseMatchEnabled: true,
   environmentMatchEnabled: true,
   useSourceFrameReference: false,
+  runSourceType: 'url',
 };
 
 export default function ReelRecreatePage() {
@@ -30,7 +31,7 @@ export default function ReelRecreatePage() {
   const [charDetail, setCharDetail] = useState(null);
   const [result, setResult] = useState(_cache.result);
   const [recreationHistory, setRecreationHistory] = useState(_cache.recreationHistory);
-  const [runSourceType, setRunSourceType] = useState('apify');
+  const [runSourceType, setRunSourceType] = useState(_cache.runSourceType);
   const [poseMatchStrength, setPoseMatchStrength] = useState(_cache.poseMatchStrength);
   const [environmentMatchStrength, setEnvironmentMatchStrength] = useState(_cache.environmentMatchStrength);
   const [poseMatchEnabled, setPoseMatchEnabled] = useState(_cache.poseMatchEnabled);
@@ -55,6 +56,7 @@ export default function ReelRecreatePage() {
   useEffect(() => { _cache.poseMatchEnabled = poseMatchEnabled; }, [poseMatchEnabled]);
   useEffect(() => { _cache.environmentMatchEnabled = environmentMatchEnabled; }, [environmentMatchEnabled]);
   useEffect(() => { _cache.useSourceFrameReference = useSourceFrameReference; }, [useSourceFrameReference]);
+  useEffect(() => { _cache.runSourceType = runSourceType; }, [runSourceType]);
 
   const LIVE_STEPS = useMemo(() => runSourceType === 'cached'
     ? ['Reusing cached source frames', 'Analyzing scenes with Gemini', 'Recreating first frame', 'Recreating follow-up frame']

@@ -119,7 +119,7 @@ router.post('/recreate', async (req, res, next) => {
     const selected = posts.slice(0, 20).map((p) => ({
       type: p.type || 'single',
       sourceUrl: asText(p.sourceUrl),
-      imageUrls: Array.isArray(p.imageUrls) ? p.imageUrls.filter((u) => typeof u === 'string') : [],
+      imageUrls: Array.isArray(p.imageUrls) ? p.imageUrls.filter((u) => typeof u === 'string' && /^https?:\/\//i.test(u)) : [],
     })).filter((p) => p.imageUrls.length > 0);
 
     if (selected.length === 0) {

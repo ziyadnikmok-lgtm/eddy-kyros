@@ -6,6 +6,7 @@ export function usePoll(fetchFn, intervalMs = 3000) {
   const timerRef = useRef(null);
   const fnRef = useRef(fetchFn);
   const activeRef = useRef(false);
+  const failCountRef = useRef(0);
 
   // Keep refs in sync to avoid stale closures in setTimeout
   useEffect(() => { fnRef.current = fetchFn; });
@@ -19,6 +20,7 @@ export function usePoll(fetchFn, intervalMs = 3000) {
   }, []);
 
   const start = useCallback(() => {
+    failCountRef.current = 0;
     setActive(true);
     activeRef.current = true;
   }, []);
@@ -32,6 +34,7 @@ export function usePoll(fetchFn, intervalMs = 3000) {
       try {
         const result = await fnRef.current();
         if (cancelled || !activeRef.current) return;
+        failCountRef.current = 0;
         setData(result);
         if (result?.status === 'completed' || result?.status === 'failed' || result?.status === 'cancelled') {
           setActive(false);
@@ -39,7 +42,13 @@ export function usePoll(fetchFn, intervalMs = 3000) {
           return;
         }
       } catch {
-        // Swallow — poll retries on next tick
+        failCountRef.current += 1;
+        if (failCountRef.current >= 30) {
+          console.warn('[usePoll] Stopped polling after 30 consecutive failures');
+          setActive(false);
+          activeRef.current = false;
+          return;
+        }
       }
       if (!cancelled && activeRef.current) {
         timerRef.current = setTimeout(tick, intervalMs);

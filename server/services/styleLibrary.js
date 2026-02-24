@@ -267,6 +267,7 @@ class StyleLibraryService {
       atom.category = updates.category;
     }
 
+    this._rebuildNormIndex();
     this._persistStore();
     return { ...atom };
   }
@@ -463,7 +464,7 @@ class StyleLibraryService {
     const atom = this._store.find(a => a.id === atomId);
     if (atom) {
       atom.usageCount = (atom.usageCount || 0) + 1;
-      this._persistStore();
+      this._schedulePersist();
     }
   }
 
@@ -897,6 +898,14 @@ class StyleLibraryService {
 
   _persistStore() {
     atomicWriteJSON(DATA_FILE, this._store);
+  }
+
+  _schedulePersist() {
+    if (this._persistTimer) return;
+    this._persistTimer = setTimeout(() => {
+      this._persistTimer = null;
+      this._persistStore();
+    }, 2000);
   }
 
   _persistProfiles() {

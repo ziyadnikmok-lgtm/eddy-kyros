@@ -30,6 +30,8 @@ const _cache = {
   fetchedPosts: [],
   selected: new Set(),
   history: [],
+  postLimit: 9,
+  availability: null,
 };
 
 export default function PostClonePage() {
@@ -40,11 +42,11 @@ export default function PostClonePage() {
   const [inputMode, setInputMode] = useState(_cache.inputMode); // single | profile
   const [postUrl, setPostUrl] = useState(_cache.postUrl);
   const [profileUrl, setProfileUrl] = useState(_cache.profileUrl);
-  const [postLimit, setPostLimit] = useState(9);
+  const [postLimit, setPostLimit] = useState(_cache.postLimit);
   const [charId, setCharId] = useState(_cache.charId);
   const [mode, setMode] = useState(_cache.mode); // exact | creative
   const [result, setResult] = useState(_cache.result);
-  const [availability, setAvailability] = useState(null);
+  const [availability, setAvailability] = useState(_cache.availability);
   const [savingFocus, setSavingFocus] = useState(null);
   const [focusName, setFocusName] = useState('');
 
@@ -73,6 +75,8 @@ export default function PostClonePage() {
   useEffect(() => { _cache.fetchedPosts = fetchedPosts; }, [fetchedPosts]);
   useEffect(() => { _cache.selected = selected; }, [selected]);
   useEffect(() => { _cache.history = history; }, [history]);
+  useEffect(() => { _cache.postLimit = postLimit; }, [postLimit]);
+  useEffect(() => { _cache.availability = availability; }, [availability]);
 
   // IG session quick-edit + live status
   const [showSession, setShowSession] = useState(false);

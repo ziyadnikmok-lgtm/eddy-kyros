@@ -28,6 +28,14 @@ router.post('/analyze', async (req, res, next) => {
       throw new AppError('"mimeType" is required', 400, 'VALIDATION_ERROR');
     }
 
+    const ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/webp'];
+    if (!ALLOWED_MIME.includes(mimeType)) {
+      throw new AppError('mimeType must be image/png, image/jpeg, or image/webp', 400, 'VALIDATION_ERROR');
+    }
+    if (typeof image === 'string' && image.length > 15_000_000) {
+      throw new AppError('Image data too large (max ~10MB)', 413, 'PAYLOAD_TOO_LARGE');
+    }
+
     // Strip data URI prefix if present
     let base64 = image;
     const dataUriMatch = image.match(/^data:image\/\w+;base64,(.+)$/);

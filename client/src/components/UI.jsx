@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
@@ -465,12 +465,15 @@ export function Empty({ icon = '📭', title, subtitle }) {
 /* ── CopyBtn ────────────────────────────────────────── */
 export function CopyBtn({ text, className = '' }) {
   const [copied, setCopied] = useState(false);
+  const timerRef = useRef();
+  useEffect(() => () => clearTimeout(timerRef.current), []);
   const copy = async (e) => {
     e.stopPropagation();
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setCopied(false), 1500);
     } catch { /* clipboard unavailable */ }
   };
   return (

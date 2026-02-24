@@ -146,7 +146,7 @@ export default function BatchPage() {
       setJobHistory(jobs);
       setQueueStats(stats);
     } catch { /* ignore */ }
-    setHistoryLoading(false);
+    finally { setHistoryLoading(false); }
   };
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch

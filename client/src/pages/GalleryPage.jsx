@@ -183,8 +183,9 @@ export default function GalleryPage() {
       setBulkDeleteConfirm(false);
     } catch (err) {
       notify(err.message || 'Bulk delete failed', 'error');
+    } finally {
+      setBulkLoading(false);
     }
-    setBulkLoading(false);
   };
 
   const handleBulkDownload = async () => {
@@ -196,8 +197,9 @@ export default function GalleryPage() {
       notify(`Downloading ${ids.length} images`, 'success');
     } catch (err) {
       notify(err.message || 'Download failed', 'error');
+    } finally {
+      setBulkLoading(false);
     }
-    setBulkLoading(false);
   };
 
   const clearFilters = () => {

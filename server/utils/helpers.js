@@ -16,11 +16,29 @@ function asText(value) {
 /**
  * Atomic JSON file write — writes to a .tmp sibling then renames.
  * Prevents file corruption if the process crashes mid-write.
+ * On Windows, renameSync can fail with EPERM/EBUSY if the target is open;
+ * falls back to unlink-then-rename, then direct write as last resort.
  */
 function atomicWriteJSON(filePath, data, indent = 2) {
   const tmp = filePath + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(data, null, indent), 'utf8');
-  fs.renameSync(tmp, filePath);
+  const json = JSON.stringify(data, null, indent);
+  fs.writeFileSync(tmp, json, 'utf8');
+  try {
+    fs.renameSync(tmp, filePath);
+  } catch (renameErr) {
+    // On Windows EPERM/EBUSY: unlink target first, then retry rename
+    try {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      fs.renameSync(tmp, filePath);
+    } catch {
+      // Last resort: write directly (non-atomic but won't crash)
+      try {
+        fs.writeFileSync(filePath, json, 'utf8');
+      } catch { /* intentional — propagate nothing, data is in memory */ }
+      // Clean up orphaned .tmp
+      try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+    }
+  }
 }
 
 module.exports = { asText, atomicWriteJSON };

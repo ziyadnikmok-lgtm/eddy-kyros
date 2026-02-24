@@ -199,6 +199,9 @@ const _cache = {
   savedPlans: [],
   startDate: null,
   expandedDay: null,
+  similarityCooldown: 'on',
+  footwearLock: '',
+  autoExecute: false,
 };
 
 /* ── Main Page ────────────────────────────────────── */
@@ -218,9 +221,9 @@ export default function AutoGeneratorPage() {
   const [carouselCount, setCarouselCount] = useState(_cache.carouselCount);
   const [reelCount, setReelCount] = useState(_cache.reelCount);
   const [storyCount, setStoryCount] = useState(_cache.storyCount);
-  const [similarityCooldown, setSimilarityCooldown] = useState('on');
-  const [footwearLock, setFootwearLock] = useState('');
-  const [autoExecute, setAutoExecute] = useState(false);
+  const [similarityCooldown, setSimilarityCooldown] = useState(_cache.similarityCooldown);
+  const [footwearLock, setFootwearLock] = useState(_cache.footwearLock);
+  const [autoExecute, setAutoExecute] = useState(_cache.autoExecute);
   const [loading, setLoading] = useState(false);
 
   // ── Execute mode state (unchanged) ──
@@ -266,6 +269,9 @@ export default function AutoGeneratorPage() {
   useEffect(() => { _cache.savedPlans = savedPlans; }, [savedPlans]);
   useEffect(() => { _cache.startDate = startDate; }, [startDate]);
   useEffect(() => { _cache.expandedDay = expandedDay; }, [expandedDay]);
+  useEffect(() => { _cache.similarityCooldown = similarityCooldown; }, [similarityCooldown]);
+  useEffect(() => { _cache.footwearLock = footwearLock; }, [footwearLock]);
+  useEffect(() => { _cache.autoExecute = autoExecute; }, [autoExecute]);
 
   // Load saved plans on mount
   useEffect(() => {
@@ -323,7 +329,9 @@ export default function AutoGeneratorPage() {
   };
 
   const abortRef = useRef(null);
+  const mountedRef = useRef(true);
   useEffect(() => () => { abortRef.current?.abort(); }, []);
+  useEffect(() => { return () => { mountedRef.current = false; }; }, []);
 
   // ── Generate handler ──
   const handleGenerate = async () => {
@@ -368,7 +376,7 @@ export default function AutoGeneratorPage() {
           footwearLock: footwearLock.trim() || undefined,
           styleAtomIds: styleAtomIds.length > 0 ? styleAtomIds : undefined,
         }),
-        signal: controller.signal,
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(300_000)]),
       });
 
       const json = await response.json().catch(() => null);
@@ -480,6 +488,7 @@ export default function AutoGeneratorPage() {
     if (remaining.length === 0) { notify('All days already executed', 'info'); return; }
 
     for (const day of remaining) {
+      if (!mountedRef.current) break;
       await handleExecuteDay(day.day);
     }
   }, [activePlan, handleExecuteDay, notify]);

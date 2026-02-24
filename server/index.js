@@ -22,6 +22,9 @@ if (!process.env.ENCRYPTION_SECRET || process.env.ENCRYPTION_SECRET.length < 32)
         envContent += `\nENCRYPTION_SECRET=${secret}\n`;
       }
       fs.writeFileSync(dotenvPath, envContent);
+    } else {
+      // .env doesn't exist yet — create it so the secret survives restarts
+      fs.writeFileSync(dotenvPath, `ENCRYPTION_SECRET=${secret}\n`);
     }
   } catch { /* non-fatal — secret is in process.env for this session */ }
 }
@@ -141,15 +144,15 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-app.use('/api/keys', keysRouter);
-app.use('/api/characters', charactersRouter);
+app.use('/api/keys', generateLimiter, keysRouter);
+app.use('/api/characters', generateLimiter, charactersRouter);
 app.use('/api/batch', batchLimiter, batchRouter);
 app.use('/api/tweak', generateLimiter, tweakRouter);
 app.use('/api/images', imagesRouter);
 app.use('/api/niches', nichesRouter);
 app.use('/api/brand-voice', brandVoiceRouter);
 app.use('/api/story', storyRouter);
-app.use('/api/gallery', galleryRouter);
+app.use('/api/gallery', generateLimiter, galleryRouter);
 app.use('/api/scene', generateLimiter, sceneRouter);
 app.use('/api/scene-memory', sceneMemoryRouter);
 app.use('/api/outfits', outfitsRouter);

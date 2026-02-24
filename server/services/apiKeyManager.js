@@ -12,6 +12,7 @@ const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
 const SALT_LENGTH = 32;
 const KEY_DERIVATION_ITERATIONS = 100000;
+const DERIVED_KEY_CACHE_MAX = 20;
 const { DATA_DIR } = require('../paths');
 const DATA_FILE = path.join(DATA_DIR, 'keys.enc');
 
@@ -19,6 +20,7 @@ class ApiKeyManager {
   constructor() {
     this._ensureDataDir();
     this._store = this._loadStore();
+    this._derivedKeyCache = new Map();
   }
 
   // --- Public API ---
@@ -299,8 +301,21 @@ class ApiKeyManager {
   }
 
   _deriveKey(salt) {
+    const cacheKey = salt.toString('hex');
+    const cached = this._derivedKeyCache.get(cacheKey);
+    if (cached) return cached;
+
     const secret = this._getEncryptionSecret();
-    return crypto.pbkdf2Sync(secret, salt, KEY_DERIVATION_ITERATIONS, 32, 'sha512');
+    const derived = crypto.pbkdf2Sync(secret, salt, KEY_DERIVATION_ITERATIONS, 32, 'sha512');
+
+    // Evict oldest entry if cache is full
+    if (this._derivedKeyCache.size >= DERIVED_KEY_CACHE_MAX) {
+      const oldest = this._derivedKeyCache.keys().next().value;
+      this._derivedKeyCache.delete(oldest);
+    }
+    this._derivedKeyCache.set(cacheKey, derived);
+
+    return derived;
   }
 
   _encrypt(plaintext) {

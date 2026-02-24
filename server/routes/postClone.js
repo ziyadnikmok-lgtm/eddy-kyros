@@ -576,8 +576,6 @@ function extractPostImages(postItem) {
     const typeName = asText(postItem.type || postItem.__typename || postItem.productType || '').toLowerCase();
     if (typeName.includes('sidecar') || typeName.includes('carousel') || postItem.mediaCount > 1) {
       console.warn(`[post-clone] CAROUSEL UNDEREXTRACTED: type=${typeName}, mediaCount=${postItem.mediaCount}, extracted=1`);
-      console.warn(`[post-clone] full keys: ${Object.keys(postItem).join(', ')}`);
-      try { console.warn(`[post-clone] item preview: ${JSON.stringify(postItem).slice(0, 600)}`); } catch { /* circular ref */ }
     }
     return {
       type: 'single',

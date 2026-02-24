@@ -58,6 +58,7 @@ async function getReelVideoUrlFromApify(reelUrl, apifyToken = '') {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(120_000),
     });
     if (!response.ok && loginCookies) {
       // Retry once without cookies in case actor input schema rejects loginCookies.
@@ -70,6 +71,7 @@ async function getReelVideoUrlFromApify(reelUrl, apifyToken = '') {
           resultsLimit: 1,
           addParentData: false,
         }),
+        signal: AbortSignal.timeout(120_000),
       });
     }
   } catch (err) {
@@ -103,7 +105,7 @@ async function downloadVideoToTemp(videoUrl) {
 
   let response;
   try {
-    response = await fetch(videoUrl);
+    response = await fetch(videoUrl, { signal: AbortSignal.timeout(120_000) });
   } catch (err) {
     throw new AppError(`Failed to download reel video: ${err.message}`, 502, 'VIDEO_DOWNLOAD_ERROR');
   }
@@ -113,6 +115,8 @@ async function downloadVideoToTemp(videoUrl) {
   }
 
   const fileStream = fs.createWriteStream(filePath);
+  let streamError = null;
+  fileStream.on('error', (err) => { streamError = err; });
   let bytes = 0;
   for await (const chunk of response.body) {
     bytes += chunk.length;
@@ -122,6 +126,11 @@ async function downloadVideoToTemp(videoUrl) {
       throw new AppError('Reel video is too large (max 120MB)', 413, 'VIDEO_TOO_LARGE');
     }
     fileStream.write(chunk);
+    if (streamError) {
+      fileStream.destroy();
+      try { fs.unlinkSync(filePath); } catch { }
+      throw new AppError(`Disk write failed: ${streamError.message}`, 500, 'DISK_WRITE_ERROR');
+    }
   }
 
   await new Promise((resolve, reject) => {
@@ -137,8 +146,8 @@ async function extractFirstAndLastFrame(videoPath) {
   const lastFramePath = path.join(tempDir, `last-${crypto.randomUUID()}.jpg`);
 
   try {
-    await execFileAsync(ffmpegPath, ['-y', '-i', videoPath, '-frames:v', '1', firstFramePath]);
-    await execFileAsync(ffmpegPath, ['-y', '-sseof', '-0.35', '-i', videoPath, '-frames:v', '1', lastFramePath]);
+    await execFileAsync(ffmpegPath, ['-y', '-i', videoPath, '-frames:v', '1', firstFramePath], { timeout: 30_000 });
+    await execFileAsync(ffmpegPath, ['-y', '-sseof', '-0.35', '-i', videoPath, '-frames:v', '1', lastFramePath], { timeout: 30_000 });
   } catch (err) {
     throw new AppError(
       `Frame extraction failed. Ensure ffmpeg is installed and in PATH. ${err.message}`,

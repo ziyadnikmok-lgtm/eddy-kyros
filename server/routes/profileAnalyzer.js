@@ -174,6 +174,10 @@ router.get('/analyze', async (req, res) => {
   const send = initSSE(res);
 
   const username = asText(req.query.username).replace(/^@/, '');
+  if (!/^[A-Za-z0-9._]{1,30}$/.test(username)) {
+    send('error', { message: 'Invalid username format' });
+    return res.end();
+  }
   const postLimit = Math.max(1, Math.min(30, parseInt(req.query.postLimit) || 12));
   const sort = asText(req.query.sort) || 'newest';
   const newerThan = asText(req.query.newerThan) || '';

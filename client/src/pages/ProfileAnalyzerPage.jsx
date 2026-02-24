@@ -109,21 +109,22 @@ export default function ProfileAnalyzerPage() {
     es.addEventListener('atoms', (e) => {
       try {
         const data = JSON.parse(e.data);
+        let newChecked;
         setResults(prev => {
           const next = [...prev, data];
           // Auto-check atoms >= 15 chars
-          const newChecked = new Set();
+          newChecked = new Set();
           data.atoms.forEach((atom, ai) => {
             if (atom.text.length >= 15) {
               newChecked.add(`${next.length - 1}-${ai}`);
             }
           });
-          setCheckedAtoms(prev2 => {
-            const merged = new Set(prev2);
-            for (const key of newChecked) merged.add(key);
-            return merged;
-          });
           return next;
+        });
+        setCheckedAtoms(prev2 => {
+          const merged = new Set(prev2);
+          for (const key of newChecked) merged.add(key);
+          return merged;
         });
       } catch { /* ignore */ }
     });

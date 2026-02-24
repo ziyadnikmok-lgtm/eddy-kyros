@@ -687,11 +687,8 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
       },
     });
   } catch (err) {
-    if (err instanceof AppError) {
-      next(err);
-      return;
-    }
-    next(new AppError(err.message || 'Reel copy failed', 500, 'REEL_COPY_ERROR'));
+    if (err instanceof AppError) return next(err);
+    next(new AppError('Reel copy failed', 500, 'REEL_COPY_ERROR'));
   } finally {
     for (const filePath of [videoPath, firstPath, lastPath]) {
       if (filePath && fs.existsSync(filePath)) {

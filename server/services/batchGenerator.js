@@ -135,7 +135,10 @@ function _persistJobs() {
         entries.push(lite);
       }
       atomicWriteJSON(JOB_STORE_PATH, entries, 0);
-    } catch { /* persist best-effort — non-critical */ }
+    } catch (err) {
+      const log = require('../utils/logger');
+      log.warn('batch_persist_failed', { message: err.message });
+    }
   });
 }
 
