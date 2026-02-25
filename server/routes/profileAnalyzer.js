@@ -265,7 +265,9 @@ router.get('/analyze', async (req, res) => {
       let tempFile = null;
       try {
         // Download image to temp
-        const ext = path.extname(new URL(imageUrl).pathname) || '.jpg';
+        const ALLOWED_IMG_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+        const rawExt = path.extname(new URL(imageUrl).pathname).toLowerCase();
+        const ext = ALLOWED_IMG_EXT.has(rawExt) ? rawExt : '.jpg';
         tempFile = path.join(TEMP_DIR, `pa-${crypto.randomUUID()}${ext}`);
         await downloadImageToTemp(imageUrl, tempFile);
         if (closed) break;

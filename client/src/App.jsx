@@ -132,16 +132,19 @@ export default function App() {
   const [apifyConnected, setApifyConnected] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     Promise.all([keysApi.list(), keysApi.getApify()])
       .then(([data, apify]) => {
+        if (cancelled) return;
         const act = data.find((k) => k.isActive);
         if (act) setActiveKey(act);
         else setActiveKey(null);
         setApifyConnected(!!apify?.hasApifyKey);
       })
       .catch(() => {
-        setApifyConnected(false);
+        if (!cancelled) setApifyConnected(false);
       });
+    return () => { cancelled = true; };
   }, [setActiveKey]);
 
   const PageComponent = PAGES[page] || GeneratePage;

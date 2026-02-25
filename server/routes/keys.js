@@ -336,13 +336,11 @@ async function checkInstagramSessionHealth() {
 
 // Health-check TTL cache — avoids burning API credits on rapid polling
 const HEALTH_CACHE_TTL_MS = 30_000; // 30s
-let _healthCache = null;
-let _healthCacheTs = 0;
+let _healthSnapshot = { cache: null, ts: 0 }; // atomic object to prevent read/write race
 
 /** Invalidate health cache so the next health-check fetches live data. */
 function invalidateHealthCache() {
-  _healthCache = null;
-  _healthCacheTs = 0;
+  _healthSnapshot = { cache: null, ts: 0 };
 }
 
 /**
@@ -351,8 +349,9 @@ function invalidateHealthCache() {
  */
 router.get('/health-check', async (_req, res, next) => {
   try {
-    if (_healthCache && Date.now() - _healthCacheTs < HEALTH_CACHE_TTL_MS) {
-      return res.json({ success: true, data: { ..._healthCache, cached: true } });
+    const snap = _healthSnapshot;
+    if (snap.cache && Date.now() - snap.ts < HEALTH_CACHE_TTL_MS) {
+      return res.json({ success: true, data: { ...snap.cache, cached: true } });
     }
 
     const [gemini, apify, ig] = await Promise.all([
@@ -372,8 +371,7 @@ router.get('/health-check', async (_req, res, next) => {
       apify,
       instagramSession: ig,
     };
-    _healthCache = result;
-    _healthCacheTs = Date.now();
+    _healthSnapshot = { cache: result, ts: Date.now() };
 
     res.json({ success: true, data: result });
   } catch (err) {

@@ -83,8 +83,11 @@ export default function BatchPage() {
   } = state;
 
   const { job, setJob, subscribe, cleanup: cleanupProgress } = useBatchProgress();
-  // Restore cached job on mount
-  useEffect(() => { if (_cache.job) setJob(_cache.job); }, []);
+  // Restore cached job on mount; cleanup SSE/polling on unmount
+  useEffect(() => {
+    if (_cache.job) setJob(_cache.job);
+    return () => cleanupProgress();
+  }, []);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   // Templates

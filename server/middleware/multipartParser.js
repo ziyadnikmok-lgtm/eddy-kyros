@@ -40,6 +40,7 @@ function createMultipartParser(options = {}) {
       totalBytes += chunk.length;
       if (maxBytes > 0 && totalBytes > maxBytes) {
         done = true;
+        chunks.length = 0; // release buffered data for GC
         req.destroy();
         return next(new AppError(`Upload exceeds ${Math.round(maxBytes / (1024 * 1024))}MB limit`, 413, 'PAYLOAD_TOO_LARGE'));
       }
@@ -51,6 +52,7 @@ function createMultipartParser(options = {}) {
       done = true;
       try {
         const raw = Buffer.concat(chunks).toString('latin1');
+        chunks.length = 0; // release chunk references after concat
         const parts = raw.split(`--${boundary}`);
         const body = {};
         let file = null;
@@ -100,6 +102,7 @@ function createMultipartParser(options = {}) {
     req.on('error', () => {
       if (done) return;
       done = true;
+      chunks.length = 0; // release buffered data for GC
       next(new AppError('Failed to read upload stream', 400, 'UPLOAD_PARSE_ERROR'));
     });
   };

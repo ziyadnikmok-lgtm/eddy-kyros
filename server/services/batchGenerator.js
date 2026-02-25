@@ -273,7 +273,9 @@ class BatchGenerator extends EventEmitter {
 
     // Fire-and-forget — errors are captured per-task; guard against
     // unhandled rejection from any unexpected top-level failure
-    this._executeTasks(job, enrichedTasks).catch(() => {
+    this._executeTasks(job, enrichedTasks).catch((err) => {
+      const log = require('../utils/logger');
+      log.error('batch_job_crash', { jobId, message: err?.message, stack: err?.stack });
       if (job.status === 'running') {
         job.status = 'failed';
         job._completedAt = Date.now();

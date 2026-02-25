@@ -30,11 +30,13 @@ function atomicWriteJSON(filePath, data, indent = 2) {
     try {
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
       fs.renameSync(tmp, filePath);
-    } catch {
+    } catch (fallbackErr) {
       // Last resort: write directly (non-atomic but won't crash)
       try {
         fs.writeFileSync(filePath, json, 'utf8');
-      } catch { /* intentional — propagate nothing, data is in memory */ }
+      } catch (writeErr) {
+        console.warn(`[atomicWriteJSON] Failed to persist ${path.basename(filePath)}: ${writeErr.message}`);
+      }
       // Clean up orphaned .tmp
       try { fs.unlinkSync(tmp); } catch { /* ignore */ }
     }

@@ -223,8 +223,13 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   if (serverProcess) {
-    serverProcess.kill('SIGTERM');
+    const proc = serverProcess;
     serverProcess = null;
+    proc.kill('SIGTERM');
+    // Force-kill if graceful shutdown takes too long
+    setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch { /* already exited */ }
+    }, 5000).unref();
   }
 });
 

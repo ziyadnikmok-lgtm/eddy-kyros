@@ -1488,7 +1488,9 @@ router.get('/proxy-image', async (req, res, next) => {
     const domainParts = host.split('.');
     const top2 = domainParts.slice(-2).join('.');
     const top3 = domainParts.slice(-3).join('.');
-    const isAllowed = top2 === 'fbcdn.net' || top2 === 'instagram.com' || top3 === 'cdninstagram.com';
+    const isAllowed = (top2 === 'fbcdn.net' && (host === 'fbcdn.net' || host.endsWith('.fbcdn.net')))
+      || (top2 === 'instagram.com' && (host === 'instagram.com' || host.endsWith('.instagram.com')))
+      || (top3 === 'cdninstagram.com' && (host === 'cdninstagram.com' || host.endsWith('.cdninstagram.com')));
     if (!isAllowed) {
       return res.status(403).json({ error: 'Only Instagram CDN URLs can be proxied' });
     }

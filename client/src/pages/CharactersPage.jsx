@@ -198,7 +198,11 @@ function CreateCharacterModal({ open, onClose, onCreated }) {
 
   const handleFile = (e) => {
     const f = e.target.files?.[0];
-    if (f) { setFile(f); setPreview(URL.createObjectURL(f)); }
+    if (f) {
+      if (preview) URL.revokeObjectURL(preview);
+      setFile(f);
+      setPreview(URL.createObjectURL(f));
+    }
   };
 
   const handleCreate = () => run(async () => {
@@ -208,6 +212,7 @@ function CreateCharacterModal({ open, onClose, onCreated }) {
     const dataUri = await fileToBase64(file);
     await charApi.create({ name: name.trim(), masterPrompt: masterPrompt.trim(), image: dataUri });
     notify('Character created', 'success');
+    if (preview) URL.revokeObjectURL(preview);
     setName(''); setMasterPrompt(''); setFile(null); setPreview(null);
     onCreated();
   });
