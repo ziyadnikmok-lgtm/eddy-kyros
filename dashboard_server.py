@@ -124,9 +124,17 @@ class H(SimpleHTTPRequestHandler):
             url=(payload.get('url') or '').strip(); img=(payload.get('image') or '').strip()
             valid = any(url.startswith(p) for p in ["https://x.com/","http://x.com/","https://twitter.com/","http://twitter.com/","https://mobile.twitter.com/","http://mobile.twitter.com/"])
             if not valid: return self._json(400,{"ok":False,"error":"valid X/Twitter post URL required"})
+
             item={"id":str(uuid.uuid4()),"url":url,"createdAt":datetime.now(timezone.utc).isoformat(),"status":"queued"}
             if img: item["imagePath"]=os.path.join(UPLOAD_DIR, os.path.basename(img))
-            q=load_queue(); q.append(item); save_queue(q)
+
+            q=load_queue()
+            # Keep queue fresh: drop older queued/processing duplicates for the same URL.
+            q=[x for x in q if not ((x.get("url") or "")==url and (x.get("status") or "queued") in ("queued","processing"))]
+            # Prioritize newest manual request first.
+            q.insert(0, item)
+            save_queue(q)
+
             run=subprocess.run(["openclaw","cron","run",CRON_TRIGGER_JOB],cwd=WORKSPACE,capture_output=True,text=True,timeout=120)
             return self._json(200,{"ok":True,"queued":item,"cronOut":(run.stdout or '')[-1000:],"cronErr":(run.stderr or '')[-500:]})
 
