@@ -11,5 +11,15 @@
     "avoidDuplicatesSameDay": true,
     "noMinorOrAmbiguousAccounts": true,
     "humanTone": true
+  },
+  "replyStyle": {
+    "tone": "flirty, confident, engaging",
+    "length": "short",
+    "rules": [
+      "always concise",
+      "use one hook line",
+      "avoid explicit sexual language",
+      "respect platform safety"
+    ]
   }
 }
