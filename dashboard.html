@@ -96,9 +96,13 @@
         </div>
         <div class="card"><h3 style="margin:0 0 6px">Live Crew Summary</h3><div id="crewSummary" style="color:var(--mut)">Loading…</div></div>
         <div class="card" style="margin-top:10px">
-          <h3 style="margin:0 0 6px">Auto Reply Control</h3>
-          <div id="autoReplyLabel" style="color:var(--mut);margin-bottom:8px">Checking status…</div>
-          <button id="autoReplyBtn" class="btn" onclick="toggleAutoReply(this)">Turn ON auto reply</button>
+          <h3 style="margin:0 0 6px">Control Pack</h3>
+          <div id="autoReplyLabel" style="color:var(--mut);margin-bottom:8px">Checking auto-reply…</div>
+          <div id="safetyLockLabel" style="color:var(--mut);margin-bottom:8px">Checking safety lock…</div>
+          <div class="row">
+            <button id="autoReplyBtn" class="btn" onclick="toggleAutoReply(this)">Turn ON auto reply</button>
+            <button id="safetyLockBtn" class="btn danger" onclick="toggleSafetyLock(this)">Enable Safety Lock</button>
+          </div>
         </div>
       </section>
 
@@ -148,11 +152,43 @@
             <table><thead><tr><th>Status</th><th>Post</th><th>Reply</th><th>Action</th></tr></thead><tbody id="queueBody"></tbody></table>
           </div>
 
+          <div class="card full">
+            <h3 style="margin:0 0 8px">Retry & Failure Center</h3>
+            <table><thead><tr><th>Status</th><th>Post</th><th>Error</th><th>Action</th></tr></thead><tbody id="failedBody"></tbody></table>
+          </div>
+
+          <div class="card full">
+            <h3 style="margin:0 0 8px">Live Run Timeline</h3>
+            <div id="timeline" style="display:grid;gap:6px"></div>
+          </div>
+
           <div class="card full"><h3 style="margin:0 0 8px">Viral Session</h3><div class="row"><button id="viralBtn" class="btn" onclick="startViral(this)">Start 2h viral session</button><span id="viralState" style="color:var(--mut)"></span></div></div>
         </div>
       </section>
 
-      <section id="settings" class="tabs"><div class="card"><h3 style="margin:0 0 8px">Config JSON</h3><textarea id="cfg"></textarea><div class="row"><button class="btn" onclick="saveCfgCmd()">Copy save command</button></div></div></section>
+      <section id="settings" class="tabs">
+        <div class="grid">
+          <div class="card">
+            <h3 style="margin:0 0 8px">Persona Studio</h3>
+            <label style="color:var(--mut);font-size:.85rem">Reply preset</label>
+            <select id="personaPreset">
+              <option value="flirty">Flirty / playful</option>
+              <option value="confident">Confident / punchy</option>
+              <option value="friendly">Friendly / warm</option>
+              <option value="professional">Professional / clean</option>
+            </select>
+          </div>
+          <div class="card">
+            <h3 style="margin:0 0 8px">Approval Rules</h3>
+            <label style="color:var(--mut);font-size:.85rem">Minimum likes to auto-reply</label>
+            <input id="ruleMinLikes" type="number" min="0" value="0" />
+            <label style="color:var(--mut);font-size:.85rem">Only tracked creators</label>
+            <select id="ruleAllowedOnly"><option value="false">No</option><option value="true">Yes</option></select>
+            <div class="row"><button class="btn ok" onclick="saveControlPackConfig()">Save control rules</button></div>
+          </div>
+          <div class="card full"><h3 style="margin:0 0 8px">Config JSON</h3><textarea id="cfg"></textarea><div class="row"><button class="btn" onclick="saveCfgCmd()">Copy save command</button></div></div>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -188,10 +224,10 @@
     async function loadImages(){try{const d=await j('/api/list-images');const f=d.files||[];document.getElementById('imgCount').textContent=`${f.length} images available`;document.getElementById('kpiImages').textContent=f.length;document.getElementById('imgSelect').innerHTML='<option value="">Auto-pick image</option>'+f.map(x=>`<option>${x.name}</option>`).join('')}catch(e){toast('Image load failed',true)}}
     async function upload(){const fs=[...document.getElementById('files').files];if(!fs.length)return toast('Choose images first',true);const toData=f=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(f)});const p={files:[]};for(const f of fs)p.files.push({name:f.name,data:await toData(f)});try{const o=await j('/api/upload-images',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});toast(`Uploaded ${o.uploaded?.length||0} image(s)`);addFeed('🖼️ New assets added to media vault.');loadImages()}catch(e){toast('Upload failed: '+e.message,true)}}
 
-    async function replyNow(btn){const u=document.getElementById('url').value.trim();if(!u)return toast('Paste URL first',true);const image=document.getElementById('imgSelect').value||'';setBusy(btn,true,'Queueing...','Queue + trigger now');try{await j('/api/reply-now',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:u,image})});document.getElementById('url').value='';toast('Queued ✅');addFeed('⚙️ Bolt accepted a fresh mission URL.');loadQueue();loadOpsHub()}catch(e){toast('Queue failed: '+e.message,true)}finally{setBusy(btn,false,'Queueing...','Queue + trigger now')}}
+    async function replyNow(btn){const u=document.getElementById('url').value.trim();if(!u)return toast('Paste URL first',true);const image=document.getElementById('imgSelect').value||'';setBusy(btn,true,'Queueing...','Queue + trigger now');try{await j('/api/reply-now',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:u,image})});document.getElementById('url').value='';toast('Queued ✅');addFeed('📮 Tony accepted a fresh mission URL.');loadQueue();loadOpsHub();loadFailedQueue();loadTimeline()}catch(e){toast('Queue failed: '+e.message,true)}finally{setBusy(btn,false,'Queueing...','Queue + trigger now')}}
 
     async function loadViral(){try{const d=await j('/api/viral-state');const a=!!(d.state&&d.state.jobId);document.getElementById('kpiViral').textContent=a?'Active':'Idle';document.getElementById('viralState').textContent=a?('Active job: '+d.state.jobId):'No active session';document.getElementById('healthBadge').textContent=a?'● Viral session active':'● System ready'}catch(e){}}
-    async function startViral(btn){setBusy(btn,true,'Starting...','Start 2h viral session');try{const d=await j('/api/start-viral-session',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});toast('Viral started');addFeed('🚀 Nova launched a viral sprint.');document.getElementById('viralState').textContent='Active job: '+d.jobId;loadViral();loadOpsHub()}catch(e){toast('Viral failed: '+e.message,true)}finally{setBusy(btn,false,'Starting...','Start 2h viral session')}}
+    async function startViral(btn){setBusy(btn,true,'Starting...','Start 2h viral session');try{const d=await j('/api/start-viral-session',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});toast('Viral started');addFeed('📈 Alex launched a viral sprint.');document.getElementById('viralState').textContent='Active job: '+d.jobId;loadViral();loadOpsHub();loadTimeline()}catch(e){toast('Viral failed: '+e.message,true)}finally{setBusy(btn,false,'Starting...','Start 2h viral session')}}
 
     function moveAgent(el,agent,idx){
       const deskSpots=[[86,126],[286,126],[486,126],[186,312],[436,312]];
@@ -243,12 +279,90 @@
       finally{btn.disabled=false;}
     }
 
+    async function loadSafetyLock(){
+      try{
+        const d=await j('/api/safety-lock-status');
+        const on=!!d.locked;
+        const label=document.getElementById('safetyLockLabel');
+        const btn=document.getElementById('safetyLockBtn');
+        label.textContent=on?'Safety Lock is ON (posting blocked).':'Safety Lock is OFF.';
+        btn.textContent=on?'Disable Safety Lock':'Enable Safety Lock';
+        btn.className='btn '+(on?'ok':'danger');
+        btn.dataset.locked=on?'1':'0';
+      }catch(e){toast('Safety-lock status failed: '+e.message,true)}
+    }
+
+    async function toggleSafetyLock(btn){
+      const next = !(btn.dataset.locked==='1');
+      setBusy(btn,true,next?'Locking...':'Unlocking...','');
+      try{
+        await j('/api/safety-lock-toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({locked:next})});
+        addFeed(next?'🔒 Safety Lock engaged.':'🔓 Safety Lock released.');
+        await loadSafetyLock();
+      }catch(e){toast('Safety Lock toggle failed: '+e.message,true);await loadSafetyLock()}
+      finally{btn.disabled=false;}
+    }
+
+    async function loadFailedQueue(){
+      try{
+        const d=await j('/api/failed-queue');
+        const b=document.getElementById('failedBody');
+        const items=d.items||[];
+        if(!items.length){b.innerHTML='<tr><td colspan="4">No failed items 🎉</td></tr>';return}
+        b.innerHTML=items.map(i=>`<tr><td>${statusPill(i.status)}</td><td><small>${i.url||''}</small></td><td><small>${i.lastError||'-'}</small></td><td><button class="btn" onclick='retryFailed(${JSON.stringify(i.id||"")},${JSON.stringify(i.url||"")})'>Retry</button></td></tr>`).join('');
+      }catch(e){toast('Failed queue load failed: '+e.message,true)}
+    }
+
+    async function retryFailed(id,url){
+      try{
+        const d=await j('/api/retry-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,url})});
+        if(!d.updated){toast('No failed item retried',true);return}
+        addFeed('♻️ Maya retried a failed item.');
+        toast('Retry queued');
+        await Promise.all([loadQueue(),loadFailedQueue(),loadTimeline(),loadOpsHub()]);
+      }catch(e){toast('Retry failed: '+e.message,true)}
+    }
+
+    async function loadTimeline(){
+      try{
+        const d=await j('/api/run-timeline');
+        const box=document.getElementById('timeline');
+        const items=d.items||[];
+        if(!items.length){box.innerHTML='<div class="feed-item">No timeline runs yet.</div>';return}
+        box.innerHTML=items.map(x=>`<div class='feed-item'><div class='t'>${new Date(x.runAtMs||Date.now()).toLocaleTimeString()} · ${x.jobId.slice(0,8)} · ${x.status||'unknown'}</div><div>${(x.summary||'').replace(/</g,'&lt;')}</div></div>`).join('');
+      }catch(e){toast('Timeline load failed: '+e.message,true)}
+    }
+
+    async function loadControlPackConfig(){
+      try{
+        const d=await j('/api/control-pack-config');
+        document.getElementById('personaPreset').value=d.personaPreset||'flirty';
+        document.getElementById('ruleMinLikes').value=(d.approvalRules?.minLikes??0);
+        document.getElementById('ruleAllowedOnly').value=(d.approvalRules?.allowedCreatorsOnly?'true':'false');
+      }catch(e){toast('Control-pack config load failed: '+e.message,true)}
+    }
+
+    async function saveControlPackConfig(){
+      const payload={
+        personaPreset: document.getElementById('personaPreset').value,
+        approvalRules:{
+          minLikes: Number(document.getElementById('ruleMinLikes').value||0),
+          allowedCreatorsOnly: document.getElementById('ruleAllowedOnly').value==='true'
+        }
+      };
+      try{
+        await j('/api/control-pack-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        addFeed('🎛️ Jarvis updated control-pack rules.');
+        toast('Control rules saved');
+      }catch(e){toast('Save control rules failed: '+e.message,true)}
+    }
+
     function saveCfgCmd(){const t=document.getElementById('cfg').value;const cmd=`cat > /Users/admin/.openclaw/workspace/social-reply-config.json <<'JSON'\n${t}\nJSON`;navigator.clipboard.writeText(cmd);toast('Save command copied')}
 
     async function init(){try{document.getElementById('cfg').value=await (await fetch('social-reply-config.json')).text()}catch{document.getElementById('cfg').value='{}'}
       addFeed('🎬 Office online. Crew entering the room...');
-      await Promise.all([loadImages(),loadQueue(),loadViral(),loadOpsHub(),loadAutoReply()]);
-      setInterval(loadQueue,10000);setInterval(loadOpsHub,7000);setInterval(loadViral,15000);setInterval(loadAutoReply,20000)
+      await Promise.all([loadImages(),loadQueue(),loadViral(),loadOpsHub(),loadAutoReply(),loadSafetyLock(),loadFailedQueue(),loadTimeline(),loadControlPackConfig()]);
+      setInterval(loadQueue,10000);setInterval(loadOpsHub,7000);setInterval(loadViral,15000);setInterval(loadAutoReply,20000);setInterval(loadSafetyLock,20000);setInterval(loadFailedQueue,12000);setInterval(loadTimeline,20000)
     }
     init();
   </script>

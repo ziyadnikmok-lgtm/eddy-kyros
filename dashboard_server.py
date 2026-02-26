@@ -85,6 +85,44 @@ class H(SimpleHTTPRequestHandler):
             enabled = bool(cfg.get("autoReplyEnabled", False))
             return self._json(200, {"ok": True, "enabled": enabled, "jobs": CRON_JOBS})
 
+        if self.path.startswith('/api/safety-lock-status'):
+            cfg = jload(CONFIG_FILE, {})
+            locked = bool(cfg.get("safetyLock", False))
+            return self._json(200, {"ok": True, "locked": locked})
+
+        if self.path.startswith('/api/control-pack-config'):
+            cfg = jload(CONFIG_FILE, {})
+            return self._json(200, {
+                "ok": True,
+                "approvalRules": cfg.get("approvalRules", {"minLikes": 0, "allowedCreatorsOnly": False}),
+                "personaPreset": cfg.get("personaPreset", "flirty")
+            })
+
+        if self.path.startswith('/api/failed-queue'):
+            q = sync_queue(load_queue())
+            items = [x for x in q if (x.get("status") or "").lower() == "error"]
+            return self._json(200, {"ok": True, "items": items})
+
+        if self.path.startswith('/api/run-timeline'):
+            entries = []
+            for jid in CRON_JOBS:
+                try:
+                    r = subprocess.run(["openclaw", "cron", "runs", "--id", jid, "--limit", "5"], cwd=WORKSPACE, capture_output=True, text=True, timeout=30)
+                    if r.returncode != 0:
+                        continue
+                    data = json.loads(r.stdout or "{}")
+                    for e in data.get("entries", []):
+                        entries.append({
+                            "jobId": jid,
+                            "status": e.get("status"),
+                            "runAtMs": e.get("runAtMs"),
+                            "summary": (e.get("summary") or "").strip()[:220]
+                        })
+                except Exception:
+                    pass
+            entries.sort(key=lambda x: x.get("runAtMs") or 0, reverse=True)
+            return self._json(200, {"ok": True, "items": entries[:12]})
+
         if self.path.startswith('/api/ops-hub'):
             q = load_queue()
             queued = [x for x in q if (x.get("status") or "queued") in ("queued", "processing")]
@@ -177,6 +215,10 @@ class H(SimpleHTTPRequestHandler):
             return self._json(200,{"ok":True,"removed": before - len(q),"items":q})
 
         if self.path.startswith('/api/reply-now'):
+            cfg = jload(CONFIG_FILE, {})
+            if bool(cfg.get("safetyLock", False)):
+                return self._json(423,{"ok":False,"error":"Safety Lock is ON. Disable lock to queue/trigger posting."})
+
             url=(payload.get('url') or '').strip(); img=(payload.get('image') or '').strip()
             valid = any(url.startswith(p) for p in ["https://x.com/","http://x.com/","https://twitter.com/","http://twitter.com/","https://mobile.twitter.com/","http://mobile.twitter.com/"])
             if not valid: return self._json(400,{"ok":False,"error":"valid X/Twitter post URL required"})
@@ -234,6 +276,44 @@ class H(SimpleHTTPRequestHandler):
             if errs:
                 return self._json(500, {"ok": False, "enabled": enabled, "errors": errs})
             return self._json(200, {"ok": True, "enabled": enabled})
+
+        if self.path.startswith('/api/safety-lock-toggle'):
+            locked = bool(payload.get("locked", False))
+            cfg = jload(CONFIG_FILE, {})
+            cfg["safetyLock"] = locked
+            jsave(CONFIG_FILE, cfg)
+            # safety-first: when locked, disable auto reply jobs
+            if locked:
+                for jid in CRON_JOBS:
+                    subprocess.run(["openclaw", "cron", "disable", jid], cwd=WORKSPACE, capture_output=True, text=True, timeout=60)
+            return self._json(200, {"ok": True, "locked": locked})
+
+        if self.path.startswith('/api/retry-queue'):
+            q = load_queue()
+            qid = (payload.get('id') or '').strip()
+            qurl = (payload.get('url') or '').strip()
+            updated = 0
+            for item in q:
+                if (qid and (item.get('id') or '') == qid) or (not qid and qurl and (item.get('url') or '') == qurl):
+                    item['status'] = 'queued'
+                    item.pop('lastError', None)
+                    updated += 1
+                    break
+            save_queue(q)
+            if updated:
+                subprocess.run(["openclaw", "cron", "run", CRON_TRIGGER_JOB], cwd=WORKSPACE, capture_output=True, text=True, timeout=120)
+            return self._json(200, {"ok": True, "updated": updated})
+
+        if self.path.startswith('/api/control-pack-config'):
+            cfg = jload(CONFIG_FILE, {})
+            rules = payload.get('approvalRules')
+            preset = payload.get('personaPreset')
+            if isinstance(rules, dict):
+                cfg['approvalRules'] = rules
+            if isinstance(preset, str) and preset:
+                cfg['personaPreset'] = preset
+            jsave(CONFIG_FILE, cfg)
+            return self._json(200, {"ok": True, "approvalRules": cfg.get('approvalRules', {}), "personaPreset": cfg.get('personaPreset', 'flirty')})
 
         return self._json(404,{"ok":False,"error":"not found"})
 
