@@ -135,8 +135,21 @@ class H(SimpleHTTPRequestHandler):
             q.insert(0, item)
             save_queue(q)
 
-            run=subprocess.run(["openclaw","cron","run",CRON_TRIGGER_JOB],cwd=WORKSPACE,capture_output=True,text=True,timeout=120)
-            return self._json(200,{"ok":True,"queued":item,"cronOut":(run.stdout or '')[-1000:],"cronErr":(run.stderr or '')[-500:]})
+            # Trigger immediate processing. If multiple queued items exist, run a short burst
+            # so it doesn't stop after only one item.
+            queued_count = sum(1 for x in q if (x.get("status") or "queued") in ("queued", "processing"))
+            burst_runs = min(max(queued_count, 1), 4)
+            last_out = ""
+            last_err = ""
+            for _ in range(burst_runs):
+                run=subprocess.run(["openclaw","cron","run",CRON_TRIGGER_JOB],cwd=WORKSPACE,capture_output=True,text=True,timeout=120)
+                last_out = (run.stdout or '')[-1000:]
+                last_err = (run.stderr or '')[-500:]
+                # Stop burst early on command error.
+                if run.returncode != 0:
+                    break
+
+            return self._json(200,{"ok":True,"queued":item,"burstRuns":burst_runs,"cronOut":last_out,"cronErr":last_err})
 
         if self.path.startswith('/api/start-viral-session'):
             # Create temporary 2h / 5m sprint
