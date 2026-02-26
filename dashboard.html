@@ -1,70 +1,184 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>X Reply Automation Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Social Reply Control Center</title>
   <style>
-    body{font-family:Inter,system-ui,Arial,sans-serif;background:#0b0f14;color:#eaf2ff;margin:20px;line-height:1.35}
-    .card{background:#121923;border:1px solid #243247;border-radius:14px;padding:16px;margin:12px 0}
-    a{color:#7cc4ff}.ok{color:#57d08b}.muted{color:#9fb3c8} code,textarea{background:#0f1622;color:#d9e6f5}
-    textarea{width:100%;min-height:240px;border:1px solid #2c3e55;border-radius:10px;padding:10px}
-    button{background:#2d7ff9;color:#fff;border:none;border-radius:10px;padding:10px 12px;cursor:pointer;margin-right:8px}
+    :root{
+      --bg:#0b1020;--card:#131a2e;--card2:#1a2440;--text:#eaf0ff;--muted:#9fb0d0;
+      --accent:#5ea1ff;--ok:#58d68d;--warn:#ffd166;--line:#2b3a63;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,system-ui,Arial,sans-serif;background:radial-gradient(1200px 700px at 20% -20%,#1a2a52 0,#0b1020 50%,#090d1a 100%);color:var(--text)}
+    .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
+    .hero{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:16px}
+    .title{font-size:28px;font-weight:800;letter-spacing:.2px}
+    .subtitle{color:var(--muted)}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .card{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:14px;padding:14px}
+    .card h3{margin:0 0 10px 0;font-size:16px}
+    .badge{display:inline-block;padding:4px 10px;border-radius:999px;background:#173a2a;color:#9bf3c5;font-weight:700;font-size:12px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0c1325;border:1px solid #2a3b66;border-radius:8px;padding:2px 6px}
+    .row{display:grid;grid-template-columns:160px 1fr;gap:10px;align-items:center;margin:8px 0}
+    label{color:#c6d6ff;font-size:14px}
+    input, textarea{width:100%;background:#0c1325;color:#f3f7ff;border:1px solid #314675;border-radius:10px;padding:10px}
+    textarea{min-height:88px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+    button{background:var(--accent);border:none;color:white;padding:10px 12px;border-radius:10px;cursor:pointer;font-weight:700}
+    button.secondary{background:#2a3659}
+    button.ok{background:#1f8f5f}
+    .hint{color:var(--muted);font-size:13px}
+    .list li{margin:6px 0}
+    .full{grid-column:1 / -1}
+    .step{padding:10px;border:1px dashed #46609b;border-radius:10px;background:#0d1630;margin:8px 0}
+    @media (max-width: 900px){.grid{grid-template-columns:1fr}.row{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
-  <h1>📊 X Reply Automation Dashboard</h1>
-  <div class="card">
-    <h3>Status</h3>
-    <p class="ok">Active · Timezone now set to <b>America/New_York</b></p>
-    <p class="muted">Goal: 10 runs/day, 10-minute spacing, reply when tracked profiles post.</p>
-  </div>
+  <div class="wrap">
+    <div class="hero">
+      <div>
+        <div class="title">✨ Social Reply Control Center</div>
+        <div class="subtitle">Edit profile tracking + image folder in a simple form (no JSON needed).</div>
+      </div>
+      <div class="badge">ACTIVE · America/New_York</div>
+    </div>
 
-  <div class="card">
-    <h3>Schedules</h3>
-    <ul>
-      <li><b>x-of-reply-burst-1</b> — <code>0,10,20,30,40,50 9 * * *</code> (NY)<br>ID: <code>b3058028-9070-4a65-baf6-9485d6e11adb</code></li>
-      <li><b>x-of-reply-burst-2</b> — <code>0,10,20,30 10 * * *</code> (NY)<br>ID: <code>c31705b8-4d7e-4c1b-bf67-5d9fc69c5859</code></li>
-    </ul>
-  </div>
+    <div class="grid">
+      <div class="card">
+        <h3>1) What this bot does</h3>
+        <div class="step">Runs <b>10 times/day</b>, every <b>10 minutes</b> in your NY schedule window.</div>
+        <div class="step">Watches your tracked profiles for new posts.</div>
+        <div class="step">If new post found: writes a human-style reply + attaches image from your folder.</div>
+        <p class="hint">Current jobs: <span class="mono">b3058028-9070-4a65-baf6-9485d6e11adb</span> and <span class="mono">c31705b8-4d7e-4c1b-bf67-5d9fc69c5859</span></p>
+      </div>
 
-  <div class="card">
-    <h3>Editable Config (profiles + image folder)</h3>
-    <p>File used by automation: <code>/Users/admin/.openclaw/workspace/social-reply-config.json</code></p>
-    <textarea id="cfg"></textarea><br>
-    <button onclick="downloadCfg()">Download edited JSON</button>
-    <button onclick="copySaveCommand()">Copy save command</button>
-    <p class="muted">After editing: save JSON back to <code>social-reply-config.json</code> (or send it to me and I’ll apply).</p>
-    <pre id="cmd" class="muted"></pre>
-  </div>
+      <div class="card">
+        <h3>2) Quick links</h3>
+        <ul class="list">
+          <li>Config file path: <span class="mono">/Users/admin/.openclaw/workspace/social-reply-config.json</span></li>
+          <li>Image folder now: <span class="mono" id="currentFolder">(loading...)</span></li>
+          <li>Tracked profiles now: <span class="mono" id="currentProfiles">(loading...)</span></li>
+        </ul>
+      </div>
 
-  <div class="card">
-    <h3>Recent Posts</h3>
-    <ul>
-      <li><a href="https://x.com/TheSarahSiw/status/2026916570543608308" target="_blank">https://x.com/TheSarahSiw/status/2026916570543608308</a></li>
-      <li><a href="https://x.com/TheSarahSiw/status/2026916936534340087" target="_blank">https://x.com/TheSarahSiw/status/2026916936534340087</a></li>
-    </ul>
+      <div class="card full">
+        <h3>3) Edit settings here (easy mode)</h3>
+
+        <div class="row">
+          <label>Timezone</label>
+          <input id="timezone" placeholder="America/New_York" />
+        </div>
+
+        <div class="row">
+          <label>Runs per day</label>
+          <input id="runsPerDay" type="number" min="1" max="24" />
+        </div>
+
+        <div class="row">
+          <label>Spacing (minutes)</label>
+          <input id="spacingMinutes" type="number" min="1" max="120" />
+        </div>
+
+        <div class="row">
+          <label>Image folder</label>
+          <input id="imageFolder" placeholder="/Users/admin/Downloads/IG POST SOFIA" />
+        </div>
+
+        <div class="row">
+          <label>Tracked profiles</label>
+          <textarea id="profiles" placeholder="One per line, like:
+@lucithakittykat
+@anotherprofile"></textarea>
+        </div>
+
+        <div class="actions">
+          <button class="ok" onclick="buildJson()">Generate updated config</button>
+          <button class="secondary" onclick="copySaveCommand()">Copy save command</button>
+          <button class="secondary" onclick="downloadJson()">Download JSON</button>
+        </div>
+        <p class="hint">After editing: click <b>Generate updated config</b>, then <b>Copy save command</b>, paste in Terminal, press Enter.</p>
+      </div>
+
+      <div class="card full">
+        <h3>4) Generated config preview</h3>
+        <textarea id="jsonOut" style="min-height:220px"></textarea>
+        <p id="status" class="hint">Ready.</p>
+      </div>
+    </div>
   </div>
 
 <script>
-async function loadCfg(){
-  try{
-    const t=await (await fetch('social-reply-config.json')).text();
-    document.getElementById('cfg').value=t;
-  }catch(e){document.getElementById('cfg').value='{}';}
+let cfg = {
+  timezone: "America/New_York",
+  runsPerDay: 10,
+  spacingMinutes: 10,
+  imageFolder: "/Users/admin/Downloads/IG POST SOFIA",
+  trackedProfiles: ["@lucithakittykat"],
+  mode: "reply_when_new_post",
+  safety: {
+    avoidDuplicatesSameDay: true,
+    noMinorOrAmbiguousAccounts: true,
+    humanTone: true
+  }
+};
+
+function setForm(c){
+  document.getElementById('timezone').value = c.timezone || '';
+  document.getElementById('runsPerDay').value = c.runsPerDay || 10;
+  document.getElementById('spacingMinutes').value = c.spacingMinutes || 10;
+  document.getElementById('imageFolder').value = c.imageFolder || '';
+  document.getElementById('profiles').value = (c.trackedProfiles||[]).join('\n');
+  document.getElementById('currentFolder').textContent = c.imageFolder || '-';
+  document.getElementById('currentProfiles').textContent = (c.trackedProfiles||[]).join(', ') || '-';
 }
-function downloadCfg(){
-  const txt=document.getElementById('cfg').value;
-  const blob=new Blob([txt],{type:'application/json'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='social-reply-config.json';a.click();
+
+function getForm(){
+  const profiles = document.getElementById('profiles').value
+    .split('\n').map(s=>s.trim()).filter(Boolean);
+  return {
+    ...cfg,
+    timezone: document.getElementById('timezone').value.trim() || 'America/New_York',
+    runsPerDay: Number(document.getElementById('runsPerDay').value || 10),
+    spacingMinutes: Number(document.getElementById('spacingMinutes').value || 10),
+    imageFolder: document.getElementById('imageFolder').value.trim(),
+    trackedProfiles: profiles
+  };
 }
+
+function buildJson(){
+  cfg = getForm();
+  document.getElementById('jsonOut').value = JSON.stringify(cfg, null, 2);
+  document.getElementById('status').textContent = 'Config generated. Now click "Copy save command" and paste into Terminal.';
+  setForm(cfg);
+}
+
 function copySaveCommand(){
-  const txt=document.getElementById('cfg').value.replace(/\\/g,'\\\\').replace(/`/g,'\\`');
-  const cmd=`cat > /Users/admin/.openclaw/workspace/social-reply-config.json <<'JSON'\n${txt}\nJSON`;
+  const txt = document.getElementById('jsonOut').value || JSON.stringify(getForm(), null, 2);
+  const cmd = `cat > /Users/admin/.openclaw/workspace/social-reply-config.json <<'JSON'\n${txt}\nJSON`;
   navigator.clipboard.writeText(cmd);
-  document.getElementById('cmd').textContent='Copied save command to clipboard. Paste in Terminal.';
+  document.getElementById('status').textContent = 'Copied ✅ Paste in Terminal and press Enter.';
 }
-loadCfg();
+
+function downloadJson(){
+  const txt = document.getElementById('jsonOut').value || JSON.stringify(getForm(), null, 2);
+  const blob = new Blob([txt], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'social-reply-config.json';
+  a.click();
+}
+
+async function load(){
+  try {
+    const t = await (await fetch('social-reply-config.json')).text();
+    cfg = JSON.parse(t);
+  } catch(e) {}
+  setForm(cfg);
+  document.getElementById('jsonOut').value = JSON.stringify(cfg, null, 2);
+}
+load();
 </script>
 </body>
 </html>
