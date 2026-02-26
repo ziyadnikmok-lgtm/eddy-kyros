@@ -5,52 +5,65 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Mission Control</title>
   <style>
-    :root{
-      --bg:#070b16;--panel:#0f1b36;--panel2:#12254a;--line:#2c4a7c;--txt:#e9f1ff;--mut:#9db5df;
-      --red:#ff4d5a;--blue:#67a1ff;--green:#34d399;--amber:#f7b955;
-    }
+    :root{--bg:#070b16;--panel:#101d3b;--line:#2c4b80;--txt:#edf3ff;--mut:#9eb6dd;--blue:#67a1ff;--ok:#34d399;--warn:#f7b955;--bad:#ff5f70}
     *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui;background:var(--bg);color:var(--txt)}
     .app{display:grid;grid-template-columns:240px 1fr;min-height:100vh}
-    .side{border-right:1px solid #1f3359;background:#0b1327;padding:14px;position:sticky;top:0;height:100vh}
+    .side{background:#0b1429;border-right:1px solid #1e3358;padding:14px;position:sticky;top:0;height:100vh}
     .brand{font-weight:800;font-size:1.1rem;margin-bottom:12px}
-    .nav button{display:block;width:100%;text-align:left;background:transparent;border:1px solid transparent;color:#dce8ff;padding:10px;border-radius:10px;margin-bottom:6px;cursor:pointer}
-    .nav button.active,.nav button:hover{background:#152a54;border-color:#31558f}
+    .nav button{display:block;width:100%;text-align:left;background:transparent;color:#d9e8ff;border:1px solid transparent;padding:10px;border-radius:10px;margin-bottom:6px;cursor:pointer}
+    .nav button:hover,.nav button.active{background:#162c56;border-color:#34588f}
     .main{padding:16px}
     .top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}
     .chip{padding:7px 10px;border:1px solid #355d98;border-radius:999px;background:#132951;color:#d6e5ff;font-size:.83rem}
     .tabs{display:none}.tabs.active{display:block}
     .cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px}
-    .card{background:linear-gradient(180deg,#ffffff08,#ffffff03),var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px}
-    .k{color:var(--mut);font-size:.82rem}.v{font-size:1.3rem;font-weight:750}
+    .card{background:linear-gradient(180deg,#fff1,#fff0),var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px}
+    .k{color:var(--mut);font-size:.82rem}.v{font-size:1.35rem;font-weight:760}
 
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-    .full{grid-column:1/-1}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.full{grid-column:1/-1}
     input,textarea,select{width:100%;background:#0b1733;border:1px solid #325690;color:var(--txt);border-radius:10px;padding:10px}
     textarea{min-height:150px}
     .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
     button.btn{border:0;border-radius:10px;padding:9px 12px;color:#fff;background:linear-gradient(180deg,#84b5ff,var(--blue));font-weight:650;cursor:pointer}
-    .btn.sec{background:#274673}.btn.ok{background:linear-gradient(180deg,#51e5b2,var(--green));color:#062a1d}.btn.danger{background:linear-gradient(180deg,#ff8d98,var(--red))}
+    .btn.sec{background:#274673}.btn.ok{background:linear-gradient(180deg,#51e5b2,var(--ok));color:#062a1d}.btn.danger{background:linear-gradient(180deg,#ff8d98,var(--bad))}
 
+    /* Office */
     .office-wrap{background:#09162f;border:1px solid var(--line);border-radius:14px;padding:12px}
-    .office{position:relative;height:440px;border-radius:12px;border:2px solid #6f4c33;
-      background:
+    .office-grid{display:grid;grid-template-columns:1fr 320px;gap:12px}
+    .office{position:relative;height:460px;border:2px solid #744e34;border-radius:14px;overflow:hidden;background:
       linear-gradient(90deg,#0000 48%,#0002 50%,#0000 52%),
       linear-gradient(#0000 48%,#0002 50%,#0000 52%),
-      radial-gradient(circle at 20% 20%,#ffffff12,transparent 30%),
-      #7f6a61;
-      background-size:60px 60px,60px 60px,auto,auto;
-      overflow:hidden}
-    .desk{position:absolute;width:140px;height:80px;background:#5b3e2a;border:2px solid #3e2a1c;border-radius:8px}
-    .agent{position:absolute;width:110px;padding:6px 8px;background:#132951e8;border:1px solid #365f9e;border-radius:10px;font-size:.78rem;transition:all .8s ease}
-    .agent .n{font-weight:700}.agent .s{color:#b9ceef}.online{box-shadow:0 0 0 2px #34d39955}.busy,.working{box-shadow:0 0 0 2px #f7b95566}.idle{opacity:.9}
+      radial-gradient(circle at 30% 15%,#ffffff22,transparent 35%),
+      #7f6a61;background-size:64px 64px,64px 64px,auto,auto}
+    .wall{position:absolute;left:0;top:0;right:0;height:76px;background:#3e4456;border-bottom:3px solid #282c37}
+    .sign{position:absolute;left:50%;top:12px;transform:translateX(-50%);padding:6px 14px;border-radius:8px;background:#2a1d14;border:2px solid #8a5f3f;font-weight:700;letter-spacing:.8px}
+    .desk{position:absolute;width:150px;height:86px;background:#5b3e2a;border:2px solid #402a1b;border-radius:8px}
+    .desk:before{content:'';position:absolute;left:12px;top:10px;width:52px;height:28px;background:#95a8c8;border:2px solid #2c3d59;border-radius:4px}
 
-    table{width:100%;border-collapse:collapse} th,td{padding:9px 8px;border-bottom:1px solid #2a4776;text-align:left;vertical-align:top}
+    .sprite{position:absolute;width:68px;height:90px;transition:transform .9s ease}
+    .avatar{width:44px;height:44px;margin:0 auto;border-radius:12px;background:#122a51;border:2px solid #4470af;display:flex;align-items:center;justify-content:center;font-size:24px;box-shadow:0 0 0 2px #0005}
+    .legs{display:flex;justify-content:center;gap:8px;margin-top:4px}
+    .leg{width:8px;height:18px;background:#1f345f;border-radius:4px;animation:bob .35s infinite alternate}
+    .leg:nth-child(2){animation-delay:.17s}
+    .nameplate{margin-top:3px;text-align:center;font-size:.7rem;background:#0e2246cc;border:1px solid #2e5286;border-radius:8px;padding:2px 4px;white-space:nowrap}
+    .sprite.idle .avatar{filter:saturate(.8)}
+    .sprite.busy .avatar,.sprite.working .avatar{box-shadow:0 0 0 2px #0005,0 0 12px #f7b95588}
+    .sprite.active .avatar,.sprite.online .avatar{box-shadow:0 0 0 2px #0005,0 0 12px #34d39988}
+    @keyframes bob{from{transform:translateY(0)}to{transform:translateY(3px)}}
+
+    .bubble{position:absolute;max-width:230px;background:#f4f7ff;color:#1b2742;border:2px solid #8ea9d3;border-radius:10px;padding:7px 9px;font-size:.76rem;box-shadow:0 8px 16px #0005}
+    .bubble:after{content:'';position:absolute;left:16px;bottom:-10px;border:6px solid transparent;border-top-color:#8ea9d3}
+    .feed{height:460px;overflow:auto}
+    .feed-item{border:1px solid #2a4676;border-radius:10px;background:#0f1d3d;padding:8px;margin-bottom:8px;font-size:.84rem}
+    .feed-item .t{color:var(--mut);font-size:.75rem;margin-bottom:3px}
+
+    table{width:100%;border-collapse:collapse}th,td{padding:9px 8px;border-bottom:1px solid #2a4776;text-align:left;vertical-align:top}
     td small{word-break:break-all;color:#c5d8ff}.pill{padding:3px 8px;border-radius:999px;font-size:.76rem;font-weight:700}
-    .pill.done{background:#34d39922;color:#9ef8da;border:1px solid #34d39955}.pill.queued{background:#f7b95522;color:#ffdca8;border:1px solid #f7b95555}.pill.error{background:#ff4d5a22;color:#ffb6be;border:1px solid #ff4d5a55}
+    .pill.done{background:#34d39922;color:#9ef8da;border:1px solid #34d39955}.pill.queued{background:#f7b95522;color:#ffdca8;border:1px solid #f7b95555}.pill.error{background:#ff5f7022;color:#ffbec6;border:1px solid #ff5f7055}
 
     .toast{position:fixed;right:14px;bottom:14px;background:#11254a;border:1px solid #3762a1;border-radius:12px;padding:10px 12px;opacity:0;transform:translateY(8px);transition:.2s;pointer-events:none}
     .toast.show{opacity:1;transform:translateY(0)}
-    @media(max-width:1050px){.app{grid-template-columns:1fr}.side{height:auto;position:static}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.grid{grid-template-columns:1fr}}
+    @media(max-width:1100px){.app{grid-template-columns:1fr}.side{height:auto;position:static}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.grid{grid-template-columns:1fr}.office-grid{grid-template-columns:1fr}.feed{height:260px}}
   </style>
 </head>
 <body>
@@ -78,21 +91,24 @@
           <div class="card"><div class="k">Completed</div><div id="kpiDone" class="v">0</div></div>
           <div class="card"><div class="k">Viral Session</div><div id="kpiViral" class="v">Idle</div></div>
         </div>
-        <div class="card">
-          <h3 style="margin:0 0 6px">Live Crew Summary</h3>
-          <div id="crewSummary" style="color:var(--mut)">Loading…</div>
-        </div>
+        <div class="card"><h3 style="margin:0 0 6px">Live Crew Summary</h3><div id="crewSummary" style="color:var(--mut)">Loading…</div></div>
       </section>
 
       <section id="office" class="tabs">
         <div class="office-wrap">
-          <h3 style="margin:0 0 8px">🕹️ Agents Office (fun mode)</h3>
-          <div class="office" id="officeStage">
-            <div class="desk" style="left:60px;top:70px"></div>
-            <div class="desk" style="left:280px;top:70px"></div>
-            <div class="desk" style="left:500px;top:70px"></div>
-            <div class="desk" style="left:170px;top:250px"></div>
-            <div class="desk" style="left:420px;top:250px"></div>
+          <h3 style="margin:0 0 8px">🕹️ Agents Office</h3>
+          <div class="office-grid">
+            <div class="office" id="officeStage">
+              <div class="wall"></div>
+              <div class="sign">TENACITAS, INC.</div>
+              <div class="desk" style="left:70px;top:110px"></div>
+              <div class="desk" style="left:270px;top:110px"></div>
+              <div class="desk" style="left:470px;top:110px"></div>
+              <div class="desk" style="left:170px;top:295px"></div>
+              <div class="desk" style="left:420px;top:295px"></div>
+              <div id="speechBubble" class="bubble" style="display:none"></div>
+            </div>
+            <div class="card feed" id="activityFeed"></div>
           </div>
         </div>
       </section>
@@ -122,72 +138,62 @@
             <table><thead><tr><th>Status</th><th>Post</th><th>Reply</th><th>Action</th></tr></thead><tbody id="queueBody"></tbody></table>
           </div>
 
-          <div class="card full">
-            <h3 style="margin:0 0 8px">Viral Session</h3>
-            <div class="row"><button id="viralBtn" class="btn" onclick="startViral(this)">Start 2h viral session</button><span id="viralState" style="color:var(--mut)"></span></div>
-          </div>
+          <div class="card full"><h3 style="margin:0 0 8px">Viral Session</h3><div class="row"><button id="viralBtn" class="btn" onclick="startViral(this)">Start 2h viral session</button><span id="viralState" style="color:var(--mut)"></span></div></div>
         </div>
       </section>
 
-      <section id="settings" class="tabs">
-        <div class="card">
-          <h3 style="margin:0 0 8px">Config JSON</h3>
-          <textarea id="cfg"></textarea>
-          <div class="row"><button class="btn" onclick="saveCfgCmd()">Copy save command</button></div>
-        </div>
-      </section>
+      <section id="settings" class="tabs"><div class="card"><h3 style="margin:0 0 8px">Config JSON</h3><textarea id="cfg"></textarea><div class="row"><button class="btn" onclick="saveCfgCmd()">Copy save command</button></div></div></section>
     </main>
   </div>
 
   <div id="toast" class="toast"></div>
 
   <script>
-    let queueItems=[], crew=[], agentsMap=new Map();
+    let queueItems=[], crew=[], agentsMap=new Map(), feed=[], lastSummary='', prevQueueSig='';
     const stage = document.getElementById('officeStage');
+    const feedEl = document.getElementById('activityFeed');
+    const bubble = document.getElementById('speechBubble');
+    const agentEmoji={Jarvy:'🧠',Bolt:'⚙️',Nova:'🚀',Mop:'🧹'};
+    const chatter=["On it.","Learning new patterns.","Queue looks spicy.","Deploying charm.","Scanning timeline."];
 
-    document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>{
-      document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active')); b.classList.add('active');
-      document.querySelectorAll('.tabs').forEach(t=>t.classList.remove('active')); document.getElementById(b.dataset.tab).classList.add('active');
-    });
+    document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.tabs').forEach(t=>t.classList.remove('active'));document.getElementById(b.dataset.tab).classList.add('active')});
 
     async function j(url,opts){const r=await fetch(url,opts);const d=await r.json();if(!r.ok) throw new Error(d.error||('HTTP '+r.status));return d}
     function toast(m,e=false){const t=document.getElementById('toast');t.textContent=m;t.style.borderColor=e?'#a94352':'#3762a1';t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400)}
     function setBusy(btn,on,a,b){btn.disabled=on;btn.textContent=on?a:b}
-
     function statusPill(s){s=(s||'queued').toLowerCase();return `<span class="pill ${s==='done'?'done':(s==='error'?'error':'queued')}">${s}</span>`}
     function updateKPIs(){const total=queueItems.length,done=queueItems.filter(x=>(x.status||'').toLowerCase()==='done').length;document.getElementById('kpiQueue').textContent=total;document.getElementById('kpiDone').textContent=done}
+    function addFeed(msg){feed.unshift({t:new Date().toLocaleTimeString(),msg});feed=feed.slice(0,16);feedEl.innerHTML=feed.map(x=>`<div class='feed-item'><div class='t'>${x.t}</div><div>${x.msg}</div></div>`).join('')}
 
-    function renderQueue(){const t=document.getElementById('queueSearch').value.trim().toLowerCase();const q=[...queueItems].reverse().filter(i=>!t||((i.url||'')+' '+(i.status||'')).toLowerCase().includes(t));
-      const b=document.getElementById('queueBody');
-      if(!q.length){b.innerHTML='<tr><td colspan="4">No queue items</td></tr>';return}
-      b.innerHTML=q.map(i=>`<tr><td>${statusPill(i.status)}</td><td><small>${i.url||''}</small></td><td>${i.replyUrl?`<a target="_blank" href="${i.replyUrl}">Open</a>`:'-'}</td><td><button class="btn danger" onclick='delQ(${JSON.stringify(i.id||"")},${JSON.stringify(i.url||"")})'>Delete</button></td></tr>`).join('')
-    }
+    function renderQueue(){const t=document.getElementById('queueSearch').value.trim().toLowerCase();const q=[...queueItems].reverse().filter(i=>!t||((i.url||'')+' '+(i.status||'')).toLowerCase().includes(t));const b=document.getElementById('queueBody');if(!q.length){b.innerHTML='<tr><td colspan="4">No queue items</td></tr>';return}
+      b.innerHTML=q.map(i=>`<tr><td>${statusPill(i.status)}</td><td><small>${i.url||''}</small></td><td>${i.replyUrl?`<a target="_blank" href="${i.replyUrl}">Open</a>`:'-'}</td><td><button class="btn danger" onclick='delQ(${JSON.stringify(i.id||"")},${JSON.stringify(i.url||"")})'>Delete</button></td></tr>`).join('')}
 
-    async function loadQueue(){try{const d=await j('/api/list-queue');queueItems=d.items||[];updateKPIs();renderQueue()}catch(e){toast('Queue load failed: '+e.message,true)}}
-    async function delQ(id,url){try{const d=await j('/api/delete-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,url})}); if(!d.removed)return toast('Nothing deleted',true); toast('Deleted');loadQueue()}catch(e){toast('Delete failed: '+e.message,true)}}
-
+    async function loadQueue(){try{const d=await j('/api/list-queue');queueItems=d.items||[];updateKPIs();renderQueue();const sig=(queueItems||[]).map(x=>`${x.id||x.url}:${x.status}`).join('|');if(prevQueueSig&&prevQueueSig!==sig)addFeed('📬 Queue changed — crew reacted.');prevQueueSig=sig}catch(e){toast('Queue load failed: '+e.message,true)}}
+    async function delQ(id,url){try{const d=await j('/api/delete-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,url})});if(!d.removed)return toast('Nothing deleted',true);toast('Deleted');addFeed('🧹 Mop cleaned one queue item.');loadQueue()}catch(e){toast('Delete failed: '+e.message,true)}}
     async function loadImages(){try{const d=await j('/api/list-images');const f=d.files||[];document.getElementById('imgCount').textContent=`${f.length} images available`;document.getElementById('kpiImages').textContent=f.length;document.getElementById('imgSelect').innerHTML='<option value="">Auto-pick image</option>'+f.map(x=>`<option>${x.name}</option>`).join('')}catch(e){toast('Image load failed',true)}}
-    async function upload(){const fs=[...document.getElementById('files').files];if(!fs.length)return toast('Choose images first',true); const toData=f=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(f)});
-      const p={files:[]}; for(const f of fs)p.files.push({name:f.name,data:await toData(f)});
-      try{const o=await j('/api/upload-images',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});toast(`Uploaded ${o.uploaded?.length||0} image(s)`);loadImages()}catch(e){toast('Upload failed: '+e.message,true)}
-    }
+    async function upload(){const fs=[...document.getElementById('files').files];if(!fs.length)return toast('Choose images first',true);const toData=f=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(f)});const p={files:[]};for(const f of fs)p.files.push({name:f.name,data:await toData(f)});try{const o=await j('/api/upload-images',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});toast(`Uploaded ${o.uploaded?.length||0} image(s)`);addFeed('🖼️ New assets added to media vault.');loadImages()}catch(e){toast('Upload failed: '+e.message,true)}}
 
-    async function replyNow(btn){const u=document.getElementById('url').value.trim();if(!u)return toast('Paste URL first',true);const image=document.getElementById('imgSelect').value||'';setBusy(btn,true,'Queueing...','Queue + trigger now');
-      try{await j('/api/reply-now',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:u,image})});document.getElementById('url').value='';toast('Queued ✅');loadQueue();loadOpsHub()}catch(e){toast('Queue failed: '+e.message,true)}finally{setBusy(btn,false,'Queueing...','Queue + trigger now')}}
+    async function replyNow(btn){const u=document.getElementById('url').value.trim();if(!u)return toast('Paste URL first',true);const image=document.getElementById('imgSelect').value||'';setBusy(btn,true,'Queueing...','Queue + trigger now');try{await j('/api/reply-now',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:u,image})});document.getElementById('url').value='';toast('Queued ✅');addFeed('⚙️ Bolt accepted a fresh mission URL.');loadQueue();loadOpsHub()}catch(e){toast('Queue failed: '+e.message,true)}finally{setBusy(btn,false,'Queueing...','Queue + trigger now')}}
 
     async function loadViral(){try{const d=await j('/api/viral-state');const a=!!(d.state&&d.state.jobId);document.getElementById('kpiViral').textContent=a?'Active':'Idle';document.getElementById('viralState').textContent=a?('Active job: '+d.state.jobId):'No active session';document.getElementById('healthBadge').textContent=a?'● Viral session active':'● System ready'}catch(e){}}
-    async function startViral(btn){setBusy(btn,true,'Starting...','Start 2h viral session');try{const d=await j('/api/start-viral-session',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});toast('Viral started');document.getElementById('viralState').textContent='Active job: '+d.jobId;loadViral();loadOpsHub()}catch(e){toast('Viral failed: '+e.message,true)}finally{setBusy(btn,false,'Starting...','Start 2h viral session')}}
+    async function startViral(btn){setBusy(btn,true,'Starting...','Start 2h viral session');try{const d=await j('/api/start-viral-session',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});toast('Viral started');addFeed('🚀 Nova launched a viral sprint.');document.getElementById('viralState').textContent='Active job: '+d.jobId;loadViral();loadOpsHub()}catch(e){toast('Viral failed: '+e.message,true)}finally{setBusy(btn,false,'Starting...','Start 2h viral session')}}
 
-    function moveAgent(el,idx){const w=stage.clientWidth-130,h=stage.clientHeight-90;const pos=[[90,85],[300,85],[520,85],[200,280],[450,280]];const p=pos[idx%pos.length];const x=Math.max(8,Math.min(w,p[0]+Math.floor((Math.random()*26)-13)));const y=Math.max(8,Math.min(h,p[1]+Math.floor((Math.random()*20)-10)));el.style.transform=`translate(${x}px,${y}px)`}
-    function renderOffice(){crew.forEach((a,i)=>{let el=agentsMap.get(a.name);if(!el){el=document.createElement('div');stage.appendChild(el);agentsMap.set(a.name,el)}el.className='agent '+(a.status||'idle');el.innerHTML=`<div class='n'>${a.emoji||'🤖'} ${a.name}</div><div class='s'>${a.role||''}</div><div>${a.task||''}</div>`;moveAgent(el,i)})}
+    function moveAgent(el,idx){const spots=[[90,120],[290,122],[500,120],[180,305],[430,305]];const p=spots[idx%spots.length];const x=p[0]+Math.floor((Math.random()*20)-10),y=p[1]+Math.floor((Math.random()*16)-8);el.style.transform=`translate(${x}px,${y}px)`}
+    function showBubble(text,x,y){bubble.style.display='block';bubble.style.left=`${x}px`;bubble.style.top=`${y}px`;bubble.textContent=text;setTimeout(()=>bubble.style.display='none',2800)}
 
-    async function loadOpsHub(){try{const d=await j('/api/ops-hub');crew=d.crew||[];renderOffice();document.getElementById('crewSummary').textContent=`${d.summary?.queued||0} queued · ${d.summary?.done||0} done · last: ${(d.summary?.lastAttempt?.status)||'n/a'}`}catch(e){toast('Ops hub failed: '+e.message,true)}}
+    function renderOffice(){crew.forEach((a,i)=>{let el=agentsMap.get(a.name);if(!el){el=document.createElement('div');el.className='sprite';el.innerHTML=`<div class='avatar'></div><div class='legs'><div class='leg'></div><div class='leg'></div></div><div class='nameplate'></div>`;stage.appendChild(el);agentsMap.set(a.name,el)}
+      el.className='sprite '+(a.status||'idle');el.querySelector('.avatar').textContent=agentEmoji[a.name]||a.emoji||'🤖';el.querySelector('.nameplate').textContent=`${a.name} • ${a.status||'idle'}`;moveAgent(el,i);
+      if(Math.random()<0.16){const rect=el.getBoundingClientRect(),s=stage.getBoundingClientRect();showBubble(chatter[Math.floor(Math.random()*chatter.length)],rect.left-s.left+14,rect.top-s.top-48)}
+    })}
+
+    async function loadOpsHub(){try{const d=await j('/api/ops-hub');crew=d.crew||[];renderOffice();const txt=`${d.summary?.queued||0} queued · ${d.summary?.done||0} done · last: ${(d.summary?.lastAttempt?.status)||'n/a'}`;document.getElementById('crewSummary').textContent=txt;if(lastSummary&&lastSummary!==txt)addFeed('🧠 Jarvy updated squad status.');lastSummary=txt}catch(e){toast('Ops hub failed: '+e.message,true)}}
 
     function saveCfgCmd(){const t=document.getElementById('cfg').value;const cmd=`cat > /Users/admin/.openclaw/workspace/social-reply-config.json <<'JSON'\n${t}\nJSON`;navigator.clipboard.writeText(cmd);toast('Save command copied')}
 
     async function init(){try{document.getElementById('cfg').value=await (await fetch('social-reply-config.json')).text()}catch{document.getElementById('cfg').value='{}'}
+      addFeed('🎬 Office online. Crew entering the room...');
       await Promise.all([loadImages(),loadQueue(),loadViral(),loadOpsHub()]);
-      setInterval(loadQueue,10000);setInterval(loadOpsHub,9000);setInterval(loadViral,15000)
+      setInterval(loadQueue,10000);setInterval(loadOpsHub,7000);setInterval(loadViral,15000)
     }
     init();
   </script>
