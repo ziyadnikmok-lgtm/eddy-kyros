@@ -27,6 +27,7 @@
   - Reply style preference: short + flirty/confident/engaging; keep "hot" tone non-explicit and platform-safe.
   - Dashboard controls now include queue delete, per-URL optional image selection, and a 2h/5m viral sprint trigger.
   - For manual/instant cron triggers, set cron delivery mode to `none` to avoid "Channel is required" errors.
+- Skill safety pattern: inspect ClawHub skill files before install (at minimum SKILL.md + executable hooks/scripts), then install when no obvious malicious behavior is found.
 - Daily automation configured:
   - 10 runs/day (10-minute spacing) via two cron jobs in America/New_York:
     - `b3058028-9070-4a65-baf6-9485d6e11adb` (09:00–09:50 NY)
