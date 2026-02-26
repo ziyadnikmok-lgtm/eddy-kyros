@@ -43,8 +43,11 @@
     .desk:before{content:'';position:absolute;left:12px;top:10px;width:52px;height:28px;background:#95a8c8;border:2px solid #2c3d59;border-radius:4px}
 
     .sprite{position:absolute;width:68px;height:96px;transition:transform .9s ease}
-    .avatar{width:44px;height:44px;margin:0 auto;border-radius:8px;background:#122a51;border:2px solid #4470af;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 2px #0005;overflow:hidden}
-    .avatar img{width:100%;height:100%;image-rendering:pixelated}
+    .avatar{width:44px;height:44px;margin:0 auto;border-radius:8px;background:#122a51;border:2px solid #4470af;box-shadow:0 0 0 2px #0005;overflow:hidden}
+    .frame{width:44px;height:44px;background-size:176px 44px;background-repeat:no-repeat;image-rendering:pixelated;animation:walk 0.75s steps(4) infinite}
+    .sprite.idle .frame{animation-play-state:paused;background-position:0 0;filter:saturate(.85)}
+    .sprite.online .frame{animation-duration:.95s}
+    .sprite.busy .frame,.sprite.working .frame,.sprite.active .frame{animation-duration:.55s}
     .legs{display:flex;justify-content:center;gap:8px;margin-top:4px}
     .leg{width:8px;height:18px;background:#1f345f;border-radius:4px;animation:bob .35s infinite alternate}
     .leg:nth-child(2){animation-delay:.17s}
@@ -53,6 +56,7 @@
     .sprite.busy .avatar,.sprite.working .avatar{box-shadow:0 0 0 2px #0005,0 0 12px #f7b95588}
     .sprite.active .avatar,.sprite.online .avatar{box-shadow:0 0 0 2px #0005,0 0 12px #34d39988}
     @keyframes bob{from{transform:translateY(0)}to{transform:translateY(3px)}}
+    @keyframes walk{from{background-position:0 0}to{background-position:-176px 0}}
 
     .bubble{position:absolute;max-width:230px;background:#f4f7ff;color:#1b2742;border:2px solid #8ea9d3;border-radius:10px;padding:7px 9px;font-size:.76rem;box-shadow:0 8px 16px #0005}
     .bubble:after{content:'';position:absolute;left:16px;bottom:-10px;border:6px solid transparent;border-top-color:#8ea9d3}
@@ -200,10 +204,10 @@
     const feedEl = document.getElementById('activityFeed');
     const bubble = document.getElementById('speechBubble');
     const spriteSrc={
-      Jarvis:'./sprites/jarvis.svg',
-      Tony:'./sprites/tony.svg',
-      Alex:'./sprites/alex.svg',
-      Maya:'./sprites/maya.svg'
+      Jarvis:'./spritesheets/jarvis-sheet.svg',
+      Tony:'./spritesheets/tony-sheet.svg',
+      Alex:'./spritesheets/alex-sheet.svg',
+      Maya:'./spritesheets/maya-sheet.svg'
     };
     const chatter=["On it.","Learning from Jarvis.","Queue looks spicy.","Scanning timeline.","Optimizing systems."];
 
@@ -245,9 +249,9 @@
     }
     function showBubble(text,x,y){bubble.style.display='block';bubble.style.left=`${x}px`;bubble.style.top=`${y}px`;bubble.textContent=text;setTimeout(()=>bubble.style.display='none',2800)}
 
-    function renderOffice(){crew.forEach((a,i)=>{let el=agentsMap.get(a.name);if(!el){el=document.createElement('div');el.className='sprite';el.innerHTML=`<div class='avatar'><img alt='' /></div><div class='legs'><div class='leg'></div><div class='leg'></div></div><div class='nameplate'></div>`;stage.appendChild(el);agentsMap.set(a.name,el)}
+    function renderOffice(){crew.forEach((a,i)=>{let el=agentsMap.get(a.name);if(!el){el=document.createElement('div');el.className='sprite';el.innerHTML=`<div class='avatar'><div class='frame'></div></div><div class='legs'><div class='leg'></div><div class='leg'></div></div><div class='nameplate'></div>`;stage.appendChild(el);agentsMap.set(a.name,el)}
       el.className='sprite '+(a.status||'idle');
-      const img=el.querySelector('.avatar img'); img.src=spriteSrc[a.name]||'./sprites/maya.svg';
+      const frame=el.querySelector('.frame'); frame.style.backgroundImage=`url('${spriteSrc[a.name]||'./spritesheets/maya-sheet.svg'}')`;
       el.querySelector('.nameplate').textContent=`${a.name} • ${a.role||a.status||'idle'}`;
       moveAgent(el,a,i);
       if(Math.random()<0.2){const rect=el.getBoundingClientRect(),s=stage.getBoundingClientRect();showBubble(chatter[Math.floor(Math.random()*chatter.length)],rect.left-s.left+14,rect.top-s.top-48)}
