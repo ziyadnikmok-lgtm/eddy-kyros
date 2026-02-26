@@ -34,3 +34,5 @@
     - `c31705b8-4d7e-4c1b-bf67-5d9fc69c5859` (10:00–10:30 NY)
   - Task now checks priority queue first (`social-reply-queue.json`): if manual URL queued, process that URL immediately; otherwise continue normal tracked-profile flow.
   - Uses `social-reply-config.json` + `social-reply-state.json` for config/state.
+- Human preference: celebrate successful worker runs and reinforce with explicit praise; morale/rapport matters for this workflow.
+- Worker instruction baseline: use `browser profile=openclaw`, deterministic queue processing, and concise logs with source/status/replyUrl or error reason.
