@@ -95,6 +95,11 @@
           <div class="card"><div class="k">Viral Session</div><div id="kpiViral" class="v">Idle</div></div>
         </div>
         <div class="card"><h3 style="margin:0 0 6px">Live Crew Summary</h3><div id="crewSummary" style="color:var(--mut)">Loading…</div></div>
+        <div class="card" style="margin-top:10px">
+          <h3 style="margin:0 0 6px">Auto Reply Control</h3>
+          <div id="autoReplyLabel" style="color:var(--mut);margin-bottom:8px">Checking status…</div>
+          <button id="autoReplyBtn" class="btn" onclick="toggleAutoReply(this)">Turn ON auto reply</button>
+        </div>
       </section>
 
       <section id="office" class="tabs">
@@ -212,14 +217,38 @@
       if(Math.random()<0.2){const rect=el.getBoundingClientRect(),s=stage.getBoundingClientRect();showBubble(chatter[Math.floor(Math.random()*chatter.length)],rect.left-s.left+14,rect.top-s.top-48)}
     })}
 
-    async function loadOpsHub(){try{const d=await j('/api/ops-hub');crew=d.crew||[];renderOffice();const txt=`${d.summary?.queued||0} queued · ${d.summary?.done||0} done · last: ${(d.summary?.lastAttempt?.status)||'n/a'}`;document.getElementById('crewSummary').textContent=txt;if(lastSummary&&lastSummary!==txt)addFeed('🧠 Jarvy updated squad status.');lastSummary=txt}catch(e){toast('Ops hub failed: '+e.message,true)}}
+    async function loadOpsHub(){try{const d=await j('/api/ops-hub');crew=d.crew||[];renderOffice();const txt=`${d.summary?.queued||0} queued · ${d.summary?.done||0} done · last: ${(d.summary?.lastAttempt?.status)||'n/a'}`;document.getElementById('crewSummary').textContent=txt;if(lastSummary&&lastSummary!==txt)addFeed('🧠 Jarvis updated squad status.');lastSummary=txt}catch(e){toast('Ops hub failed: '+e.message,true)}}
+
+    async function loadAutoReply(){
+      try{
+        const d=await j('/api/auto-reply-status');
+        const on=!!d.enabled;
+        const label=document.getElementById('autoReplyLabel');
+        const btn=document.getElementById('autoReplyBtn');
+        label.textContent=on?'Auto reply is ON (tracked profiles can trigger posts).':'Auto reply is OFF (manual queue button only).';
+        btn.textContent=on?'Turn OFF auto reply':'Turn ON auto reply';
+        btn.className='btn '+(on?'danger':'ok');
+        btn.dataset.enabled=on?'1':'0';
+      }catch(e){toast('Auto-reply status failed: '+e.message,true)}
+    }
+
+    async function toggleAutoReply(btn){
+      const next = !(btn.dataset.enabled==='1');
+      setBusy(btn,true,next?'Turning ON...':'Turning OFF...','');
+      try{
+        await j('/api/auto-reply-toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:next})});
+        addFeed(next?'✅ Auto-reply switched ON.':'🛑 Auto-reply switched OFF (manual mode).');
+        await loadAutoReply();
+      }catch(e){toast('Toggle failed: '+e.message,true);await loadAutoReply()}
+      finally{btn.disabled=false;}
+    }
 
     function saveCfgCmd(){const t=document.getElementById('cfg').value;const cmd=`cat > /Users/admin/.openclaw/workspace/social-reply-config.json <<'JSON'\n${t}\nJSON`;navigator.clipboard.writeText(cmd);toast('Save command copied')}
 
     async function init(){try{document.getElementById('cfg').value=await (await fetch('social-reply-config.json')).text()}catch{document.getElementById('cfg').value='{}'}
       addFeed('🎬 Office online. Crew entering the room...');
-      await Promise.all([loadImages(),loadQueue(),loadViral(),loadOpsHub()]);
-      setInterval(loadQueue,10000);setInterval(loadOpsHub,7000);setInterval(loadViral,15000)
+      await Promise.all([loadImages(),loadQueue(),loadViral(),loadOpsHub(),loadAutoReply()]);
+      setInterval(loadQueue,10000);setInterval(loadOpsHub,7000);setInterval(loadViral,15000);setInterval(loadAutoReply,20000)
     }
     init();
   </script>

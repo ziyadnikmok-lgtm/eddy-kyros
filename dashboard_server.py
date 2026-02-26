@@ -6,6 +6,7 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 WORKSPACE = "/Users/admin/.openclaw/workspace"
 UPLOAD_DIR = "/Users/admin/Downloads/IG POST SOFIA"
 QUEUE_FILE = os.path.join(WORKSPACE, "social-reply-queue.json")
+CONFIG_FILE = os.path.join(WORKSPACE, "social-reply-config.json")
 CRON_TRIGGER_JOB = "b3058028-9070-4a65-baf6-9485d6e11adb"
 CRON_JOBS = ["b3058028-9070-4a65-baf6-9485d6e11adb", "c31705b8-4d7e-4c1b-bf67-5d9fc69c5859"]
 VIRAL_STATE = os.path.join(WORKSPACE, "viral-session.json")
@@ -78,6 +79,11 @@ class H(SimpleHTTPRequestHandler):
             q=sync_queue(load_queue()); save_queue(q); return self._json(200,{"ok":True,"items":q})
         if self.path.startswith('/api/viral-state'):
             return self._json(200,{"ok":True,"state":jload(VIRAL_STATE,{})})
+
+        if self.path.startswith('/api/auto-reply-status'):
+            cfg = jload(CONFIG_FILE, {})
+            enabled = bool(cfg.get("autoReplyEnabled", False))
+            return self._json(200, {"ok": True, "enabled": enabled, "jobs": CRON_JOBS})
 
         if self.path.startswith('/api/ops-hub'):
             q = load_queue()
@@ -213,6 +219,21 @@ class H(SimpleHTTPRequestHandler):
             subprocess.Popen(["/bin/sh","-lc",f"sleep 7200; openclaw cron rm {jid} >/dev/null 2>&1"],cwd=WORKSPACE)
             jsave(VIRAL_STATE,{"jobId":jid,"startedAt":datetime.now(timezone.utc).isoformat(),"endsInMinutes":120})
             return self._json(200,{"ok":True,"jobId":jid})
+
+        if self.path.startswith('/api/auto-reply-toggle'):
+            enabled = bool(payload.get("enabled", False))
+            errs = []
+            for jid in CRON_JOBS:
+                cmd = ["openclaw", "cron", "enable" if enabled else "disable", jid]
+                r = subprocess.run(cmd, cwd=WORKSPACE, capture_output=True, text=True, timeout=60)
+                if r.returncode != 0:
+                    errs.append((jid, (r.stderr or r.stdout or "unknown")[-240:]))
+            cfg = jload(CONFIG_FILE, {})
+            cfg["autoReplyEnabled"] = enabled
+            jsave(CONFIG_FILE, cfg)
+            if errs:
+                return self._json(500, {"ok": False, "enabled": enabled, "errors": errs})
+            return self._json(200, {"ok": True, "enabled": enabled})
 
         return self._json(404,{"ok":False,"error":"not found"})
 

@@ -10,6 +10,7 @@
     "@cindyzhg"
   ],
   "mode": "reply_when_new_post",
+  "autoReplyEnabled": false,
   "safety": {
     "avoidDuplicatesSameDay": true,
     "noMinorOrAmbiguousAccounts": true,
