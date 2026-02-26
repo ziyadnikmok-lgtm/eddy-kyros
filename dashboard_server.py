@@ -99,10 +99,26 @@ class H(SimpleHTTPRequestHandler):
             return self._json(200,{"ok":True,"uploaded":up})
 
         if self.path.startswith('/api/delete-queue'):
-            q=load_queue(); qid=(payload.get('id') or '').strip()
-            q=[x for x in q if x.get('id')!=qid]
+            q = load_queue()
+            qid = (payload.get('id') or '').strip()
+            qurl = (payload.get('url') or '').strip()
+
+            before = len(q)
+            if qid:
+                q = [x for x in q if (x.get('id') or '') != qid]
+            elif qurl:
+                # Backward compatibility: older queue rows may not have id
+                removed = False
+                new_q = []
+                for x in q:
+                    if not removed and (x.get('url') or '') == qurl:
+                        removed = True
+                        continue
+                    new_q.append(x)
+                q = new_q
+
             save_queue(q)
-            return self._json(200,{"ok":True,"items":q})
+            return self._json(200,{"ok":True,"removed": before - len(q),"items":q})
 
         if self.path.startswith('/api/reply-now'):
             url=(payload.get('url') or '').strip(); img=(payload.get('image') or '').strip()

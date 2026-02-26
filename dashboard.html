@@ -341,7 +341,7 @@
           <td>${statusPill(i.status)}</td>
           <td><small>${i.url || ''}</small></td>
           <td>${i.replyUrl ? `<a target="_blank" href="${i.replyUrl}">Open reply</a>` : '<span class="muted">Pending</span>'}</td>
-          <td><button class="btn-danger" onclick="delQ('${i.id || ''}')">Delete</button></td>
+          <td><button class="btn-danger" onclick='delQ(${JSON.stringify(i.id || "")}, ${JSON.stringify(i.url || "")})'>Delete</button></td>
         </tr>
       `).join('');
     }
@@ -399,11 +399,17 @@
       }
     }
 
-    async function delQ(id) {
+    async function delQ(id, url) {
       try {
-        await j('/api/delete-queue', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id })
+        const out = await j('/api/delete-queue', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, url })
         });
+        if (!out.removed) {
+          notify('Nothing deleted (item may already be gone)', true);
+          return;
+        }
         notify('Queue item deleted');
         await loadQueue();
       } catch (e) {
