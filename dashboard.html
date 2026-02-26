@@ -1,149 +1,26 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Social Reply Control Center</title>
-  <style>
-    :root{--bg:#0b1020;--card:#131a2e;--card2:#1a2440;--text:#eaf0ff;--muted:#9fb0d0;--accent:#5ea1ff;--ok:#58d68d;--line:#2b3a63}
-    *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui,Arial,sans-serif;background:#0b1020;color:var(--text)}
-    .wrap{max-width:1100px;margin:20px auto;padding:0 16px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-    .card{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:14px;padding:14px}
-    .full{grid-column:1 / -1} .row{display:grid;grid-template-columns:170px 1fr;gap:10px;align-items:center;margin:8px 0}
-    input,textarea{width:100%;background:#0c1325;color:#f3f7ff;border:1px solid #314675;border-radius:10px;padding:10px}
-    textarea{min-height:88px} button{background:var(--accent);border:none;color:white;padding:10px 12px;border-radius:10px;cursor:pointer;font-weight:700}
-    .secondary{background:#2a3659}.ok{background:#1f8f5f}.hint{color:var(--muted);font-size:13px}.mono{font-family:monospace;background:#0c1325;padding:2px 6px;border-radius:6px}
-    .actions{display:flex;gap:8px;flex-wrap:wrap}.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-top:10px}
-    .img{border:1px solid #30456f;border-radius:10px;padding:6px;background:#0d1529}.img img{width:100%;height:90px;object-fit:cover;border-radius:8px}
-    @media(max-width:900px){.grid{grid-template-columns:1fr}.row{grid-template-columns:1fr}}
-  </style>
-</head>
-<body>
-<div class="wrap">
-  <h1>✨ Social Reply Control Center</h1>
-  <p class="hint">Now supports direct image upload into your bot folder.</p>
+<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Control Center</title>
+<style>body{font-family:Inter,Arial;background:#0b1020;color:#eef;margin:0} .w{max-width:1100px;margin:20px auto;padding:0 14px} .g{display:grid;grid-template-columns:1fr 1fr;gap:12px} .c{background:#141d33;border:1px solid #2d3f66;border-radius:12px;padding:12px} .full{grid-column:1/-1} input,textarea,select{width:100%;background:#0c1325;color:#fff;border:1px solid #314675;border-radius:8px;padding:9px} button{background:#4c8dff;color:#fff;border:0;border-radius:8px;padding:9px 12px;margin-right:8px} .mut{color:#9fb3d1;font-size:13px} table{width:100%;border-collapse:collapse} td,th{border-bottom:1px solid #2e4068;padding:8px;text-align:left} @media(max-width:900px){.g{grid-template-columns:1fr}}</style></head>
+<body><div class='w'><h1>✨ Social Reply Dashboard</h1><div class='mut'>Grouped sections: Settings / Images / Instant Reply / Queue / Viral Session</div>
+<div class='g'>
+<div class='c full'><h3>1) Bot Settings</h3><textarea id='cfg' style='min-height:150px'></textarea><br><button onclick='saveCfgCmd()'>Copy save command</button></div>
 
-  <div class="grid">
-    <div class="card">
-      <h3>Current setup</h3>
-      <p>Timezone: <span id="tzNow" class="mono">-</span></p>
-      <p>Image folder: <span id="folderNow" class="mono">-</span></p>
-      <p>Profiles: <span id="profilesNow" class="mono">-</span></p>
-    </div>
+<div class='c'><h3>2) Image Upload</h3><input id='files' type='file' accept='image/*' multiple><br><br><button onclick='upload()'>Upload</button><button onclick='loadImages()'>Refresh</button><div id='imgCount' class='mut'></div></div>
+<div class='c'><h3>3) Instant Reply</h3><input id='url' placeholder='https://x.com/user/status/...'><br><br><label class='mut'>Optional image selection</label><select id='imgSelect'></select><br><br><button onclick='replyNow()'>Add in queue + trigger</button></div>
 
-    <div class="card">
-      <h3>How to use</h3>
-      <ol>
-        <li>Edit fields below</li>
-        <li>Click <b>Generate config</b></li>
-        <li>Click <b>Copy save command</b>, paste in Terminal</li>
-        <li>Upload images below so I can pick them automatically</li>
-      </ol>
-    </div>
+<div class='c full'><h3>4) Queue (Pending / Done with link)</h3><table><thead><tr><th>Status</th><th>Post</th><th>Reply</th><th>Action</th></tr></thead><tbody id='queue'></tbody></table></div>
 
-    <div class="card full">
-      <h3>Edit bot settings</h3>
-      <div class="row"><label>Timezone</label><input id="timezone"></div>
-      <div class="row"><label>Runs per day</label><input id="runsPerDay" type="number"></div>
-      <div class="row"><label>Spacing (minutes)</label><input id="spacingMinutes" type="number"></div>
-      <div class="row"><label>Image folder</label><input id="imageFolder"></div>
-      <div class="row"><label>Tracked profiles</label><textarea id="profiles"></textarea></div>
-      <div class="actions">
-        <button class="ok" onclick="generate()">Generate config</button>
-        <button class="secondary" onclick="copyCmd()">Copy save command</button>
-        <button class="secondary" onclick="downloadCfg()">Download JSON</button>
-      </div>
-      <textarea id="jsonOut" style="min-height:220px;margin-top:10px"></textarea>
-      <p id="status" class="hint"></p>
-    </div>
-
-    <div class="card full">
-      <h3>Upload images (for bot to choose from)</h3>
-      <input id="fileInput" type="file" accept="image/*" multiple>
-      <div class="actions" style="margin-top:8px">
-        <button onclick="uploadImages()">Upload selected images</button>
-        <button class="secondary" onclick="refreshImages()">Refresh list</button>
-      </div>
-      <p class="hint">Uploads into: <span class="mono">/Users/admin/Downloads/IG POST SOFIA</span></p>
-      <div id="gallery" class="gallery"></div>
-    </div>
-
-    <div class="card full">
-      <h3>Instant reply to a specific X post (one-click)</h3>
-      <div class="row"><label>X post link</label><input id="replyUrl" placeholder="https://x.com/username/status/1234567890"></div>
-      <div class="actions">
-        <button class="ok" onclick="replyNow()">Reply now with image</button>
-        <button class="secondary" onclick="refreshQueue()">Refresh queue</button>
-      </div>
-      <p class="hint">This adds your URL to queue and instantly triggers the reply job.</p>
-      <div id="queueList" class="hint"></div>
-    </div>
-  </div>
-</div>
-
+<div class='c full'><h3>5) Viral Session</h3><div class='mut'>Start 2-hour session: every 5 minutes it finds likely-viral posts and replies with image.</div><br><button onclick='startViral()'>Start 2h Viral Session</button><span id='viral' class='mut'></span></div>
+</div></div>
 <script>
-let cfg={timezone:'America/New_York',runsPerDay:10,spacingMinutes:10,imageFolder:'/Users/admin/Downloads/IG POST SOFIA',trackedProfiles:['@lucithakittykat'],mode:'reply_when_new_post',safety:{avoidDuplicatesSameDay:true,noMinorOrAmbiguousAccounts:true,humanTone:true}};
-
-function setForm(){
-  timezone.value=cfg.timezone||'';runsPerDay.value=cfg.runsPerDay||10;spacingMinutes.value=cfg.spacingMinutes||10;imageFolder.value=cfg.imageFolder||'';profiles.value=(cfg.trackedProfiles||[]).join('\n');
-  tzNow.textContent=cfg.timezone||'-';folderNow.textContent=cfg.imageFolder||'-';profilesNow.textContent=(cfg.trackedProfiles||[]).join(', ')||'-';
-}
-function readForm(){
-  return {...cfg,timezone:timezone.value.trim(),runsPerDay:Number(runsPerDay.value||10),spacingMinutes:Number(spacingMinutes.value||10),imageFolder:imageFolder.value.trim(),trackedProfiles:profiles.value.split('\n').map(x=>x.trim()).filter(Boolean)};
-}
-function generate(){cfg=readForm();jsonOut.value=JSON.stringify(cfg,null,2);setForm();status.textContent='Generated. Next: Copy save command.';}
-function copyCmd(){const txt=jsonOut.value||JSON.stringify(readForm(),null,2);const cmd=`cat > /Users/admin/.openclaw/workspace/social-reply-config.json <<'JSON'\n${txt}\nJSON`;navigator.clipboard.writeText(cmd);status.textContent='Copied ✅ Paste in Terminal.';}
-function downloadCfg(){const txt=jsonOut.value||JSON.stringify(readForm(),null,2);const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:'application/json'}));a.download='social-reply-config.json';a.click();}
-
-async function uploadImages(){
-  const files=[...fileInput.files]; if(!files.length){status.textContent='Select images first.';return;}
-  const toDataUrl=(f)=>new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(f);});
-  const payload={files:[]};
-  for(const f of files){payload.files.push({name:f.name,data:await toDataUrl(f)});} 
-  const res=await fetch('/api/upload-images',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-  const j=await res.json();
-  status.textContent=j.ok?`Uploaded: ${j.uploaded.join(', ')}`:`Upload failed: ${j.error||'unknown'}`;
-  refreshImages();
-}
-async function refreshImages(){
-  const res=await fetch('/api/list-images'); const j=await res.json();
-  gallery.innerHTML='';
-  if(!j.ok){gallery.innerHTML='<div class="hint">Could not load images.</div>';return;}
-  j.files.forEach(f=>{const d=document.createElement('div');d.className='img';d.innerHTML=`<img src="/uploads/${encodeURIComponent(f.name)}"><div class="hint">${f.name}</div>`;gallery.appendChild(d);});
-}
-
-async function replyNow(){
-  const url=(replyUrl.value||'').trim();
-  if(!url){status.textContent='Paste an X post URL first.';return;}
-  status.textContent='Triggering instant reply...';
-  const res=await fetch('/api/reply-now',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
-  const j=await res.json();
-  if(!j.ok){status.textContent=`Failed: ${j.error||'unknown'}`;return;}
-  const busy=(j.cronOut||'').includes('already-running');
-  status.textContent=busy
-    ? 'Queued ✅ Worker is busy right now; your link will run next automatically.'
-    : 'Queued + triggered ✅ Check chat updates for posted reply link.';
-  replyUrl.value='';
-  refreshQueue();
-}
-
-async function refreshQueue(){
-  const res=await fetch('/api/list-queue'); const j=await res.json();
-  if(!j.ok){queueList.textContent='Could not load queue.';return;}
-  const recent=(j.items||[]).slice(-12).reverse();
-  if(!recent.length){queueList.textContent='Queue is empty.';return;}
-  queueList.innerHTML=recent.map(i=>{
-    const st=i.status||'queued';
-    const link=i.replyUrl?`<a href="${i.replyUrl}" target="_blank">open reply</a>`:'';
-    const err=i.lastError?`<span class="hint"> (${i.lastError})</span>`:'';
-    return `• <b>${st}</b> — <span class="mono">${i.url||''}</span> ${link} ${err}`;
-  }).join('<br>');
-}
-
-(async function init(){
-  try{const t=await (await fetch('social-reply-config.json')).text();cfg=JSON.parse(t);}catch(e){}
-  setForm();jsonOut.value=JSON.stringify(cfg,null,2);status.textContent='Ready.';refreshImages();refreshQueue();
-})();
-</script>
-</body>
-</html>
+async function j(u,o){const r=await fetch(u,o);return r.json()}
+async function init(){try{cfg.value=await (await fetch('social-reply-config.json')).text()}catch(e){cfg.value='{}'}; loadImages(); loadQueue(); loadViral(); setInterval(loadQueue,8000)}
+function saveCfgCmd(){const t=cfg.value; const cmd=`cat > /Users/admin/.openclaw/workspace/social-reply-config.json <<'JSON'\n${t}\nJSON`; navigator.clipboard.writeText(cmd); alert('Copied. Paste in Terminal.')}
+async function upload(){const fs=[...files.files]; if(!fs.length) return; const to=(f)=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(f)}); const payload={files:[]}; for(const f of fs) payload.files.push({name:f.name,data:await to(f)}); const out=await j('/api/upload-images',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); alert(out.ok?`Uploaded: ${out.uploaded.join(', ')}`:`Fail: ${out.error}`); loadImages()}
+async function loadImages(){const d=await j('/api/list-images'); const arr=d.files||[]; imgCount.textContent=`${arr.length} images available`; imgSelect.innerHTML='<option value="">Auto-pick image</option>'+arr.map(x=>`<option>${x.name}</option>`).join('')}
+async function replyNow(){const u=url.value.trim(); if(!u)return alert('Paste URL'); const image=imgSelect.value||''; const d=await j('/api/reply-now',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:u,image})}); if(!d.ok) return alert(d.error||'failed'); alert('Queued ✅'); url.value=''; loadQueue()}
+async function delQ(id){await j('/api/delete-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}); loadQueue()}
+async function loadQueue(){const d=await j('/api/list-queue'); const q=(d.items||[]).slice().reverse(); queue.innerHTML=q.map(i=>`<tr><td>${i.status||'queued'}</td><td><small>${i.url||''}</small></td><td>${i.replyUrl?`<a target='_blank' href='${i.replyUrl}'>open</a>`:'-'}</td><td><button onclick="delQ('${i.id||''}')">Delete</button></td></tr>`).join('')||'<tr><td colspan="4">Empty</td></tr>'}
+async function startViral(){const d=await j('/api/start-viral-session',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); viral.textContent=d.ok?` Started. jobId: ${d.jobId}`:` Error: ${d.error}`}
+async function loadViral(){const d=await j('/api/viral-state'); if(d.state&&d.state.jobId) viral.textContent=` Active job: ${d.state.jobId}`}
+init();
+</script></body></html>

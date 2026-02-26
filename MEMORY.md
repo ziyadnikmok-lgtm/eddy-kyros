@@ -25,6 +25,7 @@
   - If dashboard server crashes with `ModuleNotFoundError: cgi`, use JSON/base64 upload path (Python 3.13+ removed `cgi`).
   - Queue UX runbook: if user needs instant reply by URL, use `/api/reply-now` to enqueue + trigger; show progress from `/api/list-queue` (synced with `openclaw cron runs` summaries) and display `replyUrl` when available.
   - Reply style preference: short + flirty/confident/engaging; keep "hot" tone non-explicit and platform-safe.
+  - Dashboard controls now include queue delete, per-URL optional image selection, and a 2h/5m viral sprint trigger.
   - For manual/instant cron triggers, set cron delivery mode to `none` to avoid "Channel is required" errors.
 - Daily automation configured:
   - 10 runs/day (10-minute spacing) via two cron jobs in America/New_York:

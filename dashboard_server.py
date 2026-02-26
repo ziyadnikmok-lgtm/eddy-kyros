@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-import os
-import json
-import base64
-import subprocess
+import os, json, base64, subprocess, uuid
 from datetime import datetime, timezone
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
@@ -11,173 +8,127 @@ UPLOAD_DIR = "/Users/admin/Downloads/IG POST SOFIA"
 QUEUE_FILE = os.path.join(WORKSPACE, "social-reply-queue.json")
 CRON_TRIGGER_JOB = "b3058028-9070-4a65-baf6-9485d6e11adb"
 CRON_JOBS = ["b3058028-9070-4a65-baf6-9485d6e11adb", "c31705b8-4d7e-4c1b-bf67-5d9fc69c5859"]
+VIRAL_STATE = os.path.join(WORKSPACE, "viral-session.json")
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
-def load_queue():
-    if not os.path.exists(QUEUE_FILE):
-        return []
+def jload(path, default):
     try:
-        with open(QUEUE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            return data if isinstance(data, list) else []
+        with open(path, "r", encoding="utf-8") as f:
+            d = json.load(f)
+            return d if isinstance(d, type(default)) else default
     except Exception:
-        return []
+        return default
 
 
-def save_queue(items):
-    with open(QUEUE_FILE, "w", encoding="utf-8") as f:
-        json.dump(items, f, ensure_ascii=False, indent=2)
+def jsave(path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def sync_queue_with_cron_runs(items):
-    """Best-effort status sync from cron run summaries."""
+def load_queue(): return jload(QUEUE_FILE, [])
+def save_queue(items): jsave(QUEUE_FILE, items)
+
+
+def sync_queue(items):
     by_url = {i.get("url"): i for i in items if i.get("url")}
-    if not by_url:
-        return items
-
     for job_id in CRON_JOBS:
         try:
-            run = subprocess.run(
-                ["openclaw", "cron", "runs", "--id", job_id, "--limit", "20"],
-                cwd=WORKSPACE,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if run.returncode != 0:
-                continue
-            data = json.loads(run.stdout or "{}")
+            r = subprocess.run(["openclaw", "cron", "runs", "--id", job_id, "--limit", "20"], cwd=WORKSPACE, capture_output=True, text=True, timeout=30)
+            if r.returncode != 0: continue
+            data = json.loads(r.stdout or "{}")
             for e in data.get("entries", []):
                 summary = e.get("summary") or ""
-                src = None
-                rep = None
+                src = rep = None
                 for line in summary.splitlines():
                     line = line.strip()
-                    if line.lower().startswith("- source url:"):
-                        src = line.split(":", 1)[1].strip()
-                    if line.lower().startswith("- reply url:"):
-                        rep = line.split(":", 1)[1].strip()
+                    if line.lower().startswith("- source url:"): src = line.split(":",1)[1].strip()
+                    if line.lower().startswith("- reply url:"): rep = line.split(":",1)[1].strip()
                 if src and src in by_url:
                     q = by_url[src]
                     q["lastRunAt"] = e.get("runAtMs")
                     if e.get("status") == "ok" and rep:
-                        q["status"] = "done"
-                        q["replyUrl"] = rep
+                        q["status"] = "done"; q["replyUrl"] = rep
                     elif e.get("status") != "ok":
                         q["status"] = q.get("status") or "queued"
                         q["lastError"] = e.get("error") or "run_error"
         except Exception:
             pass
-
     return items
 
 
-class Handler(SimpleHTTPRequestHandler):
+class H(SimpleHTTPRequestHandler):
     def translate_path(self, path):
-        path = path.split('?', 1)[0].split('#', 1)[0]
-        rel = path.lstrip('/') or 'dashboard.html'
+        rel = path.split('?',1)[0].split('#',1)[0].lstrip('/') or 'dashboard.html'
         return os.path.join(WORKSPACE, rel)
 
     def _json(self, code, obj):
-        data = json.dumps(obj).encode('utf-8')
-        self.send_response(code)
-        self.send_header('Content-Type', 'application/json; charset=utf-8')
-        self.send_header('Content-Length', str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        b = json.dumps(obj).encode()
+        self.send_response(code); self.send_header('Content-Type','application/json; charset=utf-8'); self.send_header('Content-Length', str(len(b))); self.end_headers(); self.wfile.write(b)
 
     def do_GET(self):
         if self.path.startswith('/api/list-images'):
-            try:
-                files = []
-                for name in sorted(os.listdir(UPLOAD_DIR)):
-                    p = os.path.join(UPLOAD_DIR, name)
-                    if os.path.isfile(p) and name.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
-                        files.append({"name": name, "size": os.path.getsize(p)})
-                return self._json(200, {"ok": True, "dir": UPLOAD_DIR, "files": files})
-            except Exception as e:
-                return self._json(500, {"ok": False, "error": str(e)})
-
+            files=[]
+            for n in sorted(os.listdir(UPLOAD_DIR)):
+                p=os.path.join(UPLOAD_DIR,n)
+                if os.path.isfile(p) and n.lower().endswith((".jpg",".jpeg",".png",".webp",".gif")): files.append({"name":n,"size":os.path.getsize(p)})
+            return self._json(200,{"ok":True,"files":files,"dir":UPLOAD_DIR})
         if self.path.startswith('/api/list-queue'):
-            items = load_queue()
-            items = sync_queue_with_cron_runs(items)
-            save_queue(items)
-            return self._json(200, {"ok": True, "items": items})
-
+            q=sync_queue(load_queue()); save_queue(q); return self._json(200,{"ok":True,"items":q})
+        if self.path.startswith('/api/viral-state'):
+            return self._json(200,{"ok":True,"state":jload(VIRAL_STATE,{})})
         if self.path.startswith('/uploads/'):
-            name = self.path[len('/uploads/'):].split('?', 1)[0]
-            safe = os.path.basename(name)
+            safe = os.path.basename(self.path[len('/uploads/'):].split('?',1)[0])
             self.path = '/' + os.path.relpath(os.path.join(UPLOAD_DIR, safe), WORKSPACE)
             return super().do_GET()
-
         return super().do_GET()
 
     def do_POST(self):
+        n=int(self.headers.get('Content-Length','0')); body=self.rfile.read(n).decode('utf-8') if n>0 else '{}'
+        payload=json.loads(body or '{}') if body else {}
+
         if self.path.startswith('/api/upload-images'):
-            try:
-                n = int(self.headers.get('Content-Length', '0'))
-                body = self.rfile.read(n).decode('utf-8') if n > 0 else '{}'
-                payload = json.loads(body or '{}')
-                files = payload.get('files', [])
-                uploaded = []
-                for item in files:
-                    name = os.path.basename(str(item.get('name', '')))
-                    data = str(item.get('data', ''))
-                    if not name.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
-                        continue
-                    if ',' in data:
-                        data = data.split(',', 1)[1]  # data URL
-                    raw = base64.b64decode(data)
-                    with open(os.path.join(UPLOAD_DIR, name), 'wb') as f:
-                        f.write(raw)
-                    uploaded.append(name)
-                return self._json(200, {"ok": True, "uploaded": uploaded, "dir": UPLOAD_DIR})
-            except Exception as e:
-                return self._json(500, {"ok": False, "error": str(e)})
+            up=[]
+            for it in payload.get('files',[]):
+                name=os.path.basename(str(it.get('name',''))); data=str(it.get('data',''))
+                if not name.lower().endswith((".jpg",".jpeg",".png",".webp",".gif")): continue
+                if ',' in data: data=data.split(',',1)[1]
+                with open(os.path.join(UPLOAD_DIR,name),'wb') as f: f.write(base64.b64decode(data))
+                up.append(name)
+            return self._json(200,{"ok":True,"uploaded":up})
+
+        if self.path.startswith('/api/delete-queue'):
+            q=load_queue(); qid=(payload.get('id') or '').strip()
+            q=[x for x in q if x.get('id')!=qid]
+            save_queue(q)
+            return self._json(200,{"ok":True,"items":q})
 
         if self.path.startswith('/api/reply-now'):
-            try:
-                n = int(self.headers.get('Content-Length', '0'))
-                body = self.rfile.read(n).decode('utf-8') if n > 0 else '{}'
-                payload = json.loads(body or '{}')
-                url = (payload.get('url') or '').strip()
-                valid = (
-                    url.startswith('https://x.com/') or url.startswith('http://x.com/') or
-                    url.startswith('https://twitter.com/') or url.startswith('http://twitter.com/') or
-                    url.startswith('https://mobile.twitter.com/') or url.startswith('http://mobile.twitter.com/')
-                )
-                if not valid:
-                    return self._json(400, {"ok": False, "error": "Please provide a valid X/Twitter post URL"})
+            url=(payload.get('url') or '').strip(); img=(payload.get('image') or '').strip()
+            valid = any(url.startswith(p) for p in ["https://x.com/","http://x.com/","https://twitter.com/","http://twitter.com/","https://mobile.twitter.com/","http://mobile.twitter.com/"])
+            if not valid: return self._json(400,{"ok":False,"error":"valid X/Twitter post URL required"})
+            item={"id":str(uuid.uuid4()),"url":url,"createdAt":datetime.now(timezone.utc).isoformat(),"status":"queued"}
+            if img: item["imagePath"]=os.path.join(UPLOAD_DIR, os.path.basename(img))
+            q=load_queue(); q.append(item); save_queue(q)
+            run=subprocess.run(["openclaw","cron","run",CRON_TRIGGER_JOB],cwd=WORKSPACE,capture_output=True,text=True,timeout=120)
+            return self._json(200,{"ok":True,"queued":item,"cronOut":(run.stdout or '')[-1000:],"cronErr":(run.stderr or '')[-500:]})
 
-                items = load_queue()
-                item = {"url": url, "createdAt": datetime.now(timezone.utc).isoformat(), "status": "queued"}
-                items.append(item)
-                save_queue(items)
+        if self.path.startswith('/api/start-viral-session'):
+            # Create temporary 2h / 5m sprint
+            msg=(
+                "Task: For the next run, find a likely-viral X post (safe, high-engagement), reply with one image from configured image folder, "
+                "short flirty engaging caption (non-explicit), and return source+reply URLs."
+            )
+            add=subprocess.run(["openclaw","cron","add","--name","viral-sprint-2h","--every","5m","--session","isolated","--no-deliver","--message",msg],cwd=WORKSPACE,capture_output=True,text=True,timeout=120)
+            if add.returncode!=0: return self._json(500,{"ok":False,"error":add.stderr or add.stdout})
+            data=json.loads(add.stdout or '{}'); jid=data.get('id')
+            subprocess.Popen(["/bin/sh","-lc",f"sleep 7200; openclaw cron rm {jid} >/dev/null 2>&1"],cwd=WORKSPACE)
+            jsave(VIRAL_STATE,{"jobId":jid,"startedAt":datetime.now(timezone.utc).isoformat(),"endsInMinutes":120})
+            return self._json(200,{"ok":True,"jobId":jid})
 
-                run = subprocess.run(
-                    ["openclaw", "cron", "run", CRON_TRIGGER_JOB],
-                    cwd=WORKSPACE,
-                    capture_output=True,
-                    text=True,
-                    timeout=120
-                )
-                return self._json(200, {
-                    "ok": True,
-                    "queued": item,
-                    "triggeredJob": CRON_TRIGGER_JOB,
-                    "cronExit": run.returncode,
-                    "cronOut": (run.stdout or '')[-1200:],
-                    "cronErr": (run.stderr or '')[-1200:]
-                })
-            except Exception as e:
-                return self._json(500, {"ok": False, "error": str(e)})
-
-        return self._json(404, {"ok": False, "error": "not found"})
+        return self._json(404,{"ok":False,"error":"not found"})
 
 
-if __name__ == '__main__':
-    server = HTTPServer(('127.0.0.1', 8765), Handler)
-    print('Dashboard server running at http://127.0.0.1:8765')
-    server.serve_forever()
+if __name__=='__main__':
+    HTTPServer(('127.0.0.1',8765),H).serve_forever()
