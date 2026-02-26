@@ -26,4 +26,5 @@
   - 10 runs/day (10-minute spacing) via two cron jobs in America/New_York:
     - `b3058028-9070-4a65-baf6-9485d6e11adb` (09:00–09:50 NY)
     - `c31705b8-4d7e-4c1b-bf67-5d9fc69c5859` (10:00–10:30 NY)
-  - Task: read `social-reply-config.json`, track configured profiles, reply only when new post detected, use image from configured folder, avoid duplicate/safety issues, update `social-reply-state.json`.
+  - Task now checks priority queue first (`social-reply-queue.json`): if manual URL queued, process that URL immediately; otherwise continue normal tracked-profile flow.
+  - Uses `social-reply-config.json` + `social-reply-state.json` for config/state.

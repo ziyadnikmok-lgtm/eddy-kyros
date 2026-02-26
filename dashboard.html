@@ -67,6 +67,17 @@
       <p class="hint">Uploads into: <span class="mono">/Users/admin/Downloads/IG POST SOFIA</span></p>
       <div id="gallery" class="gallery"></div>
     </div>
+
+    <div class="card full">
+      <h3>Instant reply to a specific X post (one-click)</h3>
+      <div class="row"><label>X post link</label><input id="replyUrl" placeholder="https://x.com/username/status/1234567890"></div>
+      <div class="actions">
+        <button class="ok" onclick="replyNow()">Reply now with image</button>
+        <button class="secondary" onclick="refreshQueue()">Refresh queue</button>
+      </div>
+      <p class="hint">This adds your URL to queue and instantly triggers the reply job.</p>
+      <div id="queueList" class="hint"></div>
+    </div>
   </div>
 </div>
 
@@ -98,9 +109,29 @@ async function refreshImages(){
   j.files.forEach(f=>{const d=document.createElement('div');d.className='img';d.innerHTML=`<img src="/uploads/${encodeURIComponent(f.name)}"><div class="hint">${f.name}</div>`;gallery.appendChild(d);});
 }
 
+async function replyNow(){
+  const url=(replyUrl.value||'').trim();
+  if(!url){status.textContent='Paste an X post URL first.';return;}
+  status.textContent='Triggering instant reply...';
+  const res=await fetch('/api/reply-now',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+  const j=await res.json();
+  if(!j.ok){status.textContent=`Failed: ${j.error||'unknown'}`;return;}
+  status.textContent='Queued + triggered ✅ Check chat updates for posted reply link.';
+  replyUrl.value='';
+  refreshQueue();
+}
+
+async function refreshQueue(){
+  const res=await fetch('/api/list-queue'); const j=await res.json();
+  if(!j.ok){queueList.textContent='Could not load queue.';return;}
+  const recent=(j.items||[]).slice(-8).reverse();
+  if(!recent.length){queueList.textContent='Queue is empty.';return;}
+  queueList.innerHTML=recent.map(i=>`• ${i.status||'queued'} — <span class="mono">${i.url||''}</span>`).join('<br>');
+}
+
 (async function init(){
   try{const t=await (await fetch('social-reply-config.json')).text();cfg=JSON.parse(t);}catch(e){}
-  setForm();jsonOut.value=JSON.stringify(cfg,null,2);status.textContent='Ready.';refreshImages();
+  setForm();jsonOut.value=JSON.stringify(cfg,null,2);status.textContent='Ready.';refreshImages();refreshQueue();
 })();
 </script>
 </body>
