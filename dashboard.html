@@ -1,26 +1,471 @@
-<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Control Center</title>
-<style>body{font-family:Inter,Arial;background:#0b1020;color:#eef;margin:0} .w{max-width:1100px;margin:20px auto;padding:0 14px} .g{display:grid;grid-template-columns:1fr 1fr;gap:12px} .c{background:#141d33;border:1px solid #2d3f66;border-radius:12px;padding:12px} .full{grid-column:1/-1} input,textarea,select{width:100%;background:#0c1325;color:#fff;border:1px solid #314675;border-radius:8px;padding:9px} button{background:#4c8dff;color:#fff;border:0;border-radius:8px;padding:9px 12px;margin-right:8px;transition:.2s ease} button:disabled{opacity:.7;cursor:not-allowed} .busy{box-shadow:0 0 0 3px rgba(76,141,255,.25);animation:pulse .9s infinite} @keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.02)}100%{transform:scale(1)}} .mut{color:#9fb3d1;font-size:13px} table{width:100%;border-collapse:collapse} td,th{border-bottom:1px solid #2e4068;padding:8px;text-align:left} @media(max-width:900px){.g{grid-template-columns:1fr}}</style></head>
-<body><div class='w'><h1>✨ Social Reply Dashboard</h1><div class='mut'>Grouped sections: Settings / Images / Instant Reply / Queue / Viral Session</div>
-<div class='g'>
-<div class='c full'><h3>1) Bot Settings</h3><textarea id='cfg' style='min-height:150px'></textarea><br><button onclick='saveCfgCmd()'>Copy save command</button></div>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Social Reply Control Center</title>
+  <style>
+    :root {
+      --bg: #0a1022;
+      --panel: #0f1a33;
+      --panel-2: #142346;
+      --border: #27416f;
+      --muted: #9bb2d8;
+      --text: #eaf1ff;
+      --brand: #4f8dff;
+      --brand-2: #7aa8ff;
+      --success: #24c18a;
+      --danger: #ff5f7a;
+      --warning: #ffb347;
+      --shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+      --radius: 14px;
+    }
 
-<div class='c'><h3>2) Image Upload</h3><input id='files' type='file' accept='image/*' multiple><br><br><button onclick='upload()'>Upload</button><button onclick='loadImages()'>Refresh</button><div id='imgCount' class='mut'></div></div>
-<div class='c'><h3>3) Instant Reply</h3><input id='url' placeholder='https://x.com/user/status/...'><br><br><label class='mut'>Optional image selection</label><select id='imgSelect'></select><br><br><button id='replyBtn' onclick='replyNow(this)'>Add in queue + trigger</button></div>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(1200px 500px at 10% -10%, #253d75 0%, rgba(37, 61, 117, 0) 60%),
+        radial-gradient(900px 400px at 100% 0%, #1a2e5e 0%, rgba(26, 46, 94, 0) 65%),
+        var(--bg);
+      min-height: 100vh;
+      line-height: 1.45;
+    }
 
-<div class='c full'><h3>4) Queue (Pending / Done with link)</h3><table><thead><tr><th>Status</th><th>Post</th><th>Reply</th><th>Action</th></tr></thead><tbody id='queue'></tbody></table></div>
+    .wrap { max-width: 1240px; margin: 0 auto; padding: 22px 16px 28px; }
 
-<div class='c full'><h3>5) Viral Session</h3><div class='mut'>Start 2-hour session: every 5 minutes it finds likely-viral posts and replies with image.</div><br><button id='viralBtn' onclick='startViral(this)'>Start 2h Viral Session</button><span id='viral' class='mut'></span></div>
-</div></div>
-<script>
-async function j(u,o){const r=await fetch(u,o);return r.json()}
-async function init(){try{cfg.value=await (await fetch('social-reply-config.json')).text()}catch(e){cfg.value='{}'}; loadImages(); loadQueue(); loadViral(); setInterval(loadQueue,8000)}
-function saveCfgCmd(){const t=cfg.value; const cmd=`cat > /Users/admin/.openclaw/workspace/social-reply-config.json <<'JSON'\n${t}\nJSON`; navigator.clipboard.writeText(cmd); alert('Copied. Paste in Terminal.')}
-async function upload(){const fs=[...files.files]; if(!fs.length) return; const to=(f)=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(f)}); const payload={files:[]}; for(const f of fs) payload.files.push({name:f.name,data:await to(f)}); const out=await j('/api/upload-images',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); alert(out.ok?`Uploaded: ${out.uploaded.join(', ')}`:`Fail: ${out.error}`); loadImages()}
-async function loadImages(){const d=await j('/api/list-images'); const arr=d.files||[]; imgCount.textContent=`${arr.length} images available`; imgSelect.innerHTML='<option value="">Auto-pick image</option>'+arr.map(x=>`<option>${x.name}</option>`).join('')}
-async function replyNow(btn){const u=url.value.trim(); if(!u)return alert('Paste URL'); if(btn){btn.disabled=true;btn.classList.add('busy');btn.textContent='Queuing...'}; const image=imgSelect.value||''; const d=await j('/api/reply-now',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:u,image})}); if(btn){btn.disabled=false;btn.classList.remove('busy');btn.textContent='Add in queue + trigger'}; if(!d.ok) return alert(d.error||'failed'); alert('Queued ✅'); url.value=''; loadQueue()}
-async function delQ(id){await j('/api/delete-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}); loadQueue()}
-async function loadQueue(){const d=await j('/api/list-queue'); const q=(d.items||[]).slice().reverse(); queue.innerHTML=q.map(i=>`<tr><td>${i.status||'queued'}</td><td><small>${i.url||''}</small></td><td>${i.replyUrl?`<a target='_blank' href='${i.replyUrl}'>open</a>`:'-'}</td><td><button onclick="delQ('${i.id||''}')">Delete</button></td></tr>`).join('')||'<tr><td colspan="4">Empty</td></tr>'}
-async function startViral(btn){if(btn){btn.disabled=true;btn.classList.add('busy');btn.textContent='Starting...'}; const d=await j('/api/start-viral-session',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); if(btn){btn.disabled=false;btn.classList.remove('busy');btn.textContent='Start 2h Viral Session'}; viral.textContent=d.ok?` Started. jobId: ${d.jobId}`:` Error: ${d.error}`}
-async function loadViral(){const d=await j('/api/viral-state'); if(d.state&&d.state.jobId) viral.textContent=` Active job: ${d.state.jobId}`}
-init();
-</script></body></html>
+    .topbar {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    h1 { margin: 0; font-size: 1.55rem; font-weight: 700; letter-spacing: .2px; }
+    .subtitle { color: var(--muted); font-size: .95rem; margin-top: 4px; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 11px;
+      border-radius: 999px;
+      background: rgba(79, 141, 255, .16);
+      border: 1px solid rgba(122, 168, 255, .35);
+      color: #dce7ff;
+      font-size: .85rem;
+      white-space: nowrap;
+    }
+
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin: 12px 0 18px;
+    }
+
+    .kpi {
+      background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.01)), var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .kpi .label { color: var(--muted); font-size: .82rem; }
+    .kpi .value { margin-top: 4px; font-size: 1.3rem; font-weight: 700; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .card {
+      background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.01)), var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .card.full { grid-column: 1 / -1; }
+    .card h3 { margin: 0 0 10px; font-size: 1rem; }
+    .muted { color: var(--muted); font-size: .88rem; }
+
+    textarea, input, select {
+      width: 100%;
+      color: var(--text);
+      background: #0b1630;
+      border: 1px solid #2a4778;
+      border-radius: 10px;
+      padding: 10px 11px;
+      outline: none;
+    }
+
+    textarea:focus, input:focus, select:focus {
+      border-color: var(--brand-2);
+      box-shadow: 0 0 0 3px rgba(79, 141, 255, .2);
+    }
+
+    textarea { min-height: 180px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 9px 12px;
+      font-weight: 600;
+      color: #fff;
+      background: linear-gradient(180deg, #5f9dff, var(--brand));
+      cursor: pointer;
+      transition: transform .15s ease, opacity .2s ease;
+    }
+
+    button:hover { transform: translateY(-1px); }
+    button:disabled { opacity: .6; cursor: not-allowed; transform: none; }
+
+    .btn-secondary { background: #213c69; }
+    .btn-danger { background: linear-gradient(180deg, #ff7f95, var(--danger)); }
+    .btn-success { background: linear-gradient(180deg, #3cd89f, var(--success)); color: #052114; }
+
+    .pulse {
+      box-shadow: 0 0 0 0 rgba(122, 168, 255, .65);
+      animation: pulse 1.1s infinite;
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(122, 168, 255, .6); }
+      70% { box-shadow: 0 0 0 12px rgba(122, 168, 255, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(122, 168, 255, 0); }
+    }
+
+    .toolbar { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .search { max-width: 320px; }
+
+    table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 10px; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #25406b; vertical-align: top; }
+    th { color: #d7e5ff; font-size: .86rem; }
+    td small { color: #c5d7f8; word-break: break-all; }
+
+    .status {
+      display: inline-block;
+      padding: 4px 9px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      font-size: .78rem;
+      font-weight: 600;
+    }
+    .queued { background: rgba(255, 179, 71, .12); border-color: rgba(255, 179, 71, .35); color: #ffd59a; }
+    .done { background: rgba(36, 193, 138, .12); border-color: rgba(36, 193, 138, .35); color: #9ff0d1; }
+
+    .toast {
+      position: fixed;
+      right: 14px;
+      bottom: 14px;
+      min-width: 220px;
+      max-width: 420px;
+      background: #0d1b37;
+      border: 1px solid #2f4f84;
+      color: var(--text);
+      border-radius: 12px;
+      padding: 10px 12px;
+      box-shadow: var(--shadow);
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+      transition: all .2s ease;
+      font-size: .92rem;
+      z-index: 9999;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    a { color: #9dc2ff; }
+
+    @media (max-width: 980px) {
+      .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid { grid-template-columns: 1fr; }
+      .search { max-width: none; }
+      .toolbar { flex-direction: column; align-items: stretch; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div>
+        <h1>✨ Social Reply Control Center</h1>
+        <div class="subtitle">Fortune-grade operations dashboard for queueing, media prep, and viral sprint execution.</div>
+      </div>
+      <div class="badge" id="healthBadge">● System ready</div>
+    </div>
+
+    <section class="kpis">
+      <div class="kpi"><div class="label">Images available</div><div id="kpiImages" class="value">0</div></div>
+      <div class="kpi"><div class="label">Queue size</div><div id="kpiQueue" class="value">0</div></div>
+      <div class="kpi"><div class="label">Completed replies</div><div id="kpiDone" class="value">0</div></div>
+      <div class="kpi"><div class="label">Viral session</div><div id="kpiViral" class="value">Idle</div></div>
+    </section>
+
+    <main class="grid">
+      <section class="card full">
+        <h3>1) Bot Settings</h3>
+        <div class="muted">Edit JSON safely, then copy a terminal-ready command to apply changes.</div>
+        <textarea id="cfg" aria-label="Bot settings JSON"></textarea>
+        <div class="row">
+          <button onclick="saveCfgCmd()">Copy save command</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3>2) Image Upload</h3>
+        <div class="muted">Upload one or multiple media files used for auto-replies.</div>
+        <input id="files" type="file" accept="image/*" multiple />
+        <div class="row">
+          <button onclick="upload()">Upload images</button>
+          <button class="btn-secondary" onclick="loadImages()">Refresh list</button>
+        </div>
+        <div id="imgCount" class="muted" style="margin-top:8px">0 images available</div>
+      </section>
+
+      <section class="card">
+        <h3>3) Instant Reply</h3>
+        <div class="muted">Queue a specific post URL and trigger immediate processing.</div>
+        <input id="url" placeholder="https://x.com/user/status/..." />
+        <div style="height:8px"></div>
+        <label class="muted" for="imgSelect">Optional image override</label>
+        <select id="imgSelect"></select>
+        <div class="row">
+          <button id="replyBtn" class="btn-success" onclick="replyNow(this)">Queue + trigger now</button>
+        </div>
+      </section>
+
+      <section class="card full">
+        <div class="toolbar">
+          <h3 style="margin:0">4) Queue Status</h3>
+          <input id="queueSearch" class="search" placeholder="Filter by URL or status..." oninput="renderQueue()" />
+        </div>
+        <table>
+          <thead>
+            <tr><th>Status</th><th>Post</th><th>Reply</th><th>Action</th></tr>
+          </thead>
+          <tbody id="queue"></tbody>
+        </table>
+      </section>
+
+      <section class="card full">
+        <h3>5) Viral Session</h3>
+        <div class="muted">Launch a 2-hour sprint that scans and replies every 5 minutes with your configured content style.</div>
+        <div class="row">
+          <button id="viralBtn" onclick="startViral(this)">Start 2h viral session</button>
+          <span id="viral" class="muted" style="align-self:center"></span>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    let queueItems = [];
+
+    async function j(url, opts) {
+      const res = await fetch(url, opts);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    }
+
+    function notify(msg, isError = false) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.style.borderColor = isError ? 'rgba(255,95,122,.5)' : '#2f4f84';
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2600);
+    }
+
+    function setBusy(btn, on, labelOn, labelOff) {
+      if (!btn) return;
+      btn.disabled = on;
+      btn.classList.toggle('pulse', on);
+      btn.textContent = on ? labelOn : labelOff;
+    }
+
+    function statusPill(status) {
+      const s = (status || 'queued').toLowerCase();
+      return `<span class="status ${s === 'done' ? 'done' : 'queued'}">${s}</span>`;
+    }
+
+    function updateKPIs() {
+      const total = queueItems.length;
+      const done = queueItems.filter(x => (x.status || '').toLowerCase() === 'done').length;
+      document.getElementById('kpiQueue').textContent = String(total);
+      document.getElementById('kpiDone').textContent = String(done);
+    }
+
+    async function init() {
+      try {
+        document.getElementById('cfg').value = await (await fetch('social-reply-config.json')).text();
+      } catch {
+        document.getElementById('cfg').value = '{}';
+      }
+      await Promise.all([loadImages(), loadQueue(), loadViral()]);
+      setInterval(loadQueue, 10000);
+    }
+
+    function saveCfgCmd() {
+      const text = document.getElementById('cfg').value;
+      const cmd = `cat > /Users/admin/.openclaw/workspace/social-reply-config.json <<'JSON'\n${text}\nJSON`;
+      navigator.clipboard.writeText(cmd);
+      notify('Save command copied to clipboard');
+    }
+
+    async function upload() {
+      const fs = [...document.getElementById('files').files];
+      if (!fs.length) return notify('Choose at least one image', true);
+      const toData = f => new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsDataURL(f);
+      });
+      const payload = { files: [] };
+      for (const f of fs) payload.files.push({ name: f.name, data: await toData(f) });
+      try {
+        const out = await j('/api/upload-images', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        notify(out.uploaded?.length ? `Uploaded ${out.uploaded.length} image(s)` : 'No valid image uploaded', !out.uploaded?.length);
+        await loadImages();
+      } catch (e) {
+        notify(`Upload failed: ${e.message}`, true);
+      }
+    }
+
+    async function loadImages() {
+      try {
+        const d = await j('/api/list-images');
+        const files = d.files || [];
+        document.getElementById('imgCount').textContent = `${files.length} images available`;
+        document.getElementById('kpiImages').textContent = String(files.length);
+        document.getElementById('imgSelect').innerHTML =
+          '<option value="">Auto-pick image</option>' + files.map(x => `<option>${x.name}</option>`).join('');
+      } catch (e) {
+        notify(`Image load failed: ${e.message}`, true);
+      }
+    }
+
+    async function replyNow(btn) {
+      const u = document.getElementById('url').value.trim();
+      if (!u) return notify('Paste an X post URL first', true);
+      const image = document.getElementById('imgSelect').value || '';
+      setBusy(btn, true, 'Queueing...', 'Queue + trigger now');
+      try {
+        await j('/api/reply-now', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: u, image })
+        });
+        document.getElementById('url').value = '';
+        notify('Post added to queue and trigger started');
+        await loadQueue();
+      } catch (e) {
+        notify(`Queue failed: ${e.message}`, true);
+      } finally {
+        setBusy(btn, false, 'Queueing...', 'Queue + trigger now');
+      }
+    }
+
+    async function delQ(id) {
+      try {
+        await j('/api/delete-queue', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id })
+        });
+        notify('Queue item deleted');
+        await loadQueue();
+      } catch (e) {
+        notify(`Delete failed: ${e.message}`, true);
+      }
+    }
+
+    function renderQueue() {
+      const q = [...queueItems].reverse();
+      const term = document.getElementById('queueSearch').value.trim().toLowerCase();
+      const filtered = term
+        ? q.filter(i => ((i.url || '') + ' ' + (i.status || '')).toLowerCase().includes(term))
+        : q;
+
+      const tbody = document.getElementById('queue');
+      if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="muted">No queue items</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(i => `
+        <tr>
+          <td>${statusPill(i.status)}</td>
+          <td><small>${i.url || ''}</small></td>
+          <td>${i.replyUrl ? `<a target="_blank" href="${i.replyUrl}">Open reply</a>` : '<span class="muted">Pending</span>'}</td>
+          <td><button class="btn-danger" onclick="delQ('${i.id || ''}')">Delete</button></td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadQueue() {
+      try {
+        const d = await j('/api/list-queue');
+        queueItems = d.items || [];
+        updateKPIs();
+        renderQueue();
+      } catch (e) {
+        notify(`Queue load failed: ${e.message}`, true);
+      }
+    }
+
+    async function startViral(btn) {
+      setBusy(btn, true, 'Starting...', 'Start 2h viral session');
+      try {
+        const d = await j('/api/start-viral-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}'
+        });
+        document.getElementById('viral').textContent = `Active job: ${d.jobId}`;
+        document.getElementById('kpiViral').textContent = 'Active';
+        notify('Viral session started');
+      } catch (e) {
+        notify(`Viral session failed: ${e.message}`, true);
+      } finally {
+        setBusy(btn, false, 'Starting...', 'Start 2h viral session');
+      }
+    }
+
+    async function loadViral() {
+      try {
+        const d = await j('/api/viral-state');
+        if (d.state && d.state.jobId) {
+          document.getElementById('viral').textContent = `Active job: ${d.state.jobId}`;
+          document.getElementById('kpiViral').textContent = 'Active';
+          document.getElementById('healthBadge').textContent = '● Viral session active';
+        } else {
+          document.getElementById('viral').textContent = 'No active session';
+          document.getElementById('kpiViral').textContent = 'Idle';
+          document.getElementById('healthBadge').textContent = '● System ready';
+        }
+      } catch (e) {
+        notify(`Viral state load failed: ${e.message}`, true);
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
