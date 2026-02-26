@@ -90,32 +90,32 @@ class H(SimpleHTTPRequestHandler):
             # Simple "crew" model so user can see who is working on what.
             crew = [
                 {
-                    "name": "Jarvis",
+                    "name": "Jarvy",
                     "emoji": "🧠",
                     "role": "Main Orchestrator",
                     "status": "online",
-                    "task": "Coordinating dashboard + automation"
+                    "task": "Teaching crew + coordinating automation"
                 },
                 {
-                    "name": "Social Ops Worker",
+                    "name": "Bolt",
                     "emoji": "⚙️",
-                    "role": "Queue Executor",
+                    "role": "Queue Runner",
                     "status": "busy" if queued else "idle",
-                    "task": f"Processing {queued[0].get('url')}" if queued else "Waiting for queued URLs"
+                    "task": f"Grinding {queued[0].get('url')}" if queued else "Chilling until new queued URLs"
                 },
                 {
-                    "name": "Viral Scout",
+                    "name": "Nova",
                     "emoji": "🚀",
-                    "role": "Trend Sprint Agent",
+                    "role": "Viral Scout",
                     "status": "active" if viral.get("jobId") else "idle",
-                    "task": f"Job {viral.get('jobId')} running" if viral.get("jobId") else "No active viral sprint"
+                    "task": f"Hunting trends in job {viral.get('jobId')}" if viral.get("jobId") else "Studying patterns"
                 },
                 {
-                    "name": "Queue Janitor",
+                    "name": "Mop",
                     "emoji": "🧹",
-                    "role": "De-dup & Cleanup",
+                    "role": "Queue Janitor",
                     "status": "working" if len(done) and len(queued) else "idle",
-                    "task": "Removing stale duplicates" if len(done) and len(queued) else "Queue healthy"
+                    "task": "Cleaning stale duplicates" if len(done) and len(queued) else "Queue squeaky clean"
                 }
             ]
 
