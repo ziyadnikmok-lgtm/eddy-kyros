@@ -5,180 +5,103 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Social Reply Control Center</title>
   <style>
-    :root{
-      --bg:#0b1020;--card:#131a2e;--card2:#1a2440;--text:#eaf0ff;--muted:#9fb0d0;
-      --accent:#5ea1ff;--ok:#58d68d;--warn:#ffd166;--line:#2b3a63;
-    }
-    *{box-sizing:border-box}
-    body{margin:0;font-family:Inter,system-ui,Arial,sans-serif;background:radial-gradient(1200px 700px at 20% -20%,#1a2a52 0,#0b1020 50%,#090d1a 100%);color:var(--text)}
-    .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
-    .hero{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:16px}
-    .title{font-size:28px;font-weight:800;letter-spacing:.2px}
-    .subtitle{color:var(--muted)}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    :root{--bg:#0b1020;--card:#131a2e;--card2:#1a2440;--text:#eaf0ff;--muted:#9fb0d0;--accent:#5ea1ff;--ok:#58d68d;--line:#2b3a63}
+    *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui,Arial,sans-serif;background:#0b1020;color:var(--text)}
+    .wrap{max-width:1100px;margin:20px auto;padding:0 16px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
     .card{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:14px;padding:14px}
-    .card h3{margin:0 0 10px 0;font-size:16px}
-    .badge{display:inline-block;padding:4px 10px;border-radius:999px;background:#173a2a;color:#9bf3c5;font-weight:700;font-size:12px}
-    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0c1325;border:1px solid #2a3b66;border-radius:8px;padding:2px 6px}
-    .row{display:grid;grid-template-columns:160px 1fr;gap:10px;align-items:center;margin:8px 0}
-    label{color:#c6d6ff;font-size:14px}
-    input, textarea{width:100%;background:#0c1325;color:#f3f7ff;border:1px solid #314675;border-radius:10px;padding:10px}
-    textarea{min-height:88px}
-    .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-    button{background:var(--accent);border:none;color:white;padding:10px 12px;border-radius:10px;cursor:pointer;font-weight:700}
-    button.secondary{background:#2a3659}
-    button.ok{background:#1f8f5f}
-    .hint{color:var(--muted);font-size:13px}
-    .list li{margin:6px 0}
-    .full{grid-column:1 / -1}
-    .step{padding:10px;border:1px dashed #46609b;border-radius:10px;background:#0d1630;margin:8px 0}
-    @media (max-width: 900px){.grid{grid-template-columns:1fr}.row{grid-template-columns:1fr}}
+    .full{grid-column:1 / -1} .row{display:grid;grid-template-columns:170px 1fr;gap:10px;align-items:center;margin:8px 0}
+    input,textarea{width:100%;background:#0c1325;color:#f3f7ff;border:1px solid #314675;border-radius:10px;padding:10px}
+    textarea{min-height:88px} button{background:var(--accent);border:none;color:white;padding:10px 12px;border-radius:10px;cursor:pointer;font-weight:700}
+    .secondary{background:#2a3659}.ok{background:#1f8f5f}.hint{color:var(--muted);font-size:13px}.mono{font-family:monospace;background:#0c1325;padding:2px 6px;border-radius:6px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-top:10px}
+    .img{border:1px solid #30456f;border-radius:10px;padding:6px;background:#0d1529}.img img{width:100%;height:90px;object-fit:cover;border-radius:8px}
+    @media(max-width:900px){.grid{grid-template-columns:1fr}.row{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="hero">
-      <div>
-        <div class="title">✨ Social Reply Control Center</div>
-        <div class="subtitle">Edit profile tracking + image folder in a simple form (no JSON needed).</div>
-      </div>
-      <div class="badge">ACTIVE · America/New_York</div>
+<div class="wrap">
+  <h1>✨ Social Reply Control Center</h1>
+  <p class="hint">Now supports direct image upload into your bot folder.</p>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Current setup</h3>
+      <p>Timezone: <span id="tzNow" class="mono">-</span></p>
+      <p>Image folder: <span id="folderNow" class="mono">-</span></p>
+      <p>Profiles: <span id="profilesNow" class="mono">-</span></p>
     </div>
 
-    <div class="grid">
-      <div class="card">
-        <h3>1) What this bot does</h3>
-        <div class="step">Runs <b>10 times/day</b>, every <b>10 minutes</b> in your NY schedule window.</div>
-        <div class="step">Watches your tracked profiles for new posts.</div>
-        <div class="step">If new post found: writes a human-style reply + attaches image from your folder.</div>
-        <p class="hint">Current jobs: <span class="mono">b3058028-9070-4a65-baf6-9485d6e11adb</span> and <span class="mono">c31705b8-4d7e-4c1b-bf67-5d9fc69c5859</span></p>
+    <div class="card">
+      <h3>How to use</h3>
+      <ol>
+        <li>Edit fields below</li>
+        <li>Click <b>Generate config</b></li>
+        <li>Click <b>Copy save command</b>, paste in Terminal</li>
+        <li>Upload images below so I can pick them automatically</li>
+      </ol>
+    </div>
+
+    <div class="card full">
+      <h3>Edit bot settings</h3>
+      <div class="row"><label>Timezone</label><input id="timezone"></div>
+      <div class="row"><label>Runs per day</label><input id="runsPerDay" type="number"></div>
+      <div class="row"><label>Spacing (minutes)</label><input id="spacingMinutes" type="number"></div>
+      <div class="row"><label>Image folder</label><input id="imageFolder"></div>
+      <div class="row"><label>Tracked profiles</label><textarea id="profiles"></textarea></div>
+      <div class="actions">
+        <button class="ok" onclick="generate()">Generate config</button>
+        <button class="secondary" onclick="copyCmd()">Copy save command</button>
+        <button class="secondary" onclick="downloadCfg()">Download JSON</button>
       </div>
+      <textarea id="jsonOut" style="min-height:220px;margin-top:10px"></textarea>
+      <p id="status" class="hint"></p>
+    </div>
 
-      <div class="card">
-        <h3>2) Quick links</h3>
-        <ul class="list">
-          <li>Config file path: <span class="mono">/Users/admin/.openclaw/workspace/social-reply-config.json</span></li>
-          <li>Image folder now: <span class="mono" id="currentFolder">(loading...)</span></li>
-          <li>Tracked profiles now: <span class="mono" id="currentProfiles">(loading...)</span></li>
-        </ul>
+    <div class="card full">
+      <h3>Upload images (for bot to choose from)</h3>
+      <input id="fileInput" type="file" accept="image/*" multiple>
+      <div class="actions" style="margin-top:8px">
+        <button onclick="uploadImages()">Upload selected images</button>
+        <button class="secondary" onclick="refreshImages()">Refresh list</button>
       </div>
-
-      <div class="card full">
-        <h3>3) Edit settings here (easy mode)</h3>
-
-        <div class="row">
-          <label>Timezone</label>
-          <input id="timezone" placeholder="America/New_York" />
-        </div>
-
-        <div class="row">
-          <label>Runs per day</label>
-          <input id="runsPerDay" type="number" min="1" max="24" />
-        </div>
-
-        <div class="row">
-          <label>Spacing (minutes)</label>
-          <input id="spacingMinutes" type="number" min="1" max="120" />
-        </div>
-
-        <div class="row">
-          <label>Image folder</label>
-          <input id="imageFolder" placeholder="/Users/admin/Downloads/IG POST SOFIA" />
-        </div>
-
-        <div class="row">
-          <label>Tracked profiles</label>
-          <textarea id="profiles" placeholder="One per line, like:
-@lucithakittykat
-@anotherprofile"></textarea>
-        </div>
-
-        <div class="actions">
-          <button class="ok" onclick="buildJson()">Generate updated config</button>
-          <button class="secondary" onclick="copySaveCommand()">Copy save command</button>
-          <button class="secondary" onclick="downloadJson()">Download JSON</button>
-        </div>
-        <p class="hint">After editing: click <b>Generate updated config</b>, then <b>Copy save command</b>, paste in Terminal, press Enter.</p>
-      </div>
-
-      <div class="card full">
-        <h3>4) Generated config preview</h3>
-        <textarea id="jsonOut" style="min-height:220px"></textarea>
-        <p id="status" class="hint">Ready.</p>
-      </div>
+      <p class="hint">Uploads into: <span class="mono">/Users/admin/Downloads/IG POST SOFIA</span></p>
+      <div id="gallery" class="gallery"></div>
     </div>
   </div>
+</div>
 
 <script>
-let cfg = {
-  timezone: "America/New_York",
-  runsPerDay: 10,
-  spacingMinutes: 10,
-  imageFolder: "/Users/admin/Downloads/IG POST SOFIA",
-  trackedProfiles: ["@lucithakittykat"],
-  mode: "reply_when_new_post",
-  safety: {
-    avoidDuplicatesSameDay: true,
-    noMinorOrAmbiguousAccounts: true,
-    humanTone: true
-  }
-};
+let cfg={timezone:'America/New_York',runsPerDay:10,spacingMinutes:10,imageFolder:'/Users/admin/Downloads/IG POST SOFIA',trackedProfiles:['@lucithakittykat'],mode:'reply_when_new_post',safety:{avoidDuplicatesSameDay:true,noMinorOrAmbiguousAccounts:true,humanTone:true}};
 
-function setForm(c){
-  document.getElementById('timezone').value = c.timezone || '';
-  document.getElementById('runsPerDay').value = c.runsPerDay || 10;
-  document.getElementById('spacingMinutes').value = c.spacingMinutes || 10;
-  document.getElementById('imageFolder').value = c.imageFolder || '';
-  document.getElementById('profiles').value = (c.trackedProfiles||[]).join('\n');
-  document.getElementById('currentFolder').textContent = c.imageFolder || '-';
-  document.getElementById('currentProfiles').textContent = (c.trackedProfiles||[]).join(', ') || '-';
+function setForm(){
+  timezone.value=cfg.timezone||'';runsPerDay.value=cfg.runsPerDay||10;spacingMinutes.value=cfg.spacingMinutes||10;imageFolder.value=cfg.imageFolder||'';profiles.value=(cfg.trackedProfiles||[]).join('\n');
+  tzNow.textContent=cfg.timezone||'-';folderNow.textContent=cfg.imageFolder||'-';profilesNow.textContent=(cfg.trackedProfiles||[]).join(', ')||'-';
+}
+function readForm(){
+  return {...cfg,timezone:timezone.value.trim(),runsPerDay:Number(runsPerDay.value||10),spacingMinutes:Number(spacingMinutes.value||10),imageFolder:imageFolder.value.trim(),trackedProfiles:profiles.value.split('\n').map(x=>x.trim()).filter(Boolean)};
+}
+function generate(){cfg=readForm();jsonOut.value=JSON.stringify(cfg,null,2);setForm();status.textContent='Generated. Next: Copy save command.';}
+function copyCmd(){const txt=jsonOut.value||JSON.stringify(readForm(),null,2);const cmd=`cat > /Users/admin/.openclaw/workspace/social-reply-config.json <<'JSON'\n${txt}\nJSON`;navigator.clipboard.writeText(cmd);status.textContent='Copied ✅ Paste in Terminal.';}
+function downloadCfg(){const txt=jsonOut.value||JSON.stringify(readForm(),null,2);const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:'application/json'}));a.download='social-reply-config.json';a.click();}
+
+async function uploadImages(){
+  const files=fileInput.files; if(!files.length){status.textContent='Select images first.';return;}
+  const fd=new FormData(); for(const f of files) fd.append('files',f);
+  const res=await fetch('/api/upload-images',{method:'POST',body:fd}); const j=await res.json();
+  status.textContent=j.ok?`Uploaded: ${j.uploaded.join(', ')}`:`Upload failed: ${j.error||'unknown'}`;
+  refreshImages();
+}
+async function refreshImages(){
+  const res=await fetch('/api/list-images'); const j=await res.json();
+  gallery.innerHTML='';
+  if(!j.ok){gallery.innerHTML='<div class="hint">Could not load images.</div>';return;}
+  j.files.forEach(f=>{const d=document.createElement('div');d.className='img';d.innerHTML=`<img src="/uploads/${encodeURIComponent(f.name)}"><div class="hint">${f.name}</div>`;gallery.appendChild(d);});
 }
 
-function getForm(){
-  const profiles = document.getElementById('profiles').value
-    .split('\n').map(s=>s.trim()).filter(Boolean);
-  return {
-    ...cfg,
-    timezone: document.getElementById('timezone').value.trim() || 'America/New_York',
-    runsPerDay: Number(document.getElementById('runsPerDay').value || 10),
-    spacingMinutes: Number(document.getElementById('spacingMinutes').value || 10),
-    imageFolder: document.getElementById('imageFolder').value.trim(),
-    trackedProfiles: profiles
-  };
-}
-
-function buildJson(){
-  cfg = getForm();
-  document.getElementById('jsonOut').value = JSON.stringify(cfg, null, 2);
-  document.getElementById('status').textContent = 'Config generated. Now click "Copy save command" and paste into Terminal.';
-  setForm(cfg);
-}
-
-function copySaveCommand(){
-  const txt = document.getElementById('jsonOut').value || JSON.stringify(getForm(), null, 2);
-  const cmd = `cat > /Users/admin/.openclaw/workspace/social-reply-config.json <<'JSON'\n${txt}\nJSON`;
-  navigator.clipboard.writeText(cmd);
-  document.getElementById('status').textContent = 'Copied ✅ Paste in Terminal and press Enter.';
-}
-
-function downloadJson(){
-  const txt = document.getElementById('jsonOut').value || JSON.stringify(getForm(), null, 2);
-  const blob = new Blob([txt], {type:'application/json'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'social-reply-config.json';
-  a.click();
-}
-
-async function load(){
-  try {
-    const t = await (await fetch('social-reply-config.json')).text();
-    cfg = JSON.parse(t);
-  } catch(e) {}
-  setForm(cfg);
-  document.getElementById('jsonOut').value = JSON.stringify(cfg, null, 2);
-}
-load();
+(async function init(){
+  try{const t=await (await fetch('social-reply-config.json')).text();cfg=JSON.parse(t);}catch(e){}
+  setForm();jsonOut.value=JSON.stringify(cfg,null,2);status.textContent='Ready.';refreshImages();
+})();
 </script>
 </body>
 </html>

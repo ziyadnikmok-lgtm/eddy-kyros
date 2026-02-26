@@ -21,6 +21,7 @@
   - After upload, verify media block appears and Post button is enabled.
   - If click ref gets stale, use `act kind=evaluate` to click enabled Post button by text.
   - Confirm success by checking toast "Your post was sent" and capturing resulting status URL.
+  - Dashboard now supports direct image upload into `/Users/admin/Downloads/IG POST SOFIA` via local API (`dashboard_server.py`, endpoints `/api/upload-images` and `/api/list-images`).
 - Daily automation configured:
   - 10 runs/day (10-minute spacing) via two cron jobs in America/New_York:
     - `b3058028-9070-4a65-baf6-9485d6e11adb` (09:00–09:50 NY)
