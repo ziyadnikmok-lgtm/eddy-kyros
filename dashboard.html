@@ -96,9 +96,12 @@ function copyCmd(){const txt=jsonOut.value||JSON.stringify(readForm(),null,2);co
 function downloadCfg(){const txt=jsonOut.value||JSON.stringify(readForm(),null,2);const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:'application/json'}));a.download='social-reply-config.json';a.click();}
 
 async function uploadImages(){
-  const files=fileInput.files; if(!files.length){status.textContent='Select images first.';return;}
-  const fd=new FormData(); for(const f of files) fd.append('files',f);
-  const res=await fetch('/api/upload-images',{method:'POST',body:fd}); const j=await res.json();
+  const files=[...fileInput.files]; if(!files.length){status.textContent='Select images first.';return;}
+  const toDataUrl=(f)=>new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(f);});
+  const payload={files:[]};
+  for(const f of files){payload.files.push({name:f.name,data:await toDataUrl(f)});} 
+  const res=await fetch('/api/upload-images',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const j=await res.json();
   status.textContent=j.ok?`Uploaded: ${j.uploaded.join(', ')}`:`Upload failed: ${j.error||'unknown'}`;
   refreshImages();
 }

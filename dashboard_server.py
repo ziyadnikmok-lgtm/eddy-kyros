@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os
 import json
-import cgi
+import base64
 import subprocess
 from datetime import datetime, timezone
 from http.server import HTTPServer, SimpleHTTPRequestHandler
@@ -69,28 +69,26 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         if self.path.startswith('/api/upload-images'):
-            ctype, _ = cgi.parse_header(self.headers.get('content-type'))
-            if ctype != 'multipart/form-data':
-                return self._json(400, {"ok": False, "error": "multipart/form-data required"})
-            form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={'REQUEST_METHOD': 'POST'}, keep_blank_values=True)
-
-            uploaded = []
-            fields = form['files'] if 'files' in form else []
-            if not isinstance(fields, list):
-                fields = [fields]
-
-            for item in fields:
-                if not getattr(item, 'filename', None):
-                    continue
-                filename = os.path.basename(item.filename)
-                if not filename.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
-                    continue
-                dst = os.path.join(UPLOAD_DIR, filename)
-                with open(dst, 'wb') as f:
-                    f.write(item.file.read())
-                uploaded.append(filename)
-
-            return self._json(200, {"ok": True, "uploaded": uploaded, "dir": UPLOAD_DIR})
+            try:
+                n = int(self.headers.get('Content-Length', '0'))
+                body = self.rfile.read(n).decode('utf-8') if n > 0 else '{}'
+                payload = json.loads(body or '{}')
+                files = payload.get('files', [])
+                uploaded = []
+                for item in files:
+                    name = os.path.basename(str(item.get('name', '')))
+                    data = str(item.get('data', ''))
+                    if not name.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
+                        continue
+                    if ',' in data:
+                        data = data.split(',', 1)[1]  # data URL
+                    raw = base64.b64decode(data)
+                    with open(os.path.join(UPLOAD_DIR, name), 'wb') as f:
+                        f.write(raw)
+                    uploaded.append(name)
+                return self._json(200, {"ok": True, "uploaded": uploaded, "dir": UPLOAD_DIR})
+            except Exception as e:
+                return self._json(500, {"ok": False, "error": str(e)})
 
         if self.path.startswith('/api/reply-now'):
             try:
@@ -102,11 +100,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return self._json(400, {"ok": False, "error": "Please provide a valid x.com post URL"})
 
                 items = load_queue()
-                item = {
-                    "url": url,
-                    "createdAt": datetime.now(timezone.utc).isoformat(),
-                    "status": "queued"
-                }
+                item = {"url": url, "createdAt": datetime.now(timezone.utc).isoformat(), "status": "queued"}
                 items.append(item)
                 save_queue(items)
 
@@ -117,7 +111,6 @@ class Handler(SimpleHTTPRequestHandler):
                     text=True,
                     timeout=120
                 )
-
                 return self._json(200, {
                     "ok": True,
                     "queued": item,
