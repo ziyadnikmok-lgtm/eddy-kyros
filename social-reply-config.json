@@ -1,0 +1,15 @@
+{
+  "timezone": "America/New_York",
+  "runsPerDay": 10,
+  "spacingMinutes": 10,
+  "imageFolder": "/Users/admin/Downloads/IG POST SOFIA",
+  "trackedProfiles": [
+    "@lucithakittykat"
+  ],
+  "mode": "reply_when_new_post",
+  "safety": {
+    "avoidDuplicatesSameDay": true,
+    "noMinorOrAmbiguousAccounts": true,
+    "humanTone": true
+  }
+}
