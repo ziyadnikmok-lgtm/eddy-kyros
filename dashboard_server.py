@@ -78,6 +78,56 @@ class H(SimpleHTTPRequestHandler):
             q=sync_queue(load_queue()); save_queue(q); return self._json(200,{"ok":True,"items":q})
         if self.path.startswith('/api/viral-state'):
             return self._json(200,{"ok":True,"state":jload(VIRAL_STATE,{})})
+
+        if self.path.startswith('/api/ops-hub'):
+            q = load_queue()
+            queued = [x for x in q if (x.get("status") or "queued") in ("queued", "processing")]
+            done = [x for x in q if (x.get("status") or "") == "done"]
+            viral = jload(VIRAL_STATE,{})
+            state = jload(os.path.join(WORKSPACE, "social-reply-state.json"), {})
+            last_attempt = (state.get("lastQueueAttempt") or {})
+
+            # Simple "crew" model so user can see who is working on what.
+            crew = [
+                {
+                    "name": "Jarvis",
+                    "emoji": "🧠",
+                    "role": "Main Orchestrator",
+                    "status": "online",
+                    "task": "Coordinating dashboard + automation"
+                },
+                {
+                    "name": "Social Ops Worker",
+                    "emoji": "⚙️",
+                    "role": "Queue Executor",
+                    "status": "busy" if queued else "idle",
+                    "task": f"Processing {queued[0].get('url')}" if queued else "Waiting for queued URLs"
+                },
+                {
+                    "name": "Viral Scout",
+                    "emoji": "🚀",
+                    "role": "Trend Sprint Agent",
+                    "status": "active" if viral.get("jobId") else "idle",
+                    "task": f"Job {viral.get('jobId')} running" if viral.get("jobId") else "No active viral sprint"
+                },
+                {
+                    "name": "Queue Janitor",
+                    "emoji": "🧹",
+                    "role": "De-dup & Cleanup",
+                    "status": "working" if len(done) and len(queued) else "idle",
+                    "task": "Removing stale duplicates" if len(done) and len(queued) else "Queue healthy"
+                }
+            ]
+
+            return self._json(200,{
+                "ok":True,
+                "summary": {
+                    "queued": len(queued),
+                    "done": len(done),
+                    "lastAttempt": last_attempt
+                },
+                "crew": crew
+            })
         if self.path.startswith('/uploads/'):
             safe = os.path.basename(self.path[len('/uploads/'):].split('?',1)[0])
             self.path = '/' + os.path.relpath(os.path.join(UPLOAD_DIR, safe), WORKSPACE)

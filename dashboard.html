@@ -101,6 +101,26 @@
       grid-template-columns: repeat(4, minmax(0,1fr));
       gap: 10px;
     }
+
+    .crew-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0,1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .crew-card {
+      border: 1px solid var(--line-soft);
+      border-radius: 12px;
+      background: rgba(9, 22, 47, 0.65);
+      padding: 10px;
+    }
+    .crew-name { font-weight: 700; font-size: .92rem; }
+    .crew-role { color: var(--muted); font-size: .8rem; }
+    .crew-task { margin-top: 6px; font-size: .82rem; color: #cde0ff; word-break: break-word; }
+    .dot { display:inline-block; width:8px; height:8px; border-radius:999px; margin-right:6px; }
+    .dot.online, .dot.active { background: #39dba5; }
+    .dot.busy, .dot.working { background: #f5b35a; }
+    .dot.idle { background: #8aa3cd; }
     .kpi {
       border: 1px solid var(--line-soft);
       border-radius: 14px;
@@ -198,6 +218,7 @@
       .shell { grid-template-columns: 1fr; }
       .sidebar { position: static; }
       .kpis { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .crew-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
       .grid { grid-template-columns: 1fr; }
     }
   </style>
@@ -208,6 +229,7 @@
       <div class="brand">Social Reply Ops</div>
       <div class="brand-sub">Executive automation cockpit</div>
       <nav class="nav">
+        <a href="#ops-hub">🎭 Agent Hub</a>
         <a href="#settings">⚙️ Settings</a>
         <a href="#media">🖼️ Media</a>
         <a href="#instant">⚡ Instant Reply</a>
@@ -221,6 +243,12 @@
       <section class="hero">
         <h1>✨ Social Reply Command Center</h1>
         <p>Fortune-500 style interface for reliable social execution, queue operations, and campaign-grade response workflows.</p>
+      </section>
+
+      <section class="card" id="ops-hub">
+        <h3 style="margin-bottom:4px">🎭 Funny Agent Hub</h3>
+        <div class="muted">Live crew board — who is working, who is chilling, and what task each worker is on.</div>
+        <div id="crewGrid" class="crew-grid"></div>
       </section>
 
       <section class="kpis">
@@ -448,6 +476,24 @@
       }
     }
 
+    async function loadOpsHub() {
+      try {
+        const d = await j('/api/ops-hub');
+        const crew = d.crew || [];
+        const host = document.getElementById('crewGrid');
+        host.innerHTML = crew.map(c => `
+          <div class="crew-card">
+            <div class="crew-name">${c.emoji || '🤖'} ${c.name || 'Worker'}</div>
+            <div class="crew-role">${c.role || ''}</div>
+            <div style="margin-top:6px"><span class="dot ${c.status || 'idle'}"></span><span class="muted" style="text-transform:capitalize">${c.status || 'idle'}</span></div>
+            <div class="crew-task">${c.task || 'No task'}</div>
+          </div>
+        `).join('');
+      } catch (e) {
+        notify(`Hub load failed: ${e.message}`, true);
+      }
+    }
+
     async function startViral(btn) {
       setBusy(btn, true, 'Starting...', 'Start 2h viral session');
       try {
@@ -468,8 +514,9 @@
     async function init() {
       try { document.getElementById('cfg').value = await (await fetch('social-reply-config.json')).text(); }
       catch { document.getElementById('cfg').value = '{}'; }
-      await Promise.all([loadImages(), loadQueue(), loadViral()]);
+      await Promise.all([loadImages(), loadQueue(), loadViral(), loadOpsHub()]);
       setInterval(loadQueue, 10000);
+      setInterval(loadOpsHub, 12000);
     }
 
     init();
