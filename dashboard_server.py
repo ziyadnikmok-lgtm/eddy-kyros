@@ -90,32 +90,32 @@ class H(SimpleHTTPRequestHandler):
             # Simple "crew" model so user can see who is working on what.
             crew = [
                 {
-                    "name": "Jarvy",
+                    "name": "Jarvis",
                     "emoji": "🧠",
-                    "role": "Main Orchestrator",
+                    "role": "Mentor / Commander",
                     "status": "online",
-                    "task": "Teaching crew + coordinating automation"
+                    "task": "Teaching crew and coordinating strategy"
                 },
                 {
-                    "name": "Bolt",
-                    "emoji": "⚙️",
-                    "role": "Queue Runner",
+                    "name": "Tony",
+                    "emoji": "📮",
+                    "role": "Posting Specialist",
                     "status": "busy" if queued else "idle",
-                    "task": f"Grinding {queued[0].get('url')}" if queued else "Chilling until new queued URLs"
+                    "task": f"Posting queued URL: {queued[0].get('url')}" if queued else "At lounge, waiting for posting tasks"
                 },
                 {
-                    "name": "Nova",
-                    "emoji": "🚀",
-                    "role": "Viral Scout",
+                    "name": "Alex",
+                    "emoji": "📈",
+                    "role": "Viral Analyzer",
                     "status": "active" if viral.get("jobId") else "idle",
-                    "task": f"Hunting trends in job {viral.get('jobId')}" if viral.get("jobId") else "Studying patterns"
+                    "task": f"Analyzing trends in job {viral.get('jobId')}" if viral.get("jobId") else "Studying engagement patterns"
                 },
                 {
-                    "name": "Mop",
-                    "emoji": "🧹",
-                    "role": "Queue Janitor",
+                    "name": "Maya",
+                    "emoji": "🛠️",
+                    "role": "Automation Engineer",
                     "status": "working" if len(done) and len(queued) else "idle",
-                    "task": "Cleaning stale duplicates" if len(done) and len(queued) else "Queue squeaky clean"
+                    "task": "Optimizing queue flow + cleanup" if len(done) and len(queued) else "Improving workflows in background"
                 }
             ]
 

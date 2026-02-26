@@ -37,11 +37,14 @@
       #7f6a61;background-size:64px 64px,64px 64px,auto,auto}
     .wall{position:absolute;left:0;top:0;right:0;height:76px;background:#3e4456;border-bottom:3px solid #282c37}
     .sign{position:absolute;left:50%;top:12px;transform:translateX(-50%);padding:6px 14px;border-radius:8px;background:#2a1d14;border:2px solid #8a5f3f;font-weight:700;letter-spacing:.8px}
+    .whiteboard{position:absolute;left:24px;top:20px;width:170px;height:46px;background:#f4f7ff;border:2px solid #8ea9d3;border-radius:6px;color:#1b2742;font-size:.72rem;padding:4px 6px}
+    .lounge{position:absolute;left:18px;bottom:14px;width:230px;height:92px;background:#33415f;border:2px solid #222d43;border-radius:12px;display:flex;align-items:flex-end;justify-content:space-around;padding-bottom:8px;color:#dbe8ff;font-size:.72rem}
     .desk{position:absolute;width:150px;height:86px;background:#5b3e2a;border:2px solid #402a1b;border-radius:8px}
     .desk:before{content:'';position:absolute;left:12px;top:10px;width:52px;height:28px;background:#95a8c8;border:2px solid #2c3d59;border-radius:4px}
 
-    .sprite{position:absolute;width:68px;height:90px;transition:transform .9s ease}
-    .avatar{width:44px;height:44px;margin:0 auto;border-radius:12px;background:#122a51;border:2px solid #4470af;display:flex;align-items:center;justify-content:center;font-size:24px;box-shadow:0 0 0 2px #0005}
+    .sprite{position:absolute;width:68px;height:96px;transition:transform .9s ease}
+    .avatar{width:44px;height:44px;margin:0 auto;border-radius:8px;background:#122a51;border:2px solid #4470af;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 2px #0005;overflow:hidden}
+    .avatar img{width:100%;height:100%;image-rendering:pixelated}
     .legs{display:flex;justify-content:center;gap:8px;margin-top:4px}
     .leg{width:8px;height:18px;background:#1f345f;border-radius:4px;animation:bob .35s infinite alternate}
     .leg:nth-child(2){animation-delay:.17s}
@@ -101,11 +104,13 @@
             <div class="office" id="officeStage">
               <div class="wall"></div>
               <div class="sign">TENACITAS, INC.</div>
+              <div class="whiteboard">Training board:\n• Learn from Jarvis\n• Execute tasks\n• Report outcomes</div>
               <div class="desk" style="left:70px;top:110px"></div>
               <div class="desk" style="left:270px;top:110px"></div>
               <div class="desk" style="left:470px;top:110px"></div>
               <div class="desk" style="left:170px;top:295px"></div>
               <div class="desk" style="left:420px;top:295px"></div>
+              <div class="lounge">Lounge • chill & learn</div>
               <div id="speechBubble" class="bubble" style="display:none"></div>
             </div>
             <div class="card feed" id="activityFeed"></div>
@@ -153,8 +158,13 @@
     const stage = document.getElementById('officeStage');
     const feedEl = document.getElementById('activityFeed');
     const bubble = document.getElementById('speechBubble');
-    const agentEmoji={Jarvy:'🧠',Bolt:'⚙️',Nova:'🚀',Mop:'🧹'};
-    const chatter=["On it.","Learning new patterns.","Queue looks spicy.","Deploying charm.","Scanning timeline."];
+    const spriteSrc={
+      Jarvis:'./sprites/jarvis.svg',
+      Tony:'./sprites/tony.svg',
+      Alex:'./sprites/alex.svg',
+      Maya:'./sprites/maya.svg'
+    };
+    const chatter=["On it.","Learning from Jarvis.","Queue looks spicy.","Scanning timeline.","Optimizing systems."];
 
     document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.tabs').forEach(t=>t.classList.remove('active'));document.getElementById(b.dataset.tab).classList.add('active')});
 
@@ -178,12 +188,28 @@
     async function loadViral(){try{const d=await j('/api/viral-state');const a=!!(d.state&&d.state.jobId);document.getElementById('kpiViral').textContent=a?'Active':'Idle';document.getElementById('viralState').textContent=a?('Active job: '+d.state.jobId):'No active session';document.getElementById('healthBadge').textContent=a?'● Viral session active':'● System ready'}catch(e){}}
     async function startViral(btn){setBusy(btn,true,'Starting...','Start 2h viral session');try{const d=await j('/api/start-viral-session',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});toast('Viral started');addFeed('🚀 Nova launched a viral sprint.');document.getElementById('viralState').textContent='Active job: '+d.jobId;loadViral();loadOpsHub()}catch(e){toast('Viral failed: '+e.message,true)}finally{setBusy(btn,false,'Starting...','Start 2h viral session')}}
 
-    function moveAgent(el,idx){const spots=[[90,120],[290,122],[500,120],[180,305],[430,305]];const p=spots[idx%spots.length];const x=p[0]+Math.floor((Math.random()*20)-10),y=p[1]+Math.floor((Math.random()*16)-8);el.style.transform=`translate(${x}px,${y}px)`}
+    function moveAgent(el,agent,idx){
+      const deskSpots=[[86,126],[286,126],[486,126],[186,312],[436,312]];
+      const loungeSpots=[[46,370],[104,376],[162,370],[112,338]];
+      let p;
+      if(agent.name==='Jarvis'){
+        p=[224,86]; // teaching near whiteboard
+      }else if(['busy','working','active'].includes((agent.status||'').toLowerCase())){
+        p=deskSpots[idx%deskSpots.length];
+      }else{
+        p=loungeSpots[idx%loungeSpots.length];
+      }
+      const x=p[0]+Math.floor((Math.random()*14)-7), y=p[1]+Math.floor((Math.random()*10)-5);
+      el.style.transform=`translate(${x}px,${y}px)`;
+    }
     function showBubble(text,x,y){bubble.style.display='block';bubble.style.left=`${x}px`;bubble.style.top=`${y}px`;bubble.textContent=text;setTimeout(()=>bubble.style.display='none',2800)}
 
-    function renderOffice(){crew.forEach((a,i)=>{let el=agentsMap.get(a.name);if(!el){el=document.createElement('div');el.className='sprite';el.innerHTML=`<div class='avatar'></div><div class='legs'><div class='leg'></div><div class='leg'></div></div><div class='nameplate'></div>`;stage.appendChild(el);agentsMap.set(a.name,el)}
-      el.className='sprite '+(a.status||'idle');el.querySelector('.avatar').textContent=agentEmoji[a.name]||a.emoji||'🤖';el.querySelector('.nameplate').textContent=`${a.name} • ${a.status||'idle'}`;moveAgent(el,i);
-      if(Math.random()<0.16){const rect=el.getBoundingClientRect(),s=stage.getBoundingClientRect();showBubble(chatter[Math.floor(Math.random()*chatter.length)],rect.left-s.left+14,rect.top-s.top-48)}
+    function renderOffice(){crew.forEach((a,i)=>{let el=agentsMap.get(a.name);if(!el){el=document.createElement('div');el.className='sprite';el.innerHTML=`<div class='avatar'><img alt='' /></div><div class='legs'><div class='leg'></div><div class='leg'></div></div><div class='nameplate'></div>`;stage.appendChild(el);agentsMap.set(a.name,el)}
+      el.className='sprite '+(a.status||'idle');
+      const img=el.querySelector('.avatar img'); img.src=spriteSrc[a.name]||'./sprites/maya.svg';
+      el.querySelector('.nameplate').textContent=`${a.name} • ${a.role||a.status||'idle'}`;
+      moveAgent(el,a,i);
+      if(Math.random()<0.2){const rect=el.getBoundingClientRect(),s=stage.getBoundingClientRect();showBubble(chatter[Math.floor(Math.random()*chatter.length)],rect.left-s.left+14,rect.top-s.top-48)}
     })}
 
     async function loadOpsHub(){try{const d=await j('/api/ops-hub');crew=d.crew||[];renderOffice();const txt=`${d.summary?.queued||0} queued · ${d.summary?.done||0} done · last: ${(d.summary?.lastAttempt?.status)||'n/a'}`;document.getElementById('crewSummary').textContent=txt;if(lastSummary&&lastSummary!==txt)addFeed('🧠 Jarvy updated squad status.');lastSummary=txt}catch(e){toast('Ops hub failed: '+e.message,true)}}
