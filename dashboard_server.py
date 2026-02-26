@@ -10,6 +10,7 @@ WORKSPACE = "/Users/admin/.openclaw/workspace"
 UPLOAD_DIR = "/Users/admin/Downloads/IG POST SOFIA"
 QUEUE_FILE = os.path.join(WORKSPACE, "social-reply-queue.json")
 CRON_TRIGGER_JOB = "b3058028-9070-4a65-baf6-9485d6e11adb"
+CRON_JOBS = ["b3058028-9070-4a65-baf6-9485d6e11adb", "c31705b8-4d7e-4c1b-bf67-5d9fc69c5859"]
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -28,6 +29,49 @@ def load_queue():
 def save_queue(items):
     with open(QUEUE_FILE, "w", encoding="utf-8") as f:
         json.dump(items, f, ensure_ascii=False, indent=2)
+
+
+def sync_queue_with_cron_runs(items):
+    """Best-effort status sync from cron run summaries."""
+    by_url = {i.get("url"): i for i in items if i.get("url")}
+    if not by_url:
+        return items
+
+    for job_id in CRON_JOBS:
+        try:
+            run = subprocess.run(
+                ["openclaw", "cron", "runs", "--id", job_id, "--limit", "20"],
+                cwd=WORKSPACE,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if run.returncode != 0:
+                continue
+            data = json.loads(run.stdout or "{}")
+            for e in data.get("entries", []):
+                summary = e.get("summary") or ""
+                src = None
+                rep = None
+                for line in summary.splitlines():
+                    line = line.strip()
+                    if line.lower().startswith("- source url:"):
+                        src = line.split(":", 1)[1].strip()
+                    if line.lower().startswith("- reply url:"):
+                        rep = line.split(":", 1)[1].strip()
+                if src and src in by_url:
+                    q = by_url[src]
+                    q["lastRunAt"] = e.get("runAtMs")
+                    if e.get("status") == "ok" and rep:
+                        q["status"] = "done"
+                        q["replyUrl"] = rep
+                    elif e.get("status") != "ok":
+                        q["status"] = q.get("status") or "queued"
+                        q["lastError"] = e.get("error") or "run_error"
+        except Exception:
+            pass
+
+    return items
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -57,7 +101,10 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(500, {"ok": False, "error": str(e)})
 
         if self.path.startswith('/api/list-queue'):
-            return self._json(200, {"ok": True, "items": load_queue()})
+            items = load_queue()
+            items = sync_queue_with_cron_runs(items)
+            save_queue(items)
+            return self._json(200, {"ok": True, "items": items})
 
         if self.path.startswith('/uploads/'):
             name = self.path[len('/uploads/'):].split('?', 1)[0]
@@ -96,8 +143,13 @@ class Handler(SimpleHTTPRequestHandler):
                 body = self.rfile.read(n).decode('utf-8') if n > 0 else '{}'
                 payload = json.loads(body or '{}')
                 url = (payload.get('url') or '').strip()
-                if not (url.startswith('https://x.com/') or url.startswith('http://x.com/')):
-                    return self._json(400, {"ok": False, "error": "Please provide a valid x.com post URL"})
+                valid = (
+                    url.startswith('https://x.com/') or url.startswith('http://x.com/') or
+                    url.startswith('https://twitter.com/') or url.startswith('http://twitter.com/') or
+                    url.startswith('https://mobile.twitter.com/') or url.startswith('http://mobile.twitter.com/')
+                )
+                if not valid:
+                    return self._json(400, {"ok": False, "error": "Please provide a valid X/Twitter post URL"})
 
                 items = load_queue()
                 item = {"url": url, "createdAt": datetime.now(timezone.utc).isoformat(), "status": "queued"}

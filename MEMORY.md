@@ -23,6 +23,8 @@
   - Confirm success by checking toast "Your post was sent" and capturing resulting status URL.
   - Dashboard now supports direct image upload into `/Users/admin/Downloads/IG POST SOFIA` via local API (`dashboard_server.py`, endpoints `/api/upload-images` and `/api/list-images`).
   - If dashboard server crashes with `ModuleNotFoundError: cgi`, use JSON/base64 upload path (Python 3.13+ removed `cgi`).
+  - Queue UX runbook: if user needs instant reply by URL, use `/api/reply-now` to enqueue + trigger; show progress from `/api/list-queue` (synced with `openclaw cron runs` summaries) and display `replyUrl` when available.
+  - For manual/instant cron triggers, set cron delivery mode to `none` to avoid "Channel is required" errors.
 - Daily automation configured:
   - 10 runs/day (10-minute spacing) via two cron jobs in America/New_York:
     - `b3058028-9070-4a65-baf6-9485d6e11adb` (09:00–09:50 NY)

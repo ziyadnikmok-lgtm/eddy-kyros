@@ -119,7 +119,10 @@ async function replyNow(){
   const res=await fetch('/api/reply-now',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
   const j=await res.json();
   if(!j.ok){status.textContent=`Failed: ${j.error||'unknown'}`;return;}
-  status.textContent='Queued + triggered ✅ Check chat updates for posted reply link.';
+  const busy=(j.cronOut||'').includes('already-running');
+  status.textContent=busy
+    ? 'Queued ✅ Worker is busy right now; your link will run next automatically.'
+    : 'Queued + triggered ✅ Check chat updates for posted reply link.';
   replyUrl.value='';
   refreshQueue();
 }
@@ -127,9 +130,14 @@ async function replyNow(){
 async function refreshQueue(){
   const res=await fetch('/api/list-queue'); const j=await res.json();
   if(!j.ok){queueList.textContent='Could not load queue.';return;}
-  const recent=(j.items||[]).slice(-8).reverse();
+  const recent=(j.items||[]).slice(-12).reverse();
   if(!recent.length){queueList.textContent='Queue is empty.';return;}
-  queueList.innerHTML=recent.map(i=>`• ${i.status||'queued'} — <span class="mono">${i.url||''}</span>`).join('<br>');
+  queueList.innerHTML=recent.map(i=>{
+    const st=i.status||'queued';
+    const link=i.replyUrl?`<a href="${i.replyUrl}" target="_blank">open reply</a>`:'';
+    const err=i.lastError?`<span class="hint"> (${i.lastError})</span>`:'';
+    return `• <b>${st}</b> — <span class="mono">${i.url||''}</span> ${link} ${err}`;
+  }).join('<br>');
 }
 
 (async function init(){
