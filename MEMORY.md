@@ -21,3 +21,8 @@
   - After upload, verify media block appears and Post button is enabled.
   - If click ref gets stale, use `act kind=evaluate` to click enabled Post button by text.
   - Confirm success by checking toast "Your post was sent" and capturing resulting status URL.
+- Daily automation configured:
+  - 10 runs/day (10-minute spacing) via two cron jobs in Asia/Bangkok:
+    - `b3058028-9070-4a65-baf6-9485d6e11adb` (09:00–09:50)
+    - `c31705b8-4d7e-4c1b-bf67-5d9fc69c5859` (10:00–10:30)
+  - Task: find high-engagement OF creator post, analyze caption, reply with one image from `/Users/admin/Downloads/IG POST SOFIA`, return links/caption.
