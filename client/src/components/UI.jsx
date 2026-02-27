@@ -155,7 +155,7 @@ export function Card({ children, className = '', ...props }) {
   return (
     <div
       className={cn(
-        'rounded-xl border border-zinc-800/60 p-5 shadow-sm noise',
+        'rounded-xl border border-zinc-800/60 p-4 sm:p-5 shadow-sm noise',
         'glass',
         className,
       )}
@@ -283,7 +283,7 @@ export function Modal({ open, onClose, title, children, className = '' }) {
         />
         <DialogPrimitive.Content
           className={cn(
-            'fixed left-1/2 top-1/2 z-[131] w-full max-w-lg -translate-x-1/2 -translate-y-1/2',
+            'fixed left-1/2 top-1/2 z-[131] w-[calc(100%-1.5rem)] sm:w-full max-w-lg -translate-x-1/2 -translate-y-1/2',
             'max-h-[calc(100vh-2rem)] overflow-y-auto',
             'rounded-xl border border-zinc-700/50 glass p-6 shadow-2xl',
             'data-[state=open]:animate-dialog-in',
@@ -321,7 +321,7 @@ const TOAST_STYLES = {
 export function Toasts() {
   const { toasts, dismissToast } = useApp();
   return (
-    <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 max-w-sm">
+    <div className="fixed bottom-4 right-3 left-3 sm:left-auto sm:right-4 z-[100] flex flex-col gap-2 max-w-sm sm:ml-auto">
       {toasts.map((t) => (
         <div
           key={t.id}
@@ -431,7 +431,7 @@ export function ConfirmDialog({ open, onClose, onConfirm, title, message, confir
           className="fixed inset-0 z-[130] bg-black/70 backdrop-blur-sm data-[state=open]:animate-overlay-in"
         />
         <DialogPrimitive.Content
-          className="fixed left-1/2 top-1/2 z-[131] w-full max-w-sm -translate-x-1/2 -translate-y-1/2 max-h-[calc(100vh-2rem)] overflow-y-auto rounded-xl border border-zinc-700/50 glass p-6 shadow-2xl data-[state=open]:animate-dialog-in focus:outline-none"
+          className="fixed left-1/2 top-1/2 z-[131] w-[calc(100%-1.5rem)] sm:w-full max-w-sm -translate-x-1/2 -translate-y-1/2 max-h-[calc(100vh-2rem)] overflow-y-auto rounded-xl border border-zinc-700/50 glass p-6 shadow-2xl data-[state=open]:animate-dialog-in focus:outline-none"
         >
           <DialogPrimitive.Title className="text-base font-semibold text-zinc-100 mb-2">
             {title}

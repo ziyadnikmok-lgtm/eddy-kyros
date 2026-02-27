@@ -9,12 +9,28 @@ import { useApp } from '../context/AppContext';
 import { useStepTimer } from '../hooks/useStepTimer';
 import { Card, Btn, Spinner, ImageCard, Empty, Badge, Toggle, StepProgress, CopyBtn } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
-import { RESOLUTION_TIERS, ASPECT_RATIOS_COMPACT as ASPECT_RATIOS } from '../config/photoModes';
+import { RESOLUTION_TIERS, ASPECT_RATIOS_COMPACT as ASPECT_RATIOS, IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
 
 const CAROUSEL_MODES = [
   { key: 'follow-up', label: 'Follow-Up' },
   { key: 'polls', label: 'Polls' },
 ];
+
+function mergeJobSnapshots(prevJobs, fetchedJobs, expectedIds) {
+  const prevMap = new Map((Array.isArray(prevJobs) ? prevJobs : []).map((job) => [job.jobId, job]));
+  const fetchedMap = new Map((Array.isArray(fetchedJobs) ? fetchedJobs : []).map((job) => [job.jobId, job]));
+
+  const orderedIds = Array.isArray(expectedIds) && expectedIds.length > 0
+    ? expectedIds
+    : Array.from(new Set([
+      ...Array.from(prevMap.keys()),
+      ...Array.from(fetchedMap.keys()),
+    ]));
+
+  return orderedIds
+    .map((jobId) => fetchedMap.get(jobId) || prevMap.get(jobId))
+    .filter(Boolean);
+}
 
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
@@ -45,6 +61,7 @@ const _cache = {
   carouselMode: 'follow-up',
   pollTopic: '',
   pollCount: 3,
+  imageModel: DEFAULT_IMAGE_MODEL,
 };
 
 export default function CarouselPage() {
@@ -58,6 +75,7 @@ export default function CarouselPage() {
 
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [resolutionTier, setResolutionTier] = useState(_cache.resolutionTier);
+  const [imageModel, setImageModel] = useState(_cache.imageModel);
   const [kineticMotionBlur, setKineticMotionBlur] = useState('off');
 
   const [characterId, setCharacterId] = useState(_cache.characterId);
@@ -98,6 +116,7 @@ export default function CarouselPage() {
   useEffect(() => { _cache.characterId = characterId; }, [characterId]);
   useEffect(() => { _cache.aspectRatio = aspectRatio; }, [aspectRatio]);
   useEffect(() => { _cache.resolutionTier = resolutionTier; }, [resolutionTier]);
+  useEffect(() => { _cache.imageModel = imageModel; }, [imageModel]);
   useEffect(() => { _cache.followUpDirection = followUpDirection; }, [followUpDirection]);
   useEffect(() => { _cache.followUpMode = followUpMode; }, [followUpMode]);
   useEffect(() => { _cache.followUpCount = followUpCount; }, [followUpCount]);
@@ -147,7 +166,7 @@ export default function CarouselPage() {
         const jobs = await Promise.all(executeJobIds.map((jobId) => batchApi.get(jobId).catch(() => null)));
         if (!cancelled) {
           const filtered = jobs.filter(Boolean);
-          setExecuteJobs(filtered);
+          setExecuteJobs((prev) => mergeJobSnapshots(prev, filtered, executeJobIds));
           // Stop polling once every job has finished — data stays in state
           if (filtered.length > 0 && filtered.every((j) => j.status !== 'running')) {
             clearInterval(intervalId);
@@ -176,7 +195,7 @@ export default function CarouselPage() {
         const jobs = await Promise.all(pollJobIds.map(id => batchApi.get(id).catch(() => null)));
         if (!cancelled) {
           const filtered = jobs.filter(Boolean);
-          setPollJobs(filtered);
+          setPollJobs((prev) => mergeJobSnapshots(prev, filtered, pollJobIds));
           if (filtered.length > 0 && filtered.every(j => j.status !== 'running')) {
             clearInterval(intervalId);
           }
@@ -282,6 +301,7 @@ export default function CarouselPage() {
         strictContinuityLock,
         aspectRatio,
         resolutionTier,
+        imageModel,
       });
       const returnedJobIds = Array.isArray(data?.jobIds) ? data.jobIds : (data?.jobId ? [data.jobId] : []);
       if (returnedJobIds.length > 0) {
@@ -310,6 +330,7 @@ export default function CarouselPage() {
         pollCount,
         aspectRatio,
         resolutionTier,
+        imageModel,
       });
       setPollResults(data);
       const returnedJobIds = Array.isArray(data?.jobIds) ? data.jobIds : [];
@@ -329,7 +350,7 @@ export default function CarouselPage() {
   return (
     <div className="space-y-6 animate-in">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight text-gradient">Carousel Generator</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Carousel Generator</h1>
         <p className="text-zinc-500 text-sm mt-1">
           {carouselMode === 'polls'
             ? 'Create "This or That" engagement polls with AI-generated contrasting images.'
@@ -350,7 +371,7 @@ export default function CarouselPage() {
       </div>
 
       {carouselMode === 'follow-up' && (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         <div className="lg:col-span-1 space-y-4">
           <Card className="space-y-3">
             <h3 className="text-sm font-semibold text-zinc-300">Generation Settings</h3>
@@ -371,6 +392,19 @@ export default function CarouselPage() {
                   ))}
                 </div>
               )}
+            </div>
+
+            <div>
+              <span className="text-xs text-zinc-400 font-medium block mb-1.5">Image Model</span>
+              <select
+                value={imageModel}
+                onChange={(e) => setImageModel(e.target.value)}
+                className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
+              >
+                {IMAGE_MODEL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
             </div>
 
             <div>
@@ -592,7 +626,7 @@ export default function CarouselPage() {
       )}
 
       {carouselMode === 'polls' && (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         <div className="lg:col-span-1 space-y-4">
           <Card className="space-y-3">
             <h3 className="text-sm font-semibold text-zinc-300">Poll Settings</h3>

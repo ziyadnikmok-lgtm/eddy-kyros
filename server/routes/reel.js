@@ -17,7 +17,7 @@ function normalizeRefIds(activeReferenceIds) {
     : null;
 }
 
-async function analyzeAndRecreateFrame({ frame, characterId, activeReferenceIds, apiKey, referenceImages }) {
+async function analyzeAndRecreateFrame({ frame, characterId, activeReferenceIds, apiKey, referenceImages, imageModel }) {
   const sceneData = await sceneAnalyzer.analyzeScene(frame.base64Data, frame.mimeType);
   const prompt = sceneAnalyzer.buildRecreationPrompt({
     sceneData,
@@ -29,6 +29,7 @@ async function analyzeAndRecreateFrame({ frame, characterId, activeReferenceIds,
     aspectRatio: '9:16',
     imageSize: '2K',
     referenceImages,
+    model: imageModel,
   });
 
   const stored = imageStore.store({
@@ -36,7 +37,7 @@ async function analyzeAndRecreateFrame({ frame, characterId, activeReferenceIds,
     characterId,
     activeReferenceIds: activeReferenceIds || null,
     sceneDescription: JSON.stringify(sceneData),
-    modelUsed: null,
+    modelUsed: result.modelUsed || null,
     seed: null,
     parentImageId: null,
     variationIndex: null,
@@ -75,7 +76,7 @@ async function analyzeAndRecreateFrame({ frame, characterId, activeReferenceIds,
  */
 router.post('/recreate', async (req, res, next) => {
   try {
-    const { reelUrl, characterId, activeReferenceIds, apifyApiKey } = req.body || {};
+    const { reelUrl, characterId, activeReferenceIds, apifyApiKey, imageModel } = req.body || {};
 
     if (!reelUrl || typeof reelUrl !== 'string') {
       throw new AppError('"reelUrl" is required', 400, 'VALIDATION_ERROR');
@@ -101,6 +102,7 @@ router.post('/recreate', async (req, res, next) => {
         activeReferenceIds: refIds,
         apiKey,
         referenceImages: charRefImages,
+        imageModel,
       }),
       analyzeAndRecreateFrame({
         frame: frames.last,
@@ -108,6 +110,7 @@ router.post('/recreate', async (req, res, next) => {
         activeReferenceIds: refIds,
         apiKey,
         referenceImages: charRefImages,
+        imageModel,
       }),
     ]);
 

@@ -228,11 +228,11 @@ export default function StorytellerPage() {
   return (
     <div className="space-y-6 animate-in">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight text-gradient">Storyteller</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Storyteller</h1>
         <p className="text-zinc-500 text-sm mt-1">AI-powered carousel captions with IG Intelligence — engagement optimization, Explore scoring, and post lifecycle strategy.</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         {/* Controls */}
         <div className="lg:col-span-1 space-y-4">
           <Card className="space-y-4">

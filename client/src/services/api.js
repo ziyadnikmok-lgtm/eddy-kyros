@@ -292,7 +292,8 @@ export const captionTemplates = {
 
 // --- Instagram availability precheck ---
 export const availability = {
-  check: (url) => request('/availability/check', { method: 'POST', body: { url } }),
+  // Availability checks can be slow when Apify actor queues are busy.
+  check: (url) => request('/availability/check', { method: 'POST', body: { url }, timeoutMs: LONG_TIMEOUT_MS }),
 };
 
 // --- Style Library ---

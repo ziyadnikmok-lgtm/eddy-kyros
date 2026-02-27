@@ -6,6 +6,7 @@ import { useStepTimer } from '../hooks/useStepTimer';
 import { cn } from '../lib/utils';
 import { Card, Btn, Input, Badge, Slider, Spinner, Empty, Toggle, StepProgress, Section } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
+import { IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
 
 const DNA_LABELS = {
   lighting: { label: 'Lighting', color: 'text-amber-400', dot: 'bg-amber-400' },
@@ -32,6 +33,7 @@ const _cache = {
   history: [],
   postLimit: 9,
   availability: null,
+  imageModel: DEFAULT_IMAGE_MODEL,
 };
 
 export default function PostClonePage() {
@@ -45,6 +47,7 @@ export default function PostClonePage() {
   const [postLimit, setPostLimit] = useState(_cache.postLimit);
   const [charId, setCharId] = useState(_cache.charId);
   const [mode, setMode] = useState(_cache.mode); // exact | creative
+  const [imageModel, setImageModel] = useState(_cache.imageModel);
   const [result, setResult] = useState(_cache.result);
   const [availability, setAvailability] = useState(_cache.availability);
   const [savingFocus, setSavingFocus] = useState(null);
@@ -77,6 +80,7 @@ export default function PostClonePage() {
   useEffect(() => { _cache.history = history; }, [history]);
   useEffect(() => { _cache.postLimit = postLimit; }, [postLimit]);
   useEffect(() => { _cache.availability = availability; }, [availability]);
+  useEffect(() => { _cache.imageModel = imageModel; }, [imageModel]);
 
   // IG session quick-edit + live status
   const [showSession, setShowSession] = useState(false);
@@ -240,6 +244,7 @@ export default function PostClonePage() {
       posts: postsToClone,
       characterId: charId,
       mode,
+      imageModel,
     });
     setResult(Array.isArray(data) ? data : []);
     notify('Post Clone completed', 'success');
@@ -259,6 +264,7 @@ export default function PostClonePage() {
       postUrl: postUrl.trim(),
       characterId: charId,
       mode,
+      imageModel,
     });
     setResult(Array.isArray(data) ? data : []);
     notify('Post Clone completed', 'success');
@@ -277,11 +283,11 @@ export default function PostClonePage() {
   return (
     <div className="space-y-6 animate-in">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight text-gradient">Post Clone</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Post Clone</h1>
         <p className="text-zinc-500 text-sm mt-1">Clone single posts, carousels, or profile feeds with your selected character at locked 2K 4:5.</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         <div className="lg:col-span-1 space-y-4">
           <Card className="space-y-4">
             <div className="space-y-2">
@@ -319,6 +325,18 @@ export default function PostClonePage() {
                 <div className="flex flex-wrap gap-2">
                   <Badge color="blue">Locked: 2K</Badge>
                   <Badge color="blue">Locked: 4:5</Badge>
+                </div>
+                <div>
+                  <span className="text-xs text-zinc-400 font-medium block mb-1.5">Image Model</span>
+                  <select
+                    value={imageModel}
+                    onChange={(e) => setImageModel(e.target.value)}
+                    className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
+                  >
+                    {IMAGE_MODEL_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
                 </div>
                 <Btn onClick={handleRunSingle} disabled={loading || !canRunSingle} className="w-full">
                   {loading ? <><Spinner size={16} /> Cloning... {elapsedSec}s</> : 'Fetch + Recreate'}
@@ -368,6 +386,18 @@ export default function PostClonePage() {
                 <div className="flex flex-wrap gap-2">
                   <Badge color="blue">Locked: 2K</Badge>
                   <Badge color="blue">Locked: 4:5</Badge>
+                </div>
+                <div>
+                  <span className="text-xs text-zinc-400 font-medium block mb-1.5">Image Model</span>
+                  <select
+                    value={imageModel}
+                    onChange={(e) => setImageModel(e.target.value)}
+                    className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
+                  >
+                    {IMAGE_MODEL_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
                 </div>
                 <Btn onClick={handleRecreate} disabled={loading || !canRecreate} className="w-full">
                   {loading ? <><Spinner size={16} /> Recreating... {elapsedSec}s</> : `Recreate Selected (${selected.size})`}

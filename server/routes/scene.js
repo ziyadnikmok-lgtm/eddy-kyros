@@ -55,7 +55,7 @@ router.post('/analyze', async (req, res, next) => {
  */
 router.post('/recreate', async (req, res, next) => {
   try {
-    const { sceneData, characterId, activeReferenceIds } = req.body;
+    const { sceneData, characterId, activeReferenceIds, imageModel } = req.body;
     const { aspectRatio, resolutionTier, width, height } = resolveDimensions(req.body);
 
     if (!sceneData || typeof sceneData !== 'object') {
@@ -82,6 +82,7 @@ router.post('/recreate', async (req, res, next) => {
       aspectRatio,
       imageSize: resolutionTier,
       referenceImages,
+      model: imageModel,
     });
 
     // Store in imageStore
@@ -90,7 +91,7 @@ router.post('/recreate', async (req, res, next) => {
       characterId,
       activeReferenceIds: activeReferenceIds || null,
       sceneDescription: JSON.stringify(sceneData),
-      modelUsed: null,
+      modelUsed: result.modelUsed || null,
       seed: null,
       parentImageId: null,
       variationIndex: null,

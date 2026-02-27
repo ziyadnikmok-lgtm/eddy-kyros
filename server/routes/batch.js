@@ -50,6 +50,10 @@ router.post('/', parseMultipartIfNeeded, (req, res, next) => {
       validSizes.includes(req.body.resolutionTier)
         ? req.body.resolutionTier
         : '1K';
+    const imageModel =
+      typeof req.body.imageModel === 'string' && req.body.imageModel.trim().length > 0
+        ? req.body.imageModel.trim()
+        : undefined;
 
     if (!mode || typeof mode !== 'string') {
       throw new AppError('"mode" is required', 400, 'VALIDATION_ERROR');
@@ -138,6 +142,7 @@ router.post('/', parseMultipartIfNeeded, (req, res, next) => {
     const job = batchGenerator.startBatch(mode, normalizedConfig, {
       aspectRatio: finalAspectRatio,
       imageSize: finalImageSize,
+      imageModel,
     });
     res.status(202).json({ success: true, data: job });
   } catch (err) {

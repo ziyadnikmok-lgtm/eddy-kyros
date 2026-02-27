@@ -140,6 +140,7 @@ router.post('/', async (req, res, next) => {
       styleAtomIds,
       styleFocusId,
       contentType,
+      imageModel,
     } = req.body;
     const finalAspectRatio = VALID_ASPECT_RATIOS.includes(aspectRatio) ? aspectRatio : '1:1';
     const finalImageSize = VALID_IMAGE_SIZES.includes(resolutionTier) ? resolutionTier : '1K';
@@ -292,6 +293,7 @@ router.post('/', async (req, res, next) => {
       aspectRatio: finalAspectRatio,
       imageSize: finalImageSize,
       referenceImages,
+      model: imageModel,
     });
 
     // Store in imageStore (in-memory for tweak/carousel)
@@ -302,7 +304,7 @@ router.post('/', async (req, res, next) => {
       sceneDescription: (sceneDescription && typeof sceneDescription === 'string')
         ? sceneDescription.trim()
         : (prompt && typeof prompt === 'string' ? prompt.trim() : null),
-      modelUsed: geminiService.constructor.IMAGE_MODEL,
+      modelUsed: result.modelUsed || null,
       seed: null,
       parentImageId: null,
       variationIndex: null,

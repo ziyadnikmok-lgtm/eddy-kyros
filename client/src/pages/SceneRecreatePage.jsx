@@ -5,7 +5,7 @@ import { useAsync } from '../hooks/useAsync';
 import { useStepTimer } from '../hooks/useStepTimer';
 import { Card, Btn, Textarea, Badge, Spinner, ImageCard, Empty, StepProgress } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
-import { ASPECT_RATIOS, RESOLUTION_TIERS } from '../config/photoModes';
+import { ASPECT_RATIOS, RESOLUTION_TIERS, IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
 
 function fileToBase64(file) {
   return new Promise((res, rej) => {
@@ -23,6 +23,7 @@ const _cache = {
   charId: '',
   aspectRatio: '4:5',
   resolutionTier: '2K',
+  imageModel: DEFAULT_IMAGE_MODEL,
   result: null,
   history: [],
 };
@@ -40,6 +41,7 @@ export default function SceneRecreatePage() {
   const [charDetail, setCharDetail] = useState(null);
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [resolutionTier, setResolutionTier] = useState(_cache.resolutionTier);
+  const [imageModel, setImageModel] = useState(_cache.imageModel);
   const [result, setResult] = useState(_cache.result);
   const [history, setHistory] = useState(_cache.history);
 
@@ -49,6 +51,7 @@ export default function SceneRecreatePage() {
   useEffect(() => { _cache.charId = charId; }, [charId]);
   useEffect(() => { _cache.aspectRatio = aspectRatio; }, [aspectRatio]);
   useEffect(() => { _cache.resolutionTier = resolutionTier; }, [resolutionTier]);
+  useEffect(() => { _cache.imageModel = imageModel; }, [imageModel]);
   useEffect(() => { _cache.result = result; }, [result]);
   useEffect(() => { _cache.history = history; }, [history]);
 
@@ -115,6 +118,7 @@ export default function SceneRecreatePage() {
       activeReferenceIds: activeRefIds.length > 0 ? activeRefIds : undefined,
       aspectRatio,
       resolutionTier,
+      imageModel,
     });
     setResult(data);
     setHistory((h) => [data, ...h].slice(0, 10));
@@ -126,11 +130,11 @@ export default function SceneRecreatePage() {
   return (
     <div className="space-y-6 animate-in">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight text-gradient">Scene Recreate</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Scene Recreate</h1>
         <p className="text-zinc-500 text-sm mt-1">Upload an image, analyze its scene, then recreate with your character.</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         {/* Left: Upload + Controls */}
         <div className="lg:col-span-1 space-y-4">
           {/* Upload */}
@@ -182,6 +186,19 @@ export default function SceneRecreatePage() {
                   ))}
                 </div>
               )}
+
+              <div>
+                <span className="text-xs text-zinc-400 font-medium block mb-1.5">Image Model</span>
+                <select
+                  value={imageModel}
+                  onChange={(e) => setImageModel(e.target.value)}
+                  className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
+                >
+                  {IMAGE_MODEL_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
 
               <div>
                 <span className="text-xs text-zinc-400 font-medium block mb-2">Aspect Ratio</span>
@@ -257,7 +274,7 @@ export default function SceneRecreatePage() {
           {history.length > 1 && (
             <div>
               <h3 className="text-sm font-medium text-zinc-400 mb-3">Previous Recreations</h3>
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                 {history.slice(1, 9).filter((h) => h?.image?.base64Data).map((h, i) => (
                   <ImageCard
                     key={i}

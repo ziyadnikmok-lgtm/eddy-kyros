@@ -154,7 +154,7 @@ export default function StyleLibraryPage() {
           {/* Header */}
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
-              <h1 className="text-3xl font-bold tracking-tight text-gradient">Style Library</h1>
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Style Library</h1>
               {stats && <p className="text-xs text-zinc-500 mt-0.5">{stats.total} atoms</p>}
             </div>
             <div className="flex gap-2 items-center flex-wrap">

@@ -2,6 +2,11 @@
 // Single source of truth — update here, all pages reflect the change.
 
 export const RESOLUTION_TIERS = ['1K', '2K', '4K'];
+export const DEFAULT_IMAGE_MODEL = 'gemini-3-pro-image-preview';
+export const IMAGE_MODEL_OPTIONS = [
+  { value: 'gemini-3-pro-image-preview', label: 'Nano Banana Pro (Old)' },
+  { value: 'gemini-3.1-flash-image-preview', label: 'Nano Banana 2 (New)' },
+];
 
 /** Full aspect-ratio set (Generate, Scene Recreate). */
 export const ASPECT_RATIOS = ['1:1', '16:9', '9:16', '4:5', '5:4', '3:2', '2:3', '3:4', '4:3'];

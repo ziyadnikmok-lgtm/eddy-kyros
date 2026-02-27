@@ -217,7 +217,7 @@ export default function App() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-4 lg:p-6 ambient-glow">
+        <main className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6 ambient-glow">
           <div className="relative mx-auto max-w-6xl">
             <PageErrorBoundary pageKey={page}>
               <Suspense fallback={<PageFallback />}>

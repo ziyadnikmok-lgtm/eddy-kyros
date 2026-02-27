@@ -521,7 +521,7 @@ export default function AutoGeneratorPage() {
   return (
     <div className="space-y-6 animate-in">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight text-gradient">Auto Generator</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Auto Generator</h1>
         <p className="text-zinc-500 text-sm mt-1">Generate weekly content plans with a calendar view, then execute day by day.</p>
       </div>
 

@@ -83,15 +83,14 @@ const HOST = cfg.HOST;
 // Middleware
 // ---------------------
 
-// CORS — localhost only
+// CORS — localhost + production domain
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (curl, Postman, same-origin)
-      // and any localhost/127.0.0.1 origin
       if (
         !origin ||
-        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
+        /^https?:\/\/(www\.)?creationpanel1337\.xyz$/.test(origin)
       ) {
         callback(null, true);
       } else {
@@ -152,7 +151,7 @@ app.use('/api/images', imagesRouter);
 app.use('/api/niches', nichesRouter);
 app.use('/api/brand-voice', brandVoiceRouter);
 app.use('/api/story', storyRouter);
-app.use('/api/gallery', generateLimiter, galleryRouter);
+app.use('/api/gallery', galleryRouter);
 app.use('/api/scene', generateLimiter, sceneRouter);
 app.use('/api/scene-memory', sceneMemoryRouter);
 app.use('/api/outfits', outfitsRouter);
@@ -247,7 +246,7 @@ const server = app.listen(PORT, HOST, () => {
   console.log('');
   console.log('==============================================');
   console.log('  AI Content Generation Studio — Phase 8');
-  console.log('  Model: Nano Banana Pro (gemini-3-pro-image-preview)');
+  console.log('  Image Models: gemini-3-pro-image-preview, gemini-3.1-flash-image-preview');
   console.log('==============================================');
   console.log(`  Server running at http://${HOST}:${PORT}`);
   console.log('');

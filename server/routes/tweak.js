@@ -40,7 +40,7 @@ const parseMultipartIfNeeded = createMultipartParser();
  */
 router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
   try {
-    let { imageId, modifications, characterId, activeReferenceIds } = req.body || {};
+    let { imageId, modifications, characterId, activeReferenceIds, imageModel } = req.body || {};
     if (typeof modifications === 'string') {
       try { modifications = JSON.parse(modifications); } catch {
         throw new AppError('"modifications" must be valid JSON', 400, 'VALIDATION_ERROR');
@@ -154,6 +154,7 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
       aspectRatio,
       imageSize: resolutionTier,
       referenceImages,
+      model: imageModel,
     });
 
     // --- Store the new image with parent linkage ---
@@ -163,7 +164,7 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
       characterId: original.characterId,
       activeReferenceIds: original.activeReferenceIds,
       sceneDescription: original.sceneDescription,
-      modelUsed: null,
+      modelUsed: result.modelUsed || null,
       seed: null,
       parentImageId: resolvedImageId,
       variationIndex: childCount,

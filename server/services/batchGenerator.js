@@ -201,6 +201,7 @@ class BatchGenerator extends EventEmitter {
 
     const aspectRatio = generationOptions.aspectRatio || '1:1';
     const imageSize = generationOptions.imageSize || '1K';
+    const imageModel = generationOptions.imageModel || null;
 
     let tasks;
     switch (mode) {
@@ -267,6 +268,7 @@ class BatchGenerator extends EventEmitter {
       _config: this._sanitizeConfigForHistory(mode, config),
       aspectRatio,
       imageSize,
+      imageModel,
       createdAt: new Date().toISOString(),
     };
     jobs.set(jobId, job);
@@ -867,6 +869,7 @@ class BatchGenerator extends EventEmitter {
           const result = await geminiService.generateImage(apiKey, finalPrompt, {
             aspectRatio: job.aspectRatio,
             imageSize: job.imageSize,
+            model: job.imageModel || undefined,
             parts,
           });
 
@@ -887,7 +890,7 @@ class BatchGenerator extends EventEmitter {
             characterId: task.characterId,
             activeReferenceIds: task.activeReferenceIds,
             sceneDescription: task.userPrompt,
-            modelUsed: null,
+            modelUsed: result.modelUsed || job.imageModel || null,
             seed: task.seed || null,
             parentImageId: null,
             variationIndex: null,
@@ -1215,6 +1218,7 @@ class BatchGenerator extends EventEmitter {
     const config = job._config || {};
     const mode = job.mode;
     const genOpts = { aspectRatio: job.aspectRatio || '1:1', imageSize: job.imageSize || '1K' };
+    genOpts.imageModel = job.imageModel || null;
 
     // For multi mode, extract only failed prompts
     if (mode === 'multi' && Array.isArray(config.prompts)) {

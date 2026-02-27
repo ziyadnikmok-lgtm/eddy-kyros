@@ -5,6 +5,7 @@ import { useAsync } from '../hooks/useAsync';
 import { useStepTimer } from '../hooks/useStepTimer';
 import { Card, Btn, Input, Badge, Spinner, ImageCard, Empty, StepProgress } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
+import { IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
 
 // Module-level session cache — survives unmount/remount when navigating away and back
 const _cache = {
@@ -17,7 +18,9 @@ const _cache = {
   poseMatchEnabled: true,
   environmentMatchEnabled: true,
   useSourceFrameReference: false,
+  outfitTransition: false,
   runSourceType: 'url',
+  imageModel: DEFAULT_IMAGE_MODEL,
 };
 
 export default function ReelRecreatePage() {
@@ -32,11 +35,13 @@ export default function ReelRecreatePage() {
   const [result, setResult] = useState(_cache.result);
   const [recreationHistory, setRecreationHistory] = useState(_cache.recreationHistory);
   const [runSourceType, setRunSourceType] = useState(_cache.runSourceType);
+  const [imageModel, setImageModel] = useState(_cache.imageModel);
   const [poseMatchStrength, setPoseMatchStrength] = useState(_cache.poseMatchStrength);
   const [environmentMatchStrength, setEnvironmentMatchStrength] = useState(_cache.environmentMatchStrength);
   const [poseMatchEnabled, setPoseMatchEnabled] = useState(_cache.poseMatchEnabled);
   const [environmentMatchEnabled, setEnvironmentMatchEnabled] = useState(_cache.environmentMatchEnabled);
   const [useSourceFrameReference, setUseSourceFrameReference] = useState(_cache.useSourceFrameReference);
+  const [outfitTransition, setOutfitTransition] = useState(_cache.outfitTransition);
   const [availability, setAvailability] = useState(null);
 
   const STRENGTH_LEVELS = ['soft', 'medium', 'strict'];
@@ -56,7 +61,9 @@ export default function ReelRecreatePage() {
   useEffect(() => { _cache.poseMatchEnabled = poseMatchEnabled; }, [poseMatchEnabled]);
   useEffect(() => { _cache.environmentMatchEnabled = environmentMatchEnabled; }, [environmentMatchEnabled]);
   useEffect(() => { _cache.useSourceFrameReference = useSourceFrameReference; }, [useSourceFrameReference]);
+  useEffect(() => { _cache.outfitTransition = outfitTransition; }, [outfitTransition]);
   useEffect(() => { _cache.runSourceType = runSourceType; }, [runSourceType]);
+  useEffect(() => { _cache.imageModel = imageModel; }, [imageModel]);
 
   const LIVE_STEPS = useMemo(() => runSourceType === 'cached'
     ? ['Reusing cached source frames', 'Analyzing scenes with Gemini', 'Recreating first frame', 'Recreating follow-up frame']
@@ -103,6 +110,8 @@ export default function ReelRecreatePage() {
       payload.append('poseMatchEnabled', String(poseMatchEnabled));
       payload.append('environmentMatchEnabled', String(environmentMatchEnabled));
       payload.append('useSourceFrameReference', String(useSourceFrameReference));
+      payload.append('outfitTransition', String(outfitTransition));
+      payload.append('imageModel', imageModel);
     } else {
       payload = {
         reelUrl: reelUrl.trim(),
@@ -113,6 +122,8 @@ export default function ReelRecreatePage() {
         poseMatchEnabled,
         environmentMatchEnabled,
         useSourceFrameReference,
+        outfitTransition,
+        imageModel,
       };
     }
 
@@ -145,6 +156,8 @@ export default function ReelRecreatePage() {
       poseMatchEnabled,
       environmentMatchEnabled,
       useSourceFrameReference,
+      outfitTransition,
+      imageModel,
       sourceFrames: result.frames,
       sourceAnalysis: result.sourceAnalysis || undefined,
     });
@@ -163,11 +176,11 @@ export default function ReelRecreatePage() {
   return (
     <div className="space-y-6 animate-in">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight text-gradient">Reel Copy</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Reel Copy</h1>
         <p className="text-zinc-500 text-sm mt-1">Paste an Instagram reel URL to recreate first and last frame scenes with your selected character.</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         <div className="lg:col-span-1 space-y-4">
           <Card className="space-y-4">
             <Input
@@ -229,6 +242,19 @@ export default function ReelRecreatePage() {
             <div className="flex flex-wrap gap-2">
               <Badge color="blue">Locked: 2K</Badge>
               <Badge color="blue">Locked: 9:16</Badge>
+            </div>
+
+            <div>
+              <span className="text-xs text-zinc-400 font-medium block mb-1.5">Image Model</span>
+              <select
+                value={imageModel}
+                onChange={(e) => setImageModel(e.target.value)}
+                className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
+              >
+                {IMAGE_MODEL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
             </div>
 
             <div className="space-y-1">
@@ -301,6 +327,19 @@ export default function ReelRecreatePage() {
               />
             </label>
 
+            <label className="flex items-center justify-between rounded-lg border border-zinc-700/80 bg-zinc-900/40 px-3 py-2 cursor-pointer hover:bg-zinc-800/50 transition">
+              <div>
+                <span className="text-xs text-zinc-300 font-medium block">Outfit Transition</span>
+                <span className="text-[10px] text-zinc-500">Last frame uses outfit from source last frame instead of matching first</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={outfitTransition}
+                onChange={(e) => setOutfitTransition(e.target.checked)}
+                className="h-4 w-4 accent-blue-500 shrink-0 ml-3"
+              />
+            </label>
+
             <Btn onClick={handleRun} disabled={loading || (!reelUrl.trim() && !localVideoFile) || !charId} className="w-full">
               {loading ? <><Spinner size={16} /> Processing... {elapsedSec}s</> : 'Fetch + Recreate Frames'}
             </Btn>
@@ -369,6 +408,28 @@ export default function ReelRecreatePage() {
                   }}
                 />
               </div>
+
+              {(result.recreations.first?.prompt || result.recreations.last?.prompt) && (
+                <details className="group">
+                  <summary className="text-xs text-zinc-500 cursor-pointer hover:text-zinc-300 transition select-none">
+                    Show Gemini Prompts
+                  </summary>
+                  <div className="mt-2 space-y-3">
+                    {result.recreations.first?.prompt && (
+                      <div>
+                        <p className="text-[11px] font-medium text-zinc-400 mb-1">First Frame Prompt</p>
+                        <pre className="text-[10px] text-zinc-500 bg-zinc-900/80 border border-zinc-800 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto">{result.recreations.first.prompt}</pre>
+                      </div>
+                    )}
+                    {result.recreations.last?.prompt && (
+                      <div>
+                        <p className="text-[11px] font-medium text-zinc-400 mb-1">Last Frame Prompt</p>
+                        <pre className="text-[10px] text-zinc-500 bg-zinc-900/80 border border-zinc-800 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto">{result.recreations.last.prompt}</pre>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              )}
             </Card>
           )}
 

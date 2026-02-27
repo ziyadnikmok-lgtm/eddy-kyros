@@ -9,6 +9,7 @@ import useImageLightbox from '../components/lightbox/useImageLightbox';
 import {
   ASPECT_RATIOS, RESOLUTION_TIERS,
   CAMERA_PROFILES, POSE_MODES, EXPRESSION_MODES, SCENE_MODES,
+  IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL,
 } from '../config/photoModes';
 
 const StyleAtomPicker = lazy(() => import('../components/StyleAtomPicker'));
@@ -50,6 +51,7 @@ const INITIAL_STATE = {
   prompt: '',
   aspectRatio: '4:5',
   resolutionTier: '2K',
+  imageModel: DEFAULT_IMAGE_MODEL,
   formMode: 'quick',
   quickContentType: '',
   useCharacter: false,
@@ -97,6 +99,7 @@ export default function GeneratePage() {
   const [state, update] = useReducer(formReducer, _cache.formState || INITIAL_STATE);
   const {
     prompt, aspectRatio, resolutionTier,
+    imageModel,
     useCharacter, selectedCharId, selectedChar,
     sceneMemoryId, outfitId, cameraProfileId, poseMode,
     useExpressionMode, expressionMode, useSceneMode, sceneMode,
@@ -271,6 +274,7 @@ export default function GeneratePage() {
       prompt: finalPrompt,
       aspectRatio,
       resolutionTier,
+      imageModel,
       sceneMemoryId: sceneMemoryId || null,
       outfitId: outfitId || null,
       cameraProfileId: cameraProfileId || null,
@@ -366,7 +370,7 @@ export default function GeneratePage() {
   return (
     <div className="space-y-6 animate-in">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight text-gradient">Generate</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Generate</h1>
         <p className="text-zinc-500 text-sm mt-1">Create images with full control over character, scene, and style.</p>
       </div>
 
@@ -383,7 +387,7 @@ export default function GeneratePage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         <div className="lg:col-span-1 space-y-4">
           <Card className="space-y-4">
             {/* ── Quick / Advanced Toggle ── */}
@@ -458,6 +462,19 @@ export default function GeneratePage() {
             )}
 
             {/* ── Image Size ── */}
+            <div>
+              <span className="text-xs text-zinc-400 font-medium block mb-1.5">Image Model</span>
+              <select
+                value={imageModel}
+                onChange={(e) => update({ imageModel: e.target.value })}
+                className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
+              >
+                {IMAGE_MODEL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+
             <div>
               <span className="text-xs text-zinc-400 font-medium block mb-2">Aspect Ratio</span>
               <div className="flex flex-wrap gap-1.5">
@@ -908,7 +925,7 @@ export default function GeneratePage() {
           {history.length > 1 && (
             <div>
               <h3 className="text-sm font-medium text-zinc-400 mb-3">Recent</h3>
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                 {recentHistory.map((h, i) => {
                   const thumbUrl = `/api/gallery/${h.galleryId || h.imageId}/image`;
                   return (

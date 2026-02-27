@@ -265,6 +265,52 @@ function uniqueNonEmptyStrings(items) {
   return out;
 }
 
+function sanitizePollOptionPrompt(prompt, { enforceHairLock = false, enforceMirrorRealism = false } = {}) {
+  const raw = asText(prompt);
+  if (!raw) return '';
+
+  const hasMirrorCue = /\b(mirror|reflection|reflective|selfie mirror)\b/i.test(raw);
+  const looksOutdoor = /\b(outdoor|outside|street|alley|skatepark|beach|park|forest|cemetery|rooftop|city|downtown|sidewalk|road|highway|field|mountain|desert)\b/i.test(raw);
+
+  // Remove style clauses that try to redefine identity-level hair traits.
+  let parts = raw
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => !/\b(hair|hairstyle|split[- ]?dye|two[- ]?tone|ombre|balayage|highlights?)\b/i.test(part));
+
+  // Keep mirror selfies possible, but avoid impossible outdoor mirror artifacts.
+  if (enforceMirrorRealism && hasMirrorCue && looksOutdoor) {
+    parts = parts.filter((part) => !/\b(mirror|reflection|reflective|selfie mirror)\b/i.test(part));
+  }
+
+  const cleaned = parts
+    .join(', ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .trim();
+
+  const locks = [];
+  if (enforceHairLock) {
+    locks.push(
+      '[CHARACTER CONTINUITY LOCK]',
+      'Do not change hair color, hairstyle, or hair length from the locked character identity and references.',
+      '[END CHARACTER CONTINUITY LOCK]'
+    );
+  }
+  if (enforceMirrorRealism && hasMirrorCue && !looksOutdoor) {
+    locks.push(
+      '[CAPTURE CONSISTENCY LOCK]',
+      'Mirror selfie is allowed only with a clearly visible, plausible mirror plane and matching reflected environment.',
+      'No impossible floating mirror geometry or outdoor random mirror insertion.',
+      '[END CAPTURE CONSISTENCY LOCK]'
+    );
+  }
+
+  if (locks.length === 0) return cleaned || raw;
+  return [cleaned || raw, '', ...locks].join('\n');
+}
+
 function normalizeDeltaDirection(direction) {
   const raw = asText(direction);
   if (!raw) return '';
@@ -512,6 +558,7 @@ router.post('/execute', async (req, res, next) => {
       kineticMotionBlur = 'off',
       aspectRatio,
       resolutionTier,
+      imageModel,
     } = req.body || {};
 
     if (!characterId || typeof characterId !== 'string') {
@@ -570,7 +617,7 @@ router.post('/execute', async (req, res, next) => {
 
     const jobIds = startMultiBatches(
       entries,
-      { aspectRatio: finalAspectRatio, imageSize: finalImageSize },
+      { aspectRatio: finalAspectRatio, imageSize: finalImageSize, imageModel },
       { characterId, activeReferenceIds: resolvedActiveReferenceIds }
     );
 
@@ -611,6 +658,7 @@ router.post('/follow-up', async (req, res, next) => {
       useCharacterRefsInFollowUp = false,
       aspectRatio,
       resolutionTier,
+      imageModel,
     } = req.body || {};
 
     if ((!imageId || typeof imageId !== 'string') && (!imageBase64 || typeof imageBase64 !== 'string')) {
@@ -675,6 +723,7 @@ router.post('/follow-up', async (req, res, next) => {
         }, {
           aspectRatio: finalAspectRatio,
           imageSize: finalImageSize,
+          imageModel,
         });
         jobIds.push(job.jobId);
       }
@@ -698,6 +747,7 @@ router.post('/follow-up', async (req, res, next) => {
       }, {
         aspectRatio: finalAspectRatio,
         imageSize: finalImageSize,
+        imageModel,
       });
       jobId = job.jobId;
       jobIds = [job.jobId];
@@ -743,6 +793,7 @@ router.post('/polls', async (req, res, next) => {
       pollCount = 3,
       aspectRatio,
       resolutionTier,
+      imageModel,
     } = req.body || {};
 
     if (!topic || typeof topic !== 'string' || topic.trim().length === 0) {
@@ -759,6 +810,13 @@ router.post('/polls', async (req, res, next) => {
       character = referenceManager.getCharacter(characterId);
       resolvedActiveReferenceIds = resolveActiveReferenceIds(activeReferenceIds, character);
     }
+    const characterPromptLockRules = character
+      ? [
+        '- Character identity is locked by the runtime system.',
+        '- Do NOT describe or modify face traits, body traits, skin tone, or hair (color/style/length).',
+        '- Only vary: outfit, location, props, lighting mood, pose, expression, and framing.',
+      ].join('\n')
+      : '';
 
     // Generate poll questions + contrasting image prompts via Gemini
     const pollPrompt = `You generate "This or That" engagement poll content for Instagram carousels.
@@ -773,6 +831,9 @@ Task:
 - Keep the same single female subject identity across all prompts.
 - Make prompts vivid and specific for AI image generation.
 - No couples, no male interaction.
+- Mirror selfies are allowed only when the setting plausibly supports a real mirror/reflection.
+- Do not place random mirror reflections in outdoor scenes.
+${characterPromptLockRules}
 
 Return JSON only:
 {
@@ -797,8 +858,21 @@ Return JSON only:
       parsed = null;
     }
 
+    const enforceHairLock = !!character;
+    const enforceMirrorRealism = true;
     const polls = (parsed && Array.isArray(parsed.polls) ? parsed.polls : [])
       .filter(p => p && p.question && p.optionA?.prompt && p.optionB?.prompt)
+      .map((p) => ({
+        ...p,
+        optionA: {
+          ...p.optionA,
+          prompt: sanitizePollOptionPrompt(p.optionA.prompt, { enforceHairLock, enforceMirrorRealism }),
+        },
+        optionB: {
+          ...p.optionB,
+          prompt: sanitizePollOptionPrompt(p.optionB.prompt, { enforceHairLock, enforceMirrorRealism }),
+        },
+      }))
       .slice(0, safePollCount);
 
     if (polls.length === 0) {
@@ -826,7 +900,7 @@ Return JSON only:
 
     const jobIds = startMultiBatches(
       entries,
-      { aspectRatio: finalAspectRatio, imageSize: finalImageSize },
+      { aspectRatio: finalAspectRatio, imageSize: finalImageSize, imageModel },
       { characterId: characterId || null, activeReferenceIds: resolvedActiveReferenceIds }
     );
 

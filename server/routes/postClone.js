@@ -30,7 +30,12 @@ const ROUTE_TIMEOUT_MS = 5 * 60_000; // 5 min hard ceiling for single post
 const PROFILE_ROUTE_TIMEOUT_MS = 15 * 60_000; // 15 min for profile scrape (many slides)
 const DEFAULT_ACTOR_ID = process.env.APIFY_POST_ACTOR_ID || 'apify/instagram-post-scraper';
 const FALLBACK_ACTOR_ID = process.env.APIFY_POST_FALLBACK_ACTOR_ID || 'apify/instagram-scraper';
+const PROFILE_ACTOR_ID = process.env.APIFY_PROFILE_ACTOR_ID || 'apify/instagram-profile-scraper';
+const PROFILE_POSTS_ACTOR_ID = 'apify/instagram-post-scraper';
+const COMMUNITY_POSTS_ACTOR_ID = process.env.APIFY_COMMUNITY_POSTS_ACTOR_ID || 'shu8hvrXbJbY3Eb9W';
 const ANALYSIS_KEYS = ['lighting', 'camera', 'pose', 'expression', 'outfit', 'scene', 'accessories', 'details', 'format', 'full_prompt'];
+const TATTOO_TERMS_REGEX = /\b(?:tattoo(?:s|ed|ing)?|body\s*ink|inked|inkwork|sleeve\s+tattoo|tribal\s+ink)\b/i;
+const TATTOO_SENTENCE_REGEX = /[^.!?\n]*\b(?:tattoo(?:s|ed|ing)?|body\s*ink|inked|inkwork|sleeve\s+tattoo|tribal\s+ink)\b[^.!?\n]*[.!?]?/gi;
 const THUMB_MAX_AGE_MS = 30 * 60_000; // 30 min — auto-cleanup stale thumbnails
 
 function ensureTempDir() {
@@ -171,6 +176,45 @@ function parseStructuredAnalysis(rawText) {
   return { parsed, usedFallback: true };
 }
 
+function stripTattooMentions(text) {
+  const input = asText(text);
+  if (!input) return '';
+  if (!TATTOO_TERMS_REGEX.test(input)) return input.trim();
+
+  let cleaned = input
+    .replace(TATTOO_SENTENCE_REGEX, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  if (TATTOO_TERMS_REGEX.test(cleaned)) {
+    cleaned = cleaned
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => !TATTOO_TERMS_REGEX.test(line))
+      .join(' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+
+  return cleaned;
+}
+
+function stripTattoosFromStructured(parsed) {
+  const result = {};
+  for (const key of ANALYSIS_KEYS) {
+    result[key] = stripTattooMentions(parsed?.[key]);
+  }
+  if (!result.full_prompt) {
+    result.full_prompt = ANALYSIS_KEYS
+      .filter((k) => k !== 'full_prompt')
+      .map((k) => result[k])
+      .filter(Boolean)
+      .join(', ');
+  }
+  return result;
+}
+
 function buildCharacterReferenceImages(characterId, activeRefs) {
   const refs = [];
   const primaries = referenceManager.getPrimaryImages(characterId);
@@ -200,6 +244,7 @@ function buildStructuredAnalysisPrompt(mode) {
     'IMPORTANT: Write each field as a DESCRIPTIVE NATURAL LANGUAGE sentence or short paragraph — NOT as comma-separated tags.',
     'Describe like you are briefing a human photographer. Be specific about relationships, cause-and-effect, and visual interactions.',
     'Each field should be at least 10 words. Use directive tone (NOT "she is" or "the woman").',
+    'TATTOO EXCLUSION RULE: Completely ignore tattoos/body ink in the image. Do not analyze, mention, or infer tattoos in any field.',
     '',
     'lighting: MOST CRITICAL FIELD — You MUST include ALL of the following in this exact order:',
     '  1) BRIGHTNESS SCORE: Rate overall scene brightness 1-10 (1=near-black, 3=very dark/nighttime, 5=medium, 7=bright, 10=blown-out white). Be brutally honest — most nighttime/flash photos are 2-4.',
@@ -238,6 +283,7 @@ function buildCarouselDeltaPrompt(mode) {
     'EXCEPTION — outfit, accessories, and lighting MUST always be described in FULL even if unchanged. Never write "same as slide 1" for these fields.',
     'IMPORTANT: For each changed field, write a DESCRIPTIVE NATURAL LANGUAGE sentence — NOT comma-separated tags.',
     'Describe like briefing a photographer. Use directive tone (not "she is" or "the woman"). At least 8 words per changed field.',
+    'TATTOO EXCLUSION RULE: Ignore tattoos/body ink entirely. Never mention tattoos in any field, even if visible in either image.',
     '',
     'lighting: MUST include ALL of the following even if unchanged from slide 1:',
     '  1) BRIGHTNESS SCORE: Rate overall scene brightness 1-10 (1=near-black, 3=very dark/nighttime, 5=medium, 7=bright, 10=blown-out white).',
@@ -272,6 +318,7 @@ function buildGenerationPrompt({ character, activeRefs, mode, structured, isDelt
     'IDENTITY ANCHORING: The reference images provided show the EXACT person to depict. The generated face, body proportions, skin tone, and all physical features MUST match these reference photos precisely. Do NOT substitute, blend, or drift from the person shown in the references.',
     // Prevent body proportion drift and clothing conservatism
     'BODY & OUTFIT FIDELITY: Maintain the character\'s exact body proportions as shown in reference images — do NOT reduce or minimize any body features. The outfit description must be rendered exactly as written — do NOT add extra fabric, raise necklines, lengthen hemlines, or make clothing more conservative than described. If the prompt says form-fitting, render it form-fitting.',
+    'TATTOO EXCLUSION: Never add tattoos/body ink/tattoo-like markings to the generated output, even if tattoos were visible in source media.',
     REALISM_DIRECTIVE,
     // Explicitly reinforce pose and expression so body position (lying down, sitting, etc.) isn't lost
     structured.pose && structured.pose !== 'same as slide 1'
@@ -308,6 +355,7 @@ async function analyzeImageStructured(apiKey, imageBase64, mimeType, mode, sourc
   try {
     raw = await geminiService.analyzeImageWithPrompt(apiKey, imageBase64, mimeType, analysisPrompt);
     ({ parsed } = parseStructuredAnalysis(raw));
+    parsed = stripTattoosFromStructured(parsed);
   } catch (err) {
     raw = `ANALYSIS_ERROR: ${err.message || 'unknown error'}`;
     promptKnowledgeService.create({
@@ -393,6 +441,7 @@ async function analyzeCarouselDelta(apiKey, firstBase64, firstMimeType, currentB
       prompt
     );
     ({ parsed } = parseStructuredAnalysis(raw));
+    parsed = stripTattoosFromStructured(parsed);
   } catch (err) {
     raw = `ANALYSIS_ERROR: ${err.message || 'unknown error'}`;
     promptKnowledgeService.create({
@@ -467,6 +516,8 @@ function extractImageUrlFromMedia(item) {
   const candidates = [
     item?.displayUrl,
     item?.display_url,
+    item?.thumbnailSrc,
+    item?.thumbnail_src,
     item?.imageUrl,
     item?.image_url,
     item?.image,
@@ -702,6 +753,46 @@ async function resolveUsernameFromPostUrl(postUrl, restrictedItems) {
   return '';
 }
 
+async function fetchDirectIgProfilePosts(profileUsername, limit = 12) {
+  const username = asText(profileUsername);
+  const sessionid = asText(apiKeyManager.getInstagramSessionId());
+  if (!username || !sessionid) return [];
+
+  const endpoint = `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
+  const response = await axios.get(endpoint, {
+    timeout: 12000,
+    httpsAgent: sharedHttpsAgent,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      'Accept': '*/*',
+      'X-IG-App-ID': '936619743392459',
+      'Referer': `https://www.instagram.com/${username}/`,
+      'Cookie': `sessionid=${sessionid}`,
+    },
+    validateStatus: (s) => s >= 200 && s < 400,
+  });
+
+  const edges = response?.data?.data?.user?.edge_owner_to_timeline_media?.edges;
+  if (!Array.isArray(edges) || edges.length === 0) return [];
+
+  const limitCount = Math.max(1, Math.min(50, Number(limit) || 12));
+  return edges
+    .slice(0, limitCount)
+    .map((e) => e?.node)
+    .filter(Boolean)
+    .map((n) => ({
+      id: n.id,
+      shortCode: n.shortcode,
+      url: n.shortcode ? `https://www.instagram.com/p/${n.shortcode}/` : '',
+      display_url: n.display_url,
+      displayUrl: n.display_url,
+      is_video: n.is_video,
+      media_type: n.__typename === 'GraphSidecar' ? 8 : (n.__typename === 'GraphVideo' ? 2 : 1),
+      edge_sidecar_to_children: n.edge_sidecar_to_children,
+      edgeSidecarToChildren: n.edge_sidecar_to_children,
+    }));
+}
+
 async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
   const token = asText(apifyToken) || asText(apiKeyManager.getApifyKey()) || asText(process.env.APIFY_TOKEN);
   if (!token) {
@@ -725,24 +816,52 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
 
   console.log(`[post-clone] session cookies: ${loginCookies ? 'present' : 'MISSING'}, shortCode=${shortCode || 'none'}, profileUsername=${profileUsername || 'none'}`);
 
+  // Fast path for profile URLs: use direct IG endpoint with session cookie.
+  if (profileUsername) {
+    try {
+      const directItems = await fetchDirectIgProfilePosts(profileUsername, boundedLimit);
+      if (directItems.length > 0) {
+        console.log(`[post-clone] direct IG fast-path recovered ${directItems.length} post item(s)`);
+        return directItems;
+      }
+    } catch (err) {
+      console.warn(`[post-clone] direct IG fast-path failed: ${err.message}`);
+    }
+  }
+
+  // Use post-scraper as primary for profile URLs (it returns post rows more consistently).
+  const primaryActorId = profileUsername ? PROFILE_POSTS_ACTOR_ID : DEFAULT_ACTOR_ID;
+  // For profile mode, prefer profile-scraper as fallback before generic scraper.
+  const fallbackActorId = profileUsername ? PROFILE_ACTOR_ID : FALLBACK_ACTOR_ID;
   let run;
-  let actorUsed = DEFAULT_ACTOR_ID;
+  let actorUsed = primaryActorId;
 
   // Build input payloads for the primary actor — try multiple shapes to handle
   // schema differences across actor versions.
   const primaryPayloads = [];
   if (profileUsername) {
+    // Profile actor: force posts mode first (some builds default to profile-metadata only).
     primaryPayloads.push({
-      username: profileUsername,
+      usernames: [profileUsername],
+      resultsType: 'posts',
       resultsLimit: boundedLimit,
-      directUrls: [url],
-      startUrls: [{ url }],
-      expandSlideshowImages: true,
+      addParentData: false,
       ...(loginCookies ? { loginCookies } : {}),
       ...(onlyPostsNewerThan ? { onlyPostsNewerThan } : {}),
     });
+    // Alternate schema variant accepted by some actor versions.
     primaryPayloads.push({
-      username: profileUsername,
+      directUrls: [url],
+      startUrls: [{ url }],
+      resultsType: 'posts',
+      resultsLimit: boundedLimit,
+      addParentData: false,
+      ...(loginCookies ? { loginCookies } : {}),
+      ...(onlyPostsNewerThan ? { onlyPostsNewerThan } : {}),
+    });
+    // Legacy fallback shape.
+    primaryPayloads.push({
+      usernames: [profileUsername],
       resultsLimit: boundedLimit,
       ...(loginCookies ? { loginCookies } : {}),
     });
@@ -779,44 +898,63 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
   let primaryErr = null;
   for (let i = 0; i < primaryPayloads.length; i++) {
     try {
-      console.log(`[post-clone] trying ${DEFAULT_ACTOR_ID} payload #${i + 1}: ${JSON.stringify({ ...primaryPayloads[i], loginCookies: primaryPayloads[i].loginCookies ? '[set]' : undefined })}`);
-      run = await callActor(DEFAULT_ACTOR_ID, primaryPayloads[i]);
-      console.log(`[post-clone] ${DEFAULT_ACTOR_ID} payload #${i + 1} succeeded`);
+      console.log(`[post-clone] trying ${primaryActorId} payload #${i + 1}: ${JSON.stringify({ ...primaryPayloads[i], loginCookies: primaryPayloads[i].loginCookies ? '[set]' : undefined })}`);
+      run = await callActor(primaryActorId, primaryPayloads[i]);
+      console.log(`[post-clone] ${primaryActorId} payload #${i + 1} succeeded`);
       break;
     } catch (err) {
-      console.warn(`[post-clone] ${DEFAULT_ACTOR_ID} payload #${i + 1} failed: ${err.message}`);
+      console.warn(`[post-clone] ${primaryActorId} payload #${i + 1} failed: ${err.message}`);
       primaryErr = err;
     }
   }
 
-  // Fallback to generic scraper only if primary actor failed entirely
+  // Fallback actor only if primary actor failed entirely
   if (!run) {
-    console.warn(`[post-clone] primary actor failed, falling back to ${FALLBACK_ACTOR_ID}`);
-    actorUsed = FALLBACK_ACTOR_ID;
+    console.warn(`[post-clone] primary actor failed, falling back to ${fallbackActorId}`);
+    actorUsed = fallbackActorId;
     try {
-      run = await callActor(FALLBACK_ACTOR_ID, {
-        directUrls: [url],
-        startUrls: [{ url }],
-        resultsType: 'posts',
-        resultsLimit: boundedLimit,
-        addParentData: false,
-        ...(loginCookies ? { loginCookies } : {}),
-      });
+      run = await callActor(
+        fallbackActorId,
+        profileUsername
+          ? {
+            usernames: [profileUsername],
+            resultsLimit: boundedLimit,
+            ...(loginCookies ? { loginCookies } : {}),
+            ...(onlyPostsNewerThan ? { onlyPostsNewerThan } : {}),
+          }
+          : {
+            directUrls: [url],
+            startUrls: [{ url }],
+            resultsType: 'posts',
+            resultsLimit: boundedLimit,
+            addParentData: false,
+            ...(loginCookies ? { loginCookies } : {}),
+          }
+      );
     } catch (fallbackErr) {
       // Final retry without cookies in case actor schema rejects loginCookies.
       try {
-        run = await callActor(FALLBACK_ACTOR_ID, {
-          directUrls: [url],
-          startUrls: [{ url }],
-          resultsType: 'posts',
-          resultsLimit: boundedLimit,
-          addParentData: false,
-        });
+        run = await callActor(
+          fallbackActorId,
+          profileUsername
+            ? {
+              usernames: [profileUsername],
+              resultsLimit: boundedLimit,
+              ...(onlyPostsNewerThan ? { onlyPostsNewerThan } : {}),
+            }
+            : {
+              directUrls: [url],
+              startUrls: [{ url }],
+              resultsType: 'posts',
+              resultsLimit: boundedLimit,
+              addParentData: false,
+            }
+        );
       } catch {
         // keep original fallbackErr
       }
       throw new AppError(
-        `Apify actor run failed (${DEFAULT_ACTOR_ID}): ${primaryErr?.message || 'unknown'} — fallback (${FALLBACK_ACTOR_ID}): ${fallbackErr.message}`,
+        `Apify actor run failed (${primaryActorId}): ${primaryErr?.message || 'unknown'} — fallback (${fallbackActorId}): ${fallbackErr.message}`,
         502,
         'APIFY_ERROR'
       );
@@ -835,6 +973,108 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
   } catch (err) {
     throw new AppError(`Failed to read Apify dataset (${actorUsed}): ${err.message}`, 502, 'APIFY_ERROR');
   }
+
+  // Some profile actor runs return only profile metadata (no post rows).
+  // If that happens, force a posts-mode retry via the generic scraper.
+  if (profileUsername) {
+    const hasPostSignals = (rows) => (Array.isArray(rows) ? rows : []).some((row) => {
+      if (!row || typeof row !== 'object') return false;
+      if (getItemShortcode(row)) return true;
+      if (isHttpUrl(asText(row.displayUrl || row.display_url || row.imageUrl || row.image_url || row.videoUrl || row.video_url))) return true;
+      if (Array.isArray(row.images) && row.images.length > 0) return true;
+      if (Array.isArray(row.carouselMedia) && row.carouselMedia.length > 0) return true;
+      if (Array.isArray(row.children) && row.children.length > 0) return true;
+      return false;
+    });
+
+    if (!hasPostSignals(items)) {
+      console.warn('[post-clone] profile actor returned container-only data; retrying via generic posts scraper');
+      const retryPayloads = [
+        {
+          directUrls: [url],
+          startUrls: [{ url }],
+          resultsType: 'posts',
+          resultsLimit: boundedLimit,
+          addParentData: false,
+          ...(loginCookies ? { loginCookies } : {}),
+          ...(onlyPostsNewerThan ? { onlyPostsNewerThan } : {}),
+        },
+      ];
+
+      let retryErr = null;
+      for (let i = 0; i < retryPayloads.length; i++) {
+        try {
+          const retryRun = await callActor(FALLBACK_ACTOR_ID, retryPayloads[i]);
+          if (!retryRun?.defaultDatasetId) continue;
+
+          const fetchLimit = Math.max(5, Number(limit) * 3 || 20);
+          const listed = await client.dataset(retryRun.defaultDatasetId).listItems({ limit: fetchLimit });
+          const retryItems = Array.isArray(listed?.items) ? listed.items : [];
+          console.log(`[post-clone] dataset ${retryRun.defaultDatasetId} (actor=${FALLBACK_ACTOR_ID}, payload #${i + 1}): ${retryItems.length} item(s) fetched (limit=${fetchLimit})`);
+
+          if (hasPostSignals(retryItems)) {
+            items = retryItems;
+            actorUsed = FALLBACK_ACTOR_ID;
+            break;
+          }
+
+          const firstError = asText(retryItems?.[0]?.error).toLowerCase();
+          if (firstError) {
+            console.warn(`[post-clone] fallback payload #${i + 1} returned error item: ${firstError}`);
+          } else {
+            console.warn(`[post-clone] fallback payload #${i + 1} returned no post-like rows`);
+          }
+        } catch (err) {
+          retryErr = err;
+        }
+      }
+
+      if (!hasPostSignals(items) && retryErr) {
+        console.warn(`[post-clone] retry via ${FALLBACK_ACTOR_ID} failed: ${retryErr.message}`);
+      }
+
+      // Additional fallback: community actor shape (directUrls + posts mode).
+      if (!hasPostSignals(items)) {
+        try {
+          const communityPayload = {
+            directUrls: [url],
+            resultsType: 'posts',
+            resultsLimit: Math.max(1, Math.min(200, boundedLimit)),
+            addParentData: false,
+            ...(loginCookies ? { loginCookies } : {}),
+          };
+          const communityRun = await callActor(COMMUNITY_POSTS_ACTOR_ID, communityPayload);
+          if (communityRun?.defaultDatasetId) {
+            const fetchLimit = Math.max(5, Number(limit) * 3 || 20);
+            const listed = await client.dataset(communityRun.defaultDatasetId).listItems({ limit: fetchLimit });
+            const communityItems = Array.isArray(listed?.items) ? listed.items : [];
+            console.log(`[post-clone] dataset ${communityRun.defaultDatasetId} (actor=${COMMUNITY_POSTS_ACTOR_ID}): ${communityItems.length} item(s) fetched (limit=${fetchLimit})`);
+            if (hasPostSignals(communityItems)) {
+              items = communityItems;
+              actorUsed = COMMUNITY_POSTS_ACTOR_ID;
+            }
+          }
+        } catch (err) {
+          console.warn(`[post-clone] retry via ${COMMUNITY_POSTS_ACTOR_ID} failed: ${err.message}`);
+        }
+      }
+
+      // Last-resort fallback: call Instagram web_profile_info directly with session cookie.
+      if (!hasPostSignals(items)) {
+        try {
+          const mapped = await fetchDirectIgProfilePosts(profileUsername, boundedLimit);
+          if (mapped.length > 0) {
+            console.log(`[post-clone] direct IG fallback recovered ${mapped.length} post item(s)`);
+            items = mapped;
+            actorUsed = 'direct-ig-web-profile';
+          }
+        } catch (err) {
+          console.warn(`[post-clone] direct IG fallback failed: ${err.message}`);
+        }
+      }
+    }
+  }
+
   return items;
 }
 
@@ -926,7 +1166,7 @@ async function safeJpegFromAnyImage(inputPath, tempFiles) {
 
 async function processOneSlide({
   post, i, apiKey, character, activeRefs, mode, baseReferenceImages,
-  characterId, tempFiles, firstSlideOriginal, firstSlideRecreated,
+  characterId, tempFiles, firstSlideOriginal, firstSlideRecreated, imageModel,
 }) {
   const rawUrl = post.imageUrls[i];
   const imageUrl = await resolveDownloadableImageUrl(rawUrl);
@@ -997,6 +1237,7 @@ async function processOneSlide({
     aspectRatio: '4:5',
     imageSize: '2K',
     referenceImages,
+    model: imageModel,
   });
 
   const galleryEntry = galleryManager.save({
@@ -1033,12 +1274,13 @@ async function processPostClone({
   activeRefs,
   baseReferenceImages,
   tempFiles,
+  imageModel,
 }) {
   const recreatedImages = [];
   const originalImages = [];
   const galleryIds = [];
   const isCarousel = post.type === 'carousel' && post.imageUrls.length > 1;
-  const slideArgs = { post, apiKey, character, activeRefs, mode, baseReferenceImages, characterId, tempFiles };
+  const slideArgs = { post, apiKey, character, activeRefs, mode, baseReferenceImages, characterId, tempFiles, imageModel };
 
   // --- Slide 0: always processed first (serves as reference for subsequent slides) ---
   let firstSlideOriginal = null;
@@ -1139,11 +1381,133 @@ function groupItemsByShortcode(items) {
   return [...merged, ...noCode];
 }
 
+function collectNestedPostsFromContainer(container) {
+  if (!container || typeof container !== 'object') return [];
+
+  const out = [];
+  const pushArray = (arr) => {
+    for (const entry of arr) {
+      if (!entry) continue;
+      out.push(entry?.node || entry);
+    }
+  };
+
+  // Common list shapes returned by profile actors
+  if (Array.isArray(container.latestPosts)) pushArray(container.latestPosts);
+  if (Array.isArray(container.latest_posts)) pushArray(container.latest_posts);
+  if (Array.isArray(container.posts)) pushArray(container.posts);
+  if (Array.isArray(container.timelineMedia)) pushArray(container.timelineMedia);
+  if (Array.isArray(container.timeline_media)) pushArray(container.timeline_media);
+
+  if (container.latestPosts && typeof container.latestPosts === 'object') {
+    if (Array.isArray(container.latestPosts.items)) pushArray(container.latestPosts.items);
+    if (Array.isArray(container.latestPosts.edges)) pushArray(container.latestPosts.edges);
+  }
+  if (container.latest_posts && typeof container.latest_posts === 'object') {
+    if (Array.isArray(container.latest_posts.items)) pushArray(container.latest_posts.items);
+    if (Array.isArray(container.latest_posts.edges)) pushArray(container.latest_posts.edges);
+  }
+
+  const edgeTimeline = container.edge_owner_to_timeline_media?.edges;
+  if (Array.isArray(edgeTimeline)) pushArray(edgeTimeline);
+  const edgeTimelineAlt = container.edgeOwnerToTimelineMedia?.edges;
+  if (Array.isArray(edgeTimelineAlt)) pushArray(edgeTimelineAlt);
+
+  // Some actor variants serialize or deeply nest latestPosts payloads.
+  const isPostLikeNode = (value) => {
+    if (!value || typeof value !== 'object') return false;
+    const typeName = asText(value.__typename || value.type || value.media_type || '').toLowerCase();
+    if (typeName.includes('graphimage') || typeName.includes('graphvideo') || typeName.includes('graphsidecar')) return true;
+
+    const hasIdentity = !!(asText(value.shortCode || value.shortcode || value.code || value.id));
+    const hasMediaHint = !!(
+      asText(value.displayUrl || value.display_url || value.thumbnailSrc || value.thumbnail_src || value.imageUrl || value.image_url || value.videoUrl || value.video_url || value.url)
+      || value.image_versions2
+      || value.edge_sidecar_to_children
+      || value.edgeSidecarToChildren
+    );
+    return hasIdentity && hasMediaHint;
+  };
+
+  const deepCollect = (root, maxDepth = 5) => {
+    const found = [];
+    const seen = new Set();
+    const stack = [{ value: root, depth: 0 }];
+
+    while (stack.length > 0) {
+      const { value, depth } = stack.pop();
+      if (value == null || depth > maxDepth) continue;
+
+      if (typeof value === 'string') {
+        const text = value.trim();
+        if ((text.startsWith('{') || text.startsWith('['))) {
+          try {
+            stack.push({ value: JSON.parse(text), depth: depth + 1 });
+          } catch { /* ignore malformed embedded JSON */ }
+        }
+        continue;
+      }
+
+      if (Array.isArray(value)) {
+        for (const entry of value) stack.push({ value: entry, depth: depth + 1 });
+        continue;
+      }
+
+      if (typeof value !== 'object') continue;
+      if (seen.has(value)) continue;
+      seen.add(value);
+
+      if (isPostLikeNode(value)) found.push(value);
+
+      for (const v of Object.values(value)) {
+        if (v && (typeof v === 'object' || typeof v === 'string')) {
+          stack.push({ value: v, depth: depth + 1 });
+        }
+      }
+    }
+
+    return found;
+  };
+
+  if (out.length === 0 && container.latestPosts !== undefined) {
+    const recovered = deepCollect(container.latestPosts);
+    if (recovered.length > 0) {
+      out.push(...recovered);
+      console.log(`[post-clone] recovered ${recovered.length} post node(s) from nested latestPosts payload`);
+    }
+  }
+
+  return out;
+}
+
+function expandProfileContainerItems(items) {
+  const expanded = [];
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!item || typeof item !== 'object') continue;
+
+    const nested = collectNestedPostsFromContainer(item);
+
+    if (nested.length > 0) {
+      for (const n of nested) expanded.push(n);
+      continue;
+    }
+
+    expanded.push(item);
+  }
+
+  if (expanded.length !== (Array.isArray(items) ? items.length : 0)) {
+    console.log(`[post-clone] expanded profile container items: ${(Array.isArray(items) ? items.length : 0)} -> ${expanded.length}`);
+  }
+  return expanded;
+}
+
 function normalizePostsFromItems(items) {
+  const normalizedInput = expandProfileContainerItems(items || []);
+
   // --- Diagnostic logging of raw Apify dataset ---
-  console.log(`[post-clone] normalizePostsFromItems: ${(items || []).length} item(s)`);
-  for (let i = 0; i < (items || []).length; i++) {
-    const item = items[i];
+  console.log(`[post-clone] normalizePostsFromItems: ${(normalizedInput || []).length} item(s)`);
+  for (let i = 0; i < (normalizedInput || []).length; i++) {
+    const item = normalizedInput[i];
     if (!item || typeof item !== 'object') continue;
     const keys = Object.keys(item);
     const typeName = asText(item.type || item.__typename || item.productType || '');
@@ -1159,7 +1523,7 @@ function normalizePostsFromItems(items) {
   }
 
   // Check for error items returned by Apify (restricted pages, login walls, etc.)
-  const errorItem = (items || []).find((item) => {
+  const errorItem = (normalizedInput || []).find((item) => {
     if (item?.restricted === true || item?.isRestricted === true) return true;
     const err = asText(item?.error).toLowerCase();
     if (!err) return false;
@@ -1197,7 +1561,7 @@ function normalizePostsFromItems(items) {
   }
 
   // Group items by shortcode to merge carousel slides returned as separate items
-  const grouped = groupItemsByShortcode(items || []);
+  const grouped = groupItemsByShortcode(normalizedInput || []);
 
   const posts = [];
   for (const item of grouped) {
@@ -1205,13 +1569,13 @@ function normalizePostsFromItems(items) {
     if (!extracted) continue;
     posts.push(extracted);
   }
-  if (posts.length === 0 && items.length > 0) {
-    console.warn(`[post-clone] ${items.length} item(s) from Apify but 0 had extractable images. First item keys: ${Object.keys(items[0] || {}).join(', ')}`);
+  if (posts.length === 0 && normalizedInput.length > 0) {
+    console.warn(`[post-clone] ${normalizedInput.length} item(s) from Apify but 0 had extractable images. First item keys: ${Object.keys(normalizedInput[0] || {}).join(', ')}`);
   }
   return posts;
 }
 
-async function handleClone({ url, characterId, mode, postLimit = 1, apifyApiKey, profileMode = false }) {
+async function handleClone({ url, characterId, mode, postLimit = 1, apifyApiKey, profileMode = false, imageModel }) {
   const deadline = Date.now() + (profileMode ? PROFILE_ROUTE_TIMEOUT_MS : ROUTE_TIMEOUT_MS);
   const cleanUrl = asText(url);
   if (!cleanUrl || !isHttpUrl(cleanUrl)) {
@@ -1357,6 +1721,7 @@ async function handleClone({ url, characterId, mode, postLimit = 1, apifyApiKey,
           activeRefs,
           baseReferenceImages,
           tempFiles,
+          imageModel,
         }).then(processed => ({ ok: true, idx, processed }))
           .catch(postErr => {
             console.warn(`[post-clone] post ${idx + 1}/${selected.length} failed: ${postErr.message}`);
@@ -1418,12 +1783,13 @@ async function handleClone({ url, characterId, mode, postLimit = 1, apifyApiKey,
  */
 router.post('/', async (req, res, next) => {
   try {
-    const { postUrl, characterId, mode = 'exact', apifyApiKey } = req.body || {};
+    const { postUrl, characterId, mode = 'exact', apifyApiKey, imageModel } = req.body || {};
     const data = await handleClone({
       url: postUrl,
       characterId,
       mode: asText(mode).toLowerCase() || 'exact',
       apifyApiKey,
+      imageModel,
       postLimit: 1,
       profileMode: false,
     });

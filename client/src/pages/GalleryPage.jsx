@@ -95,7 +95,12 @@ export default function GalleryPage() {
   // Load gallery
   const load = async () => {
     setLoadingList(true);
-    try { const res = await galleryApi.list(); setImages(res.images || res || []); } catch { notify('Failed to load gallery. Check your server connection.', 'error'); }
+    try {
+      const res = await galleryApi.list();
+      setImages(res.images || res || []);
+    } catch (err) {
+      notify(err?.message || 'Failed to load gallery. Check your server connection.', 'error');
+    }
     setLoadingList(false);
   };
 
@@ -244,28 +249,28 @@ export default function GalleryPage() {
   return (
     <div className="space-y-4 animate-in">
       {/* Header row */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
+      <div className="flex items-start sm:items-center justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-gradient">Gallery</h1>
-          <p className="text-zinc-500 text-sm mt-1">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Gallery</h1>
+          <p className="text-zinc-500 text-xs sm:text-sm mt-1">
             {images.length} images{filteredImages.length !== images.length && ` · ${filteredImages.length} matching`}
             {visibleCount < filteredImages.length && ` · Showing ${visibleCount}`}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
           {bulkMode ? (
             <>
-              <span className="text-sm text-zinc-400">{selectedIds.size} selected</span>
-              <Btn variant="secondary" onClick={selectedIds.size === filteredImages.length ? deselectAll : selectAll} disabled={bulkLoading}>
-                {selectedIds.size === filteredImages.length ? 'Deselect All' : 'Select All'}
+              <span className="text-xs sm:text-sm text-zinc-400">{selectedIds.size} sel</span>
+              <Btn variant="secondary" onClick={selectedIds.size === filteredImages.length ? deselectAll : selectAll} disabled={bulkLoading} className="!px-2.5 !py-1.5 !text-xs sm:!px-4 sm:!py-2.5 sm:!text-sm">
+                {selectedIds.size === filteredImages.length ? 'Deselect' : 'Select All'}
               </Btn>
-              <Btn variant="secondary" onClick={handleBulkDownload} disabled={selectedIds.size === 0 || bulkLoading}>
-                Download
+              <Btn variant="secondary" onClick={handleBulkDownload} disabled={selectedIds.size === 0 || bulkLoading} className="!px-2.5 !py-1.5 !text-xs sm:!px-4 sm:!py-2.5 sm:!text-sm">
+                DL
               </Btn>
-              <Btn variant="danger" onClick={() => setBulkDeleteConfirm(true)} disabled={selectedIds.size === 0 || bulkLoading}>
-                Delete
+              <Btn variant="danger" onClick={() => setBulkDeleteConfirm(true)} disabled={selectedIds.size === 0 || bulkLoading} className="!px-2.5 !py-1.5 !text-xs sm:!px-4 sm:!py-2.5 sm:!text-sm">
+                Del
               </Btn>
-              <Btn variant="secondary" onClick={exitBulkMode} disabled={bulkLoading}>Cancel</Btn>
+              <Btn variant="secondary" onClick={exitBulkMode} disabled={bulkLoading} className="!px-2.5 !py-1.5 !text-xs sm:!px-4 sm:!py-2.5 sm:!text-sm">Cancel</Btn>
             </>
           ) : (
             <>
@@ -379,7 +384,7 @@ export default function GalleryPage() {
 
       {/* Content */}
       {loadingList ? (
-        <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-6 space-y-6">
+        <div className="columns-2 sm:columns-2 lg:columns-3 xl:columns-4 gap-3 sm:gap-6 space-y-3 sm:space-y-6">
           {Array.from({ length: 12 }).map((_, i) => (
             <div key={i} className="break-inside-avoid mb-6 rounded-2xl overflow-hidden bg-zinc-900">
               <Skeleton className="w-full aspect-[4/5]" />
@@ -395,7 +400,7 @@ export default function GalleryPage() {
       ) : filteredImages.length === 0 ? (
         <Empty icon="🔍" title="No images match" subtitle="Try adjusting your search or filters" />
       ) : (
-        <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-6 space-y-6">
+        <div className="columns-2 sm:columns-2 lg:columns-3 xl:columns-4 gap-3 sm:gap-6 space-y-3 sm:space-y-6">
           {visibleImages.map((img, index) => {
             const isSelected = selectedIds.has(img.id);
             return (

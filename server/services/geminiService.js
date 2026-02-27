@@ -1,13 +1,16 @@
 // server/services/geminiService.js
 
-const { GoogleGenAI, Modality } = require('@google/genai');
+const { GoogleGenAI, Modality, ThinkingLevel } = require('@google/genai');
 const crypto = require('node:crypto');
 const { AppError } = require('../middleware/errorHandler');
 const { dedupRequest } = require('../utils/dedup');
 const cfg = require('../config');
 
-// Hard-locked models — Nano Banana Pro for images, Flash for text/analysis
+// Default image model + allowed alternates
 const IMAGE_MODEL = 'gemini-3-pro-image-preview';
+const IMAGE_MODEL_ALTERNATES = ['gemini-3.1-flash-image-preview'];
+const ALLOWED_IMAGE_MODELS = [IMAGE_MODEL, ...IMAGE_MODEL_ALTERNATES];
+const MINIMAL_THINKING_IMAGE_MODELS = new Set(['gemini-3.1-flash-image-preview']);
 const TEXT_MODEL = 'gemini-3-flash-preview';
 
 // Timeout + retry defaults (from central config)
@@ -85,6 +88,7 @@ class GeminiService {
   async _generateImageInner(apiKey, prompt, options) {
   try {
     const genAI = getClient(apiKey);
+    const selectedImageModel = this.resolveImageModel(options.model);
     const config = {
       responseModalities: [Modality.TEXT, Modality.IMAGE],
       imageConfig: {
@@ -92,6 +96,9 @@ class GeminiService {
         imageSize: options.imageSize || "1K",
       },
     };
+    if (MINIMAL_THINKING_IMAGE_MODELS.has(selectedImageModel)) {
+      config.thinkingConfig = { thinkingLevel: ThinkingLevel.MINIMAL };
+    }
 
     // Retry loop: on safety blocks or empty responses, progressively sanitize
     // the prompt wording and retry. Also retries on transient network errors.
@@ -103,7 +110,7 @@ class GeminiService {
         const contentParts = this._buildImageGenerationParts(retryPrompt, options);
         const response = await withTimeout(
           genAI.models.generateContent({
-            model: IMAGE_MODEL,
+            model: selectedImageModel,
             contents: [{ role: 'user', parts: contentParts }],
             config,
           }),
@@ -114,7 +121,7 @@ class GeminiService {
         const parsed = this._parseImageResponse(response);
 
         if (parsed.imageResult) {
-          return { image: parsed.imageResult, text: parsed.textResult || null };
+          return { image: parsed.imageResult, text: parsed.textResult || null, modelUsed: selectedImageModel };
         }
 
         // Safety block, IMAGE_OTHER, or empty response — retry with adjustments
@@ -306,6 +313,19 @@ class GeminiService {
 
     parts.push({ text: prompt.trim() });
     return parts;
+  }
+
+  resolveImageModel(model) {
+    const requested = typeof model === 'string' ? model.trim() : '';
+    if (!requested) return IMAGE_MODEL;
+    if (!ALLOWED_IMAGE_MODELS.includes(requested)) {
+      throw new AppError(
+        `Unsupported image model "${requested}". Allowed: ${ALLOWED_IMAGE_MODELS.join(', ')}`,
+        400,
+        'VALIDATION_ERROR'
+      );
+    }
+    return requested;
   }
 
   /**
@@ -562,6 +582,8 @@ class GeminiService {
 }
 
 GeminiService.IMAGE_MODEL = IMAGE_MODEL;
+GeminiService.IMAGE_MODEL_ALTERNATES = IMAGE_MODEL_ALTERNATES;
+GeminiService.ALLOWED_IMAGE_MODELS = ALLOWED_IMAGE_MODELS;
 GeminiService.TEXT_MODEL = TEXT_MODEL;
 
 module.exports = new GeminiService();

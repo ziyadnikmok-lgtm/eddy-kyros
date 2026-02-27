@@ -9,12 +9,14 @@ import useImageLightbox from '../components/lightbox/useImageLightbox';
 import {
   RESOLUTION_TIERS, ASPECT_RATIOS_COMPACT as ASPECT_RATIOS,
   CAMERA_PROFILES, POSE_MODES, EXPRESSION_MODES, SCENE_MODES,
+  IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL,
 } from '../config/photoModes';
 
 const INITIAL_STATE = {
   mode: 'variation',
   aspectRatio: '4:5',
   resolutionTier: '2K',
+  imageModel: DEFAULT_IMAGE_MODEL,
   prompt: '',
   count: 4,
   randomSeed: true,
@@ -72,7 +74,7 @@ export default function BatchPage() {
   const { openLightbox, LightboxComponent } = useImageLightbox();
   const [state, update] = useReducer(formReducer, _cache.formState || INITIAL_STATE);
   const {
-    mode, aspectRatio, resolutionTier, prompt, count, randomSeed, tempMin, tempMax,
+    mode, aspectRatio, resolutionTier, imageModel, prompt, count, randomSeed, tempMin, tempMax,
     multiPrompts, charId, charDetail, overrideSets,
     selectedImageId, editPrompt, characterId, editCharacterDetail,
     editGalleryImages, editUploadImages, loadingEditGallery,
@@ -325,7 +327,7 @@ export default function BatchPage() {
     config.autoPose = poseMode === 'auto';
     config.expressionMode = useExpressionMode ? expressionMode : 'none';
     config.sceneMode = useSceneMode ? sceneMode : 'none';
-    const data = await batchApi.start({ mode, config, aspectRatio, resolutionTier });
+    const data = await batchApi.start({ mode, config, aspectRatio, resolutionTier, imageModel });
     update({ jobId: data.jobId });
     setJob(data);
     subscribe(data.jobId);
@@ -371,8 +373,8 @@ export default function BatchPage() {
   return (
     <div className="space-y-6 animate-in">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight text-gradient">Batch Generation</h1>
-        <p className="text-zinc-500 text-sm mt-1">Generate multiple images in parallel. Model: Nano Banana Pro.</p>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Batch Generation</h1>
+        <p className="text-zinc-500 text-sm mt-1">Generate multiple images in parallel.</p>
       </div>
 
       <Card className="space-y-5">
@@ -417,6 +419,19 @@ export default function BatchPage() {
               ))}
             </div>
           </div>
+        </div>
+
+        <div>
+          <span className="text-xs text-zinc-400 font-medium block mb-1.5">Image Model</span>
+          <select
+            value={imageModel}
+            onChange={(e) => update({ imageModel: e.target.value })}
+            className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
+          >
+            {IMAGE_MODEL_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
         </div>
 
         <Section title="Camera, Pose & Scene" hint="Control how images are shot — camera angle, body pose, facial expression, and environment.">

@@ -146,7 +146,7 @@ export default function ApiKeysPage() {
   return (
     <div className="space-y-6 animate-in">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight text-gradient">API Keys</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">API Keys</h1>
         <p className="text-zinc-500 text-sm mt-1">Manage Gemini and Apify API keys. Keys are encrypted at rest.</p>
       </div>
 

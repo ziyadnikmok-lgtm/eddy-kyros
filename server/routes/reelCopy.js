@@ -27,6 +27,8 @@ const { TEMP_DIR } = require('../paths');
 const ROUTE_TIMEOUT_MS = 5 * 60_000; // 5 min hard ceiling
 const DEFAULT_ACTOR_ID = process.env.APIFY_REEL_ACTOR_ID || 'apify/instagram-scraper';
 const MATCH_STRENGTHS = new Set(['soft', 'medium', 'strict']);
+const TATTOO_TERMS_REGEX = /\b(?:tattoo(?:s|ed|ing)?|body\s*ink|inked|inkwork|sleeve\s+tattoo|tribal\s+ink)\b/i;
+const TATTOO_SENTENCE_REGEX = /[^.!?\n]*\b(?:tattoo(?:s|ed|ing)?|body\s*ink|inked|inkwork|sleeve\s+tattoo|tribal\s+ink)\b[^.!?\n]*[.!?]?/gi;
 const parseMultipartIfNeeded = createMultipartParser({ maxBytes: 200 * 1024 * 1024 });
 
 function normalizeMatchStrength(value, fallback = 'medium') {
@@ -51,6 +53,39 @@ function parseJsonMaybe(value) {
   }
   if (typeof value === 'object') return value;
   return null;
+}
+
+function stripTattooMentions(text) {
+  const input = asText(text);
+  if (!input) return '';
+  if (!TATTOO_TERMS_REGEX.test(input)) return input.trim();
+
+  let cleaned = input
+    .replace(TATTOO_SENTENCE_REGEX, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  if (TATTOO_TERMS_REGEX.test(cleaned)) {
+    cleaned = cleaned
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => !TATTOO_TERMS_REGEX.test(line))
+      .join(' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+
+  return cleaned;
+}
+
+function stripTattoosFromSceneData(sceneData) {
+  if (!sceneData || typeof sceneData !== 'object') return sceneData;
+  const cleaned = { ...sceneData };
+  for (const [key, value] of Object.entries(cleaned)) {
+    if (typeof value === 'string') cleaned[key] = stripTattooMentions(value);
+  }
+  return cleaned;
 }
 
 function poseLockInstruction(level, stage = 'followup') {
@@ -280,7 +315,7 @@ function buildFirstFrameLockBlock(sceneData, poseStrength, envStrength, poseEnab
     'Non-negotiable lock points:',
     `- Exact environment/setting: ${sceneData.environment || 'match source exactly'}`,
     `- Exact lighting behavior and color temperature: ${sceneData.lighting || 'match source exactly'}`,
-    `- Exact camera/mirror angle and framing: ${sceneData.cameraAngle || 'match source exactly'}`,
+    `- Exact camera angle and framing: ${sceneData.cameraAngle || 'match source exactly'}`,
     `- Exact composition and background object placement: ${sceneData.composition || 'match source exactly'}`,
     sceneData.outfit ? `- OUTFIT LOCK (match exactly): ${sceneData.outfit}` : '- Wardrobe continuity lock: preserve garment structure, drape behavior, and silhouette exactly as in source.',
     sceneData.hair ? `- HAIR LOCK: ${sceneData.hair}` : null,
@@ -289,17 +324,23 @@ function buildFirstFrameLockBlock(sceneData, poseStrength, envStrength, poseEnab
     '- Strict character identity lock: preserve face and overall silhouette consistency from character references.',
     '- Identity priority rule: selected character references always override source-subject identity traits.',
     '- Do not copy the source person face or biometric identity; copy only pose/composition/scene/outfit.',
+    '- Tattoo exclusion: ignore tattoos/body ink from the source and do not render tattoos in output.',
     '- Keep proportions and styling consistent with the selected character identity lock.',
     sceneData.objects ? `- Accessories/objects lock: ${sceneData.objects}` : null,
-    '- Keep mirror selfie context and preserve same phone/device style seen in source frame.',
+    '- Only include objects/devices the subject is visibly holding in the source frame. Do NOT add a phone, camera, or any handheld object unless it is clearly present in the source.',
     '- Do not stylize, do not editorialize, do not swap location or lighting setup.',
   ].filter(Boolean).join('\n');
 }
 
-function buildFollowUpLockBlock({ firstGeneratedScene, targetScene, poseStrength, envStrength, poseEnabled, envEnabled, withSourceRef = true }) {
-  const outfitLock = firstGeneratedScene.outfit
-    ? `- OUTFIT LOCK (must match first frame exactly): ${firstGeneratedScene.outfit}`
-    : '- Keep same outfit material, garment structure, and drape behavior from frame 1 recreation.';
+function buildFollowUpLockBlock({ firstGeneratedScene, targetScene, poseStrength, envStrength, poseEnabled, envEnabled, withSourceRef = true, outfitTransition = false, targetOutfit = null, targetLighting = null }) {
+  let outfitLock;
+  if (outfitTransition && targetOutfit) {
+    outfitLock = `- OUTFIT TRANSITION (must wear a DIFFERENT outfit from first frame): ${targetOutfit}\n- This is an outfit-change transition — the character MUST be wearing the new outfit described above, NOT the first frame outfit.`;
+  } else {
+    outfitLock = firstGeneratedScene.outfit
+      ? `- OUTFIT LOCK (must match first frame exactly): ${firstGeneratedScene.outfit}`
+      : '- Keep same outfit material, garment structure, and drape behavior from frame 1 recreation.';
+  }
   const hairLock = firstGeneratedScene.hair
     ? `- HAIR LOCK (must match first frame): ${firstGeneratedScene.hair}`
     : null;
@@ -309,31 +350,38 @@ function buildFollowUpLockBlock({ firstGeneratedScene, targetScene, poseStrength
       '[REEL COPY LOCK - FOLLOW-UP CONTINUITY]',
       'Reference image rule:',
       '- Reference 1 = source last frame (POSE/EXPRESSION TARGET — copy this pose exactly).',
-      '- Reference 2 = recreated first frame (continuity anchor for environment/outfit/identity).',
+      outfitTransition
+        ? '- Reference 2 = recreated first frame (continuity anchor for environment ONLY — do NOT copy its outfit or lighting).'
+        : '- Reference 2 = recreated first frame (continuity anchor for environment/outfit/identity).',
       '- Remaining references = character identity images.',
       '',
       'HIGHEST PRIORITY: Match the exact pose, body position, arm placement, hand gesture, head tilt, and expression from Reference 1 (source last frame).',
       'Copy the pose from Reference 1 as precisely as possible. This is the single most important requirement.',
+      '- IDENTITY LOCK: Do NOT copy the face, skin tone, hair color, or body proportions from Reference 1. The character MUST look like the character reference images. Only copy pose and body position from Reference 1.',
+      '- Tattoo exclusion: ignore tattoos/body ink from source frames and do not generate tattoos in output.',
       '',
       'Continuity lock from reference 2 (must remain consistent):',
-      `- Keep the same indoor mirror-selfie vibe and lighting palette from reference 2.`,
-      `- Environment anchor: ${firstGeneratedScene.environment || 'same room style as reference 2'}`,
-      `- Lighting anchor: ${firstGeneratedScene.lighting || 'same lighting mood as reference 2'}`,
-      `- Camera anchor: ${firstGeneratedScene.cameraAngle || 'similar mirror-selfie camera relationship as reference 2'}`,
+      `- Keep the same environment/room structure from reference 2.`,
+      `- Environment anchor: ${firstGeneratedScene.environment || 'same setting as reference 2'}`,
+      outfitTransition && targetLighting
+        ? `- LIGHTING CHANGE: The lighting MUST change from the first frame. Apply this lighting: ${targetLighting}. Do NOT use the first frame's lighting.`
+        : `- Lighting anchor: ${firstGeneratedScene.lighting || 'same lighting mood as reference 2'}`,
+      `- Camera anchor: ${firstGeneratedScene.cameraAngle || 'similar camera angle/framing as reference 2'}`,
       envEnabled ? `- ${environmentLockInstruction(envStrength)}` : null,
       '- Minor background/detail differences are allowed; do not hard-copy every object position.',
       outfitLock,
       hairLock,
       '- Keep selected character identity appearance consistent.',
-      '- Identity priority rule: selected character references remain dominant over source-subject identity.',
+      '- Identity priority rule: selected character references ALWAYS override source-subject identity. Never copy face or identity from Reference 1.',
       '',
       'Pose target from Reference 1 (source last frame):',
       `- Target camera/framing: ${targetScene.framingStyle || targetScene.cameraAngle || 'match Reference 1 framing'}`,
       `- Target composition: ${targetScene.composition || 'match Reference 1 composition'}`,
       `- Target visible elements: ${targetScene.objects || 'match Reference 1 details'}`,
       poseEnabled ? `- ${poseLockInstruction(poseStrength, 'followup')}` : null,
-      '- Must not keep first-frame pose; explicitly change arm, phone, and head placement to match Reference 1 (source last frame).',
-      '- Do not change room, lighting rig, or device model while applying the pose change.',
+      '- Must not keep first-frame pose; explicitly change body position, arm placement, and head angle to match Reference 1 (source last frame).',
+      '- Only include objects/devices the subject is visibly holding in Reference 1. Do NOT add a phone, camera, or any handheld object unless clearly present in the source last frame.',
+      outfitTransition ? '- Do not change room structure while applying the pose change.' : '- Do not change room, lighting rig, or color temperature while applying the pose change.',
     ].filter(Boolean).join('\n');
   }
 
@@ -341,28 +389,34 @@ function buildFollowUpLockBlock({ firstGeneratedScene, targetScene, poseStrength
   return [
     '[REEL COPY LOCK - FOLLOW-UP CONTINUITY]',
     'Reference image rule:',
-    '- Reference 1 = recreated first frame (continuity anchor for environment/outfit/identity).',
+    outfitTransition
+      ? '- Reference 1 = recreated first frame (continuity anchor for environment/identity ONLY — do NOT copy its outfit).'
+      : '- Reference 1 = recreated first frame (continuity anchor for environment/outfit/identity).',
     '- Remaining references = character identity images.',
     '',
     'Continuity lock from reference 1 (must remain consistent):',
-    `- Keep the same indoor mirror-selfie vibe and lighting palette from reference 1.`,
-    `- Environment anchor: ${firstGeneratedScene.environment || 'same room style as reference 1'}`,
-    `- Lighting anchor: ${firstGeneratedScene.lighting || 'same lighting mood as reference 1'}`,
-    `- Camera anchor: ${firstGeneratedScene.cameraAngle || 'similar mirror-selfie camera relationship as reference 1'}`,
+    `- Keep the same environment/room structure from reference 1.`,
+    `- Environment anchor: ${firstGeneratedScene.environment || 'same setting as reference 1'}`,
+    outfitTransition && targetLighting
+      ? `- LIGHTING TRANSITION: Do NOT copy the first frame lighting. Use this lighting instead: ${targetLighting}`
+      : `- Lighting anchor: ${firstGeneratedScene.lighting || 'same lighting mood as reference 1'}`,
+    `- Camera anchor: ${firstGeneratedScene.cameraAngle || 'similar camera angle/framing as reference 1'}`,
     envEnabled ? `- ${environmentLockInstruction(envStrength)}` : null,
     '- Minor background/detail differences are allowed; do not hard-copy every object position.',
     outfitLock,
     hairLock,
     '- Keep selected character identity appearance consistent.',
     '- Identity priority rule: selected character references remain dominant over source-subject identity.',
+    '- Tattoo exclusion: ignore tattoos/body ink from source frames and do not generate tattoos in output.',
     '',
     'Pose target (from text description below — match as closely as possible):',
     `- Target camera/framing: ${targetScene.framingStyle || targetScene.cameraAngle || 'match target framing'}`,
     `- Target composition: ${targetScene.composition || 'match target composition'}`,
     `- Target visible elements: ${targetScene.objects || 'match target details'}`,
     poseEnabled ? `- ${poseLockInstruction(poseStrength, 'followup')}` : null,
-    '- Must not keep first-frame pose; explicitly change arm, phone, and head placement to match the pose description below.',
-    '- Do not change room, lighting rig, or device model while applying the pose change.',
+    '- Must not keep first-frame pose; explicitly change body position, arm placement, and head angle to match the pose description below.',
+    '- Only include objects/devices the subject is visibly holding in the target pose. Do NOT add a phone, camera, or any handheld object unless described in the pose target.',
+    outfitTransition ? '- Do not change room structure while applying the pose change. Lighting should match the source last frame.' : '- Do not change room, lighting rig, or color temperature while applying the pose change.',
   ].filter(Boolean).join('\n');
 }
 
@@ -373,14 +427,16 @@ async function derivePoseExpressionHint(apiKey, frameBase64, mimeType = 'image/j
     '- body orientation and weight distribution (front/side/three-quarter, which leg bears weight)',
     '- torso twist, shoulder angle, and spine curve',
     '- head tilt angle, chin position, and gaze direction (camera/away/down/over-shoulder)',
-    '- arm positions: phone hand (which hand, height, angle), free hand placement',
+    '- arm positions: each hand placement (height, angle, what it is holding or touching — only mention objects actually visible)',
     '- finger details: grip style, spread, pointing, resting position',
     '- expression specifics: mouth (open/closed/smirk/smile width), eyebrow position, eye intensity',
     '- overall energy level (relaxed/dynamic/tense/playful)',
+    'Ignore tattoos/body ink completely. Do not mention or describe tattoos.',
     'Output 7 short bullet lines in directive tone. No identity descriptors. No safety commentary.',
   ].join('\n');
 
-  return geminiService.analyzeImageWithPrompt(apiKey, frameBase64, mimeType, prompt);
+  const raw = await geminiService.analyzeImageWithPrompt(apiKey, frameBase64, mimeType, prompt);
+  return stripTattooMentions(raw);
 }
 
 async function recreateFrame({
@@ -389,10 +445,12 @@ async function recreateFrame({
   activeReferenceIds,
   apiKey,
   referenceImages,
+  imageModel,
   extraLockText = '',
   overrideSceneData = null,
 }) {
-  const sceneData = overrideSceneData || await sceneAnalyzer.analyzeScene(frameBase64, 'image/jpeg');
+  const rawSceneData = overrideSceneData || await sceneAnalyzer.analyzeScene(frameBase64, 'image/jpeg');
+  const sceneData = stripTattoosFromSceneData(rawSceneData);
   const promptBase = sceneAnalyzer.buildRecreationPrompt({
     sceneData,
     characterId,
@@ -421,6 +479,7 @@ async function recreateFrame({
     aspectRatio: '9:16',
     imageSize: '2K',
     referenceImages,
+    model: imageModel,
   });
 
   const stored = imageStore.store({
@@ -428,7 +487,7 @@ async function recreateFrame({
     characterId,
     activeReferenceIds,
     sceneDescription: JSON.stringify(sceneData),
-    modelUsed: geminiService.constructor.IMAGE_MODEL,
+    modelUsed: generated.modelUsed || null,
     seed: null,
     parentImageId: null,
     variationIndex: null,
@@ -454,6 +513,7 @@ async function recreateFrame({
     sceneData,
     image: generated.image,
     text: generated.text || null,
+    prompt,
   };
 }
 
@@ -467,7 +527,7 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
   let lastPath = '';
   const deadline = Date.now() + ROUTE_TIMEOUT_MS;
   try {
-    const { reelUrl, characterId, apifyApiKey, activeReferenceIds: clientRefIds } = req.body || {};
+    const { reelUrl, characterId, apifyApiKey, activeReferenceIds: clientRefIds, imageModel } = req.body || {};
     const uploadedVideo = req.file && req.file.buffer ? req.file : null;
     const cleanUrl = asText(reelUrl);
     const sourceFrames = parseJsonMaybe(req.body?.sourceFrames);
@@ -484,6 +544,7 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
     const poseMatchEnabled = parseBoolean(req.body?.poseMatchEnabled, true);
     const environmentMatchEnabled = parseBoolean(req.body?.environmentMatchEnabled, true);
     const useSourceFrameReference = parseBoolean(req.body?.useSourceFrameReference, false);
+    const outfitTransition = parseBoolean(req.body?.outfitTransition, false);
 
     if (!cleanUrl && !uploadedVideo && !hasProvidedFrames) {
       throw new AppError('Provide one source: "reelUrl", local video upload, or "sourceFrames"', 400, 'VALIDATION_ERROR');
@@ -558,9 +619,11 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
     }
 
     // Stage 1: recreate first frame with strict original-frame lock.
-    const firstSourceScene = sourceAnalysis?.firstSourceScene
-      || await sceneAnalyzer.analyzeScene(firstFrameBase64, firstFrameMimeType);
-    const firstPoseHint = asText(sourceAnalysis?.firstPoseHint)
+    const firstSourceScene = stripTattoosFromSceneData(
+      sourceAnalysis?.firstSourceScene
+      || await sceneAnalyzer.analyzeScene(firstFrameBase64, firstFrameMimeType)
+    );
+    const firstPoseHint = stripTattooMentions(asText(sourceAnalysis?.firstPoseHint))
       || await derivePoseExpressionHint(apiKey, firstFrameBase64, firstFrameMimeType);
 
     const firstLockText = `${buildFirstFrameLockBlock(
@@ -577,6 +640,7 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
         first = await recreateFrame({
           frameBase64: firstFrameBase64,
           characterId, activeReferenceIds, apiKey,
+          imageModel,
           referenceImages: [...referenceImages, { mimeType: firstFrameMimeType, base64Data: firstFrameBase64 }],
           extraLockText: firstLockText,
         });
@@ -586,6 +650,7 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
           first = await recreateFrame({
             frameBase64: firstFrameBase64,
             characterId, activeReferenceIds, apiKey,
+            imageModel,
             referenceImages,
             extraLockText: firstLockText,
           });
@@ -597,6 +662,7 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
       first = await recreateFrame({
         frameBase64: firstFrameBase64,
         characterId, activeReferenceIds, apiKey,
+        imageModel,
         referenceImages,
         extraLockText: firstLockText,
       });
@@ -606,19 +672,42 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
     if (Date.now() > deadline) {
       throw new AppError(`Reel copy timed out after ${ROUTE_TIMEOUT_MS / 1000}s (first frame done, second frame skipped)`, 504, 'REEL_COPY_TIMEOUT');
     }
-    const resolvedLastSourceScene = sourceAnalysis?.lastSourceScene
-      || await sceneAnalyzer.analyzeScene(lastFrameBase64, lastFrameMimeType);
-    const firstGeneratedScene = await sceneAnalyzer.analyzeScene(
-      first.image.base64Data,
-      first.image.mimeType || 'image/png'
+    const resolvedLastSourceScene = stripTattoosFromSceneData(
+      sourceAnalysis?.lastSourceScene
+      || await sceneAnalyzer.analyzeScene(lastFrameBase64, lastFrameMimeType)
+    );
+    const firstGeneratedScene = stripTattoosFromSceneData(
+      await sceneAnalyzer.analyzeScene(
+        first.image.base64Data,
+        first.image.mimeType || 'image/png'
+      )
     );
 
-    const lastPoseHint = asText(sourceAnalysis?.lastPoseHint)
+    const lastPoseHint = stripTattooMentions(asText(sourceAnalysis?.lastPoseHint))
       || await derivePoseExpressionHint(apiKey, lastFrameBase64, lastFrameMimeType);
 
     // Use first recreated frame's scene as the base prompt scene for the last frame.
     // This prevents the base prompt from describing the source last frame's scene
     // (which conflicts with the continuity lock and causes the model to ignore pose changes).
+    // When outfit transition is enabled, swap outfit in the base scene.
+    // Do NOT swap lighting here — the visual reference (first frame) would conflict with text.
+    // Lighting transition is driven by the lock block instruction instead.
+    const lastFrameOverrideScene = outfitTransition && resolvedLastSourceScene.outfit
+      ? { ...firstGeneratedScene, outfit: resolvedLastSourceScene.outfit }
+      : firstGeneratedScene;
+
+    const followUpLockParams = {
+      firstGeneratedScene,
+      targetScene: resolvedLastSourceScene,
+      poseStrength: poseMatchStrength,
+      envStrength: environmentMatchStrength,
+      poseEnabled: poseMatchEnabled,
+      envEnabled: environmentMatchEnabled,
+      outfitTransition,
+      targetOutfit: outfitTransition ? resolvedLastSourceScene.outfit : null,
+      targetLighting: outfitTransition ? resolvedLastSourceScene.lighting : null,
+    };
+
     let last;
     try {
       // Try with source last frame as visual pose reference (best quality).
@@ -627,20 +716,14 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
         characterId,
         activeReferenceIds,
         apiKey,
-        overrideSceneData: firstGeneratedScene,
+        imageModel,
+        overrideSceneData: lastFrameOverrideScene,
         referenceImages: [
           { mimeType: lastFrameMimeType, base64Data: lastFrameBase64 },
           { mimeType: first.image.mimeType || 'image/png', base64Data: first.image.base64Data },
           ...referenceImages,
         ],
-        extraLockText: `${buildFollowUpLockBlock({
-          firstGeneratedScene,
-          targetScene: resolvedLastSourceScene,
-          poseStrength: poseMatchStrength,
-          envStrength: environmentMatchStrength,
-          poseEnabled: poseMatchEnabled,
-          envEnabled: environmentMatchEnabled,
-        })}\n\n[LAST FRAME POSE/EXPRESSION TARGET]\n${lastPoseHint}`,
+        extraLockText: `${buildFollowUpLockBlock(followUpLockParams)}\n\n[LAST FRAME POSE/EXPRESSION TARGET]\n${lastPoseHint}`,
       });
     } catch (refErr) {
       // If Gemini blocks/empties due to the source frame reference, fall back to text-only pose.
@@ -651,20 +734,13 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
           characterId,
           activeReferenceIds,
           apiKey,
-          overrideSceneData: firstGeneratedScene,
+          imageModel,
+          overrideSceneData: lastFrameOverrideScene,
           referenceImages: [
             { mimeType: first.image.mimeType || 'image/png', base64Data: first.image.base64Data },
             ...referenceImages,
           ],
-          extraLockText: `${buildFollowUpLockBlock({
-            firstGeneratedScene,
-            targetScene: resolvedLastSourceScene,
-            poseStrength: poseMatchStrength,
-            envStrength: environmentMatchStrength,
-            poseEnabled: poseMatchEnabled,
-            envEnabled: environmentMatchEnabled,
-            withSourceRef: false,
-          })}\n\n[LAST FRAME POSE/EXPRESSION TARGET]\n${lastPoseHint}`,
+          extraLockText: `${buildFollowUpLockBlock({ ...followUpLockParams, withSourceRef: false })}\n\n[LAST FRAME POSE/EXPRESSION TARGET]\n${lastPoseHint}`,
         });
       } else {
         throw refErr;
@@ -686,6 +762,7 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
           poseMatchEnabled,
           environmentMatchEnabled,
           useSourceFrameReference,
+          outfitTransition,
         },
         lockedFormat: { resolutionTier: '2K', aspectRatio: '9:16' },
         frames: {

@@ -161,7 +161,7 @@ export default function PromptBuilderPage() {
   return (
     <div className="space-y-6 animate-in">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold tracking-tight text-gradient">Prompt Builder</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Prompt Builder</h1>
         <div className="flex gap-2">
           {presets.length > 0 && (
             <Btn variant="ghost" onClick={() => setShowPresets(true)}>

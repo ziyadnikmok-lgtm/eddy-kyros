@@ -20,12 +20,13 @@ const RECREATE_TIMEOUT_MS = 15 * 60_000; // 15 min for recreate (matches profile
  */
 router.post('/', async (req, res, next) => {
   try {
-    const { profileUrl, characterId, postLimit = 5, mode = 'exact', apifyApiKey } = req.body || {};
+    const { profileUrl, characterId, postLimit = 5, mode = 'exact', apifyApiKey, imageModel } = req.body || {};
     const data = await postCloneRoute.handleClone({
       url: profileUrl,
       characterId,
       mode: (typeof mode === 'string' ? mode.trim().toLowerCase() : 'exact') || 'exact',
       apifyApiKey,
+      imageModel,
       postLimit: Math.max(1, Math.min(20, Number(postLimit) || 5)),
       profileMode: true,
     });
@@ -102,7 +103,7 @@ router.post('/fetch', async (req, res, next) => {
  */
 router.post('/recreate', async (req, res, next) => {
   try {
-    const { posts, characterId, mode = 'exact' } = req.body || {};
+    const { posts, characterId, mode = 'exact', imageModel } = req.body || {};
 
     if (!Array.isArray(posts) || posts.length === 0) {
       throw new AppError('"posts" array is required and must not be empty', 400, 'VALIDATION_ERROR');
@@ -163,6 +164,7 @@ router.post('/recreate', async (req, res, next) => {
             activeRefs,
             baseReferenceImages,
             tempFiles,
+            imageModel,
           }).then((processed) => ({ ok: true, idx, processed }))
             .catch((err) => {
               console.warn(`[profile-clone/recreate] post ${idx + 1}/${selected.length} failed: ${err.message}`);
