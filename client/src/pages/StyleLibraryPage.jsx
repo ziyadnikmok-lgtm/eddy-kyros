@@ -160,6 +160,7 @@ export default function StyleLibraryPage() {
             <div className="flex gap-2 items-center flex-wrap">
               <Btn variant="ghost" onClick={handleBackfill}>Backfill</Btn>
               <Btn variant="ghost" onClick={() => setShowImportModal(true)}>Import JSON</Btn>
+              <Btn variant="ghost" onClick={() => { const a = document.createElement('a'); a.href = '/api/style-library/export'; a.download = 'style-library.json'; a.click(); }}>Export JSON</Btn>
               <div className="relative">
                 <Btn variant="ghost" onClick={openDeleteMenu}>Delete...</Btn>
                 {showDeleteMenu && <DeleteMenu

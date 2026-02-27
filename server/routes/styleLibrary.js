@@ -66,6 +66,16 @@ router.get('/content-presets', (_req, res) => {
   res.json({ success: true, data: _contentPresets });
 });
 
+/** GET /api/style-library/export — download all atoms as JSON */
+router.get('/export', (_req, res) => {
+  const atoms = styleLibrary._store.map(({ id, category, text, tags, source, favorite }) => ({
+    category, text, tags, source: source?.type || 'unknown', favorite,
+  }));
+  res.setHeader('Content-Disposition', 'attachment; filename="style-library.json"');
+  res.setHeader('Content-Type', 'application/json');
+  res.json(atoms);
+});
+
 /** GET /api/style-library/:id — single atom */
 router.get('/:id', (req, res, next) => {
   try {
