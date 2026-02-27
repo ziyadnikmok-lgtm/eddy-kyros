@@ -146,6 +146,15 @@ export default function PromptBuilderPage() {
     navigator.clipboard.writeText(composedPrompt);
     notify('Prompt copied to clipboard', 'success');
   };
+  const copyAsJSON = () => {
+    const json = {};
+    for (const cat of activeSlots) {
+      if (slots[cat]) json[cat] = slots[cat].text;
+    }
+    if (!Object.keys(json).length) return;
+    navigator.clipboard.writeText(JSON.stringify(json, null, 2));
+    notify('Copied JSON to clipboard', 'success');
+  };
 
   // Send to generate page
   const sendToGenerate = () => {
@@ -342,6 +351,7 @@ export default function PromptBuilderPage() {
             <div className="flex gap-2">
               <Btn variant="primary" onClick={sendToGenerate}>Send to Generate</Btn>
               <Btn variant="ghost" onClick={copyPrompt}>Copy</Btn>
+              <Btn variant="ghost" onClick={copyAsJSON}>Copy JSON</Btn>
             </div>
           </div>
         ) : (

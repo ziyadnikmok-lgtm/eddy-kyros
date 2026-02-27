@@ -139,6 +139,19 @@ export default function StyleLibraryPage() {
     navigator.clipboard.writeText(composedPrompt);
     notify('Copied to clipboard', 'success');
   };
+  const copyAsJSON = () => {
+    if (!composedPrompt) return;
+    const json = {};
+    for (const line of composedPrompt.split('\n')) {
+      const idx = line.indexOf(':');
+      if (idx === -1) continue;
+      const cat = line.slice(0, idx).trim().toLowerCase();
+      const val = line.slice(idx + 1).trim();
+      if (cat && val) json[cat] = val;
+    }
+    navigator.clipboard.writeText(JSON.stringify(json, null, 2));
+    notify('Copied JSON to clipboard', 'success');
+  };
 
   const hasSelection = selectedIds.size > 0;
 
@@ -344,7 +357,10 @@ export default function StyleLibraryPage() {
 
               {/* Actions */}
               <div className="px-4 py-3 border-t border-zinc-800 space-y-2">
-                <Btn variant="primary" className="w-full" onClick={copyComposed}>Copy Prompt</Btn>
+                <div className="flex gap-2">
+                  <Btn variant="primary" className="flex-1" onClick={copyComposed}>Copy Prompt</Btn>
+                  <Btn variant="secondary" className="flex-1" onClick={copyAsJSON}>Copy JSON</Btn>
+                </div>
                 <Btn variant="danger" className="w-full" onClick={() => setConfirmAction({ label: `Delete ${selectedIds.size} selected atoms?`, onConfirm: deleteSelected })}>
                   Delete Selected
                 </Btn>
