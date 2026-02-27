@@ -1,0 +1,130 @@
+[
+  {
+    "id": "lifestyle-morning-routine",
+    "contentType": "lifestyle",
+    "name": "Morning Routine",
+    "description": "Cozy morning vibes with natural lighting",
+    "suggestedAtoms": {
+      "scene": "Sunlit bedroom or kitchen, morning light streaming through sheer curtains, warm wooden surfaces, scattered coffee table items",
+      "lighting": "Soft natural morning light, warm golden tones from side window, gentle highlights on skin, minimal shadows",
+      "camera": "Medium shot, slightly above eye level, shallow depth of field, natural phone camera perspective",
+      "pose": "Casual stretch or seated with coffee cup in hand, relaxed shoulders, one leg tucked under, leaning slightly forward",
+      "expression": "Sleepy-soft smile, half-lidded warm eyes, gentle lazy gaze toward camera, peaceful contentment",
+      "outfit": "Oversized worn-in t-shirt or silk robe, loose-fitting, fabric draping naturally off one shoulder, barefoot",
+      "vibe": "Warm, intimate, inviting morning energy, unposed authentic feel",
+      "format": "iPhone selfie feel, natural grain, slightly overexposed highlights, warm color cast"
+    }
+  },
+  {
+    "id": "lifestyle-gym-fit",
+    "contentType": "lifestyle",
+    "name": "Gym / Fitness",
+    "description": "Active lifestyle, workout energy",
+    "suggestedAtoms": {
+      "scene": "Modern gym interior, mirrored walls, weight rack in background, rubber floor, neutral industrial tones",
+      "lighting": "Overhead fluorescent mixed with window light, slight sheen on skin, bright even exposure",
+      "camera": "Full body or three-quarter shot, eye-level, moderate depth of field, mirror reflection angle",
+      "pose": "Mid-workout stance, one hand on hip, weight in other hand, weight on front foot, core engaged posture",
+      "expression": "Determined focus with hint of smirk, direct gaze, slightly raised chin, confident energy",
+      "outfit": "Fitted sports bra and high-waist leggings, moisture-wicking fabric clinging to form, sneakers, hair pulled back",
+      "vibe": "Motivated, disciplined, aspirational fitness energy",
+      "format": "Bright clean phone photo, slight contrast boost, crisp detail, Instagram-ready"
+    }
+  },
+  {
+    "id": "lifestyle-travel-explore",
+    "contentType": "lifestyle",
+    "name": "Travel / Explore",
+    "description": "Wanderlust, discovering new places",
+    "suggestedAtoms": {
+      "scene": "Scenic overlook or charming cobblestone street, colorful architecture, lush greenery or ocean backdrop, travel atmosphere",
+      "lighting": "Golden hour warm directional light, long shadows on ground, sun flare peeking around buildings",
+      "camera": "Wide to medium shot, slightly low angle, deep focus capturing both subject and scenery, 24-35mm perspective",
+      "pose": "Walking mid-stride looking over shoulder, or leaning on stone railing gazing at view, relaxed open posture",
+      "expression": "Genuine wide smile, eyes sparkling with wonder, windswept relaxed joy, looking slightly past camera",
+      "outfit": "Flowy summer dress or linen pants with crop top, sun hat, comfortable sandals, travel-ready layers",
+      "vibe": "Adventurous, free-spirited, wanderlust energy, candid discovery moment",
+      "format": "Travel photography aesthetic, rich saturated colors, slight lens flare, editorial travel magazine feel"
+    }
+  },
+  {
+    "id": "personality-coffee-chat",
+    "contentType": "personality",
+    "name": "Coffee Chat / Day Off",
+    "description": "Relatable personal moment, warm and approachable",
+    "suggestedAtoms": {
+      "scene": "Cozy cafe booth or home couch with throw blankets, coffee cup on wooden table, houseplants, soft textures everywhere",
+      "lighting": "Warm ambient lamp light mixed with soft window glow, golden tones, gentle wrap-around illumination",
+      "camera": "Close-up to medium shot, slightly below eye level creating intimacy, shallow bokeh background, 50mm feel",
+      "pose": "Leaning chin on hand, or holding coffee cup near face with both hands, crossed legs tucked on couch, relaxed lean",
+      "expression": "Warm genuine smile, crinkled eyes, slightly tilted head, looking directly at camera like talking to a friend",
+      "outfit": "Cozy oversized sweater or cardigan, messy-chic hair, minimal jewelry, reading glasses pushed up on head",
+      "vibe": "Approachable, warm, girl-next-door comfort, Sunday afternoon energy",
+      "format": "Warm-toned candid snapshot, slight soft focus, cozy color grading with amber highlights"
+    }
+  },
+  {
+    "id": "personality-glam-night",
+    "contentType": "personality",
+    "name": "Glam Night Out",
+    "description": "Dressed up, confident, going out energy",
+    "suggestedAtoms": {
+      "scene": "Upscale restaurant or rooftop bar, city lights bokeh, marble surfaces, champagne glass on table, evening ambiance",
+      "lighting": "Warm golden overhead pendants, candle glow from below, city light rim illumination, dramatic but flattering",
+      "camera": "Three-quarter shot, slightly low angle for power, shallow depth isolating subject from sparkling background",
+      "pose": "Standing with one hand on table, weight shifted to back hip, slight forward lean, chin up with confidence",
+      "expression": "Sultry confident half-smile, direct intense gaze, slightly lowered lids, powerful feminine energy",
+      "outfit": "Form-fitting satin midi dress, strappy heels, statement earrings catching light, clutch bag, glossy styled hair",
+      "vibe": "Confident, glamorous, powerful night-out energy, aspirational luxury",
+      "format": "Cinematic evening portrait, warm color grade, rich shadows, slightly desaturated background with warm highlights"
+    }
+  },
+  {
+    "id": "teasing-bedroom",
+    "contentType": "teasing",
+    "name": "Bedroom Intimate",
+    "description": "Soft intimate bedroom setting, tasteful allure",
+    "suggestedAtoms": {
+      "scene": "Soft bedroom with rumpled white linen sheets, warm lamp on nightstand, neutral tones, cozy intimate space",
+      "lighting": "Warm side lamp creating soft directional glow, gentle shadows, rim light on silhouette, intimate low-light atmosphere",
+      "camera": "Medium close-up, eye level, shallow depth of field, 50-85mm portrait lens feel, soft focus edges",
+      "pose": "Sitting on edge of bed, knees drawn up, arms wrapped loosely, looking over shoulder, relaxed natural positioning",
+      "expression": "Soft knowing look, slightly parted lips, warm heavy-lidded eyes, subtle playful energy, gentle come-hither gaze",
+      "outfit": "Silk camisole or oversized button-down shirt slightly unbuttoned, bare legs, minimal and effortless",
+      "vibe": "Intimate, warm, soft sensuality, tasteful allure without being explicit",
+      "format": "Soft warm bedroom portrait, slight grain, dreamy highlights, intimate amateur phone photo feel"
+    }
+  },
+  {
+    "id": "teasing-pool-beach",
+    "contentType": "teasing",
+    "name": "Pool / Beach",
+    "description": "Sun-kissed poolside or beach vibes",
+    "suggestedAtoms": {
+      "scene": "Infinity pool edge or white sand beach, turquoise water, palm tree shadows, poolside lounger, tropical setting",
+      "lighting": "Bright overhead sun with reflective water bounce light, sun-kissed highlights on skin, gentle shadow patterns from palms",
+      "camera": "Medium to full body shot, low angle looking up, bright airy exposure, wide depth of field, outdoor daylight quality",
+      "pose": "Lounging on side with propped elbow, or standing at water edge looking back over shoulder, confident open posture",
+      "expression": "Playful squint from sun, relaxed carefree smile, looking over sunglasses, summer joy energy",
+      "outfit": "Two-piece swimsuit or bikini, sarong wrap, oversized sunglasses on head, ankle bracelet, sun-warmed skin",
+      "vibe": "Carefree summer energy, sun-kissed glow, vacation paradise mood",
+      "format": "Bright saturated summer photo, slight overexposure, warm golden color cast, Instagram-worthy vacation feel"
+    }
+  },
+  {
+    "id": "engagement-question",
+    "contentType": "engagement",
+    "name": "Question / Poll",
+    "description": "Interactive, inviting audience participation",
+    "suggestedAtoms": {
+      "scene": "Clean minimal background, soft neutral wall or simple room setting, focus entirely on subject, no distracting elements",
+      "lighting": "Even soft front lighting, minimal shadows, bright and clear for text overlay readability, ring light quality",
+      "camera": "Close-up face and shoulders, direct front angle, sharp focus on eyes, slightly wide for text space around subject",
+      "pose": "Hand near chin in thinking gesture, or finger pointing upward, or both palms up in questioning gesture, engaging body language",
+      "expression": "Exaggerated curious look with raised eyebrows, or playful thoughtful pout, wide eyes inviting response, interactive energy",
+      "outfit": "Simple solid-color top that doesn't distract, clean aesthetic allowing text overlays to stand out",
+      "vibe": "Interactive, fun, community-building, conversation-starter energy",
+      "format": "Clean bright story-ready photo, high contrast, perfect for text overlay, vertical framing optimized"
+    }
+  }
+]
