@@ -33,7 +33,7 @@ const FALLBACK_ACTOR_ID = process.env.APIFY_POST_FALLBACK_ACTOR_ID || 'apify/ins
 const PROFILE_ACTOR_ID = process.env.APIFY_PROFILE_ACTOR_ID || 'apify/instagram-profile-scraper';
 const PROFILE_POSTS_ACTOR_ID = 'apify/instagram-post-scraper';
 const COMMUNITY_POSTS_ACTOR_ID = process.env.APIFY_COMMUNITY_POSTS_ACTOR_ID || 'shu8hvrXbJbY3Eb9W';
-const ANALYSIS_KEYS = ['lighting', 'camera', 'pose', 'expression', 'outfit', 'scene', 'accessories', 'details', 'format', 'full_prompt'];
+const ANALYSIS_KEYS = ['lighting', 'camera', 'pose', 'expression', 'outfit', 'scene', 'accessories', 'details', 'format', 'wig', 'full_prompt'];
 const TATTOO_TERMS_REGEX = /\b(?:tattoo(?:s|ed|ing)?|body\s*ink|inked|inkwork|sleeve\s+tattoo|tribal\s+ink)\b/i;
 const TATTOO_SENTENCE_REGEX = /[^.!?\n]*\b(?:tattoo(?:s|ed|ing)?|body\s*ink|inked|inkwork|sleeve\s+tattoo|tribal\s+ink)\b[^.!?\n]*[.!?]?/gi;
 const THUMB_MAX_AGE_MS = 30 * 60_000; // 30 min — auto-cleanup stale thumbnails
@@ -119,6 +119,7 @@ function parseStructuredAnalysis(rawText) {
     accessories: '',
     details: '',
     format: '',
+    wig: '',
     full_prompt: '',
   };
   const raw = asText(rawText);
@@ -232,14 +233,18 @@ function buildCharacterReferenceImages(characterId, activeRefs) {
   return refs;
 }
 
-function buildStructuredAnalysisPrompt(mode) {
+function buildStructuredAnalysisPrompt(mode, cosplayMode = false) {
   const creativeLine = mode === 'creative'
     ? `For the "scene" field, do not copy the original location literally. Create a unique reinterpretation that keeps the same vibe and lighting feel.`
     : 'For the "scene" field, recreate the original scene as faithfully as possible.';
 
+  const jsonKeys = cosplayMode
+    ? 'lighting, camera, pose, expression, outfit, scene, accessories, details, format, wig, full_prompt'
+    : 'lighting, camera, pose, expression, outfit, scene, accessories, details, format, full_prompt';
+
   return [
     'Analyze this image and respond in JSON only with these keys:',
-    'lighting, camera, pose, expression, outfit, scene, accessories, details, format, full_prompt',
+    jsonKeys,
     '',
     'IMPORTANT: Write each field as a DESCRIPTIVE NATURAL LANGUAGE sentence or short paragraph — NOT as comma-separated tags.',
     'Describe like you are briefing a human photographer. Be specific about relationships, cause-and-effect, and visual interactions.',
@@ -262,7 +267,12 @@ function buildStructuredAnalysisPrompt(mode) {
     'accessories: Describe all visible accessories with type, material, placement, and visual effect',
     'details: Describe color grading, film stock look, grain, contrast style, saturation, visual filters',
     'format: Describe the visual rendering style — photography type, post-processing aesthetic, visual treatment. IMPORTANT: Note the photo quality level — is it a casual phone photo, candid snapshot, amateur selfie, or professional studio shot? Include this in the description.',
-    'full_prompt: Write an optimal identity-agnostic image generation prompt following Nano-Banana formula: SCENE → LIGHTING → CAMERA → POSE → EXPRESSION → OUTFIT → ACCESSORIES → DETAILS → FORMAT. No identity descriptors (face, ethnicity, hair color, skin tone). Directive tone. One flowing natural language paragraph. START with "BRIGHTNESS X/10." where X is the score from your lighting analysis, then describe the scene. Weave the brightness score, shadow coverage percentage, and key/fill light details directly into the prompt text so the generator cannot ignore them. Example start: "BRIGHTNESS 3/10. Dark nighttime fire escape, 65% of frame in deep shadow, direct camera flash..." IMPORTANT: Include the EXACT outfit description with accurate coverage/fit — do NOT make clothing more modest or conservative than the original. CRITICAL: If the original is a casual/candid phone photo, explicitly state "casual phone photo quality" or "candid snapshot aesthetic" — do NOT describe it as a professional/studio shot.',
+    ...(cosplayMode ? [
+      'wig: COSPLAY MODE — Describe the wig/hair styling in detail: color (exact shade), length, cut, texture (straight/wavy/curly), styling (bangs, pigtails, updos), and any hair accessories. This wig MUST be worn by the character in the output. Example: "Long straight pastel blue wig reaching mid-back with blunt-cut bangs across the forehead, silky texture with subtle shine"',
+    ] : []),
+    cosplayMode
+      ? 'full_prompt: Write an identity-agnostic image generation prompt following Nano-Banana formula: SCENE → LIGHTING → CAMERA → POSE → EXPRESSION → OUTFIT → ACCESSORIES → DETAILS → FORMAT. No identity descriptors (face, ethnicity, skin tone) EXCEPT include the wig description — the character must wear the exact wig described in the "wig" field. Directive tone. One flowing natural language paragraph. START with "BRIGHTNESS X/10." Include the EXACT outfit description. Explicitly state the wig color, length, and styling in the prompt so it is not lost. CRITICAL: If the original is a casual/candid phone photo, explicitly state "casual phone photo quality".'
+      : 'full_prompt: Write an optimal identity-agnostic image generation prompt following Nano-Banana formula: SCENE → LIGHTING → CAMERA → POSE → EXPRESSION → OUTFIT → ACCESSORIES → DETAILS → FORMAT. No identity descriptors (face, ethnicity, hair color, skin tone). Directive tone. One flowing natural language paragraph. START with "BRIGHTNESS X/10." where X is the score from your lighting analysis, then describe the scene. Weave the brightness score, shadow coverage percentage, and key/fill light details directly into the prompt text so the generator cannot ignore them. Example start: "BRIGHTNESS 3/10. Dark nighttime fire escape, 65% of frame in deep shadow, direct camera flash..." IMPORTANT: Include the EXACT outfit description with accurate coverage/fit — do NOT make clothing more modest or conservative than the original. CRITICAL: If the original is a casual/candid phone photo, explicitly state "casual phone photo quality" or "candid snapshot aesthetic" — do NOT describe it as a professional/studio shot.',
     '',
     creativeLine,
     'Output strictly valid JSON object only.',
@@ -302,7 +312,7 @@ function buildCarouselDeltaPrompt(mode) {
   ].join('\n');
 }
 
-function buildGenerationPrompt({ character, activeRefs, mode, structured, isDelta }) {
+function buildGenerationPrompt({ character, activeRefs, mode, cosplayMode = false, structured, isDelta }) {
   const userPrompt = [
     mode === 'creative'
       ? 'Creative reinterpretation mode: keep vibe/lighting/story, allow scene creativity while preserving identity.'
@@ -315,11 +325,17 @@ function buildGenerationPrompt({ character, activeRefs, mode, structured, isDelt
     // Prevent Gemini from brightening dark scenes
     'LIGHTING FIDELITY — MANDATORY: The prompt contains a BRIGHTNESS X/10 score and shadow coverage percentage. You MUST honor these numbers precisely. A score of 3/10 means the image must be DARK — mostly shadows with localized light only. Do NOT brighten, add fill light, soften shadows, or illuminate dark scenes. If the prompt says "65% deep shadow" then 65% of your output frame must be in deep shadow. A nighttime flash photo must stay dark with harsh flash — do NOT turn it into soft twilight or blue hour. Match the described color temperature exactly.',
     // Reinforce identity anchor from reference images
-    'IDENTITY ANCHORING: The reference images provided show the EXACT person to depict. The generated face, body proportions, skin tone, and all physical features MUST match these reference photos precisely. Do NOT substitute, blend, or drift from the person shown in the references.',
+    cosplayMode
+      ? 'IDENTITY ANCHORING (COSPLAY MODE): The reference images show the EXACT person to depict. Match the face, body proportions, skin tone, and all physical features from references precisely. HOWEVER, IGNORE the hair in the reference images — the character is wearing a cosplay wig. Use the wig description from the prompt instead of the reference hair color/style.'
+      : 'IDENTITY ANCHORING: The reference images provided show the EXACT person to depict. The generated face, body proportions, skin tone, and all physical features MUST match these reference photos precisely. Do NOT substitute, blend, or drift from the person shown in the references.',
     // Prevent body proportion drift and clothing conservatism
     'BODY & OUTFIT FIDELITY: Maintain the character\'s exact body proportions as shown in reference images — do NOT reduce or minimize any body features. The outfit description must be rendered exactly as written — do NOT add extra fabric, raise necklines, lengthen hemlines, or make clothing more conservative than described. If the prompt says form-fitting, render it form-fitting.',
     'TATTOO EXCLUSION: Never add tattoos/body ink/tattoo-like markings to the generated output, even if tattoos were visible in source media.',
     REALISM_DIRECTIVE,
+    // Cosplay wig lock — reinforce wig description so it overrides reference hair
+    cosplayMode && structured.wig
+      ? `WIG LOCK — MANDATORY: The character MUST wear this exact wig: ${structured.wig}. This overrides the natural hair shown in reference images. Do NOT use the reference hair color or style — render the cosplay wig exactly as described.`
+      : null,
     // Explicitly reinforce pose and expression so body position (lying down, sitting, etc.) isn't lost
     structured.pose && structured.pose !== 'same as slide 1'
       ? `POSE LOCK — MANDATORY: ${structured.pose}. The character MUST be in this exact body position. Do NOT default to standing or sitting if the pose describes lying down, reclining, or any other non-upright position.`
@@ -337,8 +353,8 @@ function buildGenerationPrompt({ character, activeRefs, mode, structured, isDelt
   });
 }
 
-async function analyzeImageStructured(apiKey, imageBase64, mimeType, mode, sourceMeta, characterId) {
-  const analysisPrompt = buildStructuredAnalysisPrompt(mode);
+async function analyzeImageStructured(apiKey, imageBase64, mimeType, mode, sourceMeta, characterId, cosplayMode = false) {
+  const analysisPrompt = buildStructuredAnalysisPrompt(mode, cosplayMode);
   let raw = '';
   let parsed = {
     lighting: '',
@@ -350,6 +366,7 @@ async function analyzeImageStructured(apiKey, imageBase64, mimeType, mode, sourc
     accessories: '',
     details: '',
     format: '',
+    wig: '',
     full_prompt: '',
   };
   try {
@@ -429,6 +446,7 @@ async function analyzeCarouselDelta(apiKey, firstBase64, firstMimeType, currentB
     accessories: '',
     details: '',
     format: '',
+    wig: '',
     full_prompt: '',
   };
   try {
@@ -1165,7 +1183,7 @@ async function safeJpegFromAnyImage(inputPath, tempFiles) {
 }
 
 async function processOneSlide({
-  post, i, apiKey, character, activeRefs, mode, baseReferenceImages,
+  post, i, apiKey, character, activeRefs, mode, cosplayMode = false, baseReferenceImages,
   characterId, tempFiles, firstSlideOriginal, firstSlideRecreated, imageModel,
 }) {
   const rawUrl = post.imageUrls[i];
@@ -1212,14 +1230,14 @@ async function processOneSlide({
       );
     }
     structured = delta.parsed;
-    generationPrompt = buildGenerationPrompt({ character, activeRefs, mode, structured, isDelta: true });
+    generationPrompt = buildGenerationPrompt({ character, activeRefs, mode, cosplayMode, structured, isDelta: true });
     referenceImages = [
       { mimeType: firstSlideRecreated.mimeType, base64Data: firstSlideRecreated.base64Data },
     ];
   } else {
     let analysis;
     try {
-      analysis = await analyzeImageStructured(apiKey, base64Data, mimeType, mode, sourceMeta, characterId);
+      analysis = await analyzeImageStructured(apiKey, base64Data, mimeType, mode, sourceMeta, characterId, cosplayMode);
     } catch (err) {
       const msg = asText(err?.message).toLowerCase();
       if (!msg.includes('unable to process input image') && !msg.includes('invalid_argument')) throw err;
@@ -1227,10 +1245,10 @@ async function processOneSlide({
       buffer = fs.readFileSync(resolvedPath);
       mimeType = 'image/jpeg';
       base64Data = buffer.toString('base64');
-      analysis = await analyzeImageStructured(apiKey, base64Data, mimeType, mode, sourceMeta, characterId);
+      analysis = await analyzeImageStructured(apiKey, base64Data, mimeType, mode, sourceMeta, characterId, cosplayMode);
     }
     structured = analysis.parsed;
-    generationPrompt = buildGenerationPrompt({ character, activeRefs, mode, structured, isDelta: false });
+    generationPrompt = buildGenerationPrompt({ character, activeRefs, mode, cosplayMode, structured, isDelta: false });
   }
 
   const generated = await geminiService.generateImage(apiKey, generationPrompt, {
@@ -1269,6 +1287,7 @@ async function processPostClone({
   post,
   characterId,
   mode,
+  cosplayMode = false,
   apiKey,
   character,
   activeRefs,
@@ -1280,7 +1299,7 @@ async function processPostClone({
   const originalImages = [];
   const galleryIds = [];
   const isCarousel = post.type === 'carousel' && post.imageUrls.length > 1;
-  const slideArgs = { post, apiKey, character, activeRefs, mode, baseReferenceImages, characterId, tempFiles, imageModel };
+  const slideArgs = { post, apiKey, character, activeRefs, mode, cosplayMode, baseReferenceImages, characterId, tempFiles, imageModel };
 
   // --- Slide 0: always processed first (serves as reference for subsequent slides) ---
   let firstSlideOriginal = null;
@@ -1575,7 +1594,7 @@ function normalizePostsFromItems(items) {
   return posts;
 }
 
-async function handleClone({ url, characterId, mode, postLimit = 1, apifyApiKey, profileMode = false, imageModel }) {
+async function handleClone({ url, characterId, mode, cosplayMode = false, postLimit = 1, apifyApiKey, profileMode = false, imageModel }) {
   const deadline = Date.now() + (profileMode ? PROFILE_ROUTE_TIMEOUT_MS : ROUTE_TIMEOUT_MS);
   const cleanUrl = asText(url);
   if (!cleanUrl || !isHttpUrl(cleanUrl)) {
@@ -1716,6 +1735,7 @@ async function handleClone({ url, characterId, mode, postLimit = 1, apifyApiKey,
           post,
           characterId,
           mode,
+          cosplayMode,
           apiKey,
           character,
           activeRefs,
@@ -1783,11 +1803,12 @@ async function handleClone({ url, characterId, mode, postLimit = 1, apifyApiKey,
  */
 router.post('/', async (req, res, next) => {
   try {
-    const { postUrl, characterId, mode = 'exact', apifyApiKey, imageModel } = req.body || {};
+    const { postUrl, characterId, mode = 'exact', cosplayMode = false, apifyApiKey, imageModel } = req.body || {};
     const data = await handleClone({
       url: postUrl,
       characterId,
       mode: asText(mode).toLowerCase() || 'exact',
+      cosplayMode: !!cosplayMode,
       apifyApiKey,
       imageModel,
       postLimit: 1,

@@ -18,6 +18,7 @@ const DNA_LABELS = {
   accessories: { label: 'Accessories', color: 'text-orange-400', dot: 'bg-orange-400' },
   details: { label: 'Details', color: 'text-rose-400', dot: 'bg-rose-400' },
   format: { label: 'Format', color: 'text-zinc-400', dot: 'bg-zinc-400' },
+  wig: { label: 'Wig', color: 'text-violet-400', dot: 'bg-violet-400' },
 };
 
 // Module-level session cache — survives unmount/remount when navigating away and back
@@ -27,6 +28,7 @@ const _cache = {
   profileUrl: '',
   charId: '',
   mode: 'exact',
+  cosplayMode: false,
   result: [],
   fetchedPosts: [],
   selected: new Set(),
@@ -47,6 +49,7 @@ export default function PostClonePage() {
   const [postLimit, setPostLimit] = useState(_cache.postLimit);
   const [charId, setCharId] = useState(_cache.charId);
   const [mode, setMode] = useState(_cache.mode); // exact | creative
+  const [cosplayMode, setCosplayMode] = useState(_cache.cosplayMode);
   const [imageModel, setImageModel] = useState(_cache.imageModel);
   const [result, setResult] = useState(_cache.result);
   const [availability, setAvailability] = useState(_cache.availability);
@@ -74,6 +77,7 @@ export default function PostClonePage() {
   useEffect(() => { _cache.profileUrl = profileUrl; }, [profileUrl]);
   useEffect(() => { _cache.charId = charId; }, [charId]);
   useEffect(() => { _cache.mode = mode; }, [mode]);
+  useEffect(() => { _cache.cosplayMode = cosplayMode; }, [cosplayMode]);
   useEffect(() => { _cache.result = result; }, [result]);
   useEffect(() => { _cache.fetchedPosts = fetchedPosts; }, [fetchedPosts]);
   useEffect(() => { _cache.selected = selected; }, [selected]);
@@ -244,6 +248,7 @@ export default function PostClonePage() {
       posts: postsToClone,
       characterId: charId,
       mode,
+      cosplayMode,
       imageModel,
     });
     setResult(Array.isArray(data) ? data : []);
@@ -264,6 +269,7 @@ export default function PostClonePage() {
       postUrl: postUrl.trim(),
       characterId: charId,
       mode,
+      cosplayMode,
       imageModel,
     });
     setResult(Array.isArray(data) ? data : []);
@@ -322,6 +328,14 @@ export default function PostClonePage() {
                   onChange={(next) => setMode(next ? 'exact' : 'creative')}
                   label={mode === 'exact' ? 'Exact Scene Recreate' : 'Creative Reinterpretation'}
                 />
+                <Toggle
+                  checked={cosplayMode}
+                  onChange={setCosplayMode}
+                  label="Cosplay Mode"
+                />
+                {cosplayMode && (
+                  <p className="text-[10px] text-purple-400/80 -mt-2">Keeps wig color &amp; styling from the source instead of your character's natural hair.</p>
+                )}
                 <div className="flex flex-wrap gap-2">
                   <Badge color="blue">Locked: 2K</Badge>
                   <Badge color="blue">Locked: 4:5</Badge>
@@ -383,6 +397,14 @@ export default function PostClonePage() {
                   onChange={(next) => setMode(next ? 'exact' : 'creative')}
                   label={mode === 'exact' ? 'Exact Scene Recreate' : 'Creative Reinterpretation'}
                 />
+                <Toggle
+                  checked={cosplayMode}
+                  onChange={setCosplayMode}
+                  label="Cosplay Mode"
+                />
+                {cosplayMode && (
+                  <p className="text-[10px] text-purple-400/80 -mt-2">Keeps wig color &amp; styling from the source instead of your character's natural hair.</p>
+                )}
                 <div className="flex flex-wrap gap-2">
                   <Badge color="blue">Locked: 2K</Badge>
                   <Badge color="blue">Locked: 4:5</Badge>

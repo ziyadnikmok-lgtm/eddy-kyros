@@ -103,7 +103,7 @@ router.post('/fetch', async (req, res, next) => {
  */
 router.post('/recreate', async (req, res, next) => {
   try {
-    const { posts, characterId, mode = 'exact', imageModel } = req.body || {};
+    const { posts, characterId, mode = 'exact', cosplayMode = false, imageModel } = req.body || {};
 
     if (!Array.isArray(posts) || posts.length === 0) {
       throw new AppError('"posts" array is required and must not be empty', 400, 'VALIDATION_ERROR');
@@ -159,6 +159,7 @@ router.post('/recreate', async (req, res, next) => {
             post,
             characterId,
             mode: cleanMode,
+            cosplayMode: !!cosplayMode,
             apiKey,
             character,
             activeRefs,
