@@ -71,6 +71,8 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
   const { notify } = useApp();
   const { loading, run } = useAsync();
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [editingPrompt, setEditingPrompt] = useState(false);
+  const [promptDraft, setPromptDraft] = useState('');
 
   const addPrimaryImage = (e) => {
     const f = e.target.files?.[0];
@@ -101,21 +103,55 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
     notify('Character deleted', 'success');
     onDelete();
   });
+  const copyPrompt = () => {
+    navigator.clipboard.writeText(char.masterPrompt);
+    notify('Master prompt copied', 'success');
+  };
+  const savePrompt = () => run(async () => {
+    await charApi.update(char.id, { masterPrompt: promptDraft.trim() });
+    notify('Master prompt updated', 'success');
+    setEditingPrompt(false);
+    onUpdate();
+  });
+  const downloadImage = (url, name) => {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+  };
 
   const imgCount = char.primaryImageCount || 1;
 
   return (
     <Card className="animate-in space-y-4">
       <div className="flex items-start justify-between">
-        <div>
+        <div className="flex-1 min-w-0 mr-3">
           <h2 className="text-lg font-semibold">{char.name}</h2>
           <p className="text-xs text-zinc-500 mt-0.5 max-w-md line-clamp-2">{char.masterPrompt}</p>
+          <div className="flex gap-2 mt-2">
+            <button onClick={copyPrompt} className="text-xs text-zinc-400 hover:text-blue-400 transition cursor-pointer">Copy Prompt</button>
+            <button onClick={() => { setPromptDraft(char.masterPrompt); setEditingPrompt(true); }} className="text-xs text-zinc-400 hover:text-blue-400 transition cursor-pointer">Edit Prompt</button>
+          </div>
         </div>
         <div className="flex gap-2">
           <Btn variant="secondary" className="!text-xs !py-1.5" onClick={onAddRef}>+ Reference</Btn>
           <Btn variant="danger" className="!text-xs !py-1.5" onClick={() => setConfirmDelete({ type: 'character' })} disabled={loading}>Delete</Btn>
         </div>
       </div>
+
+      {/* Edit master prompt inline */}
+      {editingPrompt && (
+        <div className="space-y-2 p-3 rounded-lg border border-blue-500/30 bg-blue-500/5">
+          <textarea value={promptDraft} onChange={(e) => setPromptDraft(e.target.value)}
+            className="w-full bg-zinc-900/80 border border-zinc-700/60 rounded-lg p-3 text-sm text-zinc-200 min-h-[120px] focus:outline-none focus:ring-1 focus:ring-blue-500/50 resize-y" />
+          <div className="flex gap-2 justify-end">
+            <Btn variant="ghost" className="!text-xs !py-1.5" onClick={() => setEditingPrompt(false)}>Cancel</Btn>
+            <Btn className="!text-xs !py-1.5" onClick={savePrompt} disabled={loading || !promptDraft.trim()}>
+              {loading ? <Spinner size={14} /> : null} Save
+            </Btn>
+          </div>
+        </div>
+      )}
 
       {/* Primary reference images */}
       <div>
@@ -124,12 +160,18 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
           {Array.from({ length: imgCount }, (_, i) => (
             <div key={i} className="relative group w-20 h-20 rounded-lg overflow-hidden bg-zinc-900 border border-zinc-700/40">
               <img src={charApi.primaryImageUrl(char.id, i)} alt={`Primary ${i + 1}`} className="w-full h-full object-cover" loading="lazy" />
-              {imgCount > 1 && (
-                <button onClick={() => setConfirmDelete({ type: 'primary', index: i })}
-                  className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/70 text-red-400 text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer">
-                  ✕
+              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-1">
+                <button onClick={() => downloadImage(charApi.primaryImageUrl(char.id, i), `${char.name}-primary-${i + 1}.png`)}
+                  className="w-6 h-6 rounded-full bg-black/70 text-blue-400 text-xs flex items-center justify-center cursor-pointer" title="Download">
+                  ↓
                 </button>
-              )}
+                {imgCount > 1 && (
+                  <button onClick={() => setConfirmDelete({ type: 'primary', index: i })}
+                    className="w-6 h-6 rounded-full bg-black/70 text-red-400 text-xs flex items-center justify-center cursor-pointer" title="Delete">
+                    ✕
+                  </button>
+                )}
+              </div>
             </div>
           ))}
           {imgCount < 10 && (
@@ -149,6 +191,8 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
               <div className="flex items-center justify-between mb-1.5">
                 <Badge color={r.isActive ? 'blue' : 'zinc'}>{r.category}</Badge>
                 <div className="flex gap-1">
+                  <button onClick={() => downloadImage(charApi.refImageUrl(char.id, r.id), `${char.name}-${r.category}.png`)}
+                    className="text-xs text-zinc-500 hover:text-blue-400 cursor-pointer transition" title="Download image">↓</button>
                   <button onClick={() => toggleRef(r.id)} className={`text-xs px-1.5 py-0.5 rounded cursor-pointer transition ${r.isActive ? 'text-blue-400' : 'text-zinc-500 hover:text-zinc-300'}`}>
                     {r.isActive ? 'ON' : 'OFF'}
                   </button>

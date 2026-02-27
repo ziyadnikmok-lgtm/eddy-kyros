@@ -72,6 +72,20 @@ router.get('/:id', (req, res, next) => {
 });
 
 /**
+ * PATCH /api/characters/:id
+ * Update master prompt.
+ */
+router.patch('/:id', (req, res, next) => {
+  try {
+    const { masterPrompt } = req.body;
+    const character = referenceManager.updateMasterPrompt(req.params.id, masterPrompt);
+    res.json({ success: true, data: character });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * DELETE /api/characters/:id
  * Delete a character and all its references.
  */

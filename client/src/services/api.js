@@ -127,6 +127,7 @@ export const characters = {
   list: () => request('/characters'),
   get: (id) => request(`/characters/${id}`),
   create: (data) => request('/characters', { method: 'POST', body: data }),
+  update: (id, data) => request(`/characters/${id}`, { method: 'PATCH', body: data }),
   remove: (id) => request(`/characters/${id}`, { method: 'DELETE' }),
   addReference: (id, data) => request(`/characters/${id}/references`, { method: 'POST', body: data }),
   toggleReference: (id, refId) => request(`/characters/${id}/references/${refId}/toggle`, { method: 'PATCH' }),

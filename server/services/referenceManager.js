@@ -112,6 +112,22 @@ class ReferenceManager {
   }
 
   /**
+   * Update the master prompt for a character.
+   */
+  updateMasterPrompt(characterId, masterPrompt) {
+    if (!masterPrompt || typeof masterPrompt !== 'string' || masterPrompt.trim().length === 0) {
+      throw new AppError('"masterPrompt" is required', 400, 'VALIDATION_ERROR');
+    }
+    if (masterPrompt.length > 10000) {
+      throw new AppError('Master prompt must be under 10,000 characters', 400, 'VALIDATION_ERROR');
+    }
+    const { data, charDir } = this._findCharacterById(characterId);
+    data.masterPrompt = masterPrompt.trim();
+    this._writeCharacterJson(charDir, data);
+    return this._toSafeCharacter(data);
+  }
+
+  /**
    * Delete a character by ID.
    */
   deleteCharacter(characterId) {
