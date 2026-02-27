@@ -76,6 +76,9 @@ const { generateLimiter, batchLimiter, cloneLimiter } = require('./middleware/ra
 
 const app = express();
 
+// Trust reverse proxy (nginx/Cloudflare) so rate limiters see real client IPs
+app.set('trust proxy', 1);
+
 const PORT = cfg.PORT;
 const HOST = cfg.HOST;
 

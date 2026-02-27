@@ -51,6 +51,12 @@ if (fs.existsSync(presetsSource)) {
   fs.writeFileSync(path.join(SEED_DIR, 'contentTypePresets.json'), '[]\n');
 }
 
+// Copy niches from server/data if it exists (app config, not personal data)
+const nichesSource = path.join(__dirname, '..', 'server', 'data', 'niches.json');
+if (fs.existsSync(nichesSource)) {
+  fs.copyFileSync(nichesSource, path.join(SEED_DIR, 'niches.json'));
+}
+
 // Copy style library from server/data if it exists (ships as starter base)
 const styleLibSource = path.join(__dirname, '..', 'server', 'data', 'styleLibrary.json');
 if (fs.existsSync(styleLibSource)) {
