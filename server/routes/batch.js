@@ -92,6 +92,27 @@ router.post('/', parseMultipartIfNeeded, (req, res, next) => {
           source: 'generate',
         });
         normalizedConfig = { ...config, imageId: imported.imageId };
+      } else if (config.imageBase64 && typeof config.imageBase64 === 'string') {
+        // Inline base64 image (from client-side upload)
+        let base64Data = config.imageBase64.trim();
+        const dataUriMatch = base64Data.match(/^data:(image\/[\w.+-]+);base64,(.+)$/i);
+        const mimeType = dataUriMatch ? dataUriMatch[1] : (config.imageMimeType || 'image/png');
+        if (dataUriMatch) base64Data = dataUriMatch[2];
+        const imported = imageStore.store({
+          basePrompt: 'Uploaded base image',
+          characterId: null,
+          activeReferenceIds: null,
+          sceneDescription: null,
+          modelUsed: null,
+          seed: null,
+          parentImageId: null,
+          variationIndex: null,
+          image: { mimeType, base64Data },
+          source: 'generate',
+        });
+        normalizedConfig = { ...config, imageId: imported.imageId };
+        delete normalizedConfig.imageBase64;
+        delete normalizedConfig.imageMimeType;
       } else if (config.imageId && typeof config.imageId === 'string') {
         let inMemory = false;
         try {

@@ -278,8 +278,10 @@ export default function BatchPage() {
     } else if (mode === 'edit') {
       if (!selectedImageId) { notify('Select an image to edit', 'error'); return; }
       if (!editPrompt.trim()) { notify('Modification prompt required', 'error'); return; }
+      // Check if selected image is a local upload (not yet on server)
+      const uploadedImg = editUploadImages.find((img) => img.id === selectedImageId);
       config = {
-        imageId: selectedImageId,
+        ...(uploadedImg ? { imageBase64: uploadedImg.src } : { imageId: selectedImageId }),
         modificationPrompt: editPrompt.trim(),
         count,
         characterId: characterId || undefined,

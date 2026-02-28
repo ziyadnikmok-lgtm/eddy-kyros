@@ -514,6 +514,7 @@ class BatchGenerator extends EventEmitter {
       tasks.push({
         index: i,
         prompt: finalPrompt,
+        seed: taskCount > 1 ? crypto.randomInt(0, 2147483647) : undefined,
         characterId: disableCharacterIdentityLock ? null : (characterId || original.characterId),
         activeReferenceIds: disableCharacterIdentityLock
           ? null

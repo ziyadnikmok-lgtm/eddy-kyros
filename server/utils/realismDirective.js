@@ -14,7 +14,9 @@ const REALISM_DIRECTIVE = [
   '',
   'BODY LOCK: Clothing fits realistically without altering the underlying anatomical scale.',
   '',
-  'NEVER use these aesthetics: hyper-realistic, 8k, masterpiece, ultra HD, sharp focus, cinematic lighting, perfect bokeh, studio lighting, symmetrical face, anime, cartoon, CGI, digital painting.',
+  'DEPTH OF FIELD: Keep background sharpness consistent with a real phone camera. Do NOT add heavy artificial bokeh or background blur unless the prompt explicitly requests it. Phone cameras have deep depth of field — most of the frame should be in focus.',
+  '',
+  'NEVER use these aesthetics: hyper-realistic, 8k, masterpiece, ultra HD, sharp focus, cinematic lighting, perfect bokeh, heavy bokeh, studio lighting, symmetrical face, anime, cartoon, CGI, digital painting.',
   'The image should look like a natural photo posted on Instagram.',
   '[END PHOTOGRAPHY REALISM DIRECTIVE]',
 ].join('\n');

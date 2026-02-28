@@ -48,8 +48,10 @@ export function useBatchProgress() {
           pollingRef.current = null;
           return;
         }
-      } catch {
-        // swallow — retry on next tick
+      } catch (err) {
+        // 404 = job deleted/doesn't exist — stop polling
+        if (err?.status === 404) { pollingRef.current = null; return; }
+        // other errors — retry on next tick
       }
       if (jobIdRef.current === jid) {
         pollingRef.current = setTimeout(tick, POLL_INTERVAL_MS);

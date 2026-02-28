@@ -383,7 +383,7 @@ function buildLockedModificationPrompt({ direction, strictContinuityLock = true,
   return [
     'Maintain full strict 100% identity lock.',
     'Same scene, same camera style, same lighting.',
-    'Image quality lock: tack-sharp focus, crisp facial detail, high texture fidelity, no haze or soft-focus wash.',
+    'Image quality lock: tack-sharp focus, crisp facial detail, high texture fidelity, no haze or soft-focus wash. Preserve the same depth-of-field as the base image — do NOT add artificial background blur or bokeh that was not in the original.',
     wardrobeLine,
     'Subtle-change mode: micro-variation only (about 5-15% change from base image).',
     'Do not introduce dramatic new composition, distance, or body-position extremes.',

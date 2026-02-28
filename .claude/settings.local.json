@@ -26,7 +26,12 @@
       "Bash(npx --prefix client vite build:*)",
       "Bash(test:*)",
       "Bash(git init:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git branch:*)",
+      "Bash(git remote add:*)",
+      "Bash(git push:*)",
+      "WebFetch(domain:ai.google.dev)"
     ]
   }
 }
