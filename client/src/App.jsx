@@ -91,8 +91,20 @@ const NAV_SECTIONS = [
   },
 ];
 
-// Flat list for header label lookup
 const ALL_NAV_ITEMS = NAV_SECTIONS.flatMap((s) => s.items);
+
+const APP_VERSION = '8.0';
+
+function SidebarHeader() {
+  return (
+    <header className="flex h-14 items-center gap-2 border-b border-zinc-800/40 px-4">
+      <span className="text-sm font-semibold text-zinc-100 tracking-tight">Content Studio</span>
+      <span className="inline-flex items-center rounded-full border border-zinc-700/50 bg-zinc-800/60 px-1.5 py-px text-[9px] text-zinc-500 font-mono">
+        v{APP_VERSION}
+      </span>
+    </header>
+  );
+}
 
 const PAGE_DESCRIPTIONS = {
   generate: 'Create a single image with full control',
@@ -191,17 +203,7 @@ export default function App() {
       )}
 
       <aside className={`fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-zinc-800/50 bg-zinc-900/95 backdrop-blur-md transition-transform duration-250 lg:static lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        {/* Logo area with ambient glow */}
-        <div className="relative flex h-16 items-center gap-2.5 border-b border-zinc-800/40 px-5 overflow-hidden">
-          {/* Ambient glow behind logo */}
-          <div className="absolute -left-4 -top-4 w-24 h-24 rounded-full bg-blue-500/10 blur-2xl pointer-events-none" style={{ animation: 'glow-breathe 4s ease-in-out infinite' }} />
-          <div className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 text-sm font-bold text-white shadow-lg shadow-blue-600/30">AI</div>
-          <div className="relative">
-            <div className="text-sm font-semibold text-zinc-100 tracking-tight">Content Studio</div>
-            <div className="inline-flex items-center rounded-full border border-zinc-700/50 bg-zinc-800/60 px-1.5 py-px text-[9px] text-zinc-500 font-mono mt-0.5">v8.0</div>
-          </div>
-        </div>
-
+        <SidebarHeader />
         <nav className="flex-1 overflow-y-auto px-3 py-3">
           {NAV_SECTIONS.map((section, sIdx) => (
             <div key={section.label} className={`mb-1.5 ${sIdx > 0 ? 'pt-3 mt-1' : ''}`}>
