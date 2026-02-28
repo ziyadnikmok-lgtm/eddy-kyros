@@ -11,39 +11,6 @@ const LOGIN_TIMEOUT_MS = 90_000;
 const LOGIN_URL = 'https://www.instagram.com/accounts/login/';
 const { DATA_DIR } = require('../paths');
 const DEBUG_DIR = path.join(DATA_DIR, 'ig-debug');
-const isElectron = !!process.env.ELECTRON_USER_DATA;
-
-/**
- * In packaged Electron, Puppeteer's bundled Chromium lives inside the ASAR
- * archive and can't be executed. Resolve a usable Chrome/Chromium binary:
- * 1. Puppeteer's default cache (~/.cache/puppeteer/) — works in dev
- * 2. Common system Chrome locations on Windows
- */
-function resolveChromePath() {
-  if (!isElectron) return undefined; // let Puppeteer use its default
-
-  // Check common Windows Chrome locations
-  const candidates = [
-    process.env.CHROME_PATH,
-    process.env.PUPPETEER_EXECUTABLE_PATH,
-    // Standard Chrome install paths
-    path.join(process.env.PROGRAMFILES || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    path.join(process.env['PROGRAMFILES(X86)'] || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    // Edge (Chromium-based, works with Puppeteer)
-    path.join(process.env.PROGRAMFILES || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-    path.join(process.env['PROGRAMFILES(X86)'] || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-  ].filter(Boolean);
-
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      console.log(`[ig-auto-login] using system browser: ${candidate}`);
-      return candidate;
-    }
-  }
-
-  return undefined; // fall through — Puppeteer will try its cache
-}
 
 /**
  * Generate a 6-digit TOTP code from a base32 secret.
@@ -136,10 +103,8 @@ async function refreshInstagramSession() {
   let browser = null;
   try {
     console.log('[ig-auto-login] launching headless browser...');
-    const executablePath = resolveChromePath();
     browser = await puppeteer.launch({
       headless: 'new',
-      ...(executablePath ? { executablePath } : {}),
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -529,15 +494,6 @@ async function refreshInstagramSession() {
   } catch (err) {
     if (err instanceof AppError) throw err;
     console.error(`[ig-auto-login] unexpected error: ${err.message}`);
-    // Give a clear hint when Chrome binary isn't found in packaged Electron
-    const isBrowserNotFound = /could not find.*chrome|no usable browser|failed to launch/i.test(err.message);
-    if (isElectron && isBrowserNotFound) {
-      throw new AppError(
-        'Chrome or Edge browser not found on this system. Install Google Chrome or Microsoft Edge to use IG auto-login.',
-        500,
-        'BROWSER_NOT_FOUND'
-      );
-    }
     throw new AppError(
       `Instagram auto-login failed: ${err.message}`,
       502,
