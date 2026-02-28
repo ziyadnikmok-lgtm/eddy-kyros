@@ -32,11 +32,7 @@ export default function CharactersPage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Characters</h1>
-          <p className="text-zinc-500 text-sm mt-1">Identity-locked character profiles with reference images.</p>
-        </div>
+      <div className="flex items-center justify-end">
         <Btn onClick={() => setShowCreate(true)}>+ New Character</Btn>
       </div>
 

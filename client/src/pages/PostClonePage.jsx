@@ -288,11 +288,6 @@ export default function PostClonePage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Post Clone</h1>
-        <p className="text-zinc-500 text-sm mt-1">Clone single posts, carousels, or profile feeds with your selected character at locked 2K 4:5.</p>
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         <div className="lg:col-span-1 space-y-4">
           <Card className="space-y-4">

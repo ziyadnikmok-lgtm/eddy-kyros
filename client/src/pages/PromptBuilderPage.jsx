@@ -169,22 +169,19 @@ export default function PromptBuilderPage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Prompt Builder</h1>
-        <div className="flex gap-2">
-          {presets.length > 0 && (
-            <Btn variant="ghost" onClick={() => setShowPresets(true)}>
-              Presets ({presets.length})
-            </Btn>
-          )}
-          <Btn
-            variant="secondary"
-            onClick={handleAIFill}
-            disabled={suggesting || filledCount === 0 || emptyCategories.length === 0}
-          >
-            {suggesting ? <><Spinner size={14} /> Filling...</> : `AI Fill Gaps (${emptyCategories.length})`}
+      <div className="flex items-center justify-end gap-2 flex-wrap">
+        {presets.length > 0 && (
+          <Btn variant="ghost" onClick={() => setShowPresets(true)}>
+            Presets ({presets.length})
           </Btn>
-        </div>
+        )}
+        <Btn
+          variant="secondary"
+          onClick={handleAIFill}
+          disabled={suggesting || filledCount === 0 || emptyCategories.length === 0}
+        >
+          {suggesting ? <><Spinner size={14} /> Filling...</> : `AI Fill Gaps (${emptyCategories.length})`}
+        </Btn>
       </div>
 
       {/* Formula label */}

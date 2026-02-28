@@ -146,11 +146,6 @@ export default function ApiKeysPage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">API Keys</h1>
-        <p className="text-zinc-500 text-sm mt-1">Manage Gemini and Apify API keys. Keys are encrypted at rest.</p>
-      </div>
-
       <Card className="space-y-4">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">Live Health Check</h3>

@@ -374,11 +374,6 @@ export default function BatchPage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Batch Generation</h1>
-        <p className="text-zinc-500 text-sm mt-1">Generate multiple images in parallel.</p>
-      </div>
-
       <Card className="space-y-5">
         <div>
           <span className="text-sm text-zinc-400 font-medium mb-2 flex items-center gap-1.5">Mode <Hint text="Variation: same prompt, multiple outputs. Multi-Prompt: different prompt per image. Override: same scene, different references. Edit: modify an existing image." /></span>

@@ -349,15 +349,6 @@ export default function CarouselPage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Carousel Generator</h1>
-        <p className="text-zinc-500 text-sm mt-1">
-          {carouselMode === 'polls'
-            ? 'Create "This or That" engagement polls with AI-generated contrasting images.'
-            : 'Select a base image and generate follow-up carousel variations.'}
-        </p>
-      </div>
-
       {/* Mode Toggle */}
       <div className="flex rounded-lg bg-zinc-800/60 p-0.5 w-fit">
         {CAROUSEL_MODES.map(m => (

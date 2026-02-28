@@ -252,8 +252,7 @@ export default function GalleryPage() {
       {/* Header row */}
       <div className="flex items-start sm:items-center justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Gallery</h1>
-          <p className="text-zinc-500 text-xs sm:text-sm mt-1">
+          <p className="text-zinc-500 text-xs sm:text-sm">
             {images.length} images{filteredImages.length !== images.length && ` · ${filteredImages.length} matching`}
             {visibleCount < filteredImages.length && ` · Showing ${visibleCount}`}
           </p>

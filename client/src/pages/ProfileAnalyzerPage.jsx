@@ -237,8 +237,6 @@ export default function ProfileAnalyzerPage() {
   // ─── Render ───────────────────────────────────────────
   return (
     <div className="space-y-6 animate-in">
-      <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Profile Analyzer</h1>
-
       {/* Input Section */}
       <Card>
         <div className="flex gap-3 items-end flex-wrap">

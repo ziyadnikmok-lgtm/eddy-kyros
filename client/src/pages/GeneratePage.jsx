@@ -369,11 +369,6 @@ export default function GeneratePage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Generate</h1>
-        <p className="text-zinc-500 text-sm mt-1">Create images with full control over character, scene, and style.</p>
-      </div>
-
       {/* Welcome banner for new users */}
       {!activeKey && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-4">

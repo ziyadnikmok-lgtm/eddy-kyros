@@ -176,11 +176,6 @@ export default function ReelRecreatePage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Reel Copy</h1>
-        <p className="text-zinc-500 text-sm mt-1">Paste an Instagram reel URL to recreate first and last frame scenes with your selected character.</p>
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         <div className="lg:col-span-1 space-y-4">
           <Card className="space-y-4">
