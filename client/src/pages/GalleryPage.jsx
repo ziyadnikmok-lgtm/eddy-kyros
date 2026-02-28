@@ -22,19 +22,16 @@ export default function GalleryPage() {
   const { run } = useAsync();
   const { openLightbox, LightboxComponent } = useImageLightbox();
 
-  // Core data
   const [images, setImages] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [loadedImages, setLoadedImages] = useState(() => new Set());
 
-  // Filters & sort
   const [searchQuery, setSearchQuery] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
   const [ratioFilter, setRatioFilter] = useState('');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [sortBy, setSortBy] = useState('newest');
 
-  // Bulk mode
   const [bulkMode, setBulkMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
@@ -42,17 +39,14 @@ export default function GalleryPage() {
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
   const [showFilters, setShowFilters] = useState(false);
 
-  // Tag filtering
   const [tagFilter, setTagFilter] = useState([]);
   const [allTags, setAllTags] = useState([]);
   const [editingTagsId, setEditingTagsId] = useState(null);
   const [newTagInput, setNewTagInput] = useState('');
 
-  // Progressive loading
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const sentinelRef = useRef(null);
 
-  // Derived filter options
   const availableSources = useMemo(() => {
     const s = new Set(images.map((i) => i.source).filter(Boolean));
     return [...s].sort();
@@ -63,7 +57,6 @@ export default function GalleryPage() {
     return [...r].sort();
   }, [images]);
 
-  // Filtered + sorted images
   const filteredImages = useMemo(() => {
     let result = images;
     if (searchQuery) {
@@ -84,7 +77,6 @@ export default function GalleryPage() {
     } else if (sortBy === 'smallest') {
       result = [...result].sort((a, b) => (a.fileSize || 0) - (b.fileSize || 0));
     }
-    // 'newest' is the default order from the API
     return result;
   }, [images, searchQuery, sourceFilter, ratioFilter, favoritesOnly, tagFilter, sortBy]);
 
@@ -93,7 +85,6 @@ export default function GalleryPage() {
 
   const hasActiveFilters = searchQuery || sourceFilter || ratioFilter || favoritesOnly || tagFilter.length > 0;
 
-  // Load gallery
   const load = async () => {
     setLoadingList(true);
     try {
@@ -107,13 +98,10 @@ export default function GalleryPage() {
 
   const loadTags = () => { galleryApi.listTags().then(setAllTags).catch(() => {}); };
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- load() is an async launcher
   useEffect(() => { load(); loadTags(); }, []);
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- reset pagination on filter/data change
   useEffect(() => { setVisibleCount(PAGE_SIZE); }, [filteredImages]);
 
-  // Progressive loading observer
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el || visibleCount >= filteredImages.length) return undefined;
@@ -125,7 +113,6 @@ export default function GalleryPage() {
     return () => observer.disconnect();
   }, [visibleCount, filteredImages.length]);
 
-  // Handlers
   const handleDelete = (id) => run(async () => {
     await galleryApi.remove(id);
     setImages((prev) => prev.filter((i) => i.id !== id));
@@ -146,7 +133,6 @@ export default function GalleryPage() {
   };
 
   const handleToggleFavorite = useCallback((id) => {
-    // Optimistic update — flip immediately, revert on failure
     setImages((prev) => prev.map((i) => (i.id === id ? { ...i, isFavorite: !i.isFavorite } : i)));
     galleryApi.toggleFavorite(id).catch(() => {
       setImages((prev) => prev.map((i) => (i.id === id ? { ...i, isFavorite: !i.isFavorite } : i)));
@@ -160,7 +146,6 @@ export default function GalleryPage() {
       .catch(() => notify('Failed to copy prompt', 'error'));
   }
 
-  // Bulk handlers
   const toggleSelection = useCallback((id) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -235,7 +220,6 @@ export default function GalleryPage() {
     } catch (err) { notify(err.message || 'Failed to remove tag', 'error'); }
   };
 
-  // Formatters
   const formatDate = (iso) => {
     const d = new Date(iso);
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
@@ -249,7 +233,6 @@ export default function GalleryPage() {
 
   return (
     <div className="space-y-4 animate-in">
-      {/* Header row */}
       <div className="flex items-start sm:items-center justify-between gap-3 flex-wrap">
         <div>
           <p className="text-zinc-500 text-xs sm:text-sm">
@@ -281,10 +264,8 @@ export default function GalleryPage() {
         </div>
       </div>
 
-      {/* Search & Filters */}
       {images.length > 0 && (
         <div className="space-y-2">
-          {/* Primary row: search + filter toggle */}
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 text-sm pointer-events-none flex items-center [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]">
@@ -321,7 +302,6 @@ export default function GalleryPage() {
             </button>
           </div>
 
-          {/* Secondary row: collapsible filters */}
           {showFilters && (
             <div className="flex items-center gap-2 flex-wrap rounded-lg border border-zinc-700/50 bg-zinc-800/40 p-2.5 animate-in">
               {availableSources.length > 1 && (
@@ -384,7 +364,6 @@ export default function GalleryPage() {
         </div>
       )}
 
-      {/* Content */}
       {loadingList ? (
         <div className="columns-2 sm:columns-2 lg:columns-3 xl:columns-4 gap-3 sm:gap-6 space-y-3 sm:space-y-6">
           {Array.from({ length: 12 }).map((_, i) => (
@@ -425,7 +404,6 @@ export default function GalleryPage() {
                     onLoad={() => setLoadedImages((prev) => { const next = new Set(prev); next.add(img.id); return next; })}
                   />
 
-                  {/* Favorite star */}
                   <button
                     onClick={(e) => { e.stopPropagation(); handleToggleFavorite(img.id); }}
                     className={`absolute top-2 right-2 w-8 h-8 rounded-full flex items-center justify-center transition cursor-pointer ${
@@ -438,7 +416,6 @@ export default function GalleryPage() {
                     {img.isFavorite ? '★' : '☆'}
                   </button>
 
-                  {/* Bulk selection checkbox */}
                   {bulkMode && (
                     <button
                       onClick={(e) => { e.stopPropagation(); toggleSelection(img.id); }}
@@ -453,7 +430,6 @@ export default function GalleryPage() {
                     </button>
                   )}
 
-                  {/* Hover overlay actions (hidden in bulk mode) */}
                   {!bulkMode && (
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 flex flex-col justify-end p-3">
                       <div className="flex gap-1.5 pointer-events-auto">
@@ -487,7 +463,6 @@ export default function GalleryPage() {
                       <IconPin uniqueId={`gallery-tag-${img.id}`} size={14} aria-hidden />
                     </button>
                   </div>
-                  {/* Tags display */}
                   {Array.isArray(img.tags) && img.tags.length > 0 && (
                     <div className="flex flex-wrap gap-1">
                       {img.tags.map(tag => (
@@ -505,7 +480,6 @@ export default function GalleryPage() {
                       ))}
                     </div>
                   )}
-                  {/* Tag editor */}
                   {editingTagsId === img.id && (
                     <div className="flex items-center gap-1 mt-0.5">
                       <input type="text" placeholder="Add tag..." value={newTagInput}
@@ -524,7 +498,6 @@ export default function GalleryPage() {
       )}
       {visibleCount < filteredImages.length && <div ref={sentinelRef} className="h-px" />}
 
-      {/* Bulk delete confirmation modal */}
       <Modal open={bulkDeleteConfirm} onClose={() => setBulkDeleteConfirm(false)} title="Delete images">
         <p className="text-zinc-300 text-sm mb-4">
           Are you sure you want to delete <strong>{selectedIds.size}</strong> image{selectedIds.size !== 1 ? 's' : ''}? This cannot be undone.

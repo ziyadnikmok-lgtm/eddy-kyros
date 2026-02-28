@@ -17,7 +17,6 @@ function fileToBase64(file) {
   });
 }
 
-// Module-level session cache — survives unmount/remount when navigating away and back
 const _cache = {
   sceneData: null,
   editableScene: '',
@@ -46,7 +45,6 @@ export default function SceneRecreatePage() {
   const [result, setResult] = useState(_cache.result);
   const [history, setHistory] = useState(_cache.history);
 
-  // ── Session cache sync ──
   useEffect(() => { _cache.sceneData = sceneData; }, [sceneData]);
   useEffect(() => { _cache.editableScene = editableScene; }, [editableScene]);
   useEffect(() => { _cache.charId = charId; }, [charId]);
@@ -68,11 +66,9 @@ export default function SceneRecreatePage() {
 
   useEffect(() => {
     if (charId) charApi.get(charId).then(setCharDetail).catch(() => setCharDetail(null));
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear detail when no char selected
     else setCharDetail(null);
   }, [charId]);
 
-  // Revoke previous object URL when preview changes or on unmount
   useEffect(() => {
     return () => { if (preview) URL.revokeObjectURL(preview); };
   }, [preview]);
@@ -94,7 +90,6 @@ export default function SceneRecreatePage() {
     const base64 = dataUri.split(',')[1];
     const data = await sceneApi.analyze(base64, file.type);
     setSceneData(data);
-    // Build editable text from scene data
     const text = Object.entries(data).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join('\n');
     setEditableScene(text);
     notify('Scene analyzed!', 'success');
@@ -104,7 +99,6 @@ export default function SceneRecreatePage() {
     if (!sceneData) { notify('Analyze a scene first', 'error'); return; }
     if (!charId) { notify('Select a character', 'error'); return; }
 
-    // Parse editable text back into structured data
     const parsed = {};
     editableScene.split('\n').forEach((line) => {
       const idx = line.indexOf(':');
@@ -131,9 +125,7 @@ export default function SceneRecreatePage() {
   return (
     <div className="space-y-6 animate-in">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
-        {/* Left: Upload + Controls */}
         <div className="lg:col-span-1 space-y-4">
-          {/* Upload */}
           <Card className="space-y-4">
             <h3 className="text-lg font-medium text-zinc-200">1. Upload Scene Image</h3>
             <label className="flex items-center justify-center border-2 border-dashed border-zinc-700/80 rounded-lg cursor-pointer hover:border-zinc-500 transition h-40 overflow-hidden">
@@ -152,7 +144,6 @@ export default function SceneRecreatePage() {
             </Btn>
           </Card>
 
-          {/* Scene Analysis Preview */}
           {sceneData && (
             <Card className="space-y-3 animate-in">
               <h3 className="text-lg font-medium text-zinc-200">2. Scene Analysis</h3>
@@ -168,7 +159,6 @@ export default function SceneRecreatePage() {
             </Card>
           )}
 
-          {/* Character + Recreate */}
           {sceneData && (
             <Card className="space-y-4 animate-in">
               <h3 className="text-lg font-medium text-zinc-200">3. Recreate with Character</h3>
@@ -233,7 +223,6 @@ export default function SceneRecreatePage() {
           )}
         </div>
 
-        {/* Right: Result */}
         <div className="lg:col-span-2 space-y-4">
           {!recreating && !result && (
             <Card className="flex items-center justify-center py-24">
@@ -253,7 +242,6 @@ export default function SceneRecreatePage() {
             </Card>
           )}
 
-          {/* Side-by-side comparison */}
           {result && preview && (
             <div className="grid grid-cols-2 gap-4">
               <Card className="!p-2">

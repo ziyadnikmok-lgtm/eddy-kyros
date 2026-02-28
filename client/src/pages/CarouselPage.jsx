@@ -41,7 +41,6 @@ function fileToDataUrl(file) {
   });
 }
 
-// Module-level session cache — survives unmount/remount when navigating away and back
 const _cache = {
   executeJobIds: [],
   executeJobs: [],
@@ -91,10 +90,8 @@ export default function CarouselPage() {
   const [strictContinuityLock, setStrictContinuityLock] = useState(true);
   const [useCharacterRefsInFollowUp, setUseCharacterRefsInFollowUp] = useState(false);
 
-  // Carousel mode toggle (follow-up vs polls)
   const [carouselMode, setCarouselMode] = useState(_cache.carouselMode);
 
-  // Polls state
   const [pollTopic, setPollTopic] = useState(_cache.pollTopic);
   const [pollCount, setPollCount] = useState(_cache.pollCount);
   const [pollLoading, setPollLoading] = useState(false);
@@ -103,7 +100,6 @@ export default function CarouselPage() {
   const [pollJobIds, setPollJobIds] = useState(_cache.pollJobIds);
   const [completedPollSlides, setCompletedPollSlides] = useState(_cache.completedPollSlides);
 
-  // Sync state back to cache on changes
   useEffect(() => { _cache.executeJobIds = executeJobIds; }, [executeJobIds]);
   useEffect(() => { _cache.executeJobs = executeJobs; }, [executeJobs]);
   useEffect(() => { _cache.completedSlides = completedSlides; }, [completedSlides]);
@@ -167,13 +163,11 @@ export default function CarouselPage() {
         if (!cancelled) {
           const filtered = jobs.filter(Boolean);
           setExecuteJobs((prev) => mergeJobSnapshots(prev, filtered, executeJobIds));
-          // Stop polling once every job has finished — data stays in state
           if (filtered.length > 0 && filtered.every((j) => j.status !== 'running')) {
             clearInterval(intervalId);
           }
         }
       } catch {
-        // Keep previous job states during transient failures.
       }
     };
 
@@ -185,7 +179,6 @@ export default function CarouselPage() {
     };
   }, [executeJobIds]);
 
-  // Poll job polling
   useEffect(() => {
     if (!Array.isArray(pollJobIds) || pollJobIds.length === 0) return undefined;
     let cancelled = false;
@@ -200,7 +193,7 @@ export default function CarouselPage() {
             clearInterval(intervalId);
           }
         }
-      } catch { /* keep previous */ }
+      } catch { }
     };
     fetchPollJobs();
     intervalId = setInterval(fetchPollJobs, 2000);
@@ -209,7 +202,6 @@ export default function CarouselPage() {
 
   const isPollJobRunning = pollJobs.some(j => j?.status === 'running');
 
-  // Accumulate follow-up slides — append-only so images never flicker
   useEffect(() => {
     setCompletedSlides(prev => {
       const existing = new Set(prev.map(s => s._key));
@@ -226,7 +218,6 @@ export default function CarouselPage() {
     });
   }, [executeJobs]);
 
-  // Accumulate poll slides — same pattern
   useEffect(() => {
     setCompletedPollSlides(prev => {
       const existing = new Set(prev.map(s => s._key));
@@ -278,7 +269,6 @@ export default function CarouselPage() {
       return;
     }
 
-    // Start a fresh follow-up session: clear previous follow-up job cards/images.
     setCompletedSlides([]);
     setExecuteJobs([]);
     setExecuteJobIds([]);
@@ -349,7 +339,6 @@ export default function CarouselPage() {
 
   return (
     <div className="space-y-6 animate-in">
-      {/* Mode Toggle */}
       <div className="flex rounded-lg bg-zinc-800/60 p-0.5 w-fit">
         {CAROUSEL_MODES.map(m => (
           <button key={m.key} onClick={() => setCarouselMode(m.key)}
@@ -675,7 +664,6 @@ export default function CarouselPage() {
             </Btn>
           </Card>
 
-          {/* Poll questions preview */}
           {pollResults?.polls?.length > 0 && (
             <Card className="space-y-2">
               <h3 className="text-sm font-semibold text-zinc-300">Poll Questions</h3>

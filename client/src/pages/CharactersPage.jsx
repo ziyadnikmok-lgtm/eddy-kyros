@@ -136,7 +136,6 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
         </div>
       </div>
 
-      {/* Edit master prompt inline */}
       {editingPrompt && (
         <div className="space-y-2 p-3 rounded-lg border border-blue-500/30 bg-blue-500/5">
           <textarea value={promptDraft} onChange={(e) => setPromptDraft(e.target.value)}
@@ -150,7 +149,6 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
         </div>
       )}
 
-      {/* Primary reference images */}
       <div>
         <span className="text-sm text-zinc-400 font-medium block mb-2">Primary Images ({imgCount}/10)</span>
         <div className="flex gap-3 flex-wrap">
@@ -180,7 +178,6 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
         </div>
       </div>
 
-      {/* Style override references */}
       {char.references?.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {char.references.map((r) => (

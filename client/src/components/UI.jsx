@@ -4,12 +4,10 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { cn } from '../lib/utils';
 
-/* ── Spinner ────────────────────────────────────────── */
 export function Spinner({ size = 24, className = '' }) {
   return <div className={cn('spinner', className)} style={{ width: size, height: size }} />;
 }
 
-/* ── Button ─────────────────────────────────────────── */
 export function Btn({ children, variant = 'primary', className = '', disabled, ...props }) {
   const base = cn(
     'inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium',
@@ -31,7 +29,6 @@ export function Btn({ children, variant = 'primary', className = '', disabled, .
   );
 }
 
-/* ── Input ──────────────────────────────────────────── */
 export function Input({ label, required, className = '', ...props }) {
   return (
     <label className="flex flex-col gap-1.5 text-sm">
@@ -56,7 +53,6 @@ export function Input({ label, required, className = '', ...props }) {
   );
 }
 
-/* ── Textarea ───────────────────────────────────────── */
 export function Textarea({ label, required, className = '', ...props }) {
   return (
     <label className="flex flex-col gap-1.5 text-sm">
@@ -81,7 +77,6 @@ export function Textarea({ label, required, className = '', ...props }) {
   );
 }
 
-/* ── Select ─────────────────────────────────────────── */
 export function Select({ label, options = [], className = '', ...props }) {
   return (
     <label className="flex flex-col gap-1.5 text-sm">
@@ -105,7 +100,6 @@ export function Select({ label, options = [], className = '', ...props }) {
   );
 }
 
-/* ── Toggle ─────────────────────────────────────────── */
 export function Toggle({ checked, onChange, label }) {
   return (
     <label className="flex items-center gap-2.5 cursor-pointer select-none text-sm">
@@ -132,7 +126,6 @@ export function Toggle({ checked, onChange, label }) {
   );
 }
 
-/* ── Slider ─────────────────────────────────────────── */
 export function Slider({ label, value, onChange, min = 0, max = 2, step = 0.1, className = '' }) {
   return (
     <label className={cn('flex flex-col gap-1.5 text-sm', className)}>
@@ -150,7 +143,6 @@ export function Slider({ label, value, onChange, min = 0, max = 2, step = 0.1, c
   );
 }
 
-/* ── Card ───────────────────────────────────────────── */
 export function Card({ children, className = '', ...props }) {
   return (
     <div
@@ -166,7 +158,6 @@ export function Card({ children, className = '', ...props }) {
   );
 }
 
-/* ── Badge ──────────────────────────────────────────── */
 const BADGE_COLORS = {
   blue: 'bg-blue-500/15 text-blue-400 border-blue-500/20',
   green: 'bg-green-500/15 text-green-400 border-green-500/20',
@@ -182,7 +173,6 @@ export function Badge({ children, color = 'blue' }) {
   );
 }
 
-/* ── Progress Bar ───────────────────────────────────── */
 export function ProgressBar({ value = 0, max = 100, className = '' }) {
   const pct = Math.min(100, Math.max(0, (value / max) * 100));
   return (
@@ -195,12 +185,10 @@ export function ProgressBar({ value = 0, max = 100, className = '' }) {
   );
 }
 
-/* ── Skeleton ───────────────────────────────────────── */
 export function Skeleton({ className = 'h-4 w-full' }) {
   return <div className={cn('skeleton rounded-lg', className)} />;
 }
 
-/* ── ImageCard ──────────────────────────────────────── */
 export function ImageCard({ src, mimeType, base64, meta, onSelect, selected, className = '' }) {
   const [loaded, setLoaded] = useState(!!base64);
   const imgSrc = src || (base64 ? `data:${mimeType || 'image/png'};base64,${base64}` : null);
@@ -273,7 +261,6 @@ export function ImageCard({ src, mimeType, base64, meta, onSelect, selected, cla
   );
 }
 
-/* ── Modal (Radix Dialog) ──────────────────────────── */
 export function Modal({ open, onClose, title, children, className = '' }) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={(v) => { if (!v) onClose?.(); }}>
@@ -312,7 +299,6 @@ export function Modal({ open, onClose, title, children, className = '' }) {
   );
 }
 
-/* ── Toasts ─────────────────────────────────────────── */
 const TOAST_STYLES = {
   info: 'border-l-blue-500',
   error: 'border-l-red-500',
@@ -344,7 +330,6 @@ export function Toasts() {
   );
 }
 
-/* ── Hint (Radix Tooltip) ──────────────────────────── */
 export function Hint({ text, className = '' }) {
   return (
     <TooltipPrimitive.Root>
@@ -369,7 +354,6 @@ export function Hint({ text, className = '' }) {
   );
 }
 
-/* ── Collapsible Section ───────────────────────────── */
 export function Section({ title, defaultOpen = false, badge, hint, children, className = '' }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -406,7 +390,6 @@ export function Section({ title, defaultOpen = false, badge, hint, children, cla
   );
 }
 
-/* ── Confirm Dialog (Radix Dialog) ─────────────────── */
 export function ConfirmDialog({ open, onClose, onConfirm, title, message, confirmLabel = 'Delete', variant = 'danger' }) {
   const [submitting, setSubmitting] = useState(false);
 
@@ -416,9 +399,7 @@ export function ConfirmDialog({ open, onClose, onConfirm, title, message, confir
     try {
       await Promise.resolve(onConfirm?.());
       onClose?.();
-    } catch (err) {
-      console.warn('[ConfirmDialog] action failed:', err?.message || err);
-      // Keep dialog open on error so user sees something went wrong
+    } catch {
     } finally {
       setSubmitting(false);
     }
@@ -465,7 +446,6 @@ export function Empty({ icon = '📭', title, subtitle }) {
   );
 }
 
-/* ── CopyBtn ────────────────────────────────────────── */
 export function CopyBtn({ text, className = '' }) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef();
@@ -477,7 +457,7 @@ export function CopyBtn({ text, className = '' }) {
       setCopied(true);
       clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => setCopied(false), 1500);
-    } catch { /* clipboard unavailable */ }
+    } catch { }
   };
   return (
     <button
@@ -494,7 +474,6 @@ export function CopyBtn({ text, className = '' }) {
   );
 }
 
-/* ── StepProgress ──────────────────────────────────── */
 export function StepProgress({ steps, currentIndex, elapsedSec, className = '' }) {
   return (
     <Card className={cn('flex items-center justify-center py-12', className)}>

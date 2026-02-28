@@ -8,7 +8,6 @@ import useImageLightbox from '../components/lightbox/useImageLightbox';
 import { IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
 import { IconVideo, IconCamera } from 'nucleo-glass';
 
-// Module-level session cache — survives unmount/remount when navigating away and back
 const _cache = {
   reelUrl: '',
   charId: '',
@@ -52,7 +51,6 @@ export default function ReelRecreatePage() {
   };
   const indexToStrength = (value) => STRENGTH_LEVELS[Math.max(0, Math.min(2, Number(value) || 1))];
 
-  // ── Session cache sync ──
   useEffect(() => { _cache.reelUrl = reelUrl; }, [reelUrl]);
   useEffect(() => { _cache.charId = charId; }, [charId]);
   useEffect(() => { _cache.result = result; }, [result]);
@@ -80,7 +78,6 @@ export default function ReelRecreatePage() {
 
   useEffect(() => {
     if (charId) charApi.get(charId).then(setCharDetail).catch(() => setCharDetail(null));
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear detail when no char selected
     else setCharDetail(null);
   }, [charId]);
 
@@ -145,7 +142,6 @@ export default function ReelRecreatePage() {
     }
 
     setRunSourceType('cached');
-    // Keep source frames visible but clear old recreations so the loading steps show.
     setResult((prev) => prev ? { ...prev, recreations: null } : prev);
 
     const activeRefIds = charDetail?.references?.filter((r) => r.isActive).map((r) => r.id) || [];

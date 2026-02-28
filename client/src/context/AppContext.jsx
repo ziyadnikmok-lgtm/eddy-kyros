@@ -16,7 +16,6 @@ export function AppProvider({ children }) {
   const [toasts, setToasts] = useState([]);
   const timers = useRef({});
 
-  // Navigation — allows any page to trigger page changes with optional params
   const [page, setPage] = useState('generate');
   const [pageParams, setPageParams] = useState({});
   const navigateTo = useCallback((pageId, params = {}) => {
@@ -29,15 +28,14 @@ export function AppProvider({ children }) {
     return p;
   }, [pageParams]);
 
-  // Shared data — fetched once, consumed by all pages
   const [characters, setCharacters] = useState([]);
   const [sceneMemories, setSceneMemories] = useState([]);
   const [outfits, setOutfits] = useState([]);
 
   useEffect(() => {
-    charApi.list().then(setCharacters).catch((err) => { console.warn('Bootstrap: characters fetch failed', err); setCharacters([]); });
-    fetchJson('/api/scene-memory').then(setSceneMemories).catch((err) => { console.warn('Bootstrap: scene-memory fetch failed', err); setSceneMemories([]); });
-    fetchJson('/api/outfits').then(setOutfits).catch((err) => { console.warn('Bootstrap: outfits fetch failed', err); setOutfits([]); });
+    charApi.list().then(setCharacters).catch(() => setCharacters([]));
+    fetchJson('/api/scene-memory').then(setSceneMemories).catch(() => setSceneMemories([]));
+    fetchJson('/api/outfits').then(setOutfits).catch(() => setOutfits([]));
   }, []);
 
   const refreshCharacters = useCallback(() => {
@@ -66,7 +64,6 @@ export function AppProvider({ children }) {
     setToasts((t) => t.filter((x) => x.id !== id));
   }, []);
 
-  // Cleanup all toast timers on unmount
   useEffect(() => {
     const t = timers;
     return () => { for (const id of Object.keys(t.current)) clearTimeout(t.current[id]); };

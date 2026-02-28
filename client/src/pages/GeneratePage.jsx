@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo, useReducer, useRef, lazy, Suspense } from 'react';
 import { generate as genApi, characters as charApi, templates as templatesApi, styleLibrary as styleApi, captionTemplates as captionApi, styleFocus as styleFocusApi } from '../services/api';
-// characters, sceneMemories, outfits come from AppContext (fetched once on app load)
 import { useAsync } from '../hooks/useAsync';
 import { useStepTimer } from '../hooks/useStepTimer';
 import { useApp } from '../context/AppContext';
@@ -78,7 +77,6 @@ function formReducer(state, action) {
   return { ...state, ...action };
 }
 
-// Module-level session cache — survives unmount/remount when navigating away and back
 const _cache = {
   formState: null,
   result: null,
@@ -110,18 +108,15 @@ export default function GeneratePage() {
   const [history, setHistory] = useState(_cache.history);
   const recentHistory = history.slice(1, 9).filter((h) => h?.imageId);
 
-  // Templates
   const [tplList, setTplList] = useState([]);
   const [tplName, setTplName] = useState('');
   const [showSaveTpl, setShowSaveTpl] = useState(false);
 
-  // Style Library
   const [styleAtomIds, setStyleAtomIds] = useState(_cache.styleAtomIds);
-  const [styleAtomDetails, setStyleAtomDetails] = useState(_cache.styleAtomDetails); // [{id, category, text}]
+  const [styleAtomDetails, setStyleAtomDetails] = useState(_cache.styleAtomDetails);
   const [showAtomPicker, setShowAtomPicker] = useState(false);
   const [stylePreview, setStylePreview] = useState('');
 
-  // Style Focus (visual DNA presets from Post Clone)
   const [styleFocusList, setStyleFocusList] = useState([]);
   const [selectedFocusId, setSelectedFocusId] = useState(_cache.selectedFocusId);
   const [selectedFocusData, setSelectedFocusData] = useState(null);
@@ -130,20 +125,16 @@ export default function GeneratePage() {
     styleFocusApi.get(selectedFocusId).then(setSelectedFocusData).catch(() => setSelectedFocusData(null));
   }, [selectedFocusId]);
 
-  // Authenticity modifiers
   const [activeMods, setActiveMods] = useState(_cache.activeMods);
 
-  // Content type presets
   const [contentPresets, setContentPresets] = useState([]);
   const [contentTab, setContentTab] = useState(_cache.contentTab);
 
-  // Caption templates
   const [captionList, setCaptionList] = useState([]);
   const [suggestedCaptions, setSuggestedCaptions] = useState([]);
   const [showCaptionComposer, setShowCaptionComposer] = useState(false);
   const [captionDraft, setCaptionDraft] = useState(_cache.captionDraft);
 
-  // ── Session cache sync ──
   useEffect(() => { _cache.formState = state; }, [state]);
   useEffect(() => { _cache.result = result; }, [result]);
   useEffect(() => { _cache.history = history; }, [history]);
@@ -159,7 +150,6 @@ export default function GeneratePage() {
   useEffect(() => { styleApi.contentPresets().then(setContentPresets).catch(() => {}); }, []);
   useEffect(() => { captionApi.list().then(setCaptionList).catch(() => {}); }, []);
 
-  // Prompt completeness indicator — Nano-Banana formula coverage
   const promptCompleteness = useMemo(() => {
     const atomCats = new Set(styleAtomDetails.map(a => a.category));
     return [
@@ -172,7 +162,6 @@ export default function GeneratePage() {
     ];
   }, [useCharacter, selectedCharId, outfitId, cameraProfileId, sceneMemoryId, poseMode, useExpressionMode, expressionMode, useSceneMode, sceneMode, styleAtomDetails, activeMods]);
 
-  // Fetch composed preview when style atoms change
   useEffect(() => {
     if (styleAtomIds.length === 0) { setStylePreview(''); return; }
     styleApi.compose(styleAtomIds).then(r => setStylePreview(r.prompt)).catch(() => setStylePreview(''));
@@ -183,7 +172,7 @@ export default function GeneratePage() {
     setShowAtomPicker(false);
     const details = [];
     for (const id of ids) {
-      try { const atom = await styleApi.get(id); details.push({ id: atom.id, category: atom.category, text: atom.text }); } catch { /* skip */ }
+      try { const atom = await styleApi.get(id); details.push({ id: atom.id, category: atom.category, text: atom.text }); } catch { }
     }
     setStyleAtomDetails(details);
   };
@@ -193,7 +182,6 @@ export default function GeneratePage() {
     setStyleAtomDetails(prev => prev.filter(x => x.id !== id));
   };
 
-  // Pick up atoms + format sent from Prompt Builder page
   useEffect(() => {
     const raw = sessionStorage.getItem('pb_atomIds');
     if (!raw) return;
@@ -201,7 +189,7 @@ export default function GeneratePage() {
     try {
       const ids = JSON.parse(raw);
       if (Array.isArray(ids) && ids.length > 0) handleApplyAtoms(ids);
-    } catch { /* ignore */ }
+    } catch { }
     const ar = sessionStorage.getItem('pb_aspectRatio');
     const res = sessionStorage.getItem('pb_resolutionTier');
     if (ar) { update({ aspectRatio: ar }); sessionStorage.removeItem('pb_aspectRatio'); }
@@ -314,8 +302,6 @@ export default function GeneratePage() {
     }
     const data = await genApi.image(body);
     setResult(data);
-    // Store lightweight history entry (imageId + meta only) to avoid holding
-    // 20 full base64 images in memory (~5-10MB each = 100-200MB).
     setHistory((h) => [{
       imageId: data.imageId,
       galleryId: data.galleryId || data.imageId,
@@ -369,7 +355,6 @@ export default function GeneratePage() {
 
   return (
     <div className="space-y-6 animate-in">
-      {/* Welcome banner for new users */}
       {!activeKey && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-4">
           <p className="text-sm text-amber-300 font-medium mb-2">Getting started</p>
@@ -385,7 +370,6 @@ export default function GeneratePage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         <div className="lg:col-span-1 space-y-4">
           <Card className="space-y-4">
-            {/* ── Quick / Advanced Toggle ── */}
             <div className="flex items-center justify-between">
               <div className="flex rounded-lg bg-zinc-800/60 p-0.5">
                 {[['quick', 'Quick'], ['advanced', 'Advanced']].map(([m, label]) => (
@@ -400,7 +384,6 @@ export default function GeneratePage() {
               {state.formMode === 'quick' && <span className="text-[10px] text-zinc-500">Essential controls only</span>}
             </div>
 
-            {/* ── Essential: Prompt + Character ── */}
             <Textarea label="Prompt" placeholder="Describe the image you want to generate..." value={prompt} onChange={(e) => update({ prompt: e.target.value })} className="!min-h-[120px]" />
 
             <Toggle checked={useCharacter} onChange={(v) => update({ useCharacter: v })} label="Use Character" />
@@ -456,7 +439,6 @@ export default function GeneratePage() {
               </div>
             )}
 
-            {/* ── Image Size ── */}
             <div>
               <span className="text-xs text-zinc-400 font-medium block mb-1.5">Image Model</span>
               <select
@@ -497,7 +479,6 @@ export default function GeneratePage() {
               </div>
             </div>
 
-            {/* ── Quick Mode: Content Type Picker ── */}
             {state.formMode === 'quick' && (
               <div>
                 <span className="text-xs text-zinc-400 font-medium block mb-2">Content Type</span>
@@ -538,9 +519,7 @@ export default function GeneratePage() {
               </div>
             )}
 
-            {/* ── Advanced-only sections ── */}
             {state.formMode === 'advanced' && <>
-            {/* ── Collapsible: Authenticity Modifiers ── */}
             <Section title="Authenticity Modifiers" badge={activeMods.size > 0 ? <Badge color="blue">{activeMods.size}</Badge> : null} hint="Add realistic photo imperfections like grain, flash, or phone quality to make images look less AI-generated.">
               <div className="flex flex-wrap gap-1.5">
                 {AUTHENTICITY_MODIFIERS.map(mod => (
@@ -562,7 +541,6 @@ export default function GeneratePage() {
               </div>
             </Section>
 
-            {/* ── Collapsible: Camera, Pose, Expression, Scene ── */}
             <Section title="Camera, Pose & Scene" badge={activeTechCount > 0 ? <Badge color="blue">{activeTechCount}</Badge> : null} hint="Control how the image is shot — camera angle, body pose, facial expression, and environment.">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -621,7 +599,6 @@ export default function GeneratePage() {
               </div>
             </Section>
 
-            {/* ── Collapsible: Image References ── */}
             <Section title="Image References" badge={activeRefCount > 0 ? <Badge color="blue">{activeRefCount}</Badge> : null} hint="Upload reference images for outfit, items, or background. The AI will incorporate these into the generation.">
               <div className="grid grid-cols-1 gap-2">
                 <label className={`flex items-center justify-between rounded-lg cursor-pointer transition h-16 overflow-hidden px-3 border border-dashed ${specificOutfitRef ? 'border-purple-500/40 bg-purple-500/5' : 'border-zinc-700/80 bg-zinc-900/50 hover:border-purple-500/30'}`}>
@@ -670,7 +647,6 @@ export default function GeneratePage() {
               </div>
             </Section>
 
-            {/* ── Collapsible: Style Library ── */}
             <Section title="Style Library" badge={styleAtomIds.length > 0 ? <Badge color="blue">{styleAtomIds.length}</Badge> : null} hint="Reusable style building blocks (lighting, vibe, camera, etc.) that combine into a cohesive visual style.">
               <div className="flex items-center justify-end">
                 <button onClick={() => setShowAtomPicker(true)} className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer">
@@ -698,7 +674,6 @@ export default function GeneratePage() {
               )}
             </Section>
 
-            {/* ── Collapsible: Style Focus ── */}
             {styleFocusList.length > 0 && (
             <Section title="Style Focus" badge={selectedFocusId ? <Badge color="purple">1</Badge> : null}
               hint="Apply a saved visual DNA snapshot from Post Clone analysis. Overrides camera, lighting, pose, and expression settings.">
@@ -728,7 +703,6 @@ export default function GeneratePage() {
             </Section>
             )}
 
-            {/* ── Collapsible: Content Type Presets ── */}
             <Section title="Content Type Presets" hint="Quick-start prompt presets organized by content category. Click one to fill your prompt instantly.">
               <div className="space-y-2.5">
                 <div className="grid grid-cols-2 gap-1.5">
@@ -767,7 +741,6 @@ export default function GeneratePage() {
               </div>
             </Section>
 
-            {/* ── Collapsible: Captions ── */}
             <Section title="Captions" badge={captionList.length > 0 ? <Badge color="zinc">{captionList.length}</Badge> : null}
               hint="Caption templates for Instagram posts. Suggested after generation based on content type.">
               <div className="space-y-2">
@@ -853,7 +826,6 @@ export default function GeneratePage() {
               </div>
             </Section>
 
-            {/* ── Collapsible: Templates ── */}
             <Section title="Templates" badge={tplList.length > 0 ? <Badge color="zinc">{tplList.length}</Badge> : null}>
               <div className="space-y-2">
                 <div className="flex items-center justify-end">
@@ -884,7 +856,6 @@ export default function GeneratePage() {
             </>}
 
             <div className="pt-1">
-              {/* Prompt Completeness Indicator */}
               <div className="flex items-center gap-1 mb-2">
                 {promptCompleteness.map(item => (
                   <div key={item.label} className="flex-1 group relative">

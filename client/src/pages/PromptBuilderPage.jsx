@@ -4,7 +4,7 @@ import { styleLibrary as api } from '../services/api';
 import { Card, Btn, Badge, Spinner, Empty, Modal } from '../components/UI';
 
 const COMPOSE_ORDER = ['scene', 'lighting', 'camera', 'pose', 'expression', 'outfit', 'accessories', 'vibe', 'format'];
-const DEFAULT_DISABLED = new Set(['format']); // off by default, skipped by AI Fill
+const DEFAULT_DISABLED = new Set(['format']);
 const ASPECT_RATIOS = ['4:5', '9:16', '1:1', '16:9', '4:3', '3:4'];
 const RESOLUTION_TIERS = ['1K', '2K', '4K'];
 
@@ -28,26 +28,23 @@ const CATEGORY_COLORS = {
 export default function PromptBuilderPage() {
   const { notify, navigateTo: navTo } = useApp();
 
-  // Each slot: { atomId, category, text } or null
   const [slots, setSlots] = useState(() =>
     Object.fromEntries(COMPOSE_ORDER.map(c => [c, null]))
   );
   const [composedPrompt, setComposedPrompt] = useState('');
   const [composing, setComposing] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
-  const [pickerCat, setPickerCat] = useState(null); // category to filter picker by, or null
+  const [pickerCat, setPickerCat] = useState(null);
   const [disabledSlots, setDisabledSlots] = useState(() => new Set(DEFAULT_DISABLED));
   const [aspectRatio, setAspectRatio] = useState('4:5');
   const [resolutionTier, setResolutionTier] = useState('2K');
 
-  // Presets (saved compositions)
   const [presets, setPresets] = useState(() => {
     try { return JSON.parse(localStorage.getItem('pb_presets') || '[]'); } catch { return []; }
   });
   const [presetName, setPresetName] = useState('');
   const [showPresets, setShowPresets] = useState(false);
 
-  // Debounced compose — avoids API call on every rapid slot change
   const composeTimerRef = useRef(null);
   useEffect(() => {
     const filledIds = COMPOSE_ORDER.filter(c => !disabledSlots.has(c)).map(c => slots[c]?.atomId).filter(Boolean);
@@ -67,7 +64,6 @@ export default function PromptBuilderPage() {
   const filledCount = activeSlots.filter(c => slots[c]).length;
   const emptyCategories = activeSlots.filter(c => !slots[c]);
 
-  // Set a slot from the picker
   const setSlot = (category, atom) => {
     setSlots(prev => ({ ...prev, [category]: { atomId: atom.id, category, text: atom.text } }));
   };
@@ -80,7 +76,6 @@ export default function PromptBuilderPage() {
     setSlots(Object.fromEntries(COMPOSE_ORDER.map(c => [c, null])));
   };
 
-  // AI Fill — use suggest endpoint to fill empty slots
   const handleAIFill = async () => {
     const filledIds = COMPOSE_ORDER.map(c => slots[c]?.atomId).filter(Boolean);
     if (filledIds.length === 0) {
@@ -99,7 +94,6 @@ export default function PromptBuilderPage() {
         notify('No suggestions generated — try adding more atoms', 'warning');
         return;
       }
-      // Save suggestions as new atoms and fill slots
       const result = await api.bulkCreate(suggestions);
       const createdAtoms = result?.atoms || [];
       const newSlots = { ...slots };
@@ -117,7 +111,6 @@ export default function PromptBuilderPage() {
     }
   };
 
-  // Presets
   const savePreset = () => {
     const name = presetName.trim() || `Preset ${presets.length + 1}`;
     const preset = { name, slots: { ...slots }, createdAt: Date.now() };
@@ -140,7 +133,6 @@ export default function PromptBuilderPage() {
     localStorage.setItem('pb_presets', JSON.stringify(next));
   };
 
-  // Copy composed prompt
   const copyPrompt = () => {
     if (!composedPrompt) return;
     navigator.clipboard.writeText(composedPrompt);
@@ -156,7 +148,6 @@ export default function PromptBuilderPage() {
     notify('Copied JSON to clipboard', 'success');
   };
 
-  // Send to generate page
   const sendToGenerate = () => {
     if (!composedPrompt) return;
     const atomIds = activeSlots.map(c => slots[c]?.atomId).filter(Boolean);
@@ -184,12 +175,10 @@ export default function PromptBuilderPage() {
         </Btn>
       </div>
 
-      {/* Formula label */}
       <p className="text-[10px] text-zinc-500 tracking-wider uppercase">
         Nano-Banana Formula: Scene &rarr; Lighting &rarr; Camera &rarr; Pose &rarr; Expression &rarr; Outfit &rarr; Accessories &rarr; Vibe &rarr; Format
       </p>
 
-      {/* Slot Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {COMPOSE_ORDER.map((cat, idx) => {
           const slot = slots[cat];
@@ -213,7 +202,6 @@ export default function PromptBuilderPage() {
                     : 'bg-zinc-900/40 border-zinc-700/30 border-dashed'
               }`}
             >
-              {/* Header */}
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <span className="text-sm">{meta.icon}</span>
@@ -240,7 +228,6 @@ export default function PromptBuilderPage() {
                 </div>
               </div>
 
-              {/* Content */}
               {disabled ? (
                 <p className="text-[10px] text-zinc-700 text-center py-3">Off</p>
               ) : slot ? (
@@ -267,7 +254,6 @@ export default function PromptBuilderPage() {
         })}
       </div>
 
-      {/* Format Options */}
       <div className="flex items-center gap-6">
         <div className="flex items-center gap-2">
           <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Ratio</span>
@@ -303,7 +289,6 @@ export default function PromptBuilderPage() {
         </div>
       </div>
 
-      {/* Composed Preview */}
       <Card>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
@@ -356,7 +341,6 @@ export default function PromptBuilderPage() {
         )}
       </Card>
 
-      {/* Atom Picker Modal */}
       {pickerCat && (
         <SlotPicker
           category={pickerCat}
@@ -366,7 +350,6 @@ export default function PromptBuilderPage() {
         />
       )}
 
-      {/* Presets Modal */}
       {showPresets && (
         <Modal open title="Saved Presets" onClose={() => setShowPresets(false)}>
           <div className="space-y-2 max-h-[60vh] overflow-y-auto scroll-fade">
@@ -396,7 +379,6 @@ export default function PromptBuilderPage() {
         </Modal>
       )}
 
-      {/* Empty state */}
       {filledCount === 0 && !pickerCat && (
         <Empty
           icon={'\uD83E\uDDE9'}
@@ -408,7 +390,6 @@ export default function PromptBuilderPage() {
   );
 }
 
-// ─── Slot Picker (category-filtered atom browser) ─────
 function SlotPicker({ category, currentAtomId, onSelect, onClose }) {
   const [atoms, setAtoms] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -418,7 +399,6 @@ function SlotPicker({ category, currentAtomId, onSelect, onClose }) {
   const [pages, setPages] = useState(1);
   const debounceRef = useRef(null);
 
-  // Debounce search input
   useEffect(() => {
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => setDebouncedSearch(searchQ), 300);
@@ -433,7 +413,7 @@ function SlotPicker({ category, currentAtomId, onSelect, onClose }) {
       const result = await api.list(params);
       setAtoms(result.atoms || []);
       setPages(result.pages || 1);
-    } catch { /* ignore */ } finally {
+    } catch { } finally {
       setLoading(false);
     }
   }, [page, category, debouncedSearch]);

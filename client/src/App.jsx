@@ -21,7 +21,6 @@ import {
   IconKey,
 } from 'nucleo-glass';
 
-// Lazy-loaded pages — each becomes its own chunk, loaded on first visit
 const GeneratePage = lazy(() => import('./pages/GeneratePage'));
 const BatchPage = lazy(() => import('./pages/BatchPage'));
 const CarouselPage = lazy(() => import('./pages/CarouselPage'));
@@ -207,7 +206,6 @@ export default function App() {
         <nav className="flex-1 overflow-y-auto px-3 py-3">
           {NAV_SECTIONS.map((section, sIdx) => (
             <div key={section.label} className={`mb-1.5 ${sIdx > 0 ? 'pt-3 mt-1' : ''}`}>
-              {/* Section label with decorative line */}
               <div className="flex items-center gap-2 px-3 py-1.5">
                 <span className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider whitespace-nowrap">{section.label}</span>
                 <div className="flex-1 h-px bg-zinc-800/60" />

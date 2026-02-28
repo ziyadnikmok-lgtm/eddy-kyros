@@ -276,7 +276,6 @@ export default function ApiKeysPage() {
           value={igLoginUsername}
           onChange={(e) => {
             const val = e.target.value;
-            // Smart paste: auto-split user:pass:2fa format
             const parts = val.split(':');
             if (parts.length >= 3 && !igLoginPassword && !igLogin2faSecret) {
               setIgLoginUsername(parts[0]);

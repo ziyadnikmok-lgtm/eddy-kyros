@@ -174,7 +174,6 @@ export default function ImageLightbox({
         notify('Image copied', 'success');
         return;
       } catch {
-        // Direct write failed, try PNG fallback
       }
 
       const pngBlob = mimeType === 'image/png' ? blob : await blobToPng(blob);

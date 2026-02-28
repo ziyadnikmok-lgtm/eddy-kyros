@@ -1,11 +1,9 @@
 const BASE = '/api';
 
-// Default timeouts by operation type (ms)
-const DEFAULT_TIMEOUT_MS = 30_000;       // 30s for standard CRUD
-const LONG_TIMEOUT_MS = 5 * 60_000;     // 5 min for generation/clone ops
-const PROFILE_TIMEOUT_MS = 15 * 60_000; // 15 min for profile scrape (many slides)
+const DEFAULT_TIMEOUT_MS = 30_000;
+const LONG_TIMEOUT_MS = 5 * 60_000;
+const PROFILE_TIMEOUT_MS = 15 * 60_000;
 
-// Paths that are known long-running operations
 const LONG_RUNNING_PATHS = [
   '/generate', '/batch', '/tweak',
   '/post-clone', '/reel-copy',
@@ -14,7 +12,6 @@ const LONG_RUNNING_PATHS = [
   '/auto/plan', '/auto/execute',
 ];
 
-// Extra-long paths (profile scrape processes many carousels)
 const EXTRA_LONG_PATHS = ['/profile-clone'];
 
 function getTimeoutForPath(path, method) {
@@ -28,13 +25,12 @@ function getTimeoutForPath(path, method) {
   return DEFAULT_TIMEOUT_MS;
 }
 
-// Retry config — only GET requests are retried (idempotent)
 const RETRY_MAX = 2;
 const RETRY_BASE_MS = 500;
 
 function _isRetryable(err) {
   if (err.code === 'TIMEOUT') return true;
-  if (err.name === 'TypeError' && err.message?.includes('fetch')) return true; // network failure only
+  if (err.name === 'TypeError' && err.message?.includes('fetch')) return true;
   if (err.status >= 500) return true;
   return false;
 }
@@ -103,7 +99,6 @@ async function _fetchOnce(path, method, body, externalSignal, timeoutMs) {
   }
 }
 
-// --- Keys ---
 export const keys = {
   list: () => request('/keys'),
   add: (name, apiKey) => request('/keys', { method: 'POST', body: { name, apiKey } }),
@@ -122,7 +117,6 @@ export const keys = {
   healthCheck: () => request('/keys/health-check'),
 };
 
-// --- Characters ---
 export const characters = {
   list: () => request('/characters'),
   get: (id) => request(`/characters/${id}`),
@@ -139,12 +133,10 @@ export const characters = {
   refImageUrl: (id, refId) => `${BASE}/characters/${id}/references/${refId}/image`,
 };
 
-// --- Generate ---
 export const generate = {
   image: (body) => request('/generate', { method: 'POST', body }),
 };
 
-// --- Batch ---
 export const batch = {
   list: (status) => request(`/batch${status ? `?status=${status}` : ''}`),
   start: (body) => request('/batch', { method: 'POST', body }),
@@ -153,23 +145,19 @@ export const batch = {
   retry: (jobId) => request(`/batch/${jobId}/retry`, { method: 'POST' }),
   remove: (jobId) => request(`/batch/${jobId}`, { method: 'DELETE' }),
   stats: () => request('/batch/stats'),
-  /** Returns an EventSource for real-time progress. Caller must close it. */
   progress: (jobId) => new EventSource(`${BASE}/batch/${jobId}/progress`),
 };
 
-// --- Tweak ---
 export const tweak = {
   create: (body) => request('/tweak', { method: 'POST', body }),
 };
 
-// --- Images (in-memory store) ---
 export const images = {
   list: () => request('/images'),
   get: (id) => request(`/images/${id}`),
   children: (id) => request(`/images/${id}/children`),
 };
 
-// --- Gallery (persistent) ---
 export const gallery = {
   list: () => request('/gallery'),
   get: (id) => request(`/gallery/${id}`),
@@ -202,13 +190,11 @@ export const gallery = {
   removeTag: (id, tag) => request(`/gallery/${id}/tags/${encodeURIComponent(tag)}`, { method: 'DELETE' }),
 };
 
-// --- Scene ---
 export const scene = {
   analyze: (image, mimeType) => request('/scene/analyze', { method: 'POST', body: { image, mimeType } }),
   recreate: (body) => request('/scene/recreate', { method: 'POST', body }),
 };
 
-// --- Niches ---
 export const niches = {
   list: () => request('/niches'),
   get: (id) => request(`/niches/${id}`),
@@ -217,18 +203,15 @@ export const niches = {
   remove: (id) => request(`/niches/${id}`, { method: 'DELETE' }),
 };
 
-// --- Brand Voice ---
 export const brandVoice = {
   get: () => request('/brand-voice'),
   update: (data) => request('/brand-voice', { method: 'PATCH', body: data }),
 };
 
-// --- Story ---
 export const story = {
   generate: (body) => request('/story/generate', { method: 'POST', body }),
 };
 
-// --- Carousel ---
 export const carousel = {
   plan: (body) => request('/carousel/plan', { method: 'POST', body }),
   execute: (body) => request('/carousel/execute', { method: 'POST', body }),
@@ -236,12 +219,10 @@ export const carousel = {
   polls: (body) => request('/carousel/polls', { method: 'POST', body }),
 };
 
-// --- Reel Recreate ---
 export const reel = {
   recreate: (body) => request('/reel-copy', { method: 'POST', body }),
 };
 
-// --- Post Clone ---
 export const postClone = {
   clonePost: (body) => request('/post-clone', { method: 'POST', body }),
   cloneProfile: (body) => request('/profile-clone', { method: 'POST', body }),
@@ -251,14 +232,12 @@ export const postClone = {
   thumbUrl: (filename) => filename ? `${BASE}/post-clone/thumb/${filename}` : '',
 };
 
-// --- Clone History ---
 export const postCloneHistory = {
   list: () => request('/post-clone/history'),
   remove: (id) => request(`/post-clone/history/${id}`, { method: 'DELETE' }),
   imageUrl: (galleryId) => `${BASE}/gallery/${galleryId}/image`,
 };
 
-// --- Style Focus ---
 export const styleFocus = {
   list: () => request('/post-clone/style-focus'),
   get: (id) => request(`/post-clone/style-focus/${id}`),
@@ -266,12 +245,10 @@ export const styleFocus = {
   remove: (id) => request(`/post-clone/style-focus/${id}`, { method: 'DELETE' }),
 };
 
-// --- Prompt Knowledge ---
 export const promptKnowledge = {
   list: (query = '') => request(`/prompt-knowledge${query ? `?${query}` : ''}`),
 };
 
-// --- Templates ---
 export const templates = {
   list: (page) => request(`/templates${page ? `?page=${page}` : ''}`),
   get: (id) => request(`/templates/${id}`),
@@ -280,7 +257,6 @@ export const templates = {
   remove: (id) => request(`/templates/${id}`, { method: 'DELETE' }),
 };
 
-// --- Caption Templates ---
 export const captionTemplates = {
   list: (category) => request(`/caption-templates${category ? `?category=${category}` : ''}`),
   get: (id) => request(`/caption-templates/${id}`),
@@ -291,13 +267,10 @@ export const captionTemplates = {
   markUsed: (id) => request(`/caption-templates/${id}/use`, { method: 'POST' }),
 };
 
-// --- Instagram availability precheck ---
 export const availability = {
-  // Availability checks can be slow when Apify actor queues are busy.
   check: (url) => request('/availability/check', { method: 'POST', body: { url }, timeoutMs: LONG_TIMEOUT_MS }),
 };
 
-// --- Style Library ---
 export const styleLibrary = {
   list: (params = {}) => {
     const qs = new URLSearchParams();
@@ -326,7 +299,6 @@ export const styleLibrary = {
   contentPresets: () => request('/style-library/content-presets'),
 };
 
-// --- Auto Plans ---
 export const autoPlans = {
   list: () => request('/auto/plans'),
   get: (id) => request(`/auto/plans/${id}`),
@@ -336,13 +308,7 @@ export const autoPlans = {
   executeDay: (id, dayNumber) => request(`/auto/plans/${id}/execute-day`, { method: 'POST', body: { dayNumber } }),
 };
 
-// --- Profile Analyzer ---
 export const profileAnalyzer = {
-  /** Returns an EventSource for SSE streaming. Caller must close it.
-   *  @param {string} username
-   *  @param {number} postLimit
-   *  @param {object} opts - { sort?: 'newest'|'oldest', newerThan?: string }
-   */
   analyze: (username, postLimit = 12, opts = {}) => {
     const params = { username, postLimit: String(postLimit) };
     if (opts.sort) params.sort = opts.sort;

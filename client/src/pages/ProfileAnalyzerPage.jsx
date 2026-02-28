@@ -4,7 +4,6 @@ import { profileAnalyzer as analyzerApi, styleLibrary as libraryApi } from '../s
 import { Card, Btn, Input, Select, Badge, Spinner, Empty, ProgressBar } from '../components/UI';
 import { IconArrowsBoldOppositeDirection, IconColorPalette, IconDeleteX } from 'nucleo-glass';
 
-// Module-level session cache — survives unmount/remount when navigating away and back
 const _cache = {
   username: '',
   postLimit: 12,
@@ -22,12 +21,12 @@ export default function ProfileAnalyzerPage() {
 
   const [username, setUsername] = useState(_cache.username);
   const [postLimit, setPostLimit] = useState(_cache.postLimit);
-  const [sort, setSort] = useState(_cache.sort);   // 'newest' | 'oldest'
-  const [newerThan, setNewerThan] = useState(_cache.newerThan); // e.g. "30 days", "2025-01-01"
+  const [sort, setSort] = useState(_cache.sort);
+  const [newerThan, setNewerThan] = useState(_cache.newerThan);
   const [analyzing, setAnalyzing] = useState(false);
-  const [progress, setProgress] = useState(_cache.progress); // { current, total, status }
-  const [results, setResults] = useState(_cache.results); // [{postIndex, postUrl, atoms: [{category, text, tags}]}]
-  const [checkedAtoms, setCheckedAtoms] = useState(_cache.checkedAtoms); // "postIdx-atomIdx" keys
+  const [progress, setProgress] = useState(_cache.progress);
+  const [results, setResults] = useState(_cache.results);
+  const [checkedAtoms, setCheckedAtoms] = useState(_cache.checkedAtoms);
   const [saving, setSaving] = useState(false);
   const [profiles, setProfiles] = useState(_cache.profiles);
   const [contentPatterns, setContentPatterns] = useState(_cache.contentPatterns);
@@ -38,7 +37,6 @@ export default function ProfileAnalyzerPage() {
     analyzingRef.current = analyzing;
   }, [analyzing]);
 
-  // ── Session cache sync ──
   useEffect(() => { _cache.username = username; }, [username]);
   useEffect(() => { _cache.postLimit = postLimit; }, [postLimit]);
   useEffect(() => { _cache.sort = sort; }, [sort]);
@@ -49,12 +47,10 @@ export default function ProfileAnalyzerPage() {
   useEffect(() => { _cache.contentPatterns = contentPatterns; }, [contentPatterns]);
   useEffect(() => { _cache.profiles = profiles; }, [profiles]);
 
-  // Fetch analyzed profiles on mount
   useEffect(() => {
     libraryApi.profiles().then(setProfiles).catch(() => {});
   }, []);
 
-  // Close EventSource on unmount to prevent leaked connections
   useEffect(() => {
     return () => {
       if (eventSourceRef.current) {
@@ -64,7 +60,6 @@ export default function ProfileAnalyzerPage() {
     };
   }, []);
 
-  // Total atoms across all results
   const allAtomKeys = useMemo(() => {
     const keys = [];
     results.forEach((post, pi) => {
@@ -77,11 +72,9 @@ export default function ProfileAnalyzerPage() {
 
   const checkedCount = checkedAtoms.size;
 
-  // ─── Analysis ─────────────────────────────────────────
   const startAnalysis = () => {
     if (!username.trim() || analyzing) return;
 
-    // Close any previous EventSource to prevent leaked connections
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
@@ -104,7 +97,7 @@ export default function ProfileAnalyzerPage() {
       try {
         const data = JSON.parse(e.data);
         setProgress(data);
-      } catch { /* ignore */ }
+      } catch { }
     });
 
     es.addEventListener('atoms', (e) => {
@@ -113,7 +106,6 @@ export default function ProfileAnalyzerPage() {
         let newChecked;
         setResults(prev => {
           const next = [...prev, data];
-          // Auto-check atoms >= 15 chars
           newChecked = new Set();
           data.atoms.forEach((atom, ai) => {
             if (atom.text.length >= 15) {
@@ -127,13 +119,13 @@ export default function ProfileAnalyzerPage() {
           for (const key of newChecked) merged.add(key);
           return merged;
         });
-      } catch { /* ignore */ }
+      } catch { }
     });
 
     es.addEventListener('contentPatterns', (e) => {
       try {
         setContentPatterns(JSON.parse(e.data));
-      } catch { /* ignore */ }
+      } catch { }
     });
 
     let closed = false;
@@ -149,7 +141,7 @@ export default function ProfileAnalyzerPage() {
       try {
         const data = JSON.parse(e.data);
         setProgress({ current: data.total, total: data.total, status: 'Analysis complete!' });
-      } catch { /* ignore */ }
+      } catch { }
       finish();
     });
 
@@ -159,7 +151,6 @@ export default function ProfileAnalyzerPage() {
         const data = JSON.parse(e.data);
         notify(data.message || 'Analysis error', 'error');
       } catch {
-        // SSE connection error (not a custom error event)
         if (!analyzingRef.current) return;
         notify('Connection lost during analysis', 'error');
       }
@@ -174,7 +165,6 @@ export default function ProfileAnalyzerPage() {
     setProgress(prev => prev ? { ...prev, status: 'Cancelled' } : null);
   };
 
-  // ─── Checkbox management ──────────────────────────────
   const toggleAtom = (key) => {
     setCheckedAtoms(prev => {
       const next = new Set(prev);
@@ -186,7 +176,6 @@ export default function ProfileAnalyzerPage() {
   const selectAll = () => setCheckedAtoms(new Set(allAtomKeys));
   const deselectAll = () => setCheckedAtoms(new Set());
 
-  // ─── Save ─────────────────────────────────────────────
   const handleSave = async () => {
     if (checkedCount === 0) return;
     setSaving(true);
@@ -205,7 +194,6 @@ export default function ProfileAnalyzerPage() {
         analyzedPostCount: results.length,
       });
       notify(`Saved ${atoms.length} atoms to Style Library`, 'success');
-      // Refresh profiles list
       libraryApi.profiles().then(setProfiles).catch(() => {});
     } catch (err) {
       notify(err.message, 'error');
@@ -234,10 +222,8 @@ export default function ProfileAnalyzerPage() {
     navigateTo('styleLibrary', { usernameFilter: profileUsername });
   }, [navigateTo]);
 
-  // ─── Render ───────────────────────────────────────────
   return (
     <div className="space-y-6 animate-in">
-      {/* Input Section */}
       <Card>
         <div className="flex gap-3 items-end flex-wrap">
           <div className="flex-1 min-w-[200px]">
@@ -290,7 +276,6 @@ export default function ProfileAnalyzerPage() {
         )}
       </Card>
 
-      {/* Progress */}
       {progress && (
         <Card>
           <div className="space-y-2">
@@ -307,10 +292,8 @@ export default function ProfileAnalyzerPage() {
         </Card>
       )}
 
-      {/* Content Patterns */}
       {contentPatterns && <ContentPatternsCard data={contentPatterns} />}
 
-      {/* Results */}
       {results.length > 0 && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
@@ -380,7 +363,6 @@ export default function ProfileAnalyzerPage() {
             </Card>
           ))}
 
-          {/* Save bar */}
           <div className="flex items-center justify-between gap-3 pt-2">
             <Btn variant="primary" onClick={handleSave} disabled={saving || checkedCount === 0}>
               {saving ? <><Spinner size={14} /> Saving...</> : `Save ${checkedCount} Selected \u2192 Library`}
@@ -392,7 +374,6 @@ export default function ProfileAnalyzerPage() {
         </div>
       )}
 
-      {/* Empty state (no results, not analyzing) */}
       {!analyzing && results.length === 0 && !progress && (
         <Empty
           icon={'\uD83D\uDD0D'}
@@ -401,7 +382,6 @@ export default function ProfileAnalyzerPage() {
         />
       )}
 
-      {/* Previously Analyzed Profiles */}
       {profiles.length > 0 && (
         <Card>
           <h3 className="text-xs font-medium text-zinc-400 mb-3">Previously Analyzed Profiles</h3>
@@ -422,12 +402,10 @@ export default function ProfileAnalyzerPage() {
   );
 }
 
-// ─── Profile Row with dropdown ────────────────────────
 function ProfileRow({ profile, onReanalyze, onViewAtoms, onDelete }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef(null);
 
-  // Close on outside click
   useEffect(() => {
     if (!open) return;
     const handler = (e) => {
@@ -449,7 +427,6 @@ function ProfileRow({ profile, onReanalyze, onViewAtoms, onDelete }) {
         <span className="text-[10px] text-zinc-600">
           {new Date(p.analyzedAt).toLocaleDateString()}
         </span>
-        {/* Dropdown trigger */}
         <div className="relative" ref={menuRef}>
           <button
             onClick={() => setOpen(v => !v)}
@@ -494,7 +471,6 @@ function ProfileRow({ profile, onReanalyze, onViewAtoms, onDelete }) {
   );
 }
 
-// ─── Content Patterns Card ────────────────────────────
 function ContentPatternsCard({ data }) {
   const { topHashtags, captionStats, engagement, postTypes, schedule } = data;
 
@@ -506,7 +482,6 @@ function ContentPatternsCard({ data }) {
       <h3 className="text-sm font-semibold text-zinc-200 mb-4">Content Patterns</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
-        {/* Engagement */}
         <div className="space-y-2">
           <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Engagement</p>
           <div className="flex gap-3">
@@ -516,7 +491,6 @@ function ContentPatternsCard({ data }) {
           </div>
         </div>
 
-        {/* Caption Stats */}
         <div className="space-y-2">
           <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Captions</p>
           <div className="flex gap-3">
@@ -525,7 +499,6 @@ function ContentPatternsCard({ data }) {
           </div>
         </div>
 
-        {/* Post Types */}
         {postTypes && Object.keys(postTypes).length > 0 && (
           <div className="space-y-2">
             <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Post Types</p>
@@ -539,7 +512,6 @@ function ContentPatternsCard({ data }) {
           </div>
         )}
 
-        {/* Posting Schedule */}
         <div className="space-y-2">
           <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Schedule</p>
           <div className="flex gap-3">
@@ -551,7 +523,6 @@ function ContentPatternsCard({ data }) {
               <StatBox label="Peak Hour" value={`${schedule.peakHour}:00`} />
             )}
           </div>
-          {/* Day-of-week mini bar chart */}
           {schedule?.dayDistribution && (
             <div className="flex items-end gap-1 h-10 mt-1">
               {schedule.dayDistribution.map((d, i) => (
@@ -568,7 +539,6 @@ function ContentPatternsCard({ data }) {
           )}
         </div>
 
-        {/* Top Hashtags */}
         {topHashtags && topHashtags.length > 0 && (
           <div className="md:col-span-2 space-y-2">
             <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">

@@ -1,6 +1,5 @@
 import { useState, useEffect, useReducer, useRef } from 'react';
 import { batch as batchApi, characters as charApi, gallery as galleryApi, templates as templatesApi } from '../services/api';
-// characters, sceneMemories, outfits come from AppContext (fetched once on app load)
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
 import { useBatchProgress } from '../hooks/useBatchProgress';
@@ -57,7 +56,6 @@ function formReducer(state, action) {
   return { ...state, ...action };
 }
 
-// Module-level session cache — survives unmount/remount when navigating away and back
 const _cache = {
   formState: null,
   job: null,
@@ -85,14 +83,12 @@ export default function BatchPage() {
   } = state;
 
   const { job, setJob, subscribe, cleanup: cleanupProgress } = useBatchProgress();
-  // Restore cached job on mount; cleanup SSE/polling on unmount
   useEffect(() => {
     if (_cache.job) setJob(_cache.job);
     return () => cleanupProgress();
   }, []);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
-  // Templates
   const [tplList, setTplList] = useState([]);
   const [tplName, setTplName] = useState('');
   const [showSaveTpl, setShowSaveTpl] = useState(false);
@@ -129,14 +125,12 @@ export default function BatchPage() {
     } catch (err) { notify(err.message || 'Failed to delete template', 'error'); }
   };
 
-  // Job history + queue dashboard
   const [jobHistory, setJobHistory] = useState(_cache.jobHistory);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [expandedJobId, setExpandedJobId] = useState(_cache.expandedJobId);
   const [queueStats, setQueueStats] = useState(_cache.queueStats);
   const [statusFilter, setStatusFilter] = useState(_cache.statusFilter);
 
-  // ── Session cache sync ──
   useEffect(() => { _cache.formState = state; }, [state]);
   useEffect(() => { _cache.job = job; }, [job]);
   useEffect(() => { _cache.jobHistory = jobHistory; }, [jobHistory]);
@@ -150,15 +144,12 @@ export default function BatchPage() {
       const [jobs, stats] = await Promise.all([batchApi.list(), batchApi.stats()]);
       setJobHistory(jobs);
       setQueueStats(stats);
-    } catch { /* ignore */ }
+    } catch { }
     finally { setHistoryLoading(false); }
   };
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch
   useEffect(() => { fetchHistory(); }, []);
 
-  // Refresh history when current job completes
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- refresh history on job completion
   useEffect(() => {
     if (job && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')) {
       fetchHistory();
@@ -278,7 +269,6 @@ export default function BatchPage() {
     } else if (mode === 'edit') {
       if (!selectedImageId) { notify('Select an image to edit', 'error'); return; }
       if (!editPrompt.trim()) { notify('Modification prompt required', 'error'); return; }
-      // Check if selected image is a local upload (not yet on server)
       const uploadedImg = editUploadImages.find((img) => img.id === selectedImageId);
       config = {
         ...(uploadedImg ? { imageBase64: uploadedImg.src } : { imageId: selectedImageId }),
@@ -661,7 +651,6 @@ export default function BatchPage() {
           </>
         )}
 
-        {/* Content Mix mode */}
         {mode === 'content-mix' && (
           <>
             <div>
@@ -721,7 +710,6 @@ export default function BatchPage() {
           </>
         )}
 
-        {/* Templates */}
         <Section title="Templates" badge={tplList.length > 0 ? <Badge color="zinc">{tplList.length}</Badge> : null}>
           <div className="space-y-2">
             <div className="flex items-center justify-end">
@@ -789,7 +777,6 @@ export default function BatchPage() {
           )}
         </Card>
       )}
-      {/* Queue Dashboard */}
       <Card className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium text-zinc-300">Queue Dashboard</h3>
@@ -798,7 +785,6 @@ export default function BatchPage() {
           </Btn>
         </div>
 
-        {/* Stats row */}
         {queueStats && (
           <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
             {[
@@ -817,7 +803,6 @@ export default function BatchPage() {
           </div>
         )}
 
-        {/* Status filter tabs */}
         <div className="flex gap-1">
           {['', 'running', 'completed', 'failed', 'cancelled'].map(f => (
             <button key={f} onClick={() => setStatusFilter(f)}
@@ -829,7 +814,6 @@ export default function BatchPage() {
           ))}
         </div>
 
-        {/* Job list */}
         {jobHistory.length === 0 ? (
           <p className="text-xs text-zinc-500 py-2">No job history yet.</p>
         ) : (
@@ -867,7 +851,6 @@ export default function BatchPage() {
                   </button>
                   {isExpanded && (
                     <div className="px-3 pb-2.5 border-t border-zinc-700/30 pt-2 space-y-2">
-                      {/* Progress bar */}
                       <div className="flex items-center gap-2">
                         <div className="flex-1 h-1.5 bg-zinc-700/50 rounded-full overflow-hidden">
                           <div className="h-full bg-green-500/70 rounded-full transition-all" style={{ width: `${successRate}%` }} />
