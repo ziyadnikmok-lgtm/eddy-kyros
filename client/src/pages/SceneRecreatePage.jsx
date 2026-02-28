@@ -140,7 +140,7 @@ export default function SceneRecreatePage() {
               {preview ? (
                 <img src={preview} alt="Scene" className="max-h-full max-w-full object-contain" />
               ) : (
-                <div className="text-center flex flex-col items-center [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor] [--nc-gradient-2-color-1:currentColor] [--nc-gradient-2-color-2:currentColor] [--nc-light:currentColor]">
+                <div className="text-center flex flex-col items-center [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]">
                 <IconCamera uniqueId="scene-upload" size={32} className="mb-1 text-zinc-500" aria-hidden />
                 <span className="text-zinc-500 text-sm">Click to upload</span>
               </div>
@@ -148,7 +148,7 @@ export default function SceneRecreatePage() {
               <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile} />
             </label>
             <Btn onClick={handleAnalyze} disabled={analyzing || !file} className="w-full">
-              {analyzing ? <><Spinner size={16} /> Analyzing... {analyzeElapsedSec}s</> : <><IconMagnifier uniqueId="scene-analyze-btn" size={16} className="inline [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor] [--nc-gradient-2-color-1:currentColor] [--nc-gradient-2-color-2:currentColor] [--nc-light:currentColor]" aria-hidden /> Analyze Scene</>}
+              {analyzing ? <><Spinner size={16} /> Analyzing... {analyzeElapsedSec}s</> : <><IconMagnifier uniqueId="scene-analyze-btn" size={16} className="inline [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]" aria-hidden /> Analyze Scene</>}
             </Btn>
           </Card>
 
@@ -227,7 +227,7 @@ export default function SceneRecreatePage() {
               </div>
 
               <Btn onClick={handleRecreate} disabled={recreating || !charId} className="w-full">
-                {recreating ? <><Spinner size={16} /> Recreating... {recreateElapsedSec}s</> : <><IconCamera uniqueId="scene-recreate-btn" size={16} className="inline [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor] [--nc-gradient-2-color-1:currentColor] [--nc-gradient-2-color-2:currentColor] [--nc-light:currentColor]" aria-hidden /> Recreate Scene</>}
+                {recreating ? <><Spinner size={16} /> Recreating... {recreateElapsedSec}s</> : <><IconCamera uniqueId="scene-recreate-btn" size={16} className="inline [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]" aria-hidden /> Recreate Scene</>}
               </Btn>
             </Card>
           )}

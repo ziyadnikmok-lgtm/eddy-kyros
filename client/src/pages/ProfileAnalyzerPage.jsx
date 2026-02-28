@@ -466,14 +466,14 @@ function ProfileRow({ profile, onReanalyze, onViewAtoms, onDelete }) {
             <div className="absolute right-0 top-full mt-1 z-50 w-44 rounded-lg border border-zinc-700/60 bg-zinc-900 shadow-xl shadow-black/40 py-1 animate-in">
               <button
                 onClick={() => { setOpen(false); onReanalyze(p.username); }}
-                className="flex items-center gap-2 w-full px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 cursor-pointer transition-colors [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor] [--nc-gradient-2-color-1:currentColor] [--nc-gradient-2-color-2:currentColor] [--nc-light:currentColor]"
+                className="flex items-center gap-2 w-full px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 cursor-pointer transition-colors [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]"
               >
                 <span className="w-4 flex items-center justify-center opacity-60"><IconArrowsBoldOppositeDirection uniqueId={`profile-reanalyze-${p.username}`} size={16} aria-hidden /></span>
                 Re-analyze
               </button>
               <button
                 onClick={() => { setOpen(false); onViewAtoms(p.username); }}
-                className="flex items-center gap-2 w-full px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 cursor-pointer transition-colors [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor] [--nc-gradient-2-color-1:currentColor] [--nc-gradient-2-color-2:currentColor] [--nc-light:currentColor]"
+                className="flex items-center gap-2 w-full px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 cursor-pointer transition-colors [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]"
               >
                 <span className="w-4 flex items-center justify-center opacity-60"><IconColorPalette uniqueId={`profile-view-atoms-${p.username}`} size={16} aria-hidden /></span>
                 View Atoms
@@ -481,7 +481,7 @@ function ProfileRow({ profile, onReanalyze, onViewAtoms, onDelete }) {
               <div className="my-1 h-px bg-zinc-800" />
               <button
                 onClick={() => { setOpen(false); onDelete(p.username); }}
-                className="flex items-center gap-2 w-full px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300 cursor-pointer transition-colors [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor] [--nc-gradient-2-color-1:currentColor] [--nc-gradient-2-color-2:currentColor] [--nc-light:currentColor]"
+                className="flex items-center gap-2 w-full px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300 cursor-pointer transition-colors [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]"
               >
                 <span className="w-4 flex items-center justify-center opacity-60"><IconDeleteX uniqueId={`profile-delete-${p.username}`} size={16} aria-hidden /></span>
                 Delete All Atoms

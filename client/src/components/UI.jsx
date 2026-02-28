@@ -451,7 +451,7 @@ export function ConfirmDialog({ open, onClose, onConfirm, title, message, confir
   );
 }
 
-const emptyIconWrap = 'mb-3 opacity-80 [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor] [--nc-gradient-2-color-1:currentColor] [--nc-gradient-2-color-2:currentColor] [--nc-light:currentColor]';
+const emptyIconWrap = 'mb-3 opacity-80';
 
 export function Empty({ icon = '📭', title, subtitle }) {
   return (

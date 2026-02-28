@@ -188,7 +188,7 @@ export default function ReelRecreatePage() {
             <div className="space-y-1">
               <span className="text-xs text-zinc-400 font-medium block">Or Upload Local Video</span>
               <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-dashed px-3 py-2 text-xs transition ${localVideoFile ? 'border-blue-500/40 bg-blue-500/5 text-blue-300' : 'border-zinc-700/80 text-zinc-300 hover:border-blue-500/30 hover:text-blue-300'}`}>
-                <span className="flex items-center justify-center [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor] [--nc-gradient-2-color-1:currentColor] [--nc-gradient-2-color-2:currentColor] [--nc-light:currentColor]">
+                <span className="flex items-center justify-center [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]">
                   {localVideoFile ? <IconCamera uniqueId="reel-local-video-camera" size={18} aria-hidden /> : <IconVideo uniqueId="reel-local-video-upload" size={18} aria-hidden />}
                 </span>
                 <input

@@ -222,7 +222,7 @@ export default function App() {
                       }`}>
                       {IconComponent ? (
                         <span className={`flex items-center justify-center w-5 transition-opacity duration-150 ${page === item.id ? 'opacity-100' : 'opacity-60 group-hover:opacity-90'}`}>
-                          <IconComponent uniqueId={`nav-${item.id}`} size={20} className="[--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor] [--nc-gradient-2-color-1:currentColor] [--nc-gradient-2-color-2:currentColor] [--nc-light:currentColor]" aria-hidden />
+                          <IconComponent uniqueId={`nav-${item.id}`} size={20} className="[--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]" aria-hidden />
                         </span>
                       ) : null}
                       {item.label}
