@@ -6,6 +6,7 @@ import { useStepTimer } from '../hooks/useStepTimer';
 import { Card, Btn, Textarea, Badge, Spinner, ImageCard, Empty, StepProgress } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 import { ASPECT_RATIOS, RESOLUTION_TIERS, IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
+import { IconCamera, IconMagnifier } from 'nucleo-glass';
 
 function fileToBase64(file) {
   return new Promise((res, rej) => {
@@ -144,12 +145,15 @@ export default function SceneRecreatePage() {
               {preview ? (
                 <img src={preview} alt="Scene" className="max-h-full max-w-full object-contain" />
               ) : (
-                <div className="text-center"><div className="text-3xl mb-1">📷</div><span className="text-zinc-500 text-sm">Click to upload</span></div>
+                <div className="text-center flex flex-col items-center [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor] [--nc-gradient-2-color-1:currentColor] [--nc-gradient-2-color-2:currentColor] [--nc-light:currentColor]">
+                <IconCamera uniqueId="scene-upload" size={32} className="mb-1 text-zinc-500" aria-hidden />
+                <span className="text-zinc-500 text-sm">Click to upload</span>
+              </div>
               )}
               <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile} />
             </label>
             <Btn onClick={handleAnalyze} disabled={analyzing || !file} className="w-full">
-              {analyzing ? <><Spinner size={16} /> Analyzing... {analyzeElapsedSec}s</> : '🔍 Analyze Scene'}
+              {analyzing ? <><Spinner size={16} /> Analyzing... {analyzeElapsedSec}s</> : <><IconMagnifier uniqueId="scene-analyze-btn" size={16} className="inline [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor] [--nc-gradient-2-color-1:currentColor] [--nc-gradient-2-color-2:currentColor] [--nc-light:currentColor]" aria-hidden /> Analyze Scene</>}
             </Btn>
           </Card>
 
@@ -228,7 +232,7 @@ export default function SceneRecreatePage() {
               </div>
 
               <Btn onClick={handleRecreate} disabled={recreating || !charId} className="w-full">
-                {recreating ? <><Spinner size={16} /> Recreating... {recreateElapsedSec}s</> : '🎬 Recreate Scene'}
+                {recreating ? <><Spinner size={16} /> Recreating... {recreateElapsedSec}s</> : <><IconCamera uniqueId="scene-recreate-btn" size={16} className="inline [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor] [--nc-gradient-2-color-1:currentColor] [--nc-gradient-2-color-2:currentColor] [--nc-light:currentColor]" aria-hidden /> Recreate Scene</>}
               </Btn>
             </Card>
           )}
@@ -238,7 +242,7 @@ export default function SceneRecreatePage() {
         <div className="lg:col-span-2 space-y-4">
           {!recreating && !result && (
             <Card className="flex items-center justify-center py-24">
-              <Empty icon="🎬" title="No recreation yet" subtitle="Upload an image, analyze its scene, then recreate with a character" />
+              <Empty icon={<IconCamera uniqueId="empty-scene" size={40} aria-hidden />} title="No recreation yet" subtitle="Upload an image, analyze its scene, then recreate with a character" />
             </Card>
           )}
 

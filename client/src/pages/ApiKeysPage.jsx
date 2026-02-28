@@ -3,6 +3,7 @@ import { keys as keysApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
 import { Card, Btn, Input, Badge, Spinner, Empty, ConfirmDialog } from '../components/UI';
+import { IconKey } from 'nucleo-glass';
 
 export default function ApiKeysPage() {
   const { activeKey, setActiveKey, notify } = useApp();
@@ -337,7 +338,7 @@ export default function ApiKeysPage() {
         {loadingList ? (
           <div className="flex justify-center py-8"><Spinner /></div>
         ) : keyList.length === 0 ? (
-          <Empty icon="🔑" title="No API keys yet" subtitle="Add one above to get started" />
+          <Empty icon={<IconKey uniqueId="empty-keys" size={40} aria-hidden />} title="No API keys yet" subtitle="Add one above to get started" />
         ) : (
           <div className="space-y-2">
             {keyList.map((k) => (

@@ -3,6 +3,7 @@ import { gallery as galleryApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
 import { Btn, Spinner, Skeleton, Empty, Badge, Modal, ConfirmDialog } from '../components/UI';
+import { IconImage, IconMagnifier, IconPin } from 'nucleo-glass';
 
 const SORT_OPTIONS = [
   { value: 'newest', label: 'Newest' },
@@ -287,7 +288,9 @@ export default function GalleryPage() {
           {/* Primary row: search + filter toggle */}
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 text-sm pointer-events-none">🔍</span>
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 text-sm pointer-events-none flex items-center [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor] [--nc-gradient-2-color-1:currentColor] [--nc-gradient-2-color-2:currentColor] [--nc-light:currentColor]">
+                <IconMagnifier uniqueId="gallery-search" size={18} aria-hidden />
+              </span>
               <input
                 type="text"
                 placeholder="Search prompts..."
@@ -396,9 +399,9 @@ export default function GalleryPage() {
           ))}
         </div>
       ) : images.length === 0 ? (
-        <Empty icon="🖼" title="Gallery is empty" subtitle="Generated images will appear here" />
+        <Empty icon={<IconImage uniqueId="empty-gallery" size={40} aria-hidden />} title="Gallery is empty" subtitle="Generated images will appear here" />
       ) : filteredImages.length === 0 ? (
-        <Empty icon="🔍" title="No images match" subtitle="Try adjusting your search or filters" />
+        <Empty icon={<IconMagnifier uniqueId="empty-gallery-search" size={40} aria-hidden />} title="No images match" subtitle="Try adjusting your search or filters" />
       ) : (
         <div className="columns-2 sm:columns-2 lg:columns-3 xl:columns-4 gap-3 sm:gap-6 space-y-3 sm:space-y-6">
           {visibleImages.map((img, index) => {
@@ -481,8 +484,8 @@ export default function GalleryPage() {
                     {img.source && <Badge color="blue">{img.source}</Badge>}
                     <span className="text-[10px] text-zinc-600">{formatSize(img.fileSize)}</span>
                     <button onClick={(e) => { e.stopPropagation(); setEditingTagsId(editingTagsId === img.id ? null : img.id); setNewTagInput(''); }}
-                      className="text-[10px] text-zinc-600 hover:text-blue-400 transition cursor-pointer ml-auto" aria-label="Edit tags">
-                      🏷
+                      className="text-[10px] text-zinc-600 hover:text-blue-400 transition cursor-pointer ml-auto flex items-center [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor] [--nc-gradient-2-color-1:currentColor] [--nc-gradient-2-color-2:currentColor] [--nc-light:currentColor]" aria-label="Edit tags">
+                      <IconPin uniqueId={`gallery-tag-${img.id}`} size={14} aria-hidden />
                     </button>
                   </div>
                   {/* Tags display */}

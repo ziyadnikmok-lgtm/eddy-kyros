@@ -6,6 +6,7 @@ import { useStepTimer } from '../hooks/useStepTimer';
 import { Card, Btn, Input, Badge, Spinner, ImageCard, Empty, StepProgress } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 import { IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
+import { IconVideo, IconCamera } from 'nucleo-glass';
 
 // Module-level session cache — survives unmount/remount when navigating away and back
 const _cache = {
@@ -192,7 +193,9 @@ export default function ReelRecreatePage() {
             <div className="space-y-1">
               <span className="text-xs text-zinc-400 font-medium block">Or Upload Local Video</span>
               <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-dashed px-3 py-2 text-xs transition ${localVideoFile ? 'border-blue-500/40 bg-blue-500/5 text-blue-300' : 'border-zinc-700/80 text-zinc-300 hover:border-blue-500/30 hover:text-blue-300'}`}>
-                <span>{localVideoFile ? '🎬' : '🎥'}</span>
+                <span className="flex items-center justify-center [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor] [--nc-gradient-2-color-1:currentColor] [--nc-gradient-2-color-2:currentColor] [--nc-light:currentColor]">
+                  {localVideoFile ? <IconCamera uniqueId="reel-local-video-camera" size={18} aria-hidden /> : <IconVideo uniqueId="reel-local-video-upload" size={18} aria-hidden />}
+                </span>
                 <input
                   type="file"
                   accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
@@ -357,7 +360,7 @@ export default function ReelRecreatePage() {
         <div className="lg:col-span-2 space-y-4">
           {!loading && !result && (
             <Card className="min-h-[360px] flex items-center justify-center">
-              <Empty icon="🎞" title="No reel processed yet" subtitle="Paste a reel URL and run recreation" />
+              <Empty icon={<IconVideo uniqueId="empty-reel" size={40} aria-hidden />} title="No reel processed yet" subtitle="Paste a reel URL and run recreation" />
             </Card>
           )}
 

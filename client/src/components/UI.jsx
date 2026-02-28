@@ -451,11 +451,14 @@ export function ConfirmDialog({ open, onClose, onConfirm, title, message, confir
   );
 }
 
-/* ── Empty State ────────────────────────────────────── */
+const emptyIconWrap = 'mb-3 opacity-80 [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor] [--nc-gradient-2-color-1:currentColor] [--nc-gradient-2-color-2:currentColor] [--nc-light:currentColor]';
+
 export function Empty({ icon = '📭', title, subtitle }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
-      <div className="text-4xl mb-3 opacity-80">{icon}</div>
+      <div className={typeof icon === 'string' ? 'text-4xl mb-3 opacity-80' : `flex justify-center ${emptyIconWrap}`}>
+        {icon}
+      </div>
       <div className="text-zinc-400 font-medium">{title}</div>
       {subtitle && <div className="text-zinc-500 text-sm mt-1 max-w-xs">{subtitle}</div>}
     </div>
