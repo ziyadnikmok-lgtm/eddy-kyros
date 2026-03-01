@@ -240,7 +240,6 @@ router.post('/', async (req, res, next) => {
     }
 
     if (sceneMemory || outfit || cameraProfile || poseFromMode || expressionFromMode || sceneFromMode || styleLibraryBlock || styleFocusBlock) {
-    if (sceneMemory || outfit || cameraProfile || poseFromMode || expressionFromMode || sceneFromMode || styleLibraryBlock || styleFocusBlock) {
       const styleBlocks = [];
       if (styleFocusBlock) {
         styleBlocks.push(styleFocusBlock);
