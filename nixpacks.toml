@@ -1,0 +1,10 @@
+[phases.build]
+cmds = ['pnpm run build:client']
+dependsOn = ['install']
+
+[variables]
+NODE_ENV = 'production'
+HOST = '0.0.0.0'
+
+[start]
+cmd = 'node server/index.js'
