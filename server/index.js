@@ -159,7 +159,7 @@ app.use('/api/caption-templates', captionTemplatesRouter);
 const { CLIENT_DIST } = require('./paths');
 if (fs.existsSync(CLIENT_DIST)) {
   app.use(express.static(CLIENT_DIST));
-  app.get('*', (_req, res) => {
+  app.get('*splat', (_req, res) => {
     res.sendFile(path.join(CLIENT_DIST, 'index.html'));
   });
 }
