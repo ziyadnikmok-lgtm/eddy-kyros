@@ -93,7 +93,8 @@ app.use(
       if (
         !origin ||
         /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
-        /^https?:\/\/(www\.)?creationpanel1337\.xyz$/.test(origin)
+        /^https?:\/\/(www\.)?creationpanel1337\.xyz$/.test(origin) ||
+        /^https?:\/\/[a-z0-9-]+\.traefik\.me(:\d+)?$/.test(origin)
       ) {
         callback(null, true);
       } else {
