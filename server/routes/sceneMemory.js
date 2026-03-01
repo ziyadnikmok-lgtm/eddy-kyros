@@ -3,10 +3,6 @@ const sceneMemoryService = require('../services/sceneMemoryService');
 
 const router = express.Router();
 
-/**
- * GET /api/scene-memory
- * List all saved scene memories.
- */
 router.get('/', (_req, res, next) => {
   try {
     const scenes = sceneMemoryService.getAllScenes();
@@ -16,10 +12,6 @@ router.get('/', (_req, res, next) => {
   }
 });
 
-/**
- * POST /api/scene-memory
- * Create a scene memory record.
- */
 router.post('/', (req, res, next) => {
   try {
     const scene = sceneMemoryService.createScene(req.body);
@@ -29,10 +21,6 @@ router.post('/', (req, res, next) => {
   }
 });
 
-/**
- * DELETE /api/scene-memory/:id
- * Delete a scene memory record by ID.
- */
 router.delete('/:id', (req, res, next) => {
   try {
     const result = sceneMemoryService.deleteScene(req.params.id);

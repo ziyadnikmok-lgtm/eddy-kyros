@@ -1,5 +1,3 @@
-// server/services/carouselStoryteller.js
-
 const { AppError } = require('../middleware/errorHandler');
 const fs = require('node:fs');
 const apiKeyManager = require('./apiKeyManager');
@@ -96,20 +94,6 @@ const MAX_HASHTAGS = 25;
 const DEFAULT_HASHTAG_COUNT = 15;
 
 class CarouselStoryteller {
-  /**
-   * Generate a full carousel story with structured captions.
-   *
-   * @param {object} params
-   * @param {string[]} params.imageIds         - Image IDs from imageStore
-   * @param {string}   params.nicheId          - Niche to use
-   * @param {string}  [params.toneOverride]    - Override niche tone
-   * @param {boolean} [params.includeHashtags] - Include hashtags (default true)
-   * @param {number}  [params.hashtagCount]    - Number of hashtags (default 15, max 25)
-   * @param {string}  [params.ctaType]         - CTA type
-   * @param {boolean} [params.viralMode]       - Enable viral writing techniques
-   * @param {string}  [params.optimizeFor]     - Engagement goal: saves|shares|comments|reach|explore
-   * @returns {Promise<object>} { hook, slides, finalCTA, hashtags, engagementInsights, lifecycleTips }
-   */
   async generateCarouselStory(params) {
     const {
       imageIds,
@@ -122,15 +106,12 @@ class CarouselStoryteller {
       optimizeFor,
     } = params || {};
 
-    // --- Validate ---
     this._validate(params);
 
-    // --- Load data ---
     const niche = nicheManager.getNiche(nicheId);
     const brandVoice = brandVoiceManager.getBrandVoice();
     const imageMetas = imageIds.map((id) => this._resolveImageMeta(id));
 
-    // --- Build prompt ---
     const useOptimize = VALID_OPTIMIZE_FOR.includes(optimizeFor) ? optimizeFor : null;
     const prompt = this._buildPrompt({
       niche,
@@ -145,21 +126,15 @@ class CarouselStoryteller {
       slideCount: Math.min(imageMetas.length, MAX_SLIDES),
     });
 
-    // --- Call Gemini ---
     const apiKey = apiKeyManager.getActiveKey();
     const rawText = await geminiService.generateText(apiKey, prompt, {
       model: 'gemini-3-flash-preview',
     });
 
-    // --- Parse response ---
     const parsed = this._parseResponse(rawText, imageMetas.length, includeHashtags);
 
     return parsed;
   }
-
-  // =========================================================================
-  // Validation
-  // =========================================================================
 
   _validate(params) {
     if (!params || typeof params !== 'object') {
@@ -168,7 +143,6 @@ class CarouselStoryteller {
 
     const { imageIds, nicheId, hashtagCount, ctaType } = params;
 
-    // imageIds
     if (!Array.isArray(imageIds) || imageIds.length === 0) {
       throw new AppError('"imageIds" array is required and must not be empty', 400, 'VALIDATION_ERROR');
     }
@@ -181,21 +155,17 @@ class CarouselStoryteller {
       }
     }
 
-    // nicheId
     if (!nicheId || typeof nicheId !== 'string') {
       throw new AppError('"nicheId" is required', 400, 'VALIDATION_ERROR');
     }
-    // Verify existence (throws 404 if missing)
     nicheManager.getNiche(nicheId);
 
-    // hashtagCount
     if (hashtagCount !== undefined) {
       if (typeof hashtagCount !== 'number' || hashtagCount < 0 || hashtagCount > MAX_HASHTAGS) {
         throw new AppError(`hashtagCount must be 0–${MAX_HASHTAGS}`, 400, 'VALIDATION_ERROR');
       }
     }
 
-    // ctaType
     if (ctaType !== undefined) {
       if (!VALID_CTA_TYPES.includes(ctaType)) {
         throw new AppError(
@@ -206,7 +176,6 @@ class CarouselStoryteller {
       }
     }
 
-    // optimizeFor
     if (params.optimizeFor !== undefined && params.optimizeFor !== null) {
       if (!VALID_OPTIMIZE_FOR.includes(params.optimizeFor)) {
         throw new AppError(
@@ -217,7 +186,6 @@ class CarouselStoryteller {
       }
     }
 
-    // toneOverride
     if (params.toneOverride !== undefined && params.toneOverride !== null) {
       if (typeof params.toneOverride !== 'string' || params.toneOverride.trim().length === 0) {
         throw new AppError('toneOverride must be a non-empty string', 400, 'VALIDATION_ERROR');
@@ -228,19 +196,13 @@ class CarouselStoryteller {
     }
   }
 
-  // =========================================================================
-  // Prompt builder
-  // =========================================================================
-
   _buildPrompt({ niche, brandVoice, imageMetas, toneOverride, includeHashtags, hashtagCount, ctaType, viralMode, optimizeFor, slideCount }) {
     const sections = [];
 
-    // --- Role ---
     sections.push(
       'You are an expert social media carousel caption writer. You create scroll-stopping, engagement-optimized carousel captions for Instagram and similar platforms.'
     );
 
-    // --- Niche context ---
     const tone = toneOverride || niche.tone;
     sections.push([
       `[NICHE: ${niche.name}]`,
@@ -252,7 +214,6 @@ class CarouselStoryteller {
       `CTA style: ${niche.ctaStyle}`,
     ].join('\n'));
 
-    // --- Brand Voice overlay ---
     if (brandVoice.writingStyleDescription || brandVoice.vocabularyPreferences.length > 0 || brandVoice.forbiddenWords.length > 0) {
       const bvLines = ['[BRAND VOICE — merge with niche style]'];
       if (brandVoice.writingStyleDescription) {
@@ -268,7 +229,6 @@ class CarouselStoryteller {
       sections.push(bvLines.join('\n'));
     }
 
-    // --- Image context ---
     const imageLines = ['[CAROUSEL IMAGES — write captions that match these visuals]'];
     for (let i = 0; i < imageMetas.length; i++) {
       const meta = imageMetas[i];
@@ -284,7 +244,6 @@ class CarouselStoryteller {
     }
     sections.push(imageLines.join('\n'));
 
-    // --- Viral mode ---
     if (viralMode) {
       sections.push([
         '[VIRAL MODE — ENABLED]',
@@ -298,12 +257,10 @@ class CarouselStoryteller {
       ].join('\n'));
     }
 
-    // --- Engagement optimization ---
     if (optimizeFor && OPTIMIZE_STRATEGIES[optimizeFor]) {
       sections.push(OPTIMIZE_STRATEGIES[optimizeFor].prompt);
     }
 
-    // --- IG Intelligence: engagement insights + lifecycle tips ---
     sections.push([
       '[IG INTELLIGENCE — also return these analysis fields]',
       'After writing the carousel, analyze your own output and provide:',
@@ -323,7 +280,6 @@ class CarouselStoryteller {
       '   - archive (array of 2-3 strings): How to repurpose or leverage this content after 24+ hours',
     ].join('\n'));
 
-    // --- Output format ---
     const ctaDesc = this._ctaDescription(ctaType);
     const formatLines = [
       '[OUTPUT FORMAT — respond ONLY with this exact JSON structure, no markdown fences, no extra text]',
@@ -366,7 +322,6 @@ class CarouselStoryteller {
 
     sections.push(formatLines.join('\n'));
 
-    // --- Rules ---
     sections.push([
       '[RULES]',
       '- Each slide caption: 1–2 short sentences. Clear, readable, no fluff.',
@@ -395,10 +350,6 @@ class CarouselStoryteller {
     return map[ctaType] || 'follow-me';
   }
 
-  /**
-   * Resolve an image id from imageStore first, then gallery fallback.
-   * If found in gallery, import into imageStore so downstream logic stays consistent.
-   */
   _resolveImageMeta(id) {
     try {
       return imageStore.get(id);
@@ -425,12 +376,7 @@ class CarouselStoryteller {
     }
   }
 
-  // =========================================================================
-  // Response parser
-  // =========================================================================
-
   _parseResponse(rawText, expectedSlides, includeHashtags) {
-    // Strip markdown fences if present
     let cleaned = rawText.trim();
     cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
 
@@ -438,7 +384,6 @@ class CarouselStoryteller {
     try {
       parsed = JSON.parse(cleaned);
     } catch {
-      // Try to extract JSON from surrounding text
       const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         try {
@@ -459,7 +404,6 @@ class CarouselStoryteller {
       }
     }
 
-    // Validate structure
     const result = {
       hook: '',
       slides: [],
@@ -493,12 +437,10 @@ class CarouselStoryteller {
         .slice(0, MAX_HASHTAGS);
     }
 
-    // Fill hook from first slide if empty
     if (!result.hook && result.slides.length > 0) {
       result.hook = result.slides[0].caption;
     }
 
-    // --- Parse engagement insights ---
     if (parsed.engagementInsights && typeof parsed.engagementInsights === 'object') {
       const ei = parsed.engagementInsights;
       result.engagementInsights = {
@@ -512,7 +454,6 @@ class CarouselStoryteller {
       };
     }
 
-    // --- Parse lifecycle tips ---
     if (parsed.lifecycleTips && typeof parsed.lifecycleTips === 'object') {
       const lt = parsed.lifecycleTips;
       const extractList = (arr) => Array.isArray(arr) ? arr.filter((t) => typeof t === 'string').slice(0, 4) : [];

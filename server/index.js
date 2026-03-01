@@ -1,15 +1,11 @@
-// server/index.js
-
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const crypto = require('node:crypto');
 
-// Load environment variables before anything else
 const dotenvPath = process.env.DOTENV_CONFIG_PATH || path.join(__dirname, '..', '.env');
 require('dotenv').config({ path: dotenvPath });
 
-// Auto-generate ENCRYPTION_SECRET if missing (first launch from source)
 if (!process.env.ENCRYPTION_SECRET || process.env.ENCRYPTION_SECRET.length < 32) {
   const secret = crypto.randomBytes(32).toString('hex');
   process.env.ENCRYPTION_SECRET = secret;
@@ -23,13 +19,11 @@ if (!process.env.ENCRYPTION_SECRET || process.env.ENCRYPTION_SECRET.length < 32)
       }
       fs.writeFileSync(dotenvPath, envContent);
     } else {
-      // .env doesn't exist yet — create it so the secret survives restarts
       fs.writeFileSync(dotenvPath, `ENCRYPTION_SECRET=${secret}\n`);
     }
-  } catch { /* non-fatal — secret is in process.env for this session */ }
+  } catch {}
 }
 
-// Catch unhandled rejections and uncaught exceptions — prevent silent crashes
 process.on('unhandledRejection', (reason) => {
   console.error('[FATAL] Unhandled promise rejection:', reason?.stack || reason?.message || reason);
   process.exit(1);
@@ -76,17 +70,11 @@ const { generateLimiter, batchLimiter, cloneLimiter } = require('./middleware/ra
 
 const app = express();
 
-// Trust reverse proxy (nginx/Cloudflare) so rate limiters see real client IPs
 app.set('trust proxy', 1);
 
 const PORT = cfg.PORT;
 const HOST = cfg.HOST;
 
-// ---------------------
-// Middleware
-// ---------------------
-
-// CORS — localhost + production domain
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -107,7 +95,6 @@ app.use(
 app.use(express.json({ limit: cfg.JSON_BODY_LIMIT }));
 app.use(compressionMiddleware(cfg.COMPRESSION_MIN_BYTES));
 
-// Request logging with timing, request IDs (skip noisy health checks)
 app.use((req, res, next) => {
   if (req.path === '/api/health') return next();
   req.id = crypto.randomUUID();
@@ -127,10 +114,6 @@ app.use((req, res, next) => {
   });
   next();
 });
-
-// ---------------------
-// Routes
-// ---------------------
 
 app.get('/api/health', (_req, res) => {
   res.json({
@@ -173,9 +156,6 @@ app.use('/api/style-library', styleLibraryRouter);
 app.use('/api/profile-analyzer', profileAnalyzerRouter);
 app.use('/api/caption-templates', captionTemplatesRouter);
 
-// ---------------------
-// Static file serving (production / Electron)
-// ---------------------
 const { CLIENT_DIST } = require('./paths');
 if (fs.existsSync(CLIENT_DIST)) {
   app.use(express.static(CLIENT_DIST));
@@ -184,17 +164,11 @@ if (fs.existsSync(CLIENT_DIST)) {
   });
 }
 
-// 404 catch-all
 app.use((req, _res, next) => {
   next(new AppError(`Route not found: ${req.method} ${req.path}`, 404, 'NOT_FOUND'));
 });
 
-// Centralized error handler (must be last)
 app.use(errorHandler);
-
-// ---------------------
-// Startup config validation
-// ---------------------
 
 (function validateConfig() {
   const warnings = [];
@@ -208,10 +182,6 @@ app.use(errorHandler);
     log.warn('config_warning', { message: w });
   }
 })();
-
-// ---------------------
-// Temp file cleanup on startup
-// ---------------------
 
 (function cleanStaleTempFiles() {
   const { TEMP_DIR } = require('./paths');
@@ -228,23 +198,18 @@ app.use(errorHandler);
         try {
           const fullPath = path.join(dir, file);
           const stat = fs.statSync(fullPath);
-          // Delete files older than 1 hour (stale from crashed runs)
           if (Date.now() - stat.mtimeMs > cfg.STALE_TEMP_FILE_AGE_MS) {
             fs.unlinkSync(fullPath);
             cleaned++;
           }
-        } catch { /* intentional — skip individual files */ }
+        } catch {}
       }
-    } catch { /* intentional — skip missing dirs */ }
+    } catch {}
   }
   if (cleaned > 0) {
     log.info('temp_cleanup', { cleaned });
   }
 })();
-
-// ---------------------
-// Start server
-// ---------------------
 
 const server = app.listen(PORT, HOST, () => {
   console.log('');
@@ -273,20 +238,14 @@ const server = app.listen(PORT, HOST, () => {
   console.log('');
 });
 
-// ---------------------
-// Graceful shutdown
-// ---------------------
-
 function gracefulShutdown(signal) {
   log.info('shutdown_start', { signal });
 
-  // Stop accepting new connections
   server.close(() => {
     log.info('shutdown_complete', { signal });
     process.exit(0);
   });
 
-  // Force exit if draining takes too long
   setTimeout(() => {
     log.error('shutdown_forced', { signal, reason: `Drain exceeded ${cfg.SHUTDOWN_TIMEOUT_MS}ms` });
     process.exit(1);

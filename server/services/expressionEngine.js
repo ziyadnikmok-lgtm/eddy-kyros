@@ -17,7 +17,6 @@ const EXPRESSION_MODE_MAP = {
   slight_smile_looking_down: 'slight smile while looking down',
   soft_confident_smirk_raised_chin: 'soft confident smirk, chin slightly raised',
   subtle_pout_raised_brows: 'subtle pout with lightly raised eyebrows',
-  // Backward compatible aliases for previously released mode IDs.
   intense_direct_gaze: 'direct gaze, confident smirk',
 };
 

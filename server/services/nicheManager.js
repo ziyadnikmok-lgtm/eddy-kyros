@@ -1,5 +1,3 @@
-// server/services/nicheManager.js
-
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -9,10 +7,6 @@ const { atomicWriteJSON } = require('../utils/helpers');
 
 const { DATA_DIR } = require('../paths');
 const DATA_FILE = path.join(DATA_DIR, 'niches.json');
-
-// ============================================================================
-// Built-in niche definitions
-// ============================================================================
 
 const BUILT_IN_NICHES = [
   {
@@ -185,19 +179,11 @@ const BUILT_IN_NICHES = [
   },
 ];
 
-// ============================================================================
-// NicheManager
-// ============================================================================
-
 class NicheManager {
   constructor() {
     this._ensureDataDir();
     this._store = this._loadStore();
   }
-
-  // -------------------------------------------------------------------------
-  // Public API
-  // -------------------------------------------------------------------------
 
   listNiches() {
     return this._store.map((n) => this._toSafe(n));
@@ -247,7 +233,6 @@ class NicheManager {
 
     const existing = this._store[index];
 
-    // Validate partial update fields
     if (data.name !== undefined) {
       if (typeof data.name !== 'string' || data.name.trim().length === 0) {
         throw new AppError('Niche name must be a non-empty string', 400, 'VALIDATION_ERROR');
@@ -305,10 +290,6 @@ class NicheManager {
     return { removed: true };
   }
 
-  // -------------------------------------------------------------------------
-  // Validation
-  // -------------------------------------------------------------------------
-
   _validateNicheData(data) {
     if (!data || typeof data !== 'object') {
       throw new AppError('Niche data object is required', 400, 'VALIDATION_ERROR');
@@ -359,10 +340,6 @@ class NicheManager {
     };
   }
 
-  // -------------------------------------------------------------------------
-  // Persistence
-  // -------------------------------------------------------------------------
-
   _ensureDataDir() {
     const dir = path.dirname(DATA_FILE);
     if (!fs.existsSync(dir)) {
@@ -383,7 +360,6 @@ class NicheManager {
       log.warn('niche_load_failed', { message: err.message });
     }
 
-    // Initialize with built-in niches
     return this._initDefaults();
   }
 
@@ -404,5 +380,4 @@ class NicheManager {
   }
 }
 
-// Singleton
 module.exports = new NicheManager();

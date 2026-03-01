@@ -1,5 +1,3 @@
-// server/routes/generate.js
-
 const express = require('express');
 const apiKeyManager = require('../services/apiKeyManager');
 const geminiService = require('../services/geminiService');
@@ -91,7 +89,6 @@ function parseCustomReferenceImages(value) {
 function buildCharacterReferenceImages(characterId, activeRefs) {
   const parts = [];
 
-  // Include ALL primary reference images
   const primaries = referenceManager.getPrimaryImages(characterId);
   for (const primary of primaries) {
     if (primary?.buffer?.length) {
@@ -115,10 +112,6 @@ function buildCharacterReferenceImages(characterId, activeRefs) {
   return parts;
 }
 
-/**
- * POST /api/generate
- * Body: { prompt?, characterId?, activeReferenceIds?, sceneDescription?, aspectRatio?, resolutionTier?, extraReferenceImage?, customReferenceImages? }
- */
 router.post('/', async (req, res, next) => {
   try {
     const {
@@ -225,16 +218,14 @@ router.post('/', async (req, res, next) => {
         ? sceneModeEngine.sceneForMode(resolvedSceneMode)
         : '';
 
-    // Resolve style library atoms
     let styleLibraryBlock = '';
     if (Array.isArray(styleAtomIds) && styleAtomIds.length > 0) {
       try {
         styleLibraryBlock = styleLibrary.composePrompt(styleAtomIds);
         styleAtomIds.forEach(id => styleLibrary.incrementUsage(id));
-      } catch { /* skip if atoms not found */ }
+      } catch { }
     }
 
-    // Resolve style focus (visual DNA from post-clone analysis)
     let styleFocusBlock = '';
     if (typeof styleFocusId === 'string' && styleFocusId.trim()) {
       try {
@@ -245,11 +236,10 @@ router.post('/', async (req, res, next) => {
         if (attrs.length > 0) {
           styleFocusBlock = `[STYLE FOCUS — Visual DNA]\n${attrs.join('\n')}\n[END STYLE FOCUS]`;
         }
-      } catch { /* not found — skip */ }
+      } catch { }
     }
 
-    // Style blocks ordered following Nano-Banana formula:
-    // Environment/Scene → Lighting/Memory → Composition/Camera → Subject Pose → Expression → Outfit → Style Library (includes format)
+    if (sceneMemory || outfit || cameraProfile || poseFromMode || expressionFromMode || sceneFromMode || styleLibraryBlock || styleFocusBlock) {
     if (sceneMemory || outfit || cameraProfile || poseFromMode || expressionFromMode || sceneFromMode || styleLibraryBlock || styleFocusBlock) {
       const styleBlocks = [];
       if (styleFocusBlock) {
@@ -285,7 +275,6 @@ router.post('/', async (req, res, next) => {
       finalPrompt = `${styleBlocks.join('\n\n')}\n\nUSER SCENE CONTEXT\n${finalPrompt}`;
     }
 
-    // Global casual/amateur realism directive — prevent over-polished or anime-like output
     finalPrompt = `${finalPrompt}\n\n${REALISM_DIRECTIVE}`;
 
     const apiKey = apiKeyManager.getActiveKey();
@@ -296,7 +285,6 @@ router.post('/', async (req, res, next) => {
       model: imageModel,
     });
 
-    // Store in imageStore (in-memory for tweak/carousel)
     const stored = imageStore.store({
       basePrompt: finalPrompt,
       characterId: resolvedCharacterId,
@@ -312,7 +300,6 @@ router.post('/', async (req, res, next) => {
       source: 'generate',
     });
 
-    // Save to persistent gallery
     const autoTags = [];
     if (contentType && typeof contentType === 'string') {
       autoTags.push(contentType.trim().toLowerCase());

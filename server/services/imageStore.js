@@ -1,38 +1,25 @@
-// server/services/imageStore.js
-
 const crypto = require('node:crypto');
 const { AppError } = require('../middleware/errorHandler');
 const log = require('../utils/logger');
 const cfg = require('../config');
 
-// ---------------------------------------------------------------------------
-// Constants (from central config)
-// ---------------------------------------------------------------------------
-
 const IMAGE_TTL_MS = cfg.IMAGE_TTL_MS;
 const CLEANUP_INTERVAL_MS = cfg.IMAGE_CLEANUP_INTERVAL_MS;
 const MAX_STORE_BYTES = cfg.MAX_STORE_BYTES;
-const ENTRY_OVERHEAD_BYTES = 512;           // approximate per-entry metadata overhead
+const ENTRY_OVERHEAD_BYTES = 512;
 
-// ---------------------------------------------------------------------------
-// Store
-// ---------------------------------------------------------------------------
-
-/** @type {Map<string, object>} */
 const images = new Map();
 let _totalBytes = 0;
 
 function _estimateEntryBytes(entry) {
   let bytes = ENTRY_OVERHEAD_BYTES;
   if (entry.image && entry.image.base64Data) {
-    bytes += entry.image.base64Data.length; // string length ≈ byte count for base64
+    bytes += entry.image.base64Data.length;
   }
   if (entry.basePrompt) bytes += entry.basePrompt.length;
   return bytes;
 }
 
-// Periodic cleanup — collects expired IDs first, then deletes in batches
-// via setImmediate to avoid blocking the event loop with large maps.
 const CLEANUP_BATCH_SIZE = 50;
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
@@ -63,27 +50,7 @@ const cleanupTimer = setInterval(() => {
 }, CLEANUP_INTERVAL_MS);
 if (cleanupTimer.unref) cleanupTimer.unref();
 
-// ---------------------------------------------------------------------------
-// ImageStore
-// ---------------------------------------------------------------------------
-
 class ImageStore {
-  /**
-   * Store metadata (and optionally image data) for a generated image.
-   *
-   * @param {object} params
-   * @param {string}  params.basePrompt        - The full prompt that produced this image
-   * @param {string} [params.characterId]      - Character used (if any)
-   * @param {string[]} [params.activeReferenceIds] - References that were active
-   * @param {string} [params.sceneDescription] - Extracted or user-provided scene description
-   * @param {string} [params.modelUsed]        - Gemini model string
-   * @param {number} [params.seed]             - Seed used
-   * @param {string} [params.parentImageId]    - Parent image (for tweaks / carousel chains)
-   * @param {number} [params.variationIndex]   - Index within parent's children
-   * @param {object} [params.image]            - { mimeType, base64Data }
-   * @param {string} [params.source]           - Origin: 'generate' | 'batch' | 'tweak' | 'reel-copy' | 'reel-recreate'
-   * @returns {object} Stored entry (safe for API)
-   */
   store(params) {
     const {
       basePrompt,
@@ -107,7 +74,6 @@ class ImageStore {
       throw new AppError(`source must be one of: ${validSources.join(', ')}`, 500, 'STORE_ERROR');
     }
 
-    // Validate parent exists if specified
     if (parentImageId && !images.has(parentImageId)) {
       throw new AppError('Parent image not found', 404, 'PARENT_NOT_FOUND');
     }
@@ -133,7 +99,6 @@ class ImageStore {
     entry._estimatedBytes = _estimateEntryBytes(entry);
     _totalBytes += entry._estimatedBytes;
 
-    // LRU eviction: drop oldest entries until under memory cap
     if (_totalBytes > MAX_STORE_BYTES) {
       let evicted = 0;
       for (const [oldId, oldEntry] of images) {
@@ -149,7 +114,6 @@ class ImageStore {
 
     images.set(imageId, entry);
 
-    // Register as child of parent (cap at 100 to prevent unbounded growth)
     if (parentImageId) {
       const parent = images.get(parentImageId);
       if (parent && parent.children.length < 100) {
@@ -160,9 +124,6 @@ class ImageStore {
     return this._toSafe(entry);
   }
 
-  /**
-   * Get image metadata by ID.
-   */
   get(imageId) {
     if (!imageId || typeof imageId !== 'string') {
       throw new AppError('Image ID is required', 400, 'VALIDATION_ERROR');
@@ -174,9 +135,6 @@ class ImageStore {
     return this._toSafe(entry);
   }
 
-  /**
-   * Get the raw internal entry (for tweak builder — never expose to API).
-   */
   _getInternal(imageId) {
     const entry = images.get(imageId);
     if (!entry) {
@@ -185,9 +143,6 @@ class ImageStore {
     return entry;
   }
 
-  /**
-   * List all stored images (metadata only, no base64 data).
-   */
   list() {
     const result = [];
     for (const entry of images.values()) {
@@ -196,9 +151,6 @@ class ImageStore {
     return result;
   }
 
-  /**
-   * Get children of an image (carousel chain).
-   */
   getChildren(imageId) {
     const entry = this._getInternal(imageId);
     return entry.children
@@ -206,25 +158,16 @@ class ImageStore {
       .map((cid) => this._toSafe(images.get(cid), false));
   }
 
-  /**
-   * Count how many children (variations) an image has.
-   */
   getChildCount(imageId) {
     const entry = images.get(imageId);
     if (!entry) return 0;
     return entry.children.filter((cid) => images.has(cid)).length;
   }
 
-  /**
-   * Check if an image exists.
-   */
   has(imageId) {
     return images.has(imageId);
   }
 
-  /**
-   * Memory stats for monitoring.
-   */
   stats() {
     return {
       entries: images.size,
@@ -234,10 +177,6 @@ class ImageStore {
     };
   }
 
-  /**
-   * Strip internal fields for API output.
-   * @param {boolean} includeImage - whether to include base64 data
-   */
   _toSafe(entry, includeImage = true) {
     const safe = {
       imageId: entry.imageId,
@@ -267,5 +206,4 @@ class ImageStore {
   }
 }
 
-// Singleton
 module.exports = new ImageStore();

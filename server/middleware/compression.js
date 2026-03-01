@@ -1,6 +1,3 @@
-// server/middleware/compression.js
-// Gzip compression for JSON responses above a size threshold.
-
 const { gzipSync } = require('node:zlib');
 
 function compressionMiddleware(minBytes = 1024) {

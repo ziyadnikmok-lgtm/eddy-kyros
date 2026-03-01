@@ -1,7 +1,3 @@
-// server/utils/realismDirective.js
-// Shared photography realism directive injected into all image generation prompts.
-// Keeps the language consistent across generate, batch, postClone, and reelCopy routes.
-
 const REALISM_DIRECTIVE = [
   '[PHOTOGRAPHY REALISM DIRECTIVE]',
   'This must look like a real photograph — NOT digital art, NOT anime, NOT 3D render, NOT an illustration, NOT a cartoon, NOT CGI.',

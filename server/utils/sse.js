@@ -1,12 +1,3 @@
-// server/utils/sse.js
-// Shared Server-Sent Events helpers.
-
-/**
- * Write SSE headers and return a typed send function.
- *
- * @param {import('express').Response} res
- * @returns {(event: string, data: object) => void} send – writes one SSE frame
- */
 function initSSE(res) {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',

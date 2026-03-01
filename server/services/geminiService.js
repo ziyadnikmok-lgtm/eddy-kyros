@@ -1,19 +1,15 @@
-// server/services/geminiService.js
-
 const { GoogleGenAI, Modality, ThinkingLevel } = require('@google/genai');
 const crypto = require('node:crypto');
 const { AppError } = require('../middleware/errorHandler');
 const { dedupRequest } = require('../utils/dedup');
 const cfg = require('../config');
 
-// Default image model + allowed alternates
 const IMAGE_MODEL = 'gemini-3-pro-image-preview';
 const IMAGE_MODEL_ALTERNATES = ['gemini-3.1-flash-image-preview'];
 const ALLOWED_IMAGE_MODELS = [IMAGE_MODEL, ...IMAGE_MODEL_ALTERNATES];
 const MINIMAL_THINKING_IMAGE_MODELS = new Set(['gemini-3.1-flash-image-preview']);
 const TEXT_MODEL = 'gemini-3-flash-preview';
 
-// Timeout + retry defaults (from central config)
 const GENERATE_TIMEOUT_MS = cfg.GEMINI_GENERATE_TIMEOUT_MS;
 const TEXT_TIMEOUT_MS = cfg.GEMINI_TEXT_TIMEOUT_MS;
 const TRANSIENT_RETRY_COUNT = cfg.GEMINI_TRANSIENT_RETRIES;
@@ -44,13 +40,11 @@ function withTimeout(promise, ms, label) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-// Cache GoogleGenAI instances — avoids re-init overhead on every call
 const _clientCache = new Map();
 function getClient(apiKey) {
   let client = _clientCache.get(apiKey);
   if (!client) {
     client = new GoogleGenAI({ apiKey });
-    // Keep cache bounded (single user = typically 1 key)
     if (_clientCache.size > 5) {
       const oldest = _clientCache.keys().next().value;
       _clientCache.delete(oldest);
@@ -61,10 +55,6 @@ function getClient(apiKey) {
 }
 
 class GeminiService {
-  /**
-   * Generate an image from a text prompt.
-   * Always uses IMAGE_MODEL (Nano Banana Pro).
-   */
   async generateImage(apiKey, prompt, options = {}) {
   if (!apiKey || typeof apiKey !== 'string') {
     throw new AppError('API key is required for generation', 500, 'CONFIG_ERROR');
@@ -76,8 +66,6 @@ class GeminiService {
     throw new AppError(`Prompt must be ${cfg.PROMPT_MAX_LENGTH.toLocaleString()} characters or fewer`, 400, 'VALIDATION_ERROR');
   }
 
-  // Deduplicate concurrent identical requests (e.g. double-click).
-  // Include a hash of reference image count + first ref's length to distinguish different characters.
   const refSig = Array.isArray(options.referenceImages) && options.referenceImages.length > 0
     ? `:refs${options.referenceImages.length}:${(options.referenceImages[0]?.base64Data || '').length}`
     : ':noref';
@@ -100,8 +88,6 @@ class GeminiService {
       config.thinkingConfig = { thinkingLevel: ThinkingLevel.MINIMAL };
     }
 
-    // Retry loop: on safety blocks or empty responses, progressively sanitize
-    // the prompt wording and retry. Also retries on transient network errors.
     const maxAttempts = 3;
     let currentPrompt = prompt;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -124,13 +110,10 @@ class GeminiService {
           return { image: parsed.imageResult, text: parsed.textResult || null, modelUsed: selectedImageModel };
         }
 
-        // Safety block, IMAGE_OTHER, or empty response — retry with adjustments
         if (parsed.blockReason || parsed.hasNoParts) {
           const reason = parsed.blockReason ? 'safety_block' : parsed.isImageOther ? 'IMAGE_OTHER' : 'empty_response';
           console.warn(`[gemini] attempt ${attempt}/${maxAttempts} failed: ${reason}`);
           if (attempt < maxAttempts) {
-            // Never strip reference images — they carry identity anchoring.
-            // Stripping them silently produces a different person.
             currentPrompt = this._sanitizePromptForRetry(currentPrompt, attempt);
             await this._sleep(500 * attempt);
             continue;
@@ -168,7 +151,6 @@ class GeminiService {
   }
 
   _buildRetryPrompt(prompt, attempt) {
-    // Cap prompt length to prevent unbounded growth across retries
     const base = prompt.trim().slice(0, cfg.PROMPT_MAX_LENGTH);
     if (attempt <= 1) return base;
     if (attempt === 2) {
@@ -180,15 +162,9 @@ class GeminiService {
     return `${base}\n\nOutput requirement: single clear photoreal image, no text.`;
   }
 
-  /**
-   * Progressively sanitize a prompt to avoid safety filter triggers.
-   * Attempt 1 → mild cleanup: swap triggering adjectives for neutral ones.
-   * Attempt 2 → heavy cleanup: strip body/clothing descriptors, focus on composition.
-   */
   _sanitizePromptForRetry(prompt, attempt) {
     let text = prompt;
 
-    // Mild pass — swap common trigger words for neutral alternatives
     const swaps = [
       [/\bsexy\b/gi, 'stylish'],
       [/\bsensual\b/gi, 'elegant'],
@@ -220,7 +196,6 @@ class GeminiService {
     }
 
     if (attempt >= 2) {
-      // Heavy pass — add safe framing, strip remaining risky phrases
       text = text
         .replace(/\b(bare|exposed|showing)\s+(skin|legs|stomach|chest|shoulders|back|arms)\b/gi, 'visible $2')
         .replace(/\b(tiny|micro|barely[- ]there)\b/gi, 'small');
@@ -282,7 +257,6 @@ class GeminiService {
 
   _buildImageGenerationParts(prompt, options) {
     if (Array.isArray(options.parts) && options.parts.length > 0) {
-      // Validate each part has the expected shape
       for (const part of options.parts) {
         if (!part || typeof part !== 'object') {
           throw new AppError('Invalid part in options.parts — each entry must be an object', 400, 'VALIDATION_ERROR');
@@ -328,9 +302,6 @@ class GeminiService {
     return requested;
   }
 
-  /**
-   * Generate text-only content. Always uses TEXT_MODEL.
-   */
   async generateText(apiKey, prompt, options = {}) {
     if (!apiKey || typeof apiKey !== 'string') {
       throw new AppError('API key is required for generation', 500, 'CONFIG_ERROR');
@@ -384,10 +355,6 @@ class GeminiService {
     }
   }
 
-  /**
-   * Analyze an uploaded image and return structured scene data.
-   * Uses TEXT_MODEL with image input.
-   */
   async analyzeImage(apiKey, imageBase64, mimeType) {
     if (!apiKey || typeof apiKey !== 'string') {
       throw new AppError('API key is required', 500, 'CONFIG_ERROR');
@@ -462,10 +429,6 @@ class GeminiService {
     }
   }
 
-  /**
-   * Analyze image with a custom prompt and return plain text.
-   * Uses TEXT_MODEL with image input.
-   */
   async analyzeImageWithPrompt(apiKey, imageBase64, mimeType, prompt) {
     if (!apiKey || typeof apiKey !== 'string') {
       throw new AppError('API key is required', 500, 'CONFIG_ERROR');
@@ -510,10 +473,6 @@ class GeminiService {
     }
   }
 
-  /**
-   * Analyze multiple images with one prompt and return plain text.
-   * Uses TEXT_MODEL with image inputs.
-   */
   async analyzeImagesWithPrompt(apiKey, images, prompt) {
     if (!apiKey || typeof apiKey !== 'string') {
       throw new AppError('API key is required', 500, 'CONFIG_ERROR');

@@ -1,10 +1,7 @@
-// server/tests/multipartParser.test.js
-
 import { describe, it, expect, vi } from 'vitest';
 const { createMultipartParser } = require('../middleware/multipartParser');
 const { EventEmitter } = require('node:events');
 
-// Helper: build a fake Express request from a multipart body
 function createMockReq(boundary, parts, contentType) {
   const body = parts
     .map((p) => {
@@ -21,7 +18,6 @@ function createMockReq(boundary, parts, contentType) {
   req.body = {};
   req.destroy = vi.fn();
 
-  // Emit body in next tick so the middleware can attach listeners
   process.nextTick(() => {
     req.emit('data', buffer);
     req.emit('end');

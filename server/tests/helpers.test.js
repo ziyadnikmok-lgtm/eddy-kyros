@@ -1,5 +1,3 @@
-// server/tests/helpers.test.js
-
 import { describe, it, expect } from 'vitest';
 const { asText } = require('../utils/helpers');
 

@@ -24,7 +24,7 @@ const logger = require('../utils/logger');
 
 const router = express.Router();
 const { TEMP_DIR } = require('../paths');
-const ROUTE_TIMEOUT_MS = 5 * 60_000; // 5 min hard ceiling
+const ROUTE_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_ACTOR_ID = process.env.APIFY_REEL_ACTOR_ID || 'apify/instagram-scraper';
 const MATCH_STRENGTHS = new Set(['soft', 'medium', 'strict']);
 const TATTOO_TERMS_REGEX = /\b(?:tattoo(?:s|ed|ing)?|body\s*ink|inked|inkwork|sleeve\s+tattoo|tribal\s+ink)\b/i;
@@ -253,7 +253,7 @@ async function downloadVideo(videoUrls, targetPath) {
           return { videoUrl: url };
         } catch (err) {
           lastErr = err;
-          try { if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath); } catch { /* cleanup best-effort */ }
+          try { if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath); } catch { }
           if (attempt < 3) await sleep(400 * attempt);
         }
       }
@@ -385,7 +385,6 @@ function buildFollowUpLockBlock({ firstGeneratedScene, targetScene, poseStrength
     ].filter(Boolean).join('\n');
   }
 
-  // Fallback: no source frame reference — pose comes from text description only.
   return [
     '[REEL COPY LOCK - FOLLOW-UP CONTINUITY]',
     'Reference image rule:',
@@ -461,15 +460,12 @@ async function recreateFrame({
     ? `${promptBase}\n\n${extraLockText}`
     : promptBase;
 
-  // Trim base prompt if combined length exceeds Gemini's 10K limit,
-  // keeping the lock text intact since it drives recreation accuracy.
   if (prompt.trim().length > MAX_PROMPT && extraLockText) {
-    const lockLen = extraLockText.length + 2; // +2 for the \n\n separator
-    const maxBase = MAX_PROMPT - lockLen - 50; // 50 char safety margin
+    const lockLen = extraLockText.length + 2;
+    const maxBase = MAX_PROMPT - lockLen - 50;
     if (maxBase > 500) {
       prompt = `${promptBase.slice(0, maxBase).trimEnd()}\n\n${extraLockText}`;
     } else {
-      // Lock text alone is near the limit — trim it too
       prompt = `${promptBase.slice(0, 2000).trimEnd()}\n\n${extraLockText.slice(0, MAX_PROMPT - 2050).trimEnd()}`;
     }
     logger.info(`[reel-copy] Prompt trimmed from ${promptBase.length + lockLen} to ${prompt.length} chars`);
@@ -517,10 +513,6 @@ async function recreateFrame({
   };
 }
 
-/**
- * POST /api/reel-copy
- * Body: { reelUrl, characterId, apifyApiKey? }
- */
 router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
   let videoPath = '';
   let firstPath = '';
@@ -607,7 +599,7 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
 
       if (uploadedVideo) {
         fs.writeFileSync(videoPath, uploadedVideo.buffer);
-        uploadedVideo.buffer = null; // release ~200MB from memory
+        uploadedVideo.buffer = null;
       } else {
         const { videoUrls } = await resolveVideoUrlFromApify(cleanUrl, apifyApiKey);
         const downloaded = await downloadVideo(videoUrls, videoPath);
@@ -618,7 +610,6 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
       lastFrameBase64 = fs.readFileSync(lastPath).toString('base64');
     }
 
-    // Stage 1: recreate first frame with strict original-frame lock.
     const firstSourceScene = stripTattoosFromSceneData(
       sourceAnalysis?.firstSourceScene
       || await sceneAnalyzer.analyzeScene(firstFrameBase64, firstFrameMimeType)
@@ -668,7 +659,6 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
       });
     }
 
-    // Stage 2: generate last frame from first recreation anchor + original last-frame target.
     if (Date.now() > deadline) {
       throw new AppError(`Reel copy timed out after ${ROUTE_TIMEOUT_MS / 1000}s (first frame done, second frame skipped)`, 504, 'REEL_COPY_TIMEOUT');
     }
@@ -686,12 +676,6 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
     const lastPoseHint = stripTattooMentions(asText(sourceAnalysis?.lastPoseHint))
       || await derivePoseExpressionHint(apiKey, lastFrameBase64, lastFrameMimeType);
 
-    // Use first recreated frame's scene as the base prompt scene for the last frame.
-    // This prevents the base prompt from describing the source last frame's scene
-    // (which conflicts with the continuity lock and causes the model to ignore pose changes).
-    // When outfit transition is enabled, swap outfit in the base scene.
-    // Do NOT swap lighting here — the visual reference (first frame) would conflict with text.
-    // Lighting transition is driven by the lock block instruction instead.
     const lastFrameOverrideScene = outfitTransition && resolvedLastSourceScene.outfit
       ? { ...firstGeneratedScene, outfit: resolvedLastSourceScene.outfit }
       : firstGeneratedScene;
@@ -710,7 +694,6 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
 
     let last;
     try {
-      // Try with source last frame as visual pose reference (best quality).
       last = await recreateFrame({
         frameBase64: lastFrameBase64,
         characterId,
@@ -726,7 +709,6 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
         extraLockText: `${buildFollowUpLockBlock(followUpLockParams)}\n\n[LAST FRAME POSE/EXPRESSION TARGET]\n${lastPoseHint}`,
       });
     } catch (refErr) {
-      // If Gemini blocks/empties due to the source frame reference, fall back to text-only pose.
       if (refErr.code === 'GENERATION_EMPTY' || refErr.code === 'SAFETY_BLOCKED') {
         logger.warn('Last frame generation blocked with source frame reference, retrying without it');
         last = await recreateFrame({
@@ -785,7 +767,7 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
   } finally {
     for (const filePath of [videoPath, firstPath, lastPath]) {
       if (filePath && fs.existsSync(filePath)) {
-        try { fs.unlinkSync(filePath); } catch { /* cleanup best-effort */ }
+        try { fs.unlinkSync(filePath); } catch { }
       }
     }
   }

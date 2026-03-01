@@ -1,5 +1,3 @@
-// server/routes/gallery.js
-
 const express = require('express');
 const galleryManager = require('../services/galleryManager');
 const { parseImageUpload } = require('../middleware/upload');
@@ -11,10 +9,6 @@ const archiver = require('archiver');
 const router = express.Router();
 const parseMultipartIfNeeded = createMultipartParser({ fallback: parseImageUpload });
 
-/**
- * GET /api/gallery
- * List gallery images (newest first). Optional pagination: ?page=&limit=&tag=
- */
 router.get('/', (req, res, next) => {
   try {
     const result = galleryManager.list({
@@ -28,11 +22,6 @@ router.get('/', (req, res, next) => {
   }
 });
 
-/**
- * POST /api/gallery/upload
- * Upload an external image into persistent gallery storage.
- * Supports multipart/form-data ("file") or JSON base64 payload.
- */
 router.post('/upload', parseMultipartIfNeeded, (req, res, next) => {
   try {
     const prompt = (req.body?.prompt && typeof req.body.prompt === 'string')
@@ -76,10 +65,6 @@ router.post('/upload', parseMultipartIfNeeded, (req, res, next) => {
   }
 });
 
-/**
- * PATCH /api/gallery/:id/favorite
- * Toggle the favorite status of a gallery image.
- */
 router.patch('/:id/favorite', (req, res, next) => {
   try {
     const entry = galleryManager.toggleFavorite(req.params.id);
@@ -89,11 +74,6 @@ router.patch('/:id/favorite', (req, res, next) => {
   }
 });
 
-/**
- * DELETE /api/gallery/bulk
- * Delete multiple gallery images at once.
- * Body: { ids: string[] }
- */
 router.delete('/bulk', (req, res, next) => {
   try {
     const { ids } = req.body;
@@ -110,11 +90,6 @@ router.delete('/bulk', (req, res, next) => {
   }
 });
 
-/**
- * POST /api/gallery/bulk-download
- * Stream a ZIP file containing the requested gallery images.
- * Body: { ids: string[] }
- */
 router.post('/bulk-download', (req, res, next) => {
   try {
     const { ids } = req.body;
@@ -148,10 +123,6 @@ router.post('/bulk-download', (req, res, next) => {
   }
 });
 
-/**
- * GET /api/gallery/tags
- * Get all unique tags across gallery images.
- */
 router.get('/tags', (_req, res, next) => {
   try {
     const tags = galleryManager.getAllTags();
@@ -161,11 +132,6 @@ router.get('/tags', (_req, res, next) => {
   }
 });
 
-/**
- * PATCH /api/gallery/:id/tags
- * Replace all tags on a gallery image.
- * Body: { tags: string[] }
- */
 router.patch('/:id/tags', (req, res, next) => {
   try {
     const { tags } = req.body;
@@ -176,11 +142,6 @@ router.patch('/:id/tags', (req, res, next) => {
   }
 });
 
-/**
- * POST /api/gallery/:id/tags
- * Add a single tag to a gallery image.
- * Body: { tag: string }
- */
 router.post('/:id/tags', (req, res, next) => {
   try {
     const { tag } = req.body;
@@ -191,10 +152,6 @@ router.post('/:id/tags', (req, res, next) => {
   }
 });
 
-/**
- * DELETE /api/gallery/:id/tags/:tag
- * Remove a specific tag from a gallery image.
- */
 router.delete('/:id/tags/:tag', (req, res, next) => {
   try {
     const entry = galleryManager.removeTag(req.params.id, decodeURIComponent(req.params.tag));
@@ -204,10 +161,6 @@ router.delete('/:id/tags/:tag', (req, res, next) => {
   }
 });
 
-/**
- * GET /api/gallery/:id/image
- * Serve image file by gallery ID.
- */
 router.get('/:id/image', (req, res, next) => {
   try {
     const { filePath, mimeType } = galleryManager.getFilePath(req.params.id);
@@ -219,10 +172,6 @@ router.get('/:id/image', (req, res, next) => {
   }
 });
 
-/**
- * DELETE /api/gallery/:id
- * Delete a gallery image (file + metadata).
- */
 router.delete('/:id', (req, res, next) => {
   try {
     const result = galleryManager.remove(req.params.id);
@@ -232,13 +181,8 @@ router.delete('/:id', (req, res, next) => {
   }
 });
 
-/**
- * POST /api/gallery/:id/open-folder
- * Open the gallery folder in the OS file explorer (localhost only).
- */
 router.post('/:id/open-folder', (req, res, next) => {
   try {
-    // Verify image exists and resolve file path
     const { filePath } = galleryManager.getFilePath(req.params.id);
     const folderPath = galleryManager.getFolderPath();
 

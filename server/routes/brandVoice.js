@@ -1,14 +1,8 @@
-// server/routes/brandVoice.js
-
 const express = require('express');
 const brandVoiceManager = require('../services/brandVoiceManager');
 
 const router = express.Router();
 
-/**
- * GET /api/brand-voice
- * Get the current brand voice profile.
- */
 router.get('/', (_req, res, next) => {
   try {
     const voice = brandVoiceManager.getBrandVoice();
@@ -18,11 +12,6 @@ router.get('/', (_req, res, next) => {
   }
 });
 
-/**
- * PATCH /api/brand-voice
- * Update the brand voice profile (partial update).
- * Body: { writingStyleDescription?, vocabularyPreferences?, emojiFrequency?, forbiddenWords? }
- */
 router.patch('/', (req, res, next) => {
   try {
     const voice = brandVoiceManager.updateBrandVoice(req.body);

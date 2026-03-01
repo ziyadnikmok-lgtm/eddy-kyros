@@ -1,17 +1,8 @@
-// server/tests/imageStore.test.js
-
 import { describe, it, expect, beforeEach } from 'vitest';
-
-// We need a fresh ImageStore for each test — require the class and create instances
-// But imageStore.js exports a singleton. We can test via the singleton since tests run
-// serially within a describe block. We'll just be aware entries accumulate.
 
 const imageStore = require('../services/imageStore');
 
 describe('ImageStore', () => {
-  // Note: store is a singleton; entries persist across tests in this suite.
-  // Each test creates with unique prompts to avoid collisions.
-
   it('stores and retrieves an image entry', () => {
     const result = imageStore.store({
       basePrompt: 'test prompt for store-retrieve',

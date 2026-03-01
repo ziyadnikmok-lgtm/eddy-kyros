@@ -1,5 +1,3 @@
-// server/services/sceneAnalyzer.js
-
 const { AppError } = require('../middleware/errorHandler');
 const apiKeyManager = require('./apiKeyManager');
 const geminiService = require('./geminiService');
@@ -14,9 +12,6 @@ const SCENE_FIELDS = [
 ];
 
 class SceneAnalyzer {
-  /**
-   * Analyze an uploaded image and extract structured scene data.
-   */
   async analyzeScene(imageBase64, mimeType) {
     if (!imageBase64 || typeof imageBase64 !== 'string') {
       throw new AppError('Image base64 data is required', 400, 'VALIDATION_ERROR');
@@ -28,7 +23,6 @@ class SceneAnalyzer {
     const apiKey = apiKeyManager.getActiveKey();
     const result = await geminiService.analyzeImage(apiKey, imageBase64, mimeType);
 
-    // Ensure all expected fields exist
     const scene = {};
     for (const field of SCENE_FIELDS) {
       scene[field] = (typeof result[field] === 'string') ? result[field] : '';
@@ -36,9 +30,6 @@ class SceneAnalyzer {
     return scene;
   }
 
-  /**
-   * Build a recreation prompt from scene data + character identity.
-   */
   buildRecreationPrompt({ sceneData, characterId, activeReferenceIds }) {
     if (!sceneData || typeof sceneData !== 'object') {
       throw new AppError('sceneData is required', 400, 'VALIDATION_ERROR');
@@ -51,17 +42,14 @@ class SceneAnalyzer {
     const refIds = Array.isArray(activeReferenceIds) ? activeReferenceIds : null;
     const activeRefs = referenceManager.getActiveReferences(characterId, refIds);
 
-    // Convert structured scene data to descriptive paragraph
     const sceneParagraph = this._sceneToDescription(sceneData);
 
-    // Build the identity-locked prompt with scene as the user prompt
     const basePrompt = promptBuilder.buildPrompt({
       masterPrompt: character.masterPrompt,
       activeReferences: activeRefs,
       userPrompt: sceneParagraph,
     });
 
-    // Add scene preservation rules
     const preservationRules = [
       '',
       '[SCENE PRESERVATION — LOCKED]',

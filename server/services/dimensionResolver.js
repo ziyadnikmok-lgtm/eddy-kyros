@@ -1,5 +1,3 @@
-// server/services/dimensionResolver.js
-
 const { AppError } = require('../middleware/errorHandler');
 
 const DEFAULT_ASPECT_RATIO = '1:1';

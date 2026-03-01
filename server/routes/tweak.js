@@ -1,5 +1,3 @@
-// server/routes/tweak.js
-
 const express = require('express');
 const fs = require('node:fs');
 const apiKeyManager = require('../services/apiKeyManager');
@@ -17,27 +15,6 @@ const { createMultipartParser } = require('../middleware/multipartParser');
 const router = express.Router();
 const parseMultipartIfNeeded = createMultipartParser();
 
-/**
- * POST /api/tweak
- *
- * Generate a controlled variation of a previously generated image.
- * Preserves environment, lighting, framing, and character identity.
- * Applies only the specified modifications.
- *
- * Body: {
- *   imageId: string,
- *   modifications: {
- *     pose?: string,
- *     expression?: string,
- *     clothing?: string,
- *     cameraAngle?: string,
- *     mood?: string
- *   },
- *   aspectRatio?: string,
- *   resolutionTier?: string,
- *   model?: string
- * }
- */
 router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
   try {
     let { imageId, modifications, characterId, activeReferenceIds, imageModel } = req.body || {};
@@ -47,7 +24,7 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
       }
     }
     if (typeof activeReferenceIds === 'string') {
-      try { activeReferenceIds = JSON.parse(activeReferenceIds); } catch { /* use raw string */ }
+      try { activeReferenceIds = JSON.parse(activeReferenceIds); } catch { }
     }
     const { aspectRatio, resolutionTier, width, height } = resolveDimensions(req.body);
 
@@ -77,9 +54,6 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
       resolvedImageId = imported.imageId;
       original = imageStore.get(resolvedImageId);
     } else if (imageId && typeof imageId === 'string') {
-      // Resolve base image from in-memory store OR persistent gallery.
-      // If it comes from gallery, import it into imageStore so downstream
-      // tweak variation linkage works consistently.
       resolvedImageId = imageId;
       try {
         original = imageStore.get(imageId);
@@ -109,7 +83,6 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
       throw new AppError('No base image provided', 400, 'VALIDATION_ERROR');
     }
 
-    // Cannot tweak a cancelled/failed batch result (no image data)
     if (!original.image) {
       throw new AppError(
         'Cannot tweak an image with no image data (may be a failed or cancelled generation)',
@@ -118,7 +91,6 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
       );
     }
 
-    // --- Build tweak prompt ---
     let tweakPrompt = tweakBuilder.buildTweakPrompt({
       originalMetadata: original,
       modifications: modifications || {},
@@ -140,7 +112,6 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
       referenceImages = buildCharacterReferenceImages(characterId, activeRefs);
     }
 
-    // Include the original image as a visual reference for controlled variation
     if (original.image?.base64Data) {
       referenceImages.push({
         mimeType: original.image.mimeType || 'image/png',
@@ -148,7 +119,6 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
       });
     }
 
-    // --- Generate via Gemini ---
     const apiKey = apiKeyManager.getActiveKey();
     const result = await geminiService.generateImage(apiKey, tweakPrompt, {
       aspectRatio,
@@ -157,7 +127,6 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
       model: imageModel,
     });
 
-    // --- Store the new image with parent linkage ---
     const childCount = imageStore.getChildCount(resolvedImageId);
     const stored = imageStore.store({
       basePrompt: tweakPrompt,

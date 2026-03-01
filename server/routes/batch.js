@@ -1,5 +1,3 @@
-// server/routes/batch.js
-
 const express = require('express');
 const fs = require('node:fs');
 const batchGenerator = require('../services/batchGenerator');
@@ -12,31 +10,11 @@ const { initSSE } = require('../utils/sse');
 const router = express.Router();
 const parseMultipartIfNeeded = createMultipartParser({ maxBytes: 50 * 1024 * 1024 });
 
-/**
- * POST /api/batch
- *
- * Start a batch generation job. Returns immediately with a job object.
- * Processing continues asynchronously.
- *
- * Body: {
- *   mode: "variation" | "multi" | "override",
- *   config: { ... mode-specific config ... }
- * }
- *
- * Variation config:
- *   { prompt, count?, randomizeSeed?, temperatureRange?: { min, max }, model?, characterId?, activeReferenceIds? }
- *
- * Multi config:
- *   { prompts: string[], temperature?, seed?, model? }
- *
- * Override config:
- *   { characterId, overrideSets: [{ referenceIds: string[] }], prompt?, model? }
- */
 router.post('/', parseMultipartIfNeeded, (req, res, next) => {
   try {
     let { mode, config } = req.body || {};
     if (typeof config === 'string') {
-      try { config = JSON.parse(config); } catch { /* use raw string */ }
+      try { config = JSON.parse(config); } catch { }
     }
     const validRatios = ['1:1', '16:9', '9:16', '4:3', '3:4', '4:5'];
     const validSizes = ['1K', '2K', '4K'];
@@ -72,8 +50,6 @@ router.post('/', parseMultipartIfNeeded, (req, res, next) => {
       ? req.file
       : null;
 
-    // Edit mode now accepts gallery IDs. If incoming imageId isn't in imageStore,
-    // load it from gallery disk and import into imageStore for batch edit pipeline.
     if (mode === 'edit') {
       if (uploadedFile) {
         const imported = imageStore.store({
@@ -93,7 +69,6 @@ router.post('/', parseMultipartIfNeeded, (req, res, next) => {
         });
         normalizedConfig = { ...config, imageId: imported.imageId };
       } else if (config.imageBase64 && typeof config.imageBase64 === 'string') {
-        // Inline base64 image (from client-side upload)
         let base64Data = config.imageBase64.trim();
         const dataUriMatch = base64Data.match(/^data:(image\/[\w.+-]+);base64,(.+)$/i);
         const mimeType = dataUriMatch ? dataUriMatch[1] : (config.imageMimeType || 'image/png');
@@ -124,7 +99,6 @@ router.post('/', parseMultipartIfNeeded, (req, res, next) => {
           }
         }
         if (!inMemory) {
-          // Not in memory store — import from gallery
           const galleryEntry = galleryManager.get(config.imageId);
           const { filePath, mimeType } = galleryManager.getFilePath(config.imageId);
           let buffer;
@@ -171,11 +145,6 @@ router.post('/', parseMultipartIfNeeded, (req, res, next) => {
   }
 });
 
-/**
- * GET /api/batch/stats
- *
- * Queue stats + job counts for the dashboard header.
- */
 router.get('/stats', (req, res, next) => {
   try {
     const stats = batchGenerator.jobStats();
@@ -186,16 +155,9 @@ router.get('/stats', (req, res, next) => {
   }
 });
 
-/**
- * GET /api/batch
- *
- * List all batch jobs (newest first). Optional ?status= filter.
- * Results omit image base64 data from persisted (non-running) jobs.
- */
 router.get('/', (req, res, next) => {
   try {
     const jobList = batchGenerator.listJobs(req.query.status || undefined);
-    // Strip results array for list view (keep lightweight)
     const lite = jobList.map(({ results, ...rest }) => rest);
     res.json({ success: true, data: lite });
   } catch (err) {
@@ -203,11 +165,6 @@ router.get('/', (req, res, next) => {
   }
 });
 
-/**
- * GET /api/batch/:jobId
- *
- * Get current status and results of a batch job.
- */
 router.get('/:jobId', (req, res, next) => {
   try {
     const job = batchGenerator.getJob(req.params.jobId);
@@ -217,22 +174,14 @@ router.get('/:jobId', (req, res, next) => {
   }
 });
 
-/**
- * GET /api/batch/:jobId/progress
- *
- * Server-Sent Events stream for real-time batch progress.
- * Emits "task" events as each task completes, and a "done" event when the job finishes.
- */
 router.get('/:jobId/progress', (req, res, next) => {
   try {
     const job = batchGenerator.getJob(req.params.jobId);
 
     const send = initSSE(res);
 
-    // Send current snapshot immediately
     send(null, { event: 'snapshot', ...job });
 
-    // If job is already finished, close immediately
     if (job.status !== 'running') {
       send(null, { event: 'done', status: job.status, completed: job.completed, failed: job.failed, total: job.total });
       res.end();
@@ -258,7 +207,6 @@ router.get('/:jobId/progress', (req, res, next) => {
       batchGenerator.removeListener('done', onDone);
     }
 
-    // Register close handler BEFORE listeners to prevent race condition
     req.on('close', cleanup);
 
     batchGenerator.on('task', onTask);
@@ -268,11 +216,6 @@ router.get('/:jobId/progress', (req, res, next) => {
   }
 });
 
-/**
- * POST /api/batch/:jobId/cancel
- *
- * Cancel a running batch job. Completed results are preserved.
- */
 router.post('/:jobId/cancel', (req, res, next) => {
   try {
     const job = batchGenerator.cancelJob(req.params.jobId);
@@ -282,12 +225,6 @@ router.post('/:jobId/cancel', (req, res, next) => {
   }
 });
 
-/**
- * POST /api/batch/:jobId/retry
- *
- * Retry failed tasks from a completed/failed job.
- * Creates a new job with only the failed tasks.
- */
 router.post('/:jobId/retry', (req, res, next) => {
   try {
     const newJob = batchGenerator.retryFailed(req.params.jobId);
@@ -297,11 +234,6 @@ router.post('/:jobId/retry', (req, res, next) => {
   }
 });
 
-/**
- * DELETE /api/batch/:jobId
- *
- * Remove a finished job from history.
- */
 router.delete('/:jobId', (req, res, next) => {
   try {
     const result = batchGenerator.removeJob(req.params.jobId);

@@ -1,5 +1,3 @@
-// server/routes/scene.js
-
 const express = require('express');
 const apiKeyManager = require('../services/apiKeyManager');
 const geminiService = require('../services/geminiService');
@@ -13,10 +11,6 @@ const { AppError } = require('../middleware/errorHandler');
 
 const router = express.Router();
 
-/**
- * POST /api/scene/analyze
- * Body: { image: "base64string", mimeType: "image/png" }
- */
 router.post('/analyze', async (req, res, next) => {
   try {
     const { image, mimeType } = req.body;
@@ -36,7 +30,6 @@ router.post('/analyze', async (req, res, next) => {
       throw new AppError('Image data too large (max ~10MB)', 413, 'PAYLOAD_TOO_LARGE');
     }
 
-    // Strip data URI prefix if present
     let base64 = image;
     const dataUriMatch = image.match(/^data:image\/\w+;base64,(.+)$/);
     if (dataUriMatch) base64 = dataUriMatch[1];
@@ -49,10 +42,6 @@ router.post('/analyze', async (req, res, next) => {
   }
 });
 
-/**
- * POST /api/scene/recreate
- * Body: { sceneData, characterId, activeReferenceIds?, aspectRatio?, resolutionTier? }
- */
 router.post('/recreate', async (req, res, next) => {
   try {
     const { sceneData, characterId, activeReferenceIds, imageModel } = req.body;
@@ -85,7 +74,6 @@ router.post('/recreate', async (req, res, next) => {
       model: imageModel,
     });
 
-    // Store in imageStore
     const stored = imageStore.store({
       basePrompt: recreationPrompt,
       characterId,
@@ -99,7 +87,6 @@ router.post('/recreate', async (req, res, next) => {
       source: 'generate',
     });
 
-    // Save to gallery
     galleryManager.save({
       base64Data: result.image.base64Data,
       mimeType: result.image.mimeType,

@@ -1,7 +1,3 @@
-// server/tests/instagramAvailability.test.js
-// Tests auth-aware cache key logic and cache hit/miss behavior.
-// Integration tests (Apify API calls) are tested manually.
-
 import { describe, it, expect, beforeEach } from 'vitest';
 const availability = require('../services/instagramAvailabilityService');
 
