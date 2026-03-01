@@ -1,5 +1,5 @@
 [phases.build]
-cmds = ['pnpm run build:client']
+cmds = ['cd client && pnpm i', 'pnpm run build:client']
 dependsOn = ['install']
 
 [variables]
