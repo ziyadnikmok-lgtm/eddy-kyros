@@ -3,6 +3,17 @@ import { characters as charApi } from '../services/api';
 
 const AppContext = createContext(null);
 
+const VALID_PAGE_IDS = new Set(['generate', 'batch', 'auto', 'carousel', 'scene', 'reel', 'postClone', 'styleLibrary', 'promptBuilder', 'profileAnalyzer', 'storyteller', 'gallery', 'characters', 'keys']);
+
+function pageFromPathname(pathname) {
+  const segment = (pathname || '/').replace(/^\/+|\/+$/g, '') || 'generate';
+  return VALID_PAGE_IDS.has(segment) ? segment : 'generate';
+}
+
+function pathnameFromPage(pageId) {
+  return pageId === 'generate' ? '/' : `/${pageId}`;
+}
+
 let toastId = 0;
 
 async function fetchJson(url) {
@@ -16,11 +27,18 @@ export function AppProvider({ children }) {
   const [toasts, setToasts] = useState([]);
   const timers = useRef({});
 
-  const [page, setPage] = useState('generate');
+  const [page, setPage] = useState(() => pageFromPathname(typeof window !== 'undefined' ? window.location.pathname : '/'));
   const [pageParams, setPageParams] = useState({});
   const navigateTo = useCallback((pageId, params = {}) => {
-    setPage(pageId);
+    const id = VALID_PAGE_IDS.has(pageId) ? pageId : 'generate';
+    setPage(id);
     setPageParams(params);
+    if (typeof window !== 'undefined') {
+      const path = pathnameFromPage(id);
+      if (window.location.pathname !== path) {
+        window.history.pushState(null, '', path);
+      }
+    }
   }, []);
   const consumePageParams = useCallback(() => {
     const p = pageParams;
@@ -31,6 +49,12 @@ export function AppProvider({ children }) {
   const [characters, setCharacters] = useState([]);
   const [sceneMemories, setSceneMemories] = useState([]);
   const [outfits, setOutfits] = useState([]);
+
+  useEffect(() => {
+    const onPopState = () => setPage(pageFromPathname(window.location.pathname));
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   useEffect(() => {
     charApi.list().then(setCharacters).catch(() => setCharacters([]));
