@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useApp } from '../context/AppContext';
 import { profileAnalyzer as analyzerApi, styleLibrary as libraryApi } from '../services/api';
 import { Card, Btn, Input, Select, Badge, Spinner, Empty, ProgressBar } from '../components/UI';
-import { IconArrowsBoldOppositeDirection, IconColorPalette, IconDeleteX } from 'nucleo-glass';
 
 const _cache = {
   username: '',
@@ -445,14 +444,12 @@ function ProfileRow({ profile, onReanalyze, onViewAtoms, onDelete }) {
                 onClick={() => { setOpen(false); onReanalyze(p.username); }}
                 className="flex items-center gap-2 w-full px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 cursor-pointer transition-colors [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]"
               >
-                <span className="w-4 flex items-center justify-center opacity-60"><IconArrowsBoldOppositeDirection uniqueId={`profile-reanalyze-${p.username}`} size={16} aria-hidden /></span>
                 Re-analyze
               </button>
               <button
                 onClick={() => { setOpen(false); onViewAtoms(p.username); }}
                 className="flex items-center gap-2 w-full px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 cursor-pointer transition-colors [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]"
               >
-                <span className="w-4 flex items-center justify-center opacity-60"><IconColorPalette uniqueId={`profile-view-atoms-${p.username}`} size={16} aria-hidden /></span>
                 View Atoms
               </button>
               <div className="my-1 h-px bg-zinc-800" />
@@ -460,7 +457,6 @@ function ProfileRow({ profile, onReanalyze, onViewAtoms, onDelete }) {
                 onClick={() => { setOpen(false); onDelete(p.username); }}
                 className="flex items-center gap-2 w-full px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300 cursor-pointer transition-colors [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]"
               >
-                <span className="w-4 flex items-center justify-center opacity-60"><IconDeleteX uniqueId={`profile-delete-${p.username}`} size={16} aria-hidden /></span>
                 Delete All Atoms
               </button>
             </div>

@@ -6,7 +6,7 @@ import { useStepTimer } from '../hooks/useStepTimer';
 import { Card, Btn, Textarea, Badge, Spinner, ImageCard, Empty, StepProgress } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 import { ASPECT_RATIOS, RESOLUTION_TIERS, IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
-import { IconCamera, IconMagnifier } from 'nucleo-glass';
+import { IconCamera } from 'nucleo-glass';
 
 function fileToBase64(file) {
   return new Promise((res, rej) => {
@@ -140,7 +140,7 @@ export default function SceneRecreatePage() {
               <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile} />
             </label>
             <Btn onClick={handleAnalyze} disabled={analyzing || !file} className="w-full">
-              {analyzing ? <><Spinner size={16} /> Analyzing... {analyzeElapsedSec}s</> : <><IconMagnifier uniqueId="scene-analyze-btn" size={16} className="inline [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]" aria-hidden /> Analyze Scene</>}
+              {analyzing ? <><Spinner size={16} /> Analyzing... {analyzeElapsedSec}s</> : <>Analyze Scene</>}
             </Btn>
           </Card>
 
@@ -217,7 +217,7 @@ export default function SceneRecreatePage() {
               </div>
 
               <Btn onClick={handleRecreate} disabled={recreating || !charId} className="w-full">
-                {recreating ? <><Spinner size={16} /> Recreating... {recreateElapsedSec}s</> : <><IconCamera uniqueId="scene-recreate-btn" size={16} className="inline [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]" aria-hidden /> Recreate Scene</>}
+                {recreating ? <><Spinner size={16} /> Recreating... {recreateElapsedSec}s</> : <>Recreate Scene</>}
               </Btn>
             </Card>
           )}

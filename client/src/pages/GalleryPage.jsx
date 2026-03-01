@@ -3,7 +3,7 @@ import { gallery as galleryApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
 import { Btn, Spinner, Skeleton, Empty, Badge, Modal, ConfirmDialog } from '../components/UI';
-import { IconImage, IconMagnifier, IconPin } from 'nucleo-glass';
+import { IconImage, IconMagnifier } from 'nucleo-glass';
 
 const SORT_OPTIONS = [
   { value: 'newest', label: 'Newest' },
@@ -459,8 +459,8 @@ export default function GalleryPage() {
                     {img.source && <Badge color="blue">{img.source}</Badge>}
                     <span className="text-[10px] text-zinc-600">{formatSize(img.fileSize)}</span>
                     <button onClick={(e) => { e.stopPropagation(); setEditingTagsId(editingTagsId === img.id ? null : img.id); setNewTagInput(''); }}
-                      className="text-[10px] text-zinc-600 hover:text-blue-400 transition cursor-pointer ml-auto flex items-center [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]" aria-label="Edit tags">
-                      <IconPin uniqueId={`gallery-tag-${img.id}`} size={14} aria-hidden />
+                      className="text-[10px] text-zinc-600 hover:text-blue-400 transition cursor-pointer ml-auto">
+                      Edit tags
                     </button>
                   </div>
                   {Array.isArray(img.tags) && img.tags.length > 0 && (
