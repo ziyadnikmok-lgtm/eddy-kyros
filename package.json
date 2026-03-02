@@ -2,14 +2,10 @@
   "name": "ai-content-studio",
   "version": "1.0.0",
   "description": "Local AI Content Generation Studio - Backend",
-  "main": "electron/main.js",
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "electron:dev": "node electron/launch.js",
     "build:client": "cd client && npm run build",
-    "dist:personal": "npm run build:client && electron-builder --config electron-builder.personal.yml",
-    "dist:clean": "npm run build:client && node scripts/clean-build.js && electron-builder --config electron-builder.clean.yml",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
@@ -17,30 +13,28 @@
     "format": "prettier --write \"server/**/*.js\" \"client/src/**/*.{js,jsx}\""
   },
   "dependencies": {
-    "@google/genai": "^1.0.0",
+    "@google/genai": "^1.43.0",
     "apify-client": "^2.22.2",
     "archiver": "^7.0.1",
-    "axios": "^1.13.5",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
-    "express": "^4.21.2",
+    "axios": "^1.13.6",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
     "express-rate-limit": "^8.2.1",
     "ffmpeg-static": "^5.3.0",
     "otpauth": "^9.5.0",
     "puppeteer": "^24.37.5",
-    "uuid": "^11.1.0"
+    "uuid": "^13.0.0"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.3",
-    "electron": "^40.6.0",
-    "electron-builder": "^26.8.1",
     "eslint": "^9.39.3",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.0.1",
-    "eslint-plugin-react-refresh": "^0.5.0",
+    "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.3.0",
     "prettier": "^3.8.1",
     "vitest": "^4.0.18"

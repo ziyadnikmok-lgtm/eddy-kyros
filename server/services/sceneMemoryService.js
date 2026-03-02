@@ -105,12 +105,11 @@ class SceneMemoryService {
       }
     } catch (err) {
       log.warn('scenememory_load_failed', { message: err.message });
-      // Backup corrupted file before overwriting
       try {
         if (fs.existsSync(DATA_FILE)) {
           fs.copyFileSync(DATA_FILE, `${DATA_FILE}.corrupt.${Date.now()}`);
         }
-      } catch { /* backup best-effort */ }
+      } catch {}
     }
 
     fs.writeFileSync(DATA_FILE, '[]', 'utf8');

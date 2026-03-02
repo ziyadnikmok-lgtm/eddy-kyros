@@ -6,6 +6,7 @@ import { useStepTimer } from '../hooks/useStepTimer';
 import { Card, Btn, Textarea, Badge, Spinner, ImageCard, Empty, StepProgress } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 import { ASPECT_RATIOS, RESOLUTION_TIERS, IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
+import { IconCamera } from 'nucleo-glass';
 
 function fileToBase64(file) {
   return new Promise((res, rej) => {
@@ -16,7 +17,6 @@ function fileToBase64(file) {
   });
 }
 
-// Module-level session cache — survives unmount/remount when navigating away and back
 const _cache = {
   sceneData: null,
   editableScene: '',
@@ -45,7 +45,6 @@ export default function SceneRecreatePage() {
   const [result, setResult] = useState(_cache.result);
   const [history, setHistory] = useState(_cache.history);
 
-  // ── Session cache sync ──
   useEffect(() => { _cache.sceneData = sceneData; }, [sceneData]);
   useEffect(() => { _cache.editableScene = editableScene; }, [editableScene]);
   useEffect(() => { _cache.charId = charId; }, [charId]);
@@ -67,11 +66,9 @@ export default function SceneRecreatePage() {
 
   useEffect(() => {
     if (charId) charApi.get(charId).then(setCharDetail).catch(() => setCharDetail(null));
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear detail when no char selected
     else setCharDetail(null);
   }, [charId]);
 
-  // Revoke previous object URL when preview changes or on unmount
   useEffect(() => {
     return () => { if (preview) URL.revokeObjectURL(preview); };
   }, [preview]);
@@ -93,7 +90,6 @@ export default function SceneRecreatePage() {
     const base64 = dataUri.split(',')[1];
     const data = await sceneApi.analyze(base64, file.type);
     setSceneData(data);
-    // Build editable text from scene data
     const text = Object.entries(data).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join('\n');
     setEditableScene(text);
     notify('Scene analyzed!', 'success');
@@ -103,7 +99,6 @@ export default function SceneRecreatePage() {
     if (!sceneData) { notify('Analyze a scene first', 'error'); return; }
     if (!charId) { notify('Select a character', 'error'); return; }
 
-    // Parse editable text back into structured data
     const parsed = {};
     editableScene.split('\n').forEach((line) => {
       const idx = line.indexOf(':');
@@ -129,31 +124,26 @@ export default function SceneRecreatePage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Scene Recreate</h1>
-        <p className="text-zinc-500 text-sm mt-1">Upload an image, analyze its scene, then recreate with your character.</p>
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
-        {/* Left: Upload + Controls */}
         <div className="lg:col-span-1 space-y-4">
-          {/* Upload */}
           <Card className="space-y-4">
             <h3 className="text-lg font-medium text-zinc-200">1. Upload Scene Image</h3>
             <label className="flex items-center justify-center border-2 border-dashed border-zinc-700/80 rounded-lg cursor-pointer hover:border-zinc-500 transition h-40 overflow-hidden">
               {preview ? (
                 <img src={preview} alt="Scene" className="max-h-full max-w-full object-contain" />
               ) : (
-                <div className="text-center"><div className="text-3xl mb-1">📷</div><span className="text-zinc-500 text-sm">Click to upload</span></div>
+                <div className="text-center flex flex-col items-center [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]">
+                <IconCamera uniqueId="scene-upload" size={32} className="mb-1 text-zinc-500" aria-hidden />
+                <span className="text-zinc-500 text-sm">Click to upload</span>
+              </div>
               )}
               <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile} />
             </label>
             <Btn onClick={handleAnalyze} disabled={analyzing || !file} className="w-full">
-              {analyzing ? <><Spinner size={16} /> Analyzing... {analyzeElapsedSec}s</> : '🔍 Analyze Scene'}
+              {analyzing ? <><Spinner size={16} /> Analyzing... {analyzeElapsedSec}s</> : <>Analyze Scene</>}
             </Btn>
           </Card>
 
-          {/* Scene Analysis Preview */}
           {sceneData && (
             <Card className="space-y-3 animate-in">
               <h3 className="text-lg font-medium text-zinc-200">2. Scene Analysis</h3>
@@ -169,7 +159,6 @@ export default function SceneRecreatePage() {
             </Card>
           )}
 
-          {/* Character + Recreate */}
           {sceneData && (
             <Card className="space-y-4 animate-in">
               <h3 className="text-lg font-medium text-zinc-200">3. Recreate with Character</h3>
@@ -228,17 +217,16 @@ export default function SceneRecreatePage() {
               </div>
 
               <Btn onClick={handleRecreate} disabled={recreating || !charId} className="w-full">
-                {recreating ? <><Spinner size={16} /> Recreating... {recreateElapsedSec}s</> : '🎬 Recreate Scene'}
+                {recreating ? <><Spinner size={16} /> Recreating... {recreateElapsedSec}s</> : <>Recreate Scene</>}
               </Btn>
             </Card>
           )}
         </div>
 
-        {/* Right: Result */}
         <div className="lg:col-span-2 space-y-4">
           {!recreating && !result && (
             <Card className="flex items-center justify-center py-24">
-              <Empty icon="🎬" title="No recreation yet" subtitle="Upload an image, analyze its scene, then recreate with a character" />
+              <Empty icon={<IconCamera uniqueId="empty-scene" size={40} aria-hidden />} title="No recreation yet" subtitle="Upload an image, analyze its scene, then recreate with a character" />
             </Card>
           )}
 
@@ -254,7 +242,6 @@ export default function SceneRecreatePage() {
             </Card>
           )}
 
-          {/* Side-by-side comparison */}
           {result && preview && (
             <div className="grid grid-cols-2 gap-4">
               <Card className="!p-2">

@@ -1,14 +1,8 @@
-// server/routes/templates.js
-
 const express = require('express');
 const templateManager = require('../services/templateManager');
 
 const router = express.Router();
 
-/**
- * GET /api/templates
- * List templates, optionally filtered by page (?page=generate|batch).
- */
 router.get('/', (req, res, next) => {
   try {
     const templates = templateManager.list(req.query.page);
@@ -18,10 +12,6 @@ router.get('/', (req, res, next) => {
   }
 });
 
-/**
- * GET /api/templates/:id
- * Get a single template.
- */
 router.get('/:id', (req, res, next) => {
   try {
     const template = templateManager.get(req.params.id);
@@ -31,11 +21,6 @@ router.get('/:id', (req, res, next) => {
   }
 });
 
-/**
- * POST /api/templates
- * Create a new template.
- * Body: { name, page: 'generate'|'batch', config: {...} }
- */
 router.post('/', (req, res, next) => {
   try {
     const template = templateManager.create(req.body);
@@ -45,10 +30,6 @@ router.post('/', (req, res, next) => {
   }
 });
 
-/**
- * PATCH /api/templates/:id
- * Update a template (name and/or config).
- */
 router.patch('/:id', (req, res, next) => {
   try {
     const template = templateManager.update(req.params.id, req.body);
@@ -58,10 +39,6 @@ router.patch('/:id', (req, res, next) => {
   }
 });
 
-/**
- * DELETE /api/templates/:id
- * Delete a template.
- */
 router.delete('/:id', (req, res, next) => {
   try {
     const result = templateManager.remove(req.params.id);

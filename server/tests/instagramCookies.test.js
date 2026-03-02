@@ -1,8 +1,3 @@
-// server/tests/instagramCookies.test.js
-// Tests for the explicit-sessionid path of buildLoginCookies.
-// Auto-resolve (apiKeyManager → env fallback) is integration-tested via the
-// 4 consumer files that previously had inline copies.
-
 import { describe, it, expect, beforeEach } from 'vitest';
 const { buildLoginCookies } = require('../utils/instagramCookies');
 

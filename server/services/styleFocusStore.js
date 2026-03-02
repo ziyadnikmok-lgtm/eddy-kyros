@@ -1,6 +1,3 @@
-// server/services/styleFocusStore.js
-// Stores reusable "Style Focus" presets — full visual DNA snapshots from post-clone analysis.
-
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -81,7 +78,7 @@ class StyleFocusStore {
         const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
         if (Array.isArray(parsed)) return parsed;
       }
-    } catch { /* corrupt — start fresh */ }
+    } catch {}
     return [];
   }
 

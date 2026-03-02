@@ -2,7 +2,6 @@ const fs = require('node:fs');
 
 const DEFAULT_PROFILE_FILES = [];
 
-// Preset style memory from removed Generate UI presets.
 const PRESET_STYLE_MEMORY = [
   {
     id: 'bathroom-mirror',
@@ -89,7 +88,6 @@ function parseProfile(raw) {
     try {
       return JSON.parse(candidate);
     } catch {
-      // Try next candidate.
     }
   }
 
@@ -117,7 +115,6 @@ function buildCache() {
       const parsed = parseProfile(raw);
       if (parsed) parsedProfiles.push(parsed);
     } catch {
-      // Ignore missing or unreadable external profile files.
     }
   }
 

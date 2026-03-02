@@ -3,6 +3,7 @@ import { characters as charApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
 import { Card, Btn, Input, Textarea, Modal, Badge, Spinner, Empty, ConfirmDialog } from '../components/UI';
+import { IconUsers, IconCamera, IconImage } from 'nucleo-glass';
 
 const CATEGORIES = ['Clothing', 'Hairstyle', 'Pose', 'Accessory', 'Expression', 'Lighting', 'Custom'];
 
@@ -31,16 +32,12 @@ export default function CharactersPage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Characters</h1>
-          <p className="text-zinc-500 text-sm mt-1">Identity-locked character profiles with reference images.</p>
-        </div>
+      <div className="flex items-center justify-end">
         <Btn onClick={() => setShowCreate(true)}>+ New Character</Btn>
       </div>
 
       {chars.length === 0 ? (
-        <Empty icon="🧑‍🎨" title="No characters yet" subtitle="Create your first identity-locked character" />
+        <Empty icon={<IconUsers uniqueId="empty-characters" size={40} aria-hidden />} title="No characters yet" subtitle="Create your first identity-locked character" />
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
           {chars.map((c) => (
@@ -139,7 +136,6 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
         </div>
       </div>
 
-      {/* Edit master prompt inline */}
       {editingPrompt && (
         <div className="space-y-2 p-3 rounded-lg border border-blue-500/30 bg-blue-500/5">
           <textarea value={promptDraft} onChange={(e) => setPromptDraft(e.target.value)}
@@ -153,7 +149,6 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
         </div>
       )}
 
-      {/* Primary reference images */}
       <div>
         <span className="text-sm text-zinc-400 font-medium block mb-2">Primary Images ({imgCount}/10)</span>
         <div className="flex gap-3 flex-wrap">
@@ -183,7 +178,6 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
         </div>
       </div>
 
-      {/* Style override references */}
       {char.references?.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {char.references.map((r) => (
@@ -271,7 +265,7 @@ function CreateCharacterModal({ open, onClose, onCreated }) {
           <label className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-4 cursor-pointer transition h-32 ${preview ? 'border-blue-500/40 bg-blue-500/5' : 'border-zinc-700/80 hover:border-blue-500/30 bg-zinc-900/30'}`}>
             {preview ? <img src={preview} alt="" className="max-h-full rounded" /> : (
               <div className="text-center">
-                <div className="text-2xl mb-1">📸</div>
+                <div className="flex justify-center mb-1 [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]"><IconCamera uniqueId="char-primary-img" size={28} aria-hidden /></div>
                 <span className="text-zinc-400 text-sm">Click to upload a clear reference photo</span>
               </div>
             )}
@@ -325,7 +319,7 @@ function AddReferenceModal({ open, onClose, characterId, onAdded }) {
             <span className="text-blue-300 text-sm truncate max-w-full px-2">{file.name}</span>
           ) : (
             <div className="text-center">
-              <div className="text-lg mb-0.5">🖼️</div>
+              <div className="flex justify-center mb-0.5 [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]"><IconImage uniqueId="char-ref-img" size={20} aria-hidden /></div>
               <span className="text-zinc-400 text-sm">Click to upload reference image</span>
             </div>
           )}

@@ -19,7 +19,6 @@ export default function StyleAtomPicker({ selectedIds, onApply, onClose }) {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const debounceRef = useRef(null);
 
-  // Debounce search input — 300ms delay prevents rapid API calls
   useEffect(() => {
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => setDebouncedSearch(searchQ), 300);
@@ -35,7 +34,7 @@ export default function StyleAtomPicker({ selectedIds, onApply, onClose }) {
       const result = await api.list(params);
       setAtoms(result.atoms || []);
       setPages(result.pages || 1);
-    } catch { /* ignore */ } finally {
+    } catch { } finally {
       setLoading(false);
     }
   }, [page, category, debouncedSearch]);
@@ -53,9 +52,7 @@ export default function StyleAtomPicker({ selectedIds, onApply, onClose }) {
   return (
     <Modal open title="Pick Style Atoms" onClose={onClose}>
       <div className="flex flex-col max-h-[70vh]">
-        {/* Filters (sticky top) */}
         <div className="space-y-3 pb-3 shrink-0">
-          {/* Category tabs */}
           <div className="flex gap-1 flex-wrap">
             {CATEGORIES.map(cat => (
               <button
@@ -72,7 +69,6 @@ export default function StyleAtomPicker({ selectedIds, onApply, onClose }) {
             ))}
           </div>
 
-          {/* Search */}
           <input
             type="text"
             placeholder="Search atoms..."
@@ -82,7 +78,6 @@ export default function StyleAtomPicker({ selectedIds, onApply, onClose }) {
           />
         </div>
 
-        {/* Scrollable atom list */}
         <div className="flex-1 overflow-y-auto scroll-fade space-y-1.5 min-h-0">
           {loading ? (
             <div className="flex justify-center py-8"><Spinner size={24} /></div>
@@ -111,7 +106,6 @@ export default function StyleAtomPicker({ selectedIds, onApply, onClose }) {
             ))
           )}
 
-          {/* Pagination */}
           {pages > 1 && (
             <div className="flex items-center justify-center gap-2 py-2">
               <button
@@ -129,7 +123,6 @@ export default function StyleAtomPicker({ selectedIds, onApply, onClose }) {
           )}
         </div>
 
-        {/* Sticky footer */}
         <div className="flex items-center justify-between pt-3 mt-3 border-t border-zinc-700/60 shrink-0">
           <span className="text-xs text-zinc-400">{selected.size} selected</span>
           <div className="flex gap-2">

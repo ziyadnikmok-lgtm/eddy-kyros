@@ -1,7 +1,3 @@
-// server/utils/httpAgent.js
-// Shared HTTP/HTTPS agents with connection pooling for external requests.
-// Reuses TCP connections instead of opening new ones per request.
-
 const http = require('node:http');
 const https = require('node:https');
 

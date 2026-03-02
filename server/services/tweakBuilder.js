@@ -1,28 +1,10 @@
-// server/services/tweakBuilder.js
-
 const { AppError } = require('../middleware/errorHandler');
 const referenceManager = require('./referenceManager');
 const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
-// Valid modification fields
 const VALID_MODIFICATIONS = ['pose', 'expression', 'clothing', 'cameraAngle', 'mood'];
 
 class TweakBuilder {
-  /**
-   * Build a tweak prompt that preserves scene continuity while applying
-   * controlled modifications.
-   *
-   * Hierarchy:
-   *   1. Character identity lock (if character-based)
-   *   2. Scene continuity lock (environment, lighting, framing, composition)
-   *   3. Explicit modification instructions
-   *   4. Anti-drift reinforcement
-   *
-   * @param {object} params
-   * @param {object} params.originalMetadata - Image metadata from imageStore
-   * @param {object} params.modifications    - { pose?, expression?, clothing?, cameraAngle?, mood? }
-   * @returns {string} Final tweak prompt
-   */
   buildTweakPrompt({ originalMetadata, modifications }) {
     if (!originalMetadata || !originalMetadata.basePrompt) {
       throw new AppError('Original image metadata with basePrompt is required', 400, 'VALIDATION_ERROR');
@@ -32,46 +14,24 @@ class TweakBuilder {
 
     const sections = [];
 
-    // -------------------------------------------------------------------
-    // 1. CHARACTER IDENTITY LOCK (if character-based original)
-    // -------------------------------------------------------------------
     const identitySection = this._buildIdentitySection(originalMetadata);
     if (identitySection) {
       sections.push(identitySection);
     }
 
-    // -------------------------------------------------------------------
-    // 2. SCENE CONTINUITY LOCK
-    // -------------------------------------------------------------------
     sections.push(this._buildSceneLockSection(originalMetadata));
-
-    // -------------------------------------------------------------------
-    // 3. MODIFICATION INSTRUCTIONS
-    // -------------------------------------------------------------------
     sections.push(this._buildModificationSection(modifications));
-
-    // -------------------------------------------------------------------
-    // 4. ANTI-DRIFT REINFORCEMENT
-    // -------------------------------------------------------------------
     sections.push(this._buildAntiDriftSection(originalMetadata));
-
-    // -------------------------------------------------------------------
-    // 5. PHOTOGRAPHY REALISM
-    // -------------------------------------------------------------------
     sections.push(REALISM_DIRECTIVE);
 
     return sections.join('\n\n');
   }
 
-  /**
-   * Validate modification fields.
-   */
   _validateModifications(modifications) {
     if (!modifications || typeof modifications !== 'object') {
       throw new AppError('Modifications object is required', 400, 'VALIDATION_ERROR');
     }
 
-    // Reject unknown fields first
     const extraKeys = Object.keys(modifications).filter((k) => !VALID_MODIFICATIONS.includes(k));
     if (extraKeys.length > 0) {
       throw new AppError(
@@ -81,7 +41,6 @@ class TweakBuilder {
       );
     }
 
-    // Validate individual field types and lengths
     for (const key of VALID_MODIFICATIONS) {
       const val = modifications[key];
       if (val !== undefined && val !== null) {
@@ -94,7 +53,6 @@ class TweakBuilder {
       }
     }
 
-    // Must have at least one non-empty modification
     const hasAny = VALID_MODIFICATIONS.some((key) => {
       const val = modifications[key];
       return val && typeof val === 'string' && val.trim().length > 0;
@@ -109,18 +67,9 @@ class TweakBuilder {
     }
   }
 
-  // =========================================================================
-  // Section builders
-  // =========================================================================
-
-  /**
-   * Build identity section from character data if available.
-   * Reuses the same lock phrasing as promptBuilder for consistency.
-   */
   _buildIdentitySection(metadata) {
     if (!metadata.characterId) return null;
 
-    // Try to load the character's master prompt
     try {
       const character = referenceManager.getCharacter(metadata.characterId);
       return [
@@ -130,15 +79,10 @@ class TweakBuilder {
         '[END CHARACTER IDENTITY]',
       ].join('\n');
     } catch {
-      // Character may have been deleted — fall back to base prompt
-      // The base prompt already contains identity info if character-based
       return null;
     }
   }
 
-  /**
-   * Build the scene continuity lock section.
-   */
   _buildSceneLockSection(metadata) {
     const sceneDesc = metadata.sceneDescription
       || this._extractSceneFromPrompt(metadata.basePrompt);
@@ -163,10 +107,6 @@ class TweakBuilder {
     return lines.join('\n');
   }
 
-  /**
-   * Build the modification instructions section.
-   * Sanitizes values to prevent prompt-injection of identity-overriding text.
-   */
   _buildModificationSection(modifications) {
     const lines = [
       '[MODIFICATIONS — apply only these changes]',
@@ -193,9 +133,6 @@ class TweakBuilder {
     return lines.join('\n');
   }
 
-  /**
-   * Reinforce anti-drift at the end of the prompt.
-   */
   _buildAntiDriftSection(metadata) {
     const lines = [
       '[CONTINUITY ENFORCEMENT]',
@@ -215,14 +152,6 @@ class TweakBuilder {
     return lines.join('\n');
   }
 
-  // =========================================================================
-  // Helpers
-  // =========================================================================
-
-  /**
-   * Sanitize a modification value to prevent prompt injection.
-   * Strips bracketed section markers that could override identity lock.
-   */
   _sanitizeModValue(value) {
     return value
       .trim()
@@ -242,15 +171,9 @@ class TweakBuilder {
       .trim();
   }
 
-  /**
-   * Extract a scene description from a prompt.
-   * Looks for scene-related content after identity/override sections,
-   * or uses the full prompt if no sections found.
-   */
   _extractSceneFromPrompt(prompt) {
     if (!prompt || typeof prompt !== 'string') return 'Unknown scene';
 
-    // Try to extract content from [SCENE / GENERATION INSTRUCTIONS] section
     const sceneMatch = prompt.match(
       /\[SCENE\s*\/?\s*GENERATION INSTRUCTIONS\]\s*([\s\S]*?)\s*\[END SCENE\]/i
     );
@@ -258,7 +181,6 @@ class TweakBuilder {
       return sceneMatch[1].trim();
     }
 
-    // If no structured sections, try to extract the non-identity portion
     const endIdentity = prompt.indexOf('[END CHARACTER IDENTITY]');
     const endOverrides = prompt.indexOf('[END STYLE OVERRIDES]');
     const afterStructured = Math.max(endIdentity, endOverrides);
@@ -268,7 +190,6 @@ class TweakBuilder {
       if (remainder.length > 10) return remainder;
     }
 
-    // Fall back: use a trimmed version of the full prompt
     const cleaned = prompt
       .replace(/\[CHARACTER IDENTITY[^\]]*\][\s\S]*?\[END CHARACTER IDENTITY\]/gi, '')
       .replace(/\[STYLE OVERRIDES[^\]]*\][\s\S]*?\[END STYLE OVERRIDES\]/gi, '')
@@ -280,8 +201,6 @@ class TweakBuilder {
   }
 }
 
-// Export valid modifications for route validation
 TweakBuilder.VALID_MODIFICATIONS = VALID_MODIFICATIONS;
 
-// Singleton
 module.exports = new TweakBuilder();

@@ -1,5 +1,3 @@
-// server/routes/keys.js
-
 const express = require('express');
 const { ApifyClient } = require('apify-client');
 const apiKeyManager = require('../services/apiKeyManager');
@@ -114,11 +112,6 @@ async function checkApifyHealth() {
   }
 }
 
-/**
- * POST /api/keys
- * Add a new API key.
- * Body: { name: string, apiKey: string }
- */
 router.post('/', (req, res, next) => {
   try {
     const { name, apiKey } = req.body;
@@ -141,10 +134,6 @@ router.post('/', (req, res, next) => {
   }
 });
 
-/**
- * GET /api/keys
- * List all stored keys (masked).
- */
 router.get('/', (_req, res, next) => {
   try {
     const keys = apiKeyManager.listKeys();
@@ -154,10 +143,6 @@ router.get('/', (_req, res, next) => {
   }
 });
 
-/**
- * PUT /api/keys/:id/activate
- * Set a key as active.
- */
 router.put('/:id/activate', (req, res, next) => {
   try {
     const { id } = req.params;
@@ -169,10 +154,6 @@ router.put('/:id/activate', (req, res, next) => {
   }
 });
 
-/**
- * GET /api/keys/apify
- * Returns masked Apify key info.
- */
 router.get('/apify', (_req, res, next) => {
   try {
     const data = apiKeyManager.getApifyKeyInfo();
@@ -182,11 +163,6 @@ router.get('/apify', (_req, res, next) => {
   }
 });
 
-/**
- * PUT /api/keys/apify
- * Save/update Apify API key.
- * Body: { apiKey: string }
- */
 router.put('/apify', (req, res, next) => {
   try {
     const { apiKey } = req.body || {};
@@ -201,10 +177,6 @@ router.put('/apify', (req, res, next) => {
   }
 });
 
-/**
- * DELETE /api/keys/apify
- * Clears stored Apify API key.
- */
 router.delete('/apify', (_req, res, next) => {
   try {
     const data = apiKeyManager.clearApifyKey();
@@ -215,9 +187,6 @@ router.delete('/apify', (_req, res, next) => {
   }
 });
 
-/**
- * GET /api/keys/instagram-session
- */
 router.get('/instagram-session', (_req, res, next) => {
   try {
     const data = apiKeyManager.getInstagramSessionInfo();
@@ -227,10 +196,6 @@ router.get('/instagram-session', (_req, res, next) => {
   }
 });
 
-/**
- * Verify IG session validity by hitting Instagram's lightweight web API.
- * Returns { configured, live, status, message, maskedValue, updatedAt }.
- */
 async function checkInstagramSessionHealth() {
   const started = Date.now();
   const info = apiKeyManager.getInstagramSessionInfo();
@@ -260,9 +225,6 @@ async function checkInstagramSessionHealth() {
   }
 
   try {
-    // Simple check: load the account settings page with sessionid cookie.
-    // Logged in → 200 (settings HTML). Expired → 302 redirect to /accounts/login/.
-    // Using maxRedirects:0 so we catch the 302 directly without loops.
     const axios = require('axios');
     const resp = await withTimeout(
       axios.get('https://www.instagram.com/accounts/edit/', {
@@ -282,11 +244,9 @@ async function checkInstagramSessionHealth() {
 
     const status = resp.status;
     const body = typeof resp.data === 'string' ? resp.data : '';
-    // Extract username from the page HTML if possible
     const usernameMatch = body.match(/"username":"([^"]+)"/);
 
     if (status === 200 && body.length > 1000) {
-      // Got a full page back — session is valid
       const username = usernameMatch ? usernameMatch[1] : '';
       return {
         configured: true,
@@ -311,7 +271,6 @@ async function checkInstagramSessionHealth() {
       };
     }
 
-    // Unexpected response — likely expired
     return {
       configured: true,
       live: false,
@@ -334,19 +293,13 @@ async function checkInstagramSessionHealth() {
   }
 }
 
-// Health-check TTL cache — avoids burning API credits on rapid polling
-const HEALTH_CACHE_TTL_MS = 30_000; // 30s
-let _healthSnapshot = { cache: null, ts: 0 }; // atomic object to prevent read/write race
+const HEALTH_CACHE_TTL_MS = 30_000;
+let _healthSnapshot = { cache: null, ts: 0 };
 
-/** Invalidate health cache so the next health-check fetches live data. */
 function invalidateHealthCache() {
   _healthSnapshot = { cache: null, ts: 0 };
 }
 
-/**
- * GET /api/keys/health-check
- * Live status checks for Gemini, Apify, and IG session.
- */
 router.get('/health-check', async (_req, res, next) => {
   try {
     const snap = _healthSnapshot;
@@ -379,10 +332,6 @@ router.get('/health-check', async (_req, res, next) => {
   }
 });
 
-/**
- * PUT /api/keys/instagram-session
- * Body: { sessionid: string }
- */
 router.put('/instagram-session', (req, res, next) => {
   try {
     const { sessionid } = req.body || {};
@@ -397,9 +346,6 @@ router.put('/instagram-session', (req, res, next) => {
   }
 });
 
-/**
- * DELETE /api/keys/instagram-session
- */
 router.delete('/instagram-session', (_req, res, next) => {
   try {
     const data = apiKeyManager.clearInstagramSessionId();
@@ -409,8 +355,6 @@ router.delete('/instagram-session', (_req, res, next) => {
     next(err);
   }
 });
-
-// --- Instagram Auto-Login (burner credentials) ---
 
 router.get('/instagram-login', (_req, res, next) => {
   try {
@@ -448,11 +392,6 @@ router.delete('/instagram-login', (_req, res, next) => {
   }
 });
 
-/**
- * POST /api/keys/ig-auto-refresh
- * Uses Puppeteer to log into Instagram with stored burner credentials,
- * extracts the sessionid cookie, and saves it as the new session.
- */
 router.post('/ig-auto-refresh', async (req, res, next) => {
   try {
     const { refreshInstagramSession } = require('../services/igAutoLogin');
@@ -464,10 +403,6 @@ router.post('/ig-auto-refresh', async (req, res, next) => {
   }
 });
 
-/**
- * DELETE /api/keys/:id
- * Remove a key.
- */
 router.delete('/:id', (req, res, next) => {
   try {
     const { id } = req.params;

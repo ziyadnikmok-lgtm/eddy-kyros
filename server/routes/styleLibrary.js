@@ -5,7 +5,6 @@ const geminiService = require('../services/geminiService');
 
 const router = express.Router();
 
-/** GET /api/style-library — list atoms with optional filters */
 router.get('/', (req, res, next) => {
   try {
     const result = styleLibrary.listAtoms({
@@ -24,7 +23,6 @@ router.get('/', (req, res, next) => {
   }
 });
 
-/** GET /api/style-library/stats — category counts */
 router.get('/stats', (_req, res, next) => {
   try {
     const stats = styleLibrary.getStats();
@@ -34,7 +32,6 @@ router.get('/stats', (_req, res, next) => {
   }
 });
 
-/** GET /api/style-library/profiles — list analyzed profiles */
 router.get('/profiles', (_req, res, next) => {
   try {
     const profiles = styleLibrary.getAnalyzedProfiles();
@@ -44,7 +41,6 @@ router.get('/profiles', (_req, res, next) => {
   }
 });
 
-/** GET /api/style-library/duplicates — preview duplicate count */
 router.get('/duplicates', (_req, res, next) => {
   try {
     const { duplicateCount } = styleLibrary.findDuplicates();
@@ -54,7 +50,6 @@ router.get('/duplicates', (_req, res, next) => {
   }
 });
 
-/** GET /api/style-library/content-presets — OFM content type presets (40/30/20/10 mix) */
 const _contentPresets = (() => {
   try {
     return JSON.parse(require('node:fs').readFileSync(
@@ -66,7 +61,6 @@ router.get('/content-presets', (_req, res) => {
   res.json({ success: true, data: _contentPresets });
 });
 
-/** GET /api/style-library/export — all atoms grouped by category as copyable prompts */
 router.get('/export', (_req, res) => {
   const grouped = {};
   for (const cat of ['pose', 'expression', 'outfit', 'scene', 'lighting', 'camera', 'vibe', 'accessories', 'format']) {
@@ -78,7 +72,6 @@ router.get('/export', (_req, res) => {
   res.json(grouped);
 });
 
-/** GET /api/style-library/:id — single atom */
 router.get('/:id', (req, res, next) => {
   try {
     const atom = styleLibrary.getAtom(req.params.id);
@@ -88,7 +81,6 @@ router.get('/:id', (req, res, next) => {
   }
 });
 
-/** POST /api/style-library — create single atom */
 router.post('/', (req, res, next) => {
   try {
     const atom = styleLibrary.createAtom(req.body);
@@ -98,7 +90,6 @@ router.post('/', (req, res, next) => {
   }
 });
 
-/** POST /api/style-library/bulk — bulk create atoms */
 router.post('/bulk', (req, res, next) => {
   try {
     const atoms = styleLibrary.createBulk(req.body.atoms || req.body);
@@ -108,7 +99,6 @@ router.post('/bulk', (req, res, next) => {
   }
 });
 
-/** POST /api/style-library/compose — compose prompt from atom IDs */
 router.post('/compose', (req, res, next) => {
   try {
     const prompt = styleLibrary.composePrompt(req.body.atomIds);
@@ -118,7 +108,6 @@ router.post('/compose', (req, res, next) => {
   }
 });
 
-/** POST /api/style-library/import-json — parse JSON file, return preview atoms (no auto-save) */
 router.post('/import-json', (req, res, next) => {
   try {
     const { jsonData, sourceLabel } = req.body;
@@ -129,7 +118,6 @@ router.post('/import-json', (req, res, next) => {
   }
 });
 
-/** POST /api/style-library/backfill — import from existing promptKnowledge.json */
 router.post('/backfill', (_req, res, next) => {
   try {
     const result = styleLibrary.backfillFromPromptKnowledge();
@@ -139,7 +127,6 @@ router.post('/backfill', (_req, res, next) => {
   }
 });
 
-/** PATCH /api/style-library/:id — update atom */
 router.patch('/:id', (req, res, next) => {
   try {
     const atom = styleLibrary.updateAtom(req.params.id, req.body);
@@ -149,7 +136,6 @@ router.patch('/:id', (req, res, next) => {
   }
 });
 
-/** POST /api/style-library/bulk-delete — delete multiple atoms by IDs */
 router.post('/bulk-delete', (req, res, next) => {
   try {
     const result = styleLibrary.deleteBulk(req.body.ids || []);
@@ -159,7 +145,6 @@ router.post('/bulk-delete', (req, res, next) => {
   }
 });
 
-/** POST /api/style-library/delete-duplicates — remove duplicate atoms */
 router.post('/delete-duplicates', (_req, res, next) => {
   try {
     const result = styleLibrary.deleteDuplicates();
@@ -169,7 +154,6 @@ router.post('/delete-duplicates', (_req, res, next) => {
   }
 });
 
-/** DELETE /api/style-library/all — delete all atoms */
 router.delete('/all', (_req, res, next) => {
   try {
     const result = styleLibrary.deleteAll();
@@ -179,7 +163,6 @@ router.delete('/all', (_req, res, next) => {
   }
 });
 
-/** DELETE /api/style-library/:id — delete single atom */
 router.delete('/:id', (req, res, next) => {
   try {
     const result = styleLibrary.deleteAtom(req.params.id);
@@ -189,7 +172,6 @@ router.delete('/:id', (req, res, next) => {
   }
 });
 
-/** POST /api/style-library/suggest — Gemini-powered complementary atom suggestions */
 router.post('/suggest', async (req, res, next) => {
   try {
     const { atomIds, targetCategories } = req.body;
@@ -202,7 +184,6 @@ router.post('/suggest', async (req, res, next) => {
       return res.status(400).json({ success: false, error: { message: 'No active Gemini API key' } });
     }
 
-    // Get the current atoms for context
     const currentAtoms = atomIds.map(id => {
       try { return styleLibrary.getAtom(id); } catch { return null; }
     }).filter(Boolean);
@@ -246,7 +227,7 @@ Return ONLY the JSON object.`;
       parsed = JSON.parse(cleaned);
     } catch {
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (jsonMatch) try { parsed = JSON.parse(jsonMatch[0]); } catch { /* skip */ }
+      if (jsonMatch) try { parsed = JSON.parse(jsonMatch[0]); } catch { }
     }
 
     const suggestions = [];
@@ -267,7 +248,6 @@ Return ONLY the JSON object.`;
   }
 });
 
-/** DELETE /api/style-library/source/:username — delete all atoms from a profile */
 router.delete('/source/:username', (req, res, next) => {
   try {
     const result = styleLibrary.deleteBySource(req.params.username);

@@ -3,6 +3,7 @@ import { keys as keysApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
 import { Card, Btn, Input, Badge, Spinner, Empty, ConfirmDialog } from '../components/UI';
+import { IconKey } from 'nucleo-glass';
 
 export default function ApiKeysPage() {
   const { activeKey, setActiveKey, notify } = useApp();
@@ -145,11 +146,6 @@ export default function ApiKeysPage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">API Keys</h1>
-        <p className="text-zinc-500 text-sm mt-1">Manage Gemini and Apify API keys. Keys are encrypted at rest.</p>
-      </div>
-
       <Card className="space-y-4">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">Live Health Check</h3>
@@ -280,7 +276,6 @@ export default function ApiKeysPage() {
           value={igLoginUsername}
           onChange={(e) => {
             const val = e.target.value;
-            // Smart paste: auto-split user:pass:2fa format
             const parts = val.split(':');
             if (parts.length >= 3 && !igLoginPassword && !igLogin2faSecret) {
               setIgLoginUsername(parts[0]);
@@ -337,7 +332,7 @@ export default function ApiKeysPage() {
         {loadingList ? (
           <div className="flex justify-center py-8"><Spinner /></div>
         ) : keyList.length === 0 ? (
-          <Empty icon="🔑" title="No API keys yet" subtitle="Add one above to get started" />
+          <Empty icon={<IconKey uniqueId="empty-keys" size={40} aria-hidden />} title="No API keys yet" subtitle="Add one above to get started" />
         ) : (
           <div className="space-y-2">
             {keyList.map((k) => (

@@ -241,11 +241,11 @@ function parseJsonFromText(rawText) {
   } catch {
     const arrMatch = cleaned.match(/\[[\s\S]*\]/);
     if (arrMatch) {
-      try { return JSON.parse(arrMatch[0]); } catch { /* fallback below */ }
+      try { return JSON.parse(arrMatch[0]); } catch { }
     }
     const objMatch = cleaned.match(/\{[\s\S]*\}/);
     if (objMatch) {
-      try { return JSON.parse(objMatch[0]); } catch { /* fallback below */ }
+      try { return JSON.parse(objMatch[0]); } catch { }
     }
     return null;
   }
@@ -272,14 +272,12 @@ function sanitizePollOptionPrompt(prompt, { enforceHairLock = false, enforceMirr
   const hasMirrorCue = /\b(mirror|reflection|reflective|selfie mirror)\b/i.test(raw);
   const looksOutdoor = /\b(outdoor|outside|street|alley|skatepark|beach|park|forest|cemetery|rooftop|city|downtown|sidewalk|road|highway|field|mountain|desert)\b/i.test(raw);
 
-  // Remove style clauses that try to redefine identity-level hair traits.
   let parts = raw
     .split(',')
     .map((part) => part.trim())
     .filter(Boolean)
     .filter((part) => !/\b(hair|hairstyle|split[- ]?dye|two[- ]?tone|ombre|balayage|highlights?)\b/i.test(part));
 
-  // Keep mirror selfies possible, but avoid impossible outdoor mirror artifacts.
   if (enforceMirrorRealism && hasMirrorCue && looksOutdoor) {
     parts = parts.filter((part) => !/\b(mirror|reflection|reflective|selfie mirror)\b/i.test(part));
   }
@@ -315,7 +313,6 @@ function normalizeDeltaDirection(direction) {
   const raw = asText(direction);
   if (!raw) return '';
 
-  // Drop continuity/style instructions from user/model text so follow-up remains delta-only.
   let cleaned = raw
     .replace(/\b(same outfit|same scene|same style|same lighting|identity lock|strict continuity)\b/gi, '')
     .replace(/\b(phone selfie|selfie camera|camera style|camera angle|lens|focal|lighting|illumination|exposure)\b/gi, '')
@@ -324,7 +321,6 @@ function normalizeDeltaDirection(direction) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Keep only short delta clauses that typically indicate pose/expression/view changes.
   const chunks = cleaned
     .split(/[.;\n|]+/)
     .map((part) => part.trim())
@@ -492,7 +488,7 @@ Return JSON only in this format:
     direction: item,
     strictContinuityLock,
     wardrobeLock,
-    rawDirection: true, // AI output is already delta-only — skip normalization
+    rawDirection: true,
   }));
 
   if (modelPrompts.length >= safeCount) {
@@ -769,21 +765,6 @@ router.post('/follow-up', async (req, res, next) => {
   }
 });
 
-/**
- * POST /api/carousel/polls
- * Generate "This or That" engagement poll carousel content.
- *
- * Body: {
- *   topic: string,               — poll theme (e.g. "beach vs city", "morning vs night")
- *   characterId?: string,
- *   activeReferenceIds?: string[],
- *   pollCount?: number,          — number of poll questions (1-5, default 3)
- *   aspectRatio?: string,
- *   resolutionTier?: string,
- * }
- *
- * Returns: { polls: [{question, optionA, optionB}], jobIds, totalImages }
- */
 router.post('/polls', async (req, res, next) => {
   try {
     const {
@@ -818,7 +799,6 @@ router.post('/polls', async (req, res, next) => {
       ].join('\n')
       : '';
 
-    // Generate poll questions + contrasting image prompts via Gemini
     const pollPrompt = `You generate "This or That" engagement poll content for Instagram carousels.
 
 Topic: ${topic.trim()}
@@ -879,7 +859,6 @@ Return JSON only:
       throw new AppError('Failed to generate poll content. Try a different topic.', 500, 'GENERATION_FAILED');
     }
 
-    // Build image entries from poll options (2 images per poll)
     const entries = [];
     for (const poll of polls) {
       entries.push({

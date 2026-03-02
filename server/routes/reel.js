@@ -69,11 +69,6 @@ async function analyzeAndRecreateFrame({ frame, characterId, activeReferenceIds,
   };
 }
 
-/**
- * POST /api/reel/recreate
- * Body: { reelUrl, characterId, activeReferenceIds?, apifyApiKey? }
- * Output: first and last frame scene recreations with locked format 2K 9:16.
- */
 router.post('/recreate', async (req, res, next) => {
   try {
     const { reelUrl, characterId, activeReferenceIds, apifyApiKey, imageModel } = req.body || {};
@@ -85,7 +80,6 @@ router.post('/recreate', async (req, res, next) => {
       throw new AppError('"characterId" is required', 400, 'VALIDATION_ERROR');
     }
 
-    // Validate character early.
     referenceManager.getCharacter(characterId);
     const refIds = normalizeRefIds(activeReferenceIds);
     const apiKey = apiKeyManager.getActiveKey();

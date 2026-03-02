@@ -21,7 +21,6 @@ const DNA_LABELS = {
   wig: { label: 'Wig', color: 'text-violet-400', dot: 'bg-violet-400' },
 };
 
-// Module-level session cache — survives unmount/remount when navigating away and back
 const _cache = {
   inputMode: 'single',
   postUrl: '',
@@ -43,12 +42,12 @@ export default function PostClonePage() {
   const { loading, run } = useAsync();
   const { openLightbox, LightboxComponent } = useImageLightbox();
 
-  const [inputMode, setInputMode] = useState(_cache.inputMode); // single | profile
+  const [inputMode, setInputMode] = useState(_cache.inputMode);
   const [postUrl, setPostUrl] = useState(_cache.postUrl);
   const [profileUrl, setProfileUrl] = useState(_cache.profileUrl);
   const [postLimit, setPostLimit] = useState(_cache.postLimit);
   const [charId, setCharId] = useState(_cache.charId);
-  const [mode, setMode] = useState(_cache.mode); // exact | creative
+  const [mode, setMode] = useState(_cache.mode);
   const [cosplayMode, setCosplayMode] = useState(_cache.cosplayMode);
   const [imageModel, setImageModel] = useState(_cache.imageModel);
   const [result, setResult] = useState(_cache.result);
@@ -56,22 +55,19 @@ export default function PostClonePage() {
   const [savingFocus, setSavingFocus] = useState(null);
   const [focusName, setFocusName] = useState('');
 
-  // Profile scrape: two-step state
-  const [fetchedPosts, setFetchedPosts] = useState(_cache.fetchedPosts); // previews from fetch
-  const [selected, setSelected] = useState(_cache.selected);   // selected indices
+  const [fetchedPosts, setFetchedPosts] = useState(_cache.fetchedPosts);
+  const [selected, setSelected] = useState(_cache.selected);
   const [fetching, setFetching] = useState(false);
 
-  // Clone history
   const [history, setHistory] = useState(_cache.history);
   const loadHistory = async () => {
     try {
       const data = await historyApi.list();
       setHistory(Array.isArray(data) ? data : []);
-    } catch { /* silent */ }
+    } catch { }
   };
   useEffect(() => { loadHistory(); }, []);
 
-  // ── Session cache sync ──
   useEffect(() => { _cache.inputMode = inputMode; }, [inputMode]);
   useEffect(() => { _cache.postUrl = postUrl; }, [postUrl]);
   useEffect(() => { _cache.profileUrl = profileUrl; }, [profileUrl]);
@@ -86,7 +82,6 @@ export default function PostClonePage() {
   useEffect(() => { _cache.availability = availability; }, [availability]);
   useEffect(() => { _cache.imageModel = imageModel; }, [imageModel]);
 
-  // IG session quick-edit + live status
   const [showSession, setShowSession] = useState(false);
   const [sessionInput, setSessionInput] = useState('');
   const [sessionInfo, setSessionInfo] = useState(null);
@@ -105,7 +100,7 @@ export default function PostClonePage() {
       setSessionInfo(info || null);
       setSessionStatus(health?.instagramSession || null);
       setIgLoginInfo(login || null);
-    } catch { /* ignore */ }
+    } catch { }
   };
   useEffect(() => { loadSession(); }, []);
 
@@ -155,7 +150,6 @@ export default function PostClonePage() {
     }
   };
 
-  // Step timer for single mode and recreate phase
   const LIVE_STEPS = useMemo(() => [
     'Fetching post from Apify',
     'Downloading post images',
@@ -173,22 +167,18 @@ export default function PostClonePage() {
   [inputMode]);
   const { elapsedSec, stepIndex: liveStepIndex } = useStepTimer(loading, POST_THRESHOLDS);
 
-  // Single mode validation
   const canRunSingle = useMemo(() => {
     return !!charId && !!postUrl.trim();
   }, [charId, postUrl]);
 
-  // Profile fetch validation
   const canFetch = useMemo(() => {
     return !!profileUrl.trim() && postLimit >= 1;
   }, [profileUrl, postLimit]);
 
-  // Profile recreate validation
   const canRecreate = useMemo(() => {
     return !!charId && selected.size > 0;
   }, [charId, selected]);
 
-  // Toggle selection
   const toggleSelect = useCallback((idx) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -206,9 +196,8 @@ export default function PostClonePage() {
     setSelected(new Set());
   }, []);
 
-  // Fetch profile posts (step 1)
   const handleFetch = async () => {
-    if (fetching) return; // prevent double-click
+    if (fetching) return;
     setFetching(true);
     setFetchedPosts([]);
     setSelected(new Set());
@@ -226,7 +215,6 @@ export default function PostClonePage() {
       });
       const posts = Array.isArray(data) ? data : [];
       setFetchedPosts(posts);
-      // Auto-select all
       setSelected(new Set(posts.map((_, i) => i)));
       if (posts.length === 0) {
         notify('No posts found for this profile', 'error');
@@ -240,7 +228,6 @@ export default function PostClonePage() {
     }
   };
 
-  // Recreate selected posts (step 2)
   const handleRecreate = () => run(async () => {
     if (!canRecreate) return;
     const postsToClone = fetchedPosts.filter((_, i) => selected.has(i));
@@ -256,7 +243,6 @@ export default function PostClonePage() {
     loadHistory();
   });
 
-  // Single post clone (unchanged)
   const handleRunSingle = () => run(async () => {
     if (!canRunSingle) return;
     const check = await availabilityApi.check(postUrl.trim());
@@ -283,16 +269,10 @@ export default function PostClonePage() {
     setResult([]);
   };
 
-  // --- Profile mode: selection grid in right panel ---
   const isProfileSelecting = inputMode === 'profile' && fetchedPosts.length > 0 && result.length === 0 && !loading;
 
   return (
     <div className="space-y-6 animate-in">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Post Clone</h1>
-        <p className="text-zinc-500 text-sm mt-1">Clone single posts, carousels, or profile feeds with your selected character at locked 2K 4:5.</p>
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         <div className="lg:col-span-1 space-y-4">
           <Card className="space-y-4">
@@ -443,7 +423,6 @@ export default function PostClonePage() {
             )}
           </Card>
 
-          {/* IG Session quick-edit with live status */}
           <Card className="!p-0 overflow-hidden">
             <button
               type="button"
@@ -543,7 +522,6 @@ export default function PostClonePage() {
         </div>
 
         <div className="lg:col-span-2 space-y-4">
-          {/* Profile fetch: selection grid */}
           {isProfileSelecting && (
             <Card className="space-y-3">
               <div className="flex items-center justify-between">
@@ -558,7 +536,6 @@ export default function PostClonePage() {
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
                 {fetchedPosts.map((post, idx) => {
                   const isSelected = selected.has(idx);
-                  // Prefer server-cached thumbnail (downloaded while CDN was fresh)
                   const cachedThumb = postCloneApi.thumbUrl(post.thumbnail);
                   const hasSrc = !!(cachedThumb || (post.imageUrls || [])[0]);
                   return (
@@ -580,7 +557,6 @@ export default function PostClonePage() {
                           className="w-full aspect-[4/5] object-cover bg-zinc-800"
                           loading="lazy"
                           onError={(e) => {
-                            // Hide broken image, show placeholder
                             e.target.style.display = 'none';
                             e.target.nextElementSibling?.classList?.remove('hidden');
                           }}
@@ -592,7 +568,6 @@ export default function PostClonePage() {
                       )}>
                         No preview
                       </div>
-                      {/* Checkbox overlay */}
                       <div className={cn(
                         'absolute top-1.5 right-1.5 w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold transition-colors',
                         isSelected
@@ -601,7 +576,6 @@ export default function PostClonePage() {
                       )}>
                         {isSelected && '✓'}
                       </div>
-                      {/* Info overlay */}
                       <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1.5 pt-4">
                         <div className="flex items-center gap-1">
                           <Badge color="zinc" className="!text-[9px] !px-1 !py-0">{post.type}</Badge>
@@ -617,7 +591,6 @@ export default function PostClonePage() {
             </Card>
           )}
 
-          {/* Fetching spinner */}
           {fetching && (
             <Card className="min-h-[360px] flex items-center justify-center">
               <div className="flex flex-col items-center gap-3">
@@ -627,19 +600,16 @@ export default function PostClonePage() {
             </Card>
           )}
 
-          {/* Empty state */}
           {!loading && !fetching && !isProfileSelecting && (!Array.isArray(result) || result.length === 0) && (
             <Card className="min-h-[360px] flex items-center justify-center">
               <Empty icon="Cl" title="No clone results yet" subtitle={inputMode === 'profile' ? 'Fetch posts from a profile, select which ones to recreate.' : 'Run a post clone and results will appear here.'} />
             </Card>
           )}
 
-          {/* Loading (recreate phase) */}
           {loading && (
             <StepProgress steps={activeSteps} currentIndex={liveStepIndex} elapsedSec={elapsedSec} className="min-h-[360px]" />
           )}
 
-          {/* Results */}
           {!loading && Array.isArray(result) && result.length > 0 && result.map((post, idx) => {
             const firstStructured = (post.recreatedImages || [])[0]?.structured;
             const hasDna = firstStructured && Object.values(DNA_LABELS).some((_, i) => firstStructured[Object.keys(DNA_LABELS)[i]]);
@@ -736,7 +706,6 @@ export default function PostClonePage() {
         </div>
       </div>
 
-      {/* Clone History */}
       {history.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center gap-2">

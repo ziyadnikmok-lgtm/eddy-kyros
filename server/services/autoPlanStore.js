@@ -1,5 +1,3 @@
-// server/services/autoPlanStore.js
-
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -120,7 +118,7 @@ class AutoPlanStore {
         const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
         if (Array.isArray(parsed)) return parsed;
       }
-    } catch { /* corrupt — start fresh */ }
+    } catch { }
     return [];
   }
 

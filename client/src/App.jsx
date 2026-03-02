@@ -4,8 +4,23 @@ import { Toasts, Spinner } from './components/UI';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { PageErrorBoundary } from './components/ErrorBoundary';
 import { keys as keysApi } from './services/api';
+import {
+  IconBadgeSparkle,
+  IconAppStack,
+  IconBolt,
+  IconLayers,
+  IconCamera,
+  IconVideo,
+  IconDuplicate,
+  IconColorPalette,
+  IconMagicWandSparkle,
+  IconMagnifier,
+  IconBookOpen,
+  IconImage,
+  IconUsers,
+  IconKey,
+} from 'nucleo-glass';
 
-// Lazy-loaded pages — each becomes its own chunk, loaded on first visit
 const GeneratePage = lazy(() => import('./pages/GeneratePage'));
 const BatchPage = lazy(() => import('./pages/BatchPage'));
 const CarouselPage = lazy(() => import('./pages/CarouselPage'));
@@ -21,45 +36,74 @@ const ProfileAnalyzerPage = lazy(() => import('./pages/ProfileAnalyzerPage'));
 const PromptBuilderPage = lazy(() => import('./pages/PromptBuilderPage'));
 const ApiKeysPage = lazy(() => import('./pages/ApiKeysPage'));
 
+const NAV_ICONS = {
+  generate: IconBadgeSparkle,
+  batch: IconAppStack,
+  auto: IconBolt,
+  carousel: IconLayers,
+  scene: IconCamera,
+  reel: IconVideo,
+  postClone: IconDuplicate,
+  styleLibrary: IconColorPalette,
+  promptBuilder: IconMagicWandSparkle,
+  profileAnalyzer: IconMagnifier,
+  storyteller: IconBookOpen,
+  gallery: IconImage,
+  characters: IconUsers,
+  keys: IconKey,
+};
+
 const NAV_SECTIONS = [
   {
     label: 'Create',
     items: [
-      { id: 'generate', label: 'Generate', icon: '\u2726' },
-      { id: 'batch', label: 'Batch', icon: '\u229E' },
-      { id: 'auto', label: 'Auto Generator', icon: '\u26A1' },
+      { id: 'generate', label: 'Generate' },
+      { id: 'batch', label: 'Batch' },
+      { id: 'auto', label: 'Auto Generator' },
     ],
   },
   {
     label: 'Remix',
     items: [
-      { id: 'carousel', label: 'Carousel', icon: '\u25cd' },
-      { id: 'scene', label: 'Scene Recreate', icon: '\uD83C\uDFAC' },
-      { id: 'reel', label: 'Reel Copy', icon: '\uD83C\uDFA5' },
-      { id: 'postClone', label: 'Post Clone', icon: '\uD83D\uDDBC' },
+      { id: 'carousel', label: 'Carousel' },
+      { id: 'scene', label: 'Scene Recreate' },
+      { id: 'reel', label: 'Reel Copy' },
+      { id: 'postClone', label: 'Post Clone' },
     ],
   },
   {
     label: 'Tools',
     items: [
-      { id: 'styleLibrary', label: 'Style Library', icon: '\uD83C\uDFA8' },
-      { id: 'promptBuilder', label: 'Prompt Builder', icon: '\uD83E\uDDE9' },
-      { id: 'profileAnalyzer', label: 'Profile Analyzer', icon: '\uD83D\uDD0D' },
-      { id: 'storyteller', label: 'Storyteller', icon: '\u270D' },
+      { id: 'styleLibrary', label: 'Style Library' },
+      { id: 'promptBuilder', label: 'Prompt Builder' },
+      { id: 'profileAnalyzer', label: 'Profile Analyzer' },
+      { id: 'storyteller', label: 'Storyteller' },
     ],
   },
   {
     label: 'Manage',
     items: [
-      { id: 'gallery', label: 'Gallery', icon: '\uD83D\uDDBC' },
-      { id: 'characters', label: 'Characters', icon: '\u263B' },
-      { id: 'keys', label: 'API Keys', icon: '\u26BF' },
+      { id: 'gallery', label: 'Gallery' },
+      { id: 'characters', label: 'Characters' },
+      { id: 'keys', label: 'API Keys' },
     ],
   },
 ];
 
-// Flat list for header label lookup
 const ALL_NAV_ITEMS = NAV_SECTIONS.flatMap((s) => s.items);
+
+const APP_VERSION = '8.0';
+
+function SidebarHeader() {
+  return (
+    <header className="flex h-14 items-center gap-2 border-b border-zinc-800/40 px-4">
+      <span className="text-sm font-semibold text-zinc-100 tracking-tight">Content Studio</span>
+      <span className="inline-flex items-center rounded-full border border-zinc-700/50 bg-zinc-800/60 px-1.5 py-px text-[9px] text-zinc-500 font-mono">
+        v{APP_VERSION}
+      </span>
+    </header>
+  );
+}
 
 const PAGE_DESCRIPTIONS = {
   generate: 'Create a single image with full control',
@@ -158,37 +202,33 @@ export default function App() {
       )}
 
       <aside className={`fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-zinc-800/50 bg-zinc-900/95 backdrop-blur-md transition-transform duration-250 lg:static lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        {/* Logo area with ambient glow */}
-        <div className="relative flex h-16 items-center gap-2.5 border-b border-zinc-800/40 px-5 overflow-hidden">
-          {/* Ambient glow behind logo */}
-          <div className="absolute -left-4 -top-4 w-24 h-24 rounded-full bg-blue-500/10 blur-2xl pointer-events-none" style={{ animation: 'glow-breathe 4s ease-in-out infinite' }} />
-          <div className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 text-sm font-bold text-white shadow-lg shadow-blue-600/30">AI</div>
-          <div className="relative">
-            <div className="text-sm font-semibold text-zinc-100 tracking-tight">Content Studio</div>
-            <div className="inline-flex items-center rounded-full border border-zinc-700/50 bg-zinc-800/60 px-1.5 py-px text-[9px] text-zinc-500 font-mono mt-0.5">v8.0</div>
-          </div>
-        </div>
-
+        <SidebarHeader />
         <nav className="flex-1 overflow-y-auto px-3 py-3">
           {NAV_SECTIONS.map((section, sIdx) => (
             <div key={section.label} className={`mb-1.5 ${sIdx > 0 ? 'pt-3 mt-1' : ''}`}>
-              {/* Section label with decorative line */}
               <div className="flex items-center gap-2 px-3 py-1.5">
                 <span className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider whitespace-nowrap">{section.label}</span>
                 <div className="flex-1 h-px bg-zinc-800/60" />
               </div>
               <div className="space-y-0.5">
-                {section.items.map((item) => (
-                  <button key={item.id} onClick={() => { navigateTo(item.id); setSidebarOpen(false); }}
-                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150 cursor-pointer group ${
-                      page === item.id
-                        ? 'bg-blue-600/12 text-blue-400 shadow-[inset_2px_0_0_0_#3b82f6]'
-                        : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200 hover:translate-x-0.5'
-                    }`}>
-                    <span className={`w-5 text-center text-base transition-opacity duration-150 ${page === item.id ? 'opacity-100' : 'opacity-60 group-hover:opacity-90'}`}>{item.icon}</span>
-                    {item.label}
-                  </button>
-                ))}
+                {section.items.map((item) => {
+                  const IconComponent = NAV_ICONS[item.id];
+                  return (
+                    <button key={item.id} onClick={() => { navigateTo(item.id); setSidebarOpen(false); }}
+                      className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150 cursor-pointer group ${
+                        page === item.id
+                          ? 'bg-blue-600/12 text-blue-400 shadow-[inset_2px_0_0_0_#3b82f6]'
+                          : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200 hover:translate-x-0.5'
+                      }`}>
+                      {IconComponent ? (
+                        <span className={`flex items-center justify-center w-5 transition-opacity duration-150 ${page === item.id ? 'opacity-100' : 'opacity-60 group-hover:opacity-90'}`}>
+                          <IconComponent uniqueId={`nav-${item.id}`} size={20} className="[--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]" aria-hidden />
+                        </span>
+                      ) : null}
+                      {item.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           ))}

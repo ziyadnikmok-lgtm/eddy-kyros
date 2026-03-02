@@ -7,7 +7,6 @@ import { Card, Btn, Input, Toggle, Slider, Spinner, Empty, Badge, ImageCard, Ste
 
 const StyleAtomPicker = lazy(() => import('../components/StyleAtomPicker'));
 
-/* ── Helpers ──────────────────────────────────────── */
 
 function addDaysToDate(dateStr, offset) {
   const d = new Date(dateStr + 'T00:00:00');
@@ -33,7 +32,6 @@ const STATUS_STYLES = {
   completed: { color: 'green', label: 'Completed' },
 };
 
-/* ── Day Cell ─────────────────────────────────────── */
 
 function DayCell({ day, startDate, executed, executingDay, onExecute, expanded, onToggle }) {
   const { weekday, date } = formatDayDate(startDate, day.day - 1);
@@ -118,7 +116,6 @@ function DayCell({ day, startDate, executed, executingDay, onExecute, expanded, 
   );
 }
 
-/* ── Day Detail Panel ─────────────────────────────── */
 
 function DayDetail({ day }) {
   return (
@@ -178,7 +175,6 @@ function DayDetail({ day }) {
   );
 }
 
-// Module-level session cache — survives unmount/remount when navigating away and back
 const _cache = {
   theme: '',
   personaMode: 'luxury',
@@ -204,12 +200,10 @@ const _cache = {
   autoExecute: false,
 };
 
-/* ── Main Page ────────────────────────────────────── */
 
 export default function AutoGeneratorPage() {
   const { notify, characters } = useApp();
 
-  // ── Form state (unchanged) ──
   const [theme, setTheme] = useState(_cache.theme);
   const [personaMode, setPersonaMode] = useState(_cache.personaMode);
   const [customPersona, setCustomPersona] = useState(_cache.customPersona);
@@ -226,30 +220,25 @@ export default function AutoGeneratorPage() {
   const [autoExecute, setAutoExecute] = useState(_cache.autoExecute);
   const [loading, setLoading] = useState(false);
 
-  // ── Execute mode state (unchanged) ──
   const [result, setResult] = useState(_cache.result);
   const [executeJobs, setExecuteJobs] = useState(_cache.executeJobs);
 
-  // ── Style Library (unchanged) ──
   const [styleAtomIds, setStyleAtomIds] = useState(_cache.styleAtomIds);
   const [styleAtomDetails, setStyleAtomDetails] = useState(_cache.styleAtomDetails);
   const [showAtomPicker, setShowAtomPicker] = useState(false);
 
-  // ── Calendar view state ──
   const [activePlan, setActivePlan] = useState(_cache.activePlan);
   const [savedPlans, setSavedPlans] = useState(_cache.savedPlans);
   const [startDate, setStartDate] = useState(_cache.startDate || todayStr());
   const [expandedDay, setExpandedDay] = useState(_cache.expandedDay);
   const [executingDay, setExecutingDay] = useState(null);
 
-  // Auto-select first character
   useEffect(() => {
     if (!characterId && characters.length > 0) {
       setCharacterId(characters[0].id);
     }
   }, [characters, characterId]);
 
-  // ── Session cache sync ──
   useEffect(() => { _cache.theme = theme; }, [theme]);
   useEffect(() => { _cache.personaMode = personaMode; }, [personaMode]);
   useEffect(() => { _cache.customPersona = customPersona; }, [customPersona]);
@@ -273,12 +262,10 @@ export default function AutoGeneratorPage() {
   useEffect(() => { _cache.footwearLock = footwearLock; }, [footwearLock]);
   useEffect(() => { _cache.autoExecute = autoExecute; }, [autoExecute]);
 
-  // Load saved plans on mount
   useEffect(() => {
     plansApi.list().then(setSavedPlans).catch(() => {});
   }, []);
 
-  // ── Execute mode polling (unchanged) ──
   useEffect(() => {
     if (!result || result.mode !== 'execute' || !Array.isArray(result.data?.jobIds) || result.data.jobIds.length === 0) {
       setExecuteJobs([]);
@@ -292,7 +279,7 @@ export default function AutoGeneratorPage() {
       try {
         const jobs = await Promise.all(jobIds.map((jobId) => batchApi.get(jobId).catch(() => null)));
         if (!cancelled) setExecuteJobs(jobs.filter(Boolean));
-      } catch { /* keep previous */ }
+      } catch { }
     };
 
     fetchJobs();
@@ -300,7 +287,6 @@ export default function AutoGeneratorPage() {
     return () => { cancelled = true; clearInterval(interval); };
   }, [result]);
 
-  // ── Step timers (unchanged) ──
   const AUTO_STEPS = useMemo(() => autoExecute
     ? ['Building content plan with Gemini', 'Submitting batch generation jobs', 'Starting image generation']
     : ['Analyzing theme and persona', 'Building content plan with Gemini', 'Formatting schedule output'],
@@ -312,13 +298,12 @@ export default function AutoGeneratorPage() {
   const EXEC_THRESHOLDS = useMemo(() => [5], []);
   const { elapsedSec: executeElapsedSec } = useStepTimer(isExecuteRunning, EXEC_THRESHOLDS);
 
-  // ── Style Library handlers (unchanged) ──
   const handleApplyAtoms = async (ids) => {
     setStyleAtomIds(ids);
     setShowAtomPicker(false);
     const details = [];
     for (const id of ids) {
-      try { const atom = await styleApi.get(id); details.push({ id: atom.id, category: atom.category, text: atom.text }); } catch { /* skip */ }
+      try { const atom = await styleApi.get(id); details.push({ id: atom.id, category: atom.category, text: atom.text }); } catch { }
     }
     setStyleAtomDetails(details);
   };
@@ -333,7 +318,6 @@ export default function AutoGeneratorPage() {
   useEffect(() => () => { abortRef.current?.abort(); }, []);
   useEffect(() => { return () => { mountedRef.current = false; }; }, []);
 
-  // ── Generate handler ──
   const handleGenerate = async () => {
     if (!characterId) { notify('Character is required', 'error'); return; }
     if (!theme.trim()) { notify('Theme is required', 'error'); return; }
@@ -392,7 +376,6 @@ export default function AutoGeneratorPage() {
       } else {
         if (!Array.isArray(data)) throw new Error('Invalid plan response format');
 
-        // Auto-save the plan
         try {
           const saved = await plansApi.save({
             name: theme.trim().slice(0, 80),
@@ -414,7 +397,6 @@ export default function AutoGeneratorPage() {
           setActivePlan(saved);
           setSavedPlans((prev) => [{ id: saved.id, name: saved.name, theme: saved.theme, personaMode: saved.personaMode, duration: saved.duration, startDate: saved.startDate, status: saved.status, totalDays: saved.days.length, executedDayCount: 0, createdAt: saved.createdAt }, ...prev]);
         } catch {
-          // Save failed — still show the plan inline
           setActivePlan({ id: null, days: data, executedDays: [], startDate, name: theme.trim() });
         }
 
@@ -430,7 +412,6 @@ export default function AutoGeneratorPage() {
     }
   };
 
-  // ── Load a saved plan ──
   const handleLoadPlan = useCallback(async (planId) => {
     try {
       const plan = await plansApi.get(planId);
@@ -444,7 +425,6 @@ export default function AutoGeneratorPage() {
     }
   }, [notify]);
 
-  // ── Delete a saved plan ──
   const handleDeletePlan = useCallback(async (planId) => {
     try {
       await plansApi.remove(planId);
@@ -459,14 +439,12 @@ export default function AutoGeneratorPage() {
     }
   }, [activePlan, notify]);
 
-  // ── Execute a single day ──
   const handleExecuteDay = useCallback(async (dayNumber) => {
     if (!activePlan?.id) { notify('Save the plan first to execute individual days', 'error'); return; }
     setExecutingDay(dayNumber);
     try {
       const res = await plansApi.executeDay(activePlan.id, dayNumber);
       notify(`Day ${dayNumber} started: ${res.totalImages} images across ${res.jobIds.length} batch job${res.jobIds.length > 1 ? 's' : ''}`, 'success');
-      // Update local plan state
       setActivePlan((prev) => {
         if (!prev) return prev;
         const executedDays = [...(prev.executedDays || []), { day: dayNumber, jobIds: res.jobIds, executedAt: new Date().toISOString() }];
@@ -480,7 +458,6 @@ export default function AutoGeneratorPage() {
     }
   }, [activePlan, notify]);
 
-  // ── Execute all remaining days ──
   const handleExecuteAll = useCallback(async () => {
     if (!activePlan?.id) return;
     const executedSet = new Set((activePlan.executedDays || []).map((d) => d.day));
@@ -493,7 +470,6 @@ export default function AutoGeneratorPage() {
     }
   }, [activePlan, handleExecuteDay, notify]);
 
-  // ── Calendar stats ──
   const calendarStats = useMemo(() => {
     if (!activePlan?.days) return null;
     const executedSet = new Set((activePlan.executedDays || []).map((d) => d.day));
@@ -520,12 +496,6 @@ export default function AutoGeneratorPage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Auto Generator</h1>
-        <p className="text-zinc-500 text-sm mt-1">Generate weekly content plans with a calendar view, then execute day by day.</p>
-      </div>
-
-      {/* ── Saved Plans Bar ── */}
       {savedPlans.length > 0 && (
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs text-zinc-500 font-medium shrink-0">Saved Plans:</span>
@@ -559,10 +529,8 @@ export default function AutoGeneratorPage() {
         </div>
       )}
 
-      {/* ── Form Card ── */}
       <Section title="Plan Configuration" defaultOpen={!activePlan} className="space-y-0">
         <Card className="space-y-4">
-          {/* ── Essential: Character, Theme, Persona ── */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <label className="flex flex-col gap-1.5 text-sm">
               <span className="text-zinc-400 font-medium">Character</span>
@@ -636,7 +604,6 @@ export default function AutoGeneratorPage() {
             </div>
           )}
 
-          {/* ── Content Schedule ── */}
           <Section title="Content Schedule" defaultOpen>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <label className="flex flex-col gap-1.5 text-sm">
@@ -688,7 +655,6 @@ export default function AutoGeneratorPage() {
             </div>
           </Section>
 
-          {/* ── Advanced Options ── */}
           <Section title="Advanced Options" hint="Fine-tune the generation with custom persona overrides, footwear consistency, and duplicate prevention.">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <label className="flex flex-col gap-1.5 text-sm">
@@ -728,7 +694,6 @@ export default function AutoGeneratorPage() {
             </div>
           </Section>
 
-          {/* ── Style Library ── */}
           <Section title="Style Library" badge={styleAtomIds.length > 0 ? <Badge color="blue">{styleAtomIds.length}</Badge> : null} hint="Reusable style building blocks that shape the visual style. Additional atoms are auto-selected based on your theme.">
             <div className="flex items-center justify-end">
               <div className="flex items-center gap-2">
@@ -761,19 +726,16 @@ export default function AutoGeneratorPage() {
         </Card>
       </Section>
 
-      {/* ── Loading ── */}
       {loading && (
         <StepProgress steps={AUTO_STEPS} currentIndex={autoStepIndex} elapsedSec={loadingElapsedSec} className="min-h-[360px]" />
       )}
 
-      {/* ── Empty state ── */}
       {!loading && !result && !activePlan && (
         <Card className="flex items-center justify-center py-16">
           <Empty icon="Auto" title="No plan yet" subtitle="Configure your content plan above and click Generate Plan" />
         </Card>
       )}
 
-      {/* ── Execute mode results (unchanged) ── */}
       {!loading && result?.mode === 'execute' && (
         <Card className="space-y-4">
           <h2 className="text-sm font-medium text-zinc-300">Execution Started</h2>
@@ -822,10 +784,8 @@ export default function AutoGeneratorPage() {
         </Card>
       )}
 
-      {/* ── Calendar View ── */}
       {!loading && activePlan && activePlan.days?.length > 0 && result?.mode === 'plan' && (
         <div className="space-y-4">
-          {/* Plan header */}
           <Card className="space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
@@ -882,7 +842,6 @@ export default function AutoGeneratorPage() {
               </div>
             </div>
 
-            {/* Progress bar */}
             {calendarStats && calendarStats.totalDays > 0 && (
               <div className="h-1.5 rounded-full bg-zinc-800/80 overflow-hidden">
                 <div
@@ -893,7 +852,6 @@ export default function AutoGeneratorPage() {
             )}
           </Card>
 
-          {/* Calendar grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
             {activePlan.days.map((day) => (
               <DayCell
@@ -909,7 +867,6 @@ export default function AutoGeneratorPage() {
             ))}
           </div>
 
-          {/* Expanded day detail */}
           {expandedDay && (() => {
             const day = activePlan.days.find((d) => d.day === expandedDay);
             return day ? <DayDetail day={day} /> : null;

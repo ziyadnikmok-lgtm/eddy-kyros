@@ -1,16 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { cn } from '../lib/utils';
 
-/**
- * Before/after image comparison slider.
- *
- * Props:
- *  - originalSrc   — URL or data-URI for the "before" image
- *  - processedSrc  — URL or data-URI for the "after" image
- *  - originalLabel  — label shown top-left  (default "ORIGINAL")
- *  - processedLabel — label shown top-right (default "PROCESSED")
- *  - className      — extra classes on the outer wrapper
- */
 export default function CompareSlider({
   originalSrc,
   processedSrc,
@@ -56,7 +46,6 @@ export default function CompareSlider({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
     >
-      {/* Processed (full background) */}
       <img
         src={processedSrc}
         alt={processedLabel}
@@ -64,7 +53,6 @@ export default function CompareSlider({
         className="block w-full h-auto"
       />
 
-      {/* Original (clipped from left) */}
       <div
         className="absolute inset-0"
         style={{ clipPath: `inset(0 ${100 - pos}% 0 0)` }}
@@ -77,12 +65,10 @@ export default function CompareSlider({
         />
       </div>
 
-      {/* Divider line */}
       <div
         className="absolute top-0 bottom-0 w-0.5 bg-white -translate-x-1/2"
         style={{ left: `${pos}%`, boxShadow: '0 0 8px rgba(0,0,0,0.5)' }}
       >
-        {/* Handle */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white border-2 border-zinc-400 flex items-center justify-center shadow-lg">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="8 4 4 8 8 12" />
@@ -91,7 +77,6 @@ export default function CompareSlider({
         </div>
       </div>
 
-      {/* Labels */}
       <div className="absolute top-2.5 left-2.5 px-2.5 py-1 rounded-md text-[0.7rem] font-bold tracking-wide bg-black/60 text-red-400 backdrop-blur-sm">
         {originalLabel}
       </div>

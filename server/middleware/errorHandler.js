@@ -1,5 +1,3 @@
-// server/middleware/errorHandler.js
-
 const log = require('../utils/logger');
 
 class AppError extends Error {
@@ -25,7 +23,6 @@ function errorHandler(err, req, res, _next) {
     ? (err.code || 'INTERNAL_ERROR')
     : _classifyError(err);
 
-  // Structured JSON error log (never log sensitive data like req.body)
   if (statusCode >= 500) {
     const meta = {
       rid: req.id || null,

@@ -1,16 +1,10 @@
-// server/tests/batchGenerator.test.js
-// Tests validation and synchronous logic in BatchGenerator.
-// Async execution tests (API calls, events) require extensive mocking of
-// 12+ CJS singletons and are tested via integration/manual testing.
-
 import { describe, it, expect, beforeAll } from 'vitest';
 import { existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
-// Clean up persisted jobs file before loading the module to avoid stale state
 const JOB_STORE_PATH = join(process.cwd(), 'data', 'batch-jobs.json');
 beforeAll(() => {
-  try { if (existsSync(JOB_STORE_PATH)) unlinkSync(JOB_STORE_PATH); } catch { /* cleanup best-effort */ }
+  try { if (existsSync(JOB_STORE_PATH)) unlinkSync(JOB_STORE_PATH); } catch {}
 });
 
 const batchGenerator = require('../services/batchGenerator');

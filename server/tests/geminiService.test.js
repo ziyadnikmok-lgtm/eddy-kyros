@@ -1,8 +1,3 @@
-// server/tests/geminiService.test.js
-// Tests validation logic and error mapping in GeminiService.
-// API-level integration (mock generateContent) is skipped due to CJS
-// singleton caching interop with vitest's vi.mock.
-
 import { describe, it, expect } from 'vitest';
 const geminiService = require('../services/geminiService');
 const { AppError } = require('../middleware/errorHandler');

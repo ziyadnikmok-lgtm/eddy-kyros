@@ -1,5 +1,3 @@
-// server/services/apiKeyManager.js
-
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -23,11 +21,6 @@ class ApiKeyManager {
     this._derivedKeyCache = new Map();
   }
 
-  // --- Public API ---
-
-  /**
-   * Add a new API key. Returns the key's ID and masked value.
-   */
   addKey(name, apiKey) {
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       throw new AppError('Key name is required', 400, 'VALIDATION_ERROR');
@@ -47,7 +40,6 @@ class ApiKeyManager {
 
     this._store.keys.push(entry);
 
-    // If this is the first key, make it active automatically
     if (this._store.keys.length === 1) {
       this._store.activeKeyId = id;
     }
@@ -57,9 +49,6 @@ class ApiKeyManager {
     return { id: entry.id, name: entry.name, maskedKey: entry.maskedKey, isActive: this._store.activeKeyId === id };
   }
 
-  /**
-   * Set the active key by ID.
-   */
   setActiveKey(keyId) {
     if (!keyId || typeof keyId !== 'string') {
       throw new AppError('Key ID is required', 400, 'VALIDATION_ERROR');
@@ -76,9 +65,6 @@ class ApiKeyManager {
     return { id: entry.id, name: entry.name, maskedKey: entry.maskedKey };
   }
 
-  /**
-   * Get the decrypted active API key. Never expose this to HTTP responses.
-   */
   getActiveKey() {
     if (!this._store.activeKeyId) {
       throw new AppError('No active API key set. Add a key first.', 400, 'NO_ACTIVE_KEY');
@@ -92,9 +78,6 @@ class ApiKeyManager {
     return this._decrypt(entry.encryptedKey);
   }
 
-  /**
-   * List all stored keys (masked, never decrypted).
-   */
   listKeys() {
     return this._store.keys.map((k) => ({
       id: k.id,
@@ -105,9 +88,6 @@ class ApiKeyManager {
     }));
   }
 
-  /**
-   * Remove a key by ID.
-   */
   removeKey(keyId) {
     if (!keyId || typeof keyId !== 'string') {
       throw new AppError('Key ID is required', 400, 'VALIDATION_ERROR');
@@ -128,9 +108,6 @@ class ApiKeyManager {
     return { removed: true };
   }
 
-  /**
-   * Save (or overwrite) the Apify API key.
-   */
   setApifyKey(apiKey) {
     if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 10) {
       throw new AppError('A valid Apify API key is required (min 10 chars)', 400, 'VALIDATION_ERROR');
@@ -147,17 +124,11 @@ class ApiKeyManager {
     };
   }
 
-  /**
-   * Get decrypted Apify key (internal only).
-   */
   getApifyKey() {
     if (!this._store.apifyKeyEncrypted) return '';
     return this._decrypt(this._store.apifyKeyEncrypted);
   }
 
-  /**
-   * Get masked Apify key info for API/UI.
-   */
   getApifyKeyInfo() {
     return {
       hasApifyKey: !!this._store.apifyKeyEncrypted,
@@ -166,9 +137,6 @@ class ApiKeyManager {
     };
   }
 
-  /**
-   * Remove stored Apify key.
-   */
   clearApifyKey() {
     this._store.apifyKeyEncrypted = null;
     this._store.apifyKeyMasked = '';
@@ -214,8 +182,6 @@ class ApiKeyManager {
     return { removed: true };
   }
 
-  // --- Instagram Auto-Login (burner credentials) ---
-
   setInstagramLogin(username, password, twoFaSecret) {
     if (!username || typeof username !== 'string' || username.trim().length < 3) {
       throw new AppError('A valid Instagram username is required (min 3 chars)', 400, 'VALIDATION_ERROR');
@@ -229,7 +195,6 @@ class ApiKeyManager {
     this._store.igLoginUsernameMasked = this._maskKey(u);
     this._store.igLoginPasswordEncrypted = this._encrypt(p);
     this._store.igLoginPasswordMasked = this._maskKey(p);
-    // 2FA secret is optional
     if (twoFaSecret && typeof twoFaSecret === 'string' && twoFaSecret.trim().length > 0) {
       const s = twoFaSecret.trim().toUpperCase().replace(/\s/g, '');
       this._store.igLogin2faSecretEncrypted = this._encrypt(s);
@@ -286,8 +251,6 @@ class ApiKeyManager {
     return { removed: true };
   }
 
-  // --- Encryption internals ---
-
   _getEncryptionSecret() {
     const secret = process.env.ENCRYPTION_SECRET;
     if (!secret || secret.length < 32) {
@@ -308,7 +271,6 @@ class ApiKeyManager {
     const secret = this._getEncryptionSecret();
     const derived = crypto.pbkdf2Sync(secret, salt, KEY_DERIVATION_ITERATIONS, 32, 'sha512');
 
-    // Evict oldest entry if cache is full
     if (this._derivedKeyCache.size >= DERIVED_KEY_CACHE_MAX) {
       const oldest = this._derivedKeyCache.keys().next().value;
       this._derivedKeyCache.delete(oldest);
@@ -327,7 +289,6 @@ class ApiKeyManager {
     const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
     const authTag = cipher.getAuthTag();
 
-    // Format: salt:iv:authTag:ciphertext (all hex-encoded)
     return [
       salt.toString('hex'),
       iv.toString('hex'),
@@ -362,8 +323,6 @@ class ApiKeyManager {
     return key.slice(0, 4) + '****' + key.slice(-4);
   }
 
-  // --- Persistence ---
-
   _ensureDataDir() {
     const dataDir = path.dirname(DATA_FILE);
     if (!fs.existsSync(dataDir)) {
@@ -376,7 +335,6 @@ class ApiKeyManager {
       if (fs.existsSync(DATA_FILE)) {
         const raw = fs.readFileSync(DATA_FILE, 'utf8');
         const parsed = JSON.parse(raw);
-        // Validate structure
         if (Array.isArray(parsed.keys)) {
           return {
             keys: parsed.keys,
@@ -424,5 +382,4 @@ class ApiKeyManager {
   }
 }
 
-// Singleton
 module.exports = new ApiKeyManager();

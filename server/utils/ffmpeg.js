@@ -1,13 +1,7 @@
-// server/utils/ffmpeg.js
-// Resolves the ffmpeg binary path: uses bundled ffmpeg-static if available,
-// otherwise falls back to system PATH.
-
 let ffmpegPath = 'ffmpeg';
 try {
   const resolved = require('ffmpeg-static');
   if (resolved) ffmpegPath = resolved;
-} catch {
-  // ffmpeg-static not installed — rely on system PATH
-}
+} catch {}
 
 module.exports = ffmpegPath;

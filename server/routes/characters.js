@@ -1,5 +1,3 @@
-// server/routes/characters.js
-
 const express = require('express');
 const referenceManager = require('../services/referenceManager');
 const { AppError } = require('../middleware/errorHandler');
@@ -7,21 +5,6 @@ const { parseImageUpload } = require('../middleware/upload');
 
 const router = express.Router();
 
-// =========================================================================
-// Character CRUD
-// =========================================================================
-
-/**
- * POST /api/characters
- * Create a new character.
- * Body (JSON): {
- *   name: string,
- *   masterPrompt: string,
- *   image: string (base64 or data URI),
- *   mimeType?: string,
- *   imageName?: string
- * }
- */
 router.post('/', parseImageUpload, (req, res, next) => {
   try {
     const { name, masterPrompt } = req.body;
@@ -45,10 +28,6 @@ router.post('/', parseImageUpload, (req, res, next) => {
   }
 });
 
-/**
- * GET /api/characters
- * List all characters.
- */
 router.get('/', (_req, res, next) => {
   try {
     const characters = referenceManager.listCharacters();
@@ -58,10 +37,6 @@ router.get('/', (_req, res, next) => {
   }
 });
 
-/**
- * GET /api/characters/:id
- * Get a single character by ID.
- */
 router.get('/:id', (req, res, next) => {
   try {
     const character = referenceManager.getCharacterSafe(req.params.id);
@@ -71,10 +46,6 @@ router.get('/:id', (req, res, next) => {
   }
 });
 
-/**
- * PATCH /api/characters/:id
- * Update master prompt.
- */
 router.patch('/:id', (req, res, next) => {
   try {
     const { masterPrompt } = req.body;
@@ -85,10 +56,6 @@ router.patch('/:id', (req, res, next) => {
   }
 });
 
-/**
- * DELETE /api/characters/:id
- * Delete a character and all its references.
- */
 router.delete('/:id', (req, res, next) => {
   try {
     const result = referenceManager.deleteCharacter(req.params.id);
@@ -98,14 +65,6 @@ router.delete('/:id', (req, res, next) => {
   }
 });
 
-// =========================================================================
-// Image serving (safe — no internal paths exposed)
-// =========================================================================
-
-/**
- * GET /api/characters/:id/image
- * Serve the first primary image for a character.
- */
 router.get('/:id/image', (req, res, next) => {
   try {
     const { buffer, mimeType } = referenceManager.getPrimaryImage(req.params.id);
@@ -117,10 +76,6 @@ router.get('/:id/image', (req, res, next) => {
   }
 });
 
-/**
- * GET /api/characters/:id/primary-images/:index
- * Serve a specific primary image by index.
- */
 router.get('/:id/primary-images/:index', (req, res, next) => {
   try {
     const images = referenceManager.getPrimaryImages(req.params.id);
@@ -136,10 +91,6 @@ router.get('/:id/primary-images/:index', (req, res, next) => {
   }
 });
 
-/**
- * POST /api/characters/:id/primary-images
- * Add an additional primary reference image.
- */
 router.post('/:id/primary-images', parseImageUpload, (req, res, next) => {
   try {
     const character = referenceManager.addPrimaryImage(req.params.id, {
@@ -153,10 +104,6 @@ router.post('/:id/primary-images', parseImageUpload, (req, res, next) => {
   }
 });
 
-/**
- * DELETE /api/characters/:id/primary-images/:index
- * Remove a primary image by index.
- */
 router.delete('/:id/primary-images/:index', (req, res, next) => {
   try {
     const idx = parseInt(req.params.index, 10);
@@ -170,21 +117,6 @@ router.delete('/:id/primary-images/:index', (req, res, next) => {
   }
 });
 
-// =========================================================================
-// Reference CRUD
-// =========================================================================
-
-/**
- * POST /api/characters/:id/references
- * Add a reference image to a character.
- * Body (JSON): {
- *   category: string,
- *   overridePrompt: string,
- *   image: string (base64 or data URI),
- *   mimeType?: string,
- *   name?: string
- * }
- */
 router.post('/:id/references', parseImageUpload, (req, res, next) => {
   try {
     const { category, overridePrompt } = req.body;
@@ -206,10 +138,6 @@ router.post('/:id/references', parseImageUpload, (req, res, next) => {
   }
 });
 
-/**
- * PATCH /api/characters/:id/references/:refId/toggle
- * Toggle a reference's active state.
- */
 router.patch('/:id/references/:refId/toggle', (req, res, next) => {
   try {
     const result = referenceManager.toggleReference(req.params.id, req.params.refId);
@@ -219,10 +147,6 @@ router.patch('/:id/references/:refId/toggle', (req, res, next) => {
   }
 });
 
-/**
- * DELETE /api/characters/:id/references/:refId
- * Remove a reference.
- */
 router.delete('/:id/references/:refId', (req, res, next) => {
   try {
     const result = referenceManager.removeReference(req.params.id, req.params.refId);
@@ -232,10 +156,6 @@ router.delete('/:id/references/:refId', (req, res, next) => {
   }
 });
 
-/**
- * GET /api/characters/:id/references/:refId/image
- * Serve a reference image.
- */
 router.get('/:id/references/:refId/image', (req, res, next) => {
   try {
     const { buffer, mimeType } = referenceManager.getReferenceImage(req.params.id, req.params.refId);

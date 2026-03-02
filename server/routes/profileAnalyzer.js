@@ -19,28 +19,23 @@ const {
 const router = express.Router();
 const { TEMP_DIR } = require('../paths');
 
-/**
- * Extract content patterns (captions, hashtags, engagement, schedule) from raw Apify items.
- */
 function _extractContentPatterns(items) {
   const hashtagCounts = {};
   const captions = [];
   const engagements = [];
   const postTypes = {};
-  const dayOfWeek = [0, 0, 0, 0, 0, 0, 0]; // Sun-Sat
+  const dayOfWeek = [0, 0, 0, 0, 0, 0, 0];
   const hourOfDay = new Array(24).fill(0);
   const timestamps = [];
 
   for (const item of items) {
     if (!item || typeof item !== 'object') continue;
 
-    // Caption
     const caption = asText(
       item.caption || item.text || item.edge_media_to_caption?.edges?.[0]?.node?.text || ''
     );
     if (caption) captions.push(caption);
 
-    // Hashtags — from caption or dedicated field
     const rawTags = Array.isArray(item.hashtags)
       ? item.hashtags
       : (caption.match(/#[\w\u00C0-\u024F]+/g) || []);
@@ -49,14 +44,12 @@ function _extractContentPatterns(items) {
       if (t) hashtagCounts[t] = (hashtagCounts[t] || 0) + 1;
     }
 
-    // Engagement
     const likes = item.likesCount ?? item.likes ?? item.edge_liked_by?.count ?? null;
     const comments = item.commentsCount ?? item.comments ?? item.edge_media_to_comment?.count ?? null;
     if (likes !== null || comments !== null) {
       engagements.push({ likes: Number(likes) || 0, comments: Number(comments) || 0 });
     }
 
-    // Post type
     const pType = asText(item.type || item.__typename || item.productType || 'unknown').toLowerCase();
     const normalizedType =
       pType.includes('video') || pType.includes('reel') ? 'video'
@@ -65,7 +58,6 @@ function _extractContentPatterns(items) {
             : 'other';
     postTypes[normalizedType] = (postTypes[normalizedType] || 0) + 1;
 
-    // Timestamp
     const ts = item.timestamp || item.taken_at_timestamp || item.takenAtTimestamp || item.date || '';
     if (ts) {
       const d = new Date(typeof ts === 'number' && ts < 1e12 ? ts * 1000 : ts);
@@ -77,26 +69,22 @@ function _extractContentPatterns(items) {
     }
   }
 
-  // Top hashtags sorted by frequency
   const topHashtags = Object.entries(hashtagCounts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 30)
     .map(([tag, count]) => ({ tag, count }));
 
-  // Caption stats
   const captionLengths = captions.map(c => c.length);
   const avgCaptionLen = captionLengths.length
     ? Math.round(captionLengths.reduce((a, b) => a + b, 0) / captionLengths.length)
     : 0;
   const captionWithHashtags = captions.filter(c => c.includes('#')).length;
 
-  // Engagement stats
   const totalLikes = engagements.reduce((a, e) => a + e.likes, 0);
   const totalComments = engagements.reduce((a, e) => a + e.comments, 0);
   const avgLikes = engagements.length ? Math.round(totalLikes / engagements.length) : 0;
   const avgComments = engagements.length ? Math.round(totalComments / engagements.length) : 0;
 
-  // Posting frequency
   timestamps.sort((a, b) => a - b);
   let avgDaysBetween = null;
   if (timestamps.length >= 2) {
@@ -128,7 +116,6 @@ function _extractContentPatterns(items) {
   };
 }
 
-// Identity-agnostic extraction prompt for style atoms (Nano-Banana enriched)
 const STYLE_EXTRACTION_PROMPT = `You are a style analysis engine for an AI image generation system. Analyze this image and extract ONLY stylistic elements as natural language descriptions.
 
 CRITICAL RULES:
@@ -160,19 +147,8 @@ Return a JSON object with these fields:
 
 Return ONLY the JSON object, no markdown fences or extra text.`;
 
-/**
- * GET /api/profile-analyzer/analyze
- * SSE endpoint — scrapes an IG profile via Apify, then analyzes each post with Gemini.
- * Query: ?username=xxx&postLimit=12&sort=newest|oldest&newerThan=30+days
- *
- * sort=newest (default) — take the first N posts (Instagram returns newest first)
- * sort=oldest — scrape up to 100 posts, sort by date ascending, take first N
- * newerThan — passed to Apify as onlyPostsNewerThan (e.g. "30 days", "2025-01-01")
- */
 router.get('/analyze', async (req, res) => {
-  // SSE headers
   const send = initSSE(res);
-
   const username = asText(req.query.username).replace(/^@/, '');
   if (!/^[A-Za-z0-9._]{1,30}$/.test(username)) {
     send('error', { message: 'Invalid username format' });
@@ -197,7 +173,6 @@ router.get('/analyze', async (req, res) => {
   req.on('close', () => { closed = true; });
 
   try {
-    // For "oldest" sort we need to scrape more posts so we can reverse-pick
     const scrapeLimit = sort === 'oldest' ? Math.min(100, postLimit * 8) : postLimit;
 
     send('progress', { current: 0, total: 0, status: sort === 'oldest'
@@ -205,7 +180,6 @@ router.get('/analyze', async (req, res) => {
       : `Scraping @${username} via Apify...`
     });
 
-    // Scrape the profile
     const profileUrl = `https://www.instagram.com/${username}/`;
     const items = await runPostActor({
       url: profileUrl,
@@ -217,7 +191,6 @@ router.get('/analyze', async (req, res) => {
       return res.end();
     }
 
-    // Build a timestamp map from raw items to help sort posts
     const timestampMap = new Map();
     for (const item of items) {
       const url = asText(item.url || item.inputUrl || item.shortCodeUrl || '');
@@ -227,10 +200,8 @@ router.get('/analyze', async (req, res) => {
       }
     }
 
-    // Normalize to get image URLs
     let posts = normalizePostsFromItems(items);
 
-    // Apply sort order
     if (sort === 'oldest' && timestampMap.size > 0) {
       posts = posts
         .map(p => ({ ...p, _ts: timestampMap.get(p.sourceUrl) || Infinity }))
@@ -243,18 +214,16 @@ router.get('/analyze', async (req, res) => {
     const total = posts.length;
     send('progress', { current: 0, total, status: `Found ${total} posts, starting analysis...` });
 
-    // Extract content patterns from raw Apify data (captions, hashtags, engagement, schedule)
     const contentPatterns = _extractContentPatterns(items);
     send('contentPatterns', contentPatterns);
 
     ensureTempDir();
 
-    // Analyze each post
     for (let i = 0; i < total; i++) {
       if (closed) break;
 
       const post = posts[i];
-      const imageUrl = post.imageUrls?.[0]; // Use first image of each post
+      const imageUrl = post.imageUrls?.[0];
       if (!imageUrl) {
         send('progress', { current: i + 1, total, status: `Post ${i + 1}: no image, skipping` });
         continue;
@@ -264,7 +233,6 @@ router.get('/analyze', async (req, res) => {
 
       let tempFile = null;
       try {
-        // Download image to temp
         const ALLOWED_IMG_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp']);
         const rawExt = path.extname(new URL(imageUrl).pathname).toLowerCase();
         const ext = ALLOWED_IMG_EXT.has(rawExt) ? rawExt : '.jpg';
@@ -272,29 +240,24 @@ router.get('/analyze', async (req, res) => {
         await downloadImageToTemp(imageUrl, tempFile);
         if (closed) break;
 
-        // Read as base64
         const imageBuffer = fs.readFileSync(tempFile);
         const base64 = imageBuffer.toString('base64');
         const mime = mimeFromExt(tempFile);
 
-        // Analyze with Gemini
         const raw = await geminiService.analyzeImageWithPrompt(apiKey, base64, mime, STYLE_EXTRACTION_PROMPT);
         if (closed) break;
 
-        // Parse the JSON response
         let parsed = {};
         try {
           const cleaned = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
           parsed = JSON.parse(cleaned);
         } catch {
-          // Try extracting JSON from response
           const jsonMatch = raw.match(/\{[\s\S]*\}/);
           if (jsonMatch) {
-            try { parsed = JSON.parse(jsonMatch[0]); } catch { /* skip */ }
+            try { parsed = JSON.parse(jsonMatch[0]); } catch { }
           }
         }
 
-        // Build atoms from parsed response
         const atoms = [];
         const categories = ['pose', 'expression', 'outfit', 'scene', 'lighting', 'camera', 'vibe', 'accessories', 'format'];
         for (const cat of categories) {
@@ -308,7 +271,6 @@ router.get('/analyze', async (req, res) => {
           }
         }
 
-        // Extract recommended_prompt (not an atom — display-only convenience)
         const recommendedPrompt = asText(parsed.recommended_prompt);
 
         send('atoms', {
@@ -322,7 +284,7 @@ router.get('/analyze', async (req, res) => {
         send('progress', { current: i + 1, total, status: `Post ${i + 1}: analysis failed — ${err.message}` });
       } finally {
         if (tempFile) {
-          try { fs.unlinkSync(tempFile); } catch { /* ignore */ }
+          try { fs.unlinkSync(tempFile); } catch { }
         }
       }
     }
@@ -335,11 +297,6 @@ router.get('/analyze', async (req, res) => {
   res.end();
 });
 
-/**
- * POST /api/profile-analyzer/save
- * Save reviewed atoms to the style library.
- * Body: { profileUsername, atoms: [{category, text, tags}, ...] }
- */
 router.post('/save', (req, res, next) => {
   try {
     const { profileUsername, atoms, analyzedPostCount } = req.body;

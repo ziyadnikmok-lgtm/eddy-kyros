@@ -244,9 +244,7 @@ async function generateCarouselPlan({ narrative, slideCount = 5, allowOutfitChan
       responseMimeType: 'application/json',
     });
     rawPlan = tryParseJson(rawText);
-  } catch {
-    // Use fallback plan below.
-  }
+  } catch { }
 
   return normalizePlanShape(rawPlan, {
     narrative: safeNarrative,

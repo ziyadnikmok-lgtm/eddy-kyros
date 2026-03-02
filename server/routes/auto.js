@@ -284,10 +284,6 @@ function tokenize(text) {
     .filter((token) => token.length > 2);
 }
 
-/**
- * Auto-select Style Library atoms based on weekly plan keywords.
- * Merges with any user-provided atom IDs.
- */
 function resolveStyleAtomIds(weeklyPlan, userAtomIds) {
   const keywords = [
     ...tokenize(asText(weeklyPlan && weeklyPlan.location_core)),
@@ -296,7 +292,6 @@ function resolveStyleAtomIds(weeklyPlan, userAtomIds) {
       : []),
   ];
 
-  // Add keywords from first day plan for richer matching
   const firstDay = weeklyPlan && Array.isArray(weeklyPlan.days) && weeklyPlan.days[0];
   if (firstDay) {
     keywords.push(...tokenize(asText(firstDay.vibe)));
@@ -484,25 +479,18 @@ function buildAutoPlanData({
   return { days, imageEntries, sceneMemoryId, footwearLock: runFootwearLock, styleAtomIds: mergedAtomIds };
 }
 
-// ---------------------
-// Saved Plans CRUD
-// ---------------------
-
-/** GET /api/auto/plans — list saved plans */
 router.get('/plans', (_req, res, next) => {
   try {
     res.json({ success: true, data: autoPlanStore.list() });
   } catch (err) { next(err); }
 });
 
-/** GET /api/auto/plans/:id — get a saved plan */
 router.get('/plans/:id', (req, res, next) => {
   try {
     res.json({ success: true, data: autoPlanStore.get(req.params.id) });
   } catch (err) { next(err); }
 });
 
-/** POST /api/auto/plans — save a plan */
 router.post('/plans', (req, res, next) => {
   try {
     const plan = autoPlanStore.save(req.body);
@@ -510,7 +498,6 @@ router.post('/plans', (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/** PATCH /api/auto/plans/:id — update a plan */
 router.patch('/plans/:id', (req, res, next) => {
   try {
     const plan = autoPlanStore.update(req.params.id, req.body);
@@ -518,14 +505,12 @@ router.patch('/plans/:id', (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/** DELETE /api/auto/plans/:id — delete a plan */
 router.delete('/plans/:id', (req, res, next) => {
   try {
     res.json({ success: true, data: autoPlanStore.remove(req.params.id) });
   } catch (err) { next(err); }
 });
 
-/** POST /api/auto/plans/:id/execute-day — execute a single day from a saved plan */
 router.post('/plans/:id/execute-day', (req, res, next) => {
   try {
     const plan = autoPlanStore.get(req.params.id);
@@ -556,7 +541,6 @@ router.post('/plans/:id/execute-day', (req, res, next) => {
       characterConfig,
     );
 
-    // Build image entries from the day block
     const entries = [];
 
     for (const prompt of (dayBlock.carouselPrompts || [])) {

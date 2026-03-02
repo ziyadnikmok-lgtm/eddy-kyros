@@ -9,16 +9,9 @@ const cfg = require('../config');
 const PROFILE_ACTOR_ID = process.env.APIFY_PROFILE_ACTOR_ID || 'apify/instagram-profile-scraper';
 const QUICK_ACTOR_ID = process.env.APIFY_QUICK_ACTOR_ID || 'apify/instagram-scraper';
 
-// TTL cache for availability results — avoids repeated Apify calls for the same URL.
-// Keys are auth-aware: same URL with different credentials produces different entries.
 const AVAILABILITY_CACHE_TTL_MS = cfg.AVAILABILITY_CACHE_TTL_MS;
 const _availabilityCache = new Map();
 
-/**
- * Build a non-sensitive fingerprint from auth context so different
- * auth contexts produce different cache entries for the same URL.
- * Returns 'anon' when no credentials are present, or an 8-char hex digest.
- */
 function authFingerprint(token, sessionid) {
   if (!token && !sessionid) return 'anon';
   const data = `${token || ''}:${sessionid || ''}`;
@@ -40,7 +33,6 @@ function getCachedAvailability(key) {
 }
 
 function setCachedAvailability(key, result) {
-  // Bound the cache size
   if (_availabilityCache.size > 100) {
     const oldest = _availabilityCache.keys().next().value;
     _availabilityCache.delete(oldest);
@@ -199,7 +191,6 @@ async function checkPostAvailability(url, options = {}) {
     throw new AppError('A valid Instagram URL is required for availability check', 400, 'VALIDATION_ERROR');
   }
 
-  // Resolve auth context early so the cache key reflects the caller's credentials.
   const token = asText(options.apifyToken) || asText(apiKeyManager.getApifyKey()) || asText(process.env.APIFY_TOKEN);
   if (!token) {
     throw new AppError('Apify token is required', 400, 'CONFIG_ERROR');
@@ -231,9 +222,6 @@ async function checkPostAvailability(url, options = {}) {
     username: uname,
   });
 
-  // Post/reel/tv URLs don't have a username in the path — skip the expensive
-  // username-resolution scraper call. The actual clone scraper handles post
-  // URLs directly, so the availability check would just add latency.
   if (!username) {
     console.log('[availability] post/reel URL detected — skipping profile check, allowing proceed');
     return unknownResult();
@@ -261,8 +249,6 @@ async function checkPostAvailability(url, options = {}) {
     }
     const result = parseAvailabilityFromProfile(profile, hasSession);
     console.log(`[availability] decision: status=${result.status}, allowed=${result.allowed}, label="${result.label}"`);
-    // Only cache definitive results (public, private, age_restricted).
-    // Don't cache 'unknown' from empty scraper data — it's transient.
     if (result.status !== 'unknown') {
       setCachedAvailability(cacheKey, result);
     } else {
@@ -271,14 +257,12 @@ async function checkPostAvailability(url, options = {}) {
     return result;
   } catch (profileErr) {
     console.warn(`[availability] profile scraper threw: ${profileErr.message}`);
-    // Don't cache error results — let user retry immediately
     return unknownResult(username);
   }
 }
 
 module.exports = {
   checkPostAvailability,
-  // Exposed for testing
   _authFingerprint: authFingerprint,
   _buildCacheKey: buildCacheKey,
   _getCachedAvailability: getCachedAvailability,

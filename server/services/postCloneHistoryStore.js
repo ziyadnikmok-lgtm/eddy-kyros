@@ -1,6 +1,3 @@
-// server/services/postCloneHistoryStore.js
-// Lightweight history of post-clone runs — stores gallery IDs + source URL only.
-
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -24,7 +21,7 @@ class PostCloneHistoryStore {
 
   save(data) {
     const galleryIds = Array.isArray(data.galleryIds) ? data.galleryIds.filter(Boolean) : [];
-    if (galleryIds.length === 0) return null; // nothing to show — skip
+    if (galleryIds.length === 0) return null;
 
     if (this._store.length >= MAX_ITEMS) {
       this._store.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
@@ -66,7 +63,7 @@ class PostCloneHistoryStore {
         const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
         if (Array.isArray(parsed)) return parsed;
       }
-    } catch { /* corrupt — start fresh */ }
+    } catch {}
     return [];
   }
 

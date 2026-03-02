@@ -26,8 +26,8 @@ const REALISM_DIRECTIVE = require('../utils/realismDirective');
 const router = express.Router();
 const { TEMP_DIR } = require('../paths');
 const THUMB_DIR = path.join(TEMP_DIR, 'thumbs');
-const ROUTE_TIMEOUT_MS = 5 * 60_000; // 5 min hard ceiling for single post
-const PROFILE_ROUTE_TIMEOUT_MS = 15 * 60_000; // 15 min for profile scrape (many slides)
+const ROUTE_TIMEOUT_MS = 5 * 60_000;
+const PROFILE_ROUTE_TIMEOUT_MS = 15 * 60_000;
 const DEFAULT_ACTOR_ID = process.env.APIFY_POST_ACTOR_ID || 'apify/instagram-post-scraper';
 const FALLBACK_ACTOR_ID = process.env.APIFY_POST_FALLBACK_ACTOR_ID || 'apify/instagram-scraper';
 const PROFILE_ACTOR_ID = process.env.APIFY_PROFILE_ACTOR_ID || 'apify/instagram-profile-scraper';
@@ -36,7 +36,7 @@ const COMMUNITY_POSTS_ACTOR_ID = process.env.APIFY_COMMUNITY_POSTS_ACTOR_ID || '
 const ANALYSIS_KEYS = ['lighting', 'camera', 'pose', 'expression', 'outfit', 'scene', 'accessories', 'details', 'format', 'wig', 'full_prompt'];
 const TATTOO_TERMS_REGEX = /\b(?:tattoo(?:s|ed|ing)?|body\s*ink|inked|inkwork|sleeve\s+tattoo|tribal\s+ink)\b/i;
 const TATTOO_SENTENCE_REGEX = /[^.!?\n]*\b(?:tattoo(?:s|ed|ing)?|body\s*ink|inked|inkwork|sleeve\s+tattoo|tribal\s+ink)\b[^.!?\n]*[.!?]?/gi;
-const THUMB_MAX_AGE_MS = 30 * 60_000; // 30 min — auto-cleanup stale thumbnails
+const THUMB_MAX_AGE_MS = 30 * 60_000;
 
 function ensureTempDir() {
   fs.mkdirSync(TEMP_DIR, { recursive: true });
@@ -46,14 +46,10 @@ function ensureThumbDir() {
   fs.mkdirSync(THUMB_DIR, { recursive: true });
 }
 
-/**
- * Download a single thumbnail image server-side (while CDN URL is fresh).
- * Returns the filename on success, or '' on failure.
- */
 async function cacheThumbnail(imageUrl) {
   if (!isHttpUrl(imageUrl)) return '';
   const id = crypto.randomUUID();
-  const ext = '.jpg'; // IG images are always JPEG
+  const ext = '.jpg';
   const filename = `${id}${ext}`;
   const filePath = path.join(THUMB_DIR, filename);
   try {
@@ -74,12 +70,11 @@ async function cacheThumbnail(imageUrl) {
     fs.writeFileSync(filePath, buffer);
     return filename;
   } catch {
-    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch { /* */ }
+    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch { }
     return '';
   }
 }
 
-/** Periodically clean stale thumbnails */
 function cleanStaleThumbs() {
   try {
     if (!fs.existsSync(THUMB_DIR)) return;
@@ -89,11 +84,11 @@ function cleanStaleThumbs() {
       try {
         const stat = fs.statSync(fp);
         if (now - stat.mtimeMs > THUMB_MAX_AGE_MS) fs.unlinkSync(fp);
-      } catch { /* best-effort */ }
+      } catch { }
     }
-  } catch { /* */ }
+  } catch { }
 }
-setInterval(cleanStaleThumbs, 5 * 60_000).unref(); // don't block graceful shutdown
+setInterval(cleanStaleThumbs, 5 * 60_000).unref();
 
 function isHttpUrl(value) {
   return /^https?:\/\//i.test(asText(value));
@@ -142,7 +137,7 @@ function parseStructuredAnalysis(rawText) {
       }
       return { parsed, usedFallback: false };
     }
-  } catch { /* JSON parse failed — try object extraction */ }
+  } catch { }
 
   const objMatch = cleaned.match(/\{[\s\S]*\}/);
   if (objMatch) {
@@ -158,7 +153,7 @@ function parseStructuredAnalysis(rawText) {
           .join(', ');
       }
       return { parsed, usedFallback: false };
-    } catch { /* object parse failed — use fallback */ }
+    } catch { }
   }
 
   const parsed = { ...defaults };
@@ -320,23 +315,17 @@ function buildGenerationPrompt({ character, activeRefs, mode, cosplayMode = fals
     isDelta
       ? 'This is a carousel follow-up delta prompt relative to slide 1 continuity anchor.'
       : 'This is a base prompt for the first image/standalone post.',
-    // Prevent Gemini from over-polishing casual/candid photos into studio shots
     'IMPORTANT VISUAL QUALITY DIRECTION: Match the casual, authentic quality of the original source photo. If the source looks like a casual phone photo or candid snapshot, the recreation should have that same relaxed, natural, slightly imperfect feel — NOT hyper-polished studio lighting or commercial retouching. Preserve the raw/real energy. Avoid making it look like a professional photoshoot unless the original clearly is one.',
-    // Prevent Gemini from brightening dark scenes
     'LIGHTING FIDELITY — MANDATORY: The prompt contains a BRIGHTNESS X/10 score and shadow coverage percentage. You MUST honor these numbers precisely. A score of 3/10 means the image must be DARK — mostly shadows with localized light only. Do NOT brighten, add fill light, soften shadows, or illuminate dark scenes. If the prompt says "65% deep shadow" then 65% of your output frame must be in deep shadow. A nighttime flash photo must stay dark with harsh flash — do NOT turn it into soft twilight or blue hour. Match the described color temperature exactly.',
-    // Reinforce identity anchor from reference images
     cosplayMode
       ? 'IDENTITY ANCHORING (COSPLAY MODE): The reference images show the EXACT person to depict. Match the face, body proportions, skin tone, and all physical features from references precisely. HOWEVER, IGNORE the hair in the reference images — the character is wearing a cosplay wig. Use the wig description from the prompt instead of the reference hair color/style.'
       : 'IDENTITY ANCHORING: The reference images provided show the EXACT person to depict. The generated face, body proportions, skin tone, and all physical features MUST match these reference photos precisely. Do NOT substitute, blend, or drift from the person shown in the references.',
-    // Prevent body proportion drift and clothing conservatism
     'BODY & OUTFIT FIDELITY: Maintain the character\'s exact body proportions as shown in reference images — do NOT reduce or minimize any body features. The outfit description must be rendered exactly as written — do NOT add extra fabric, raise necklines, lengthen hemlines, or make clothing more conservative than described. If the prompt says form-fitting, render it form-fitting.',
     'TATTOO EXCLUSION: Never add tattoos/body ink/tattoo-like markings to the generated output, even if tattoos were visible in source media.',
     REALISM_DIRECTIVE,
-    // Cosplay wig lock — reinforce wig description so it overrides reference hair
     cosplayMode && structured.wig
       ? `WIG LOCK — MANDATORY: The character MUST wear this exact wig: ${structured.wig}. This overrides the natural hair shown in reference images. Do NOT use the reference hair color or style — render the cosplay wig exactly as described.`
       : null,
-    // Explicitly reinforce pose and expression so body position (lying down, sitting, etc.) isn't lost
     structured.pose && structured.pose !== 'same as slide 1'
       ? `POSE LOCK — MANDATORY: ${structured.pose}. The character MUST be in this exact body position. Do NOT default to standing or sitting if the pose describes lying down, reclining, or any other non-upright position.`
       : null,
@@ -415,7 +404,6 @@ async function analyzeImageStructured(apiKey, imageBase64, mimeType, mode, sourc
     gemini_raw_response: raw,
   });
 
-  // Auto-feed style library with identity-stripped atoms
   try {
     const styleCats = ['lighting', 'camera', 'pose', 'expression', 'outfit', 'scene', 'accessories', 'format'];
     for (const cat of styleCats) {
@@ -502,7 +490,6 @@ async function analyzeCarouselDelta(apiKey, firstBase64, firstMimeType, currentB
     gemini_raw_response: raw,
   });
 
-  // Auto-feed style library with identity-stripped atoms
   try {
     const styleCats = ['lighting', 'camera', 'pose', 'expression', 'outfit', 'scene', 'accessories', 'format'];
     for (const cat of styleCats) {
@@ -521,12 +508,10 @@ async function analyzeCarouselDelta(apiKey, firstBase64, firstMimeType, currentB
 }
 
 function extractImageUrlFromMedia(item) {
-  // Handle plain URL strings (some actors return images as string arrays)
   if (typeof item === 'string') {
     const clean = asText(item);
     return looksLikeDirectImageUrl(clean) ? clean : '';
   }
-  // image_versions2 is common in newer Apify actors — pick highest resolution
   const iv2 = item?.image_versions2?.candidates;
   const iv2Best = Array.isArray(iv2) && iv2.length > 0
     ? iv2.reduce((best, c) => ((c.width || 0) > (best.width || 0) ? c : best), iv2[0])?.url
@@ -553,14 +538,12 @@ function extractImageUrlFromMedia(item) {
 }
 
 function isVideoItem(item) {
-  // Plain URL string — check extension for video formats
   if (typeof item === 'string') {
     return /\.(mp4|mov|avi|webm)(\?|$)/i.test(item);
   }
   if (!item || typeof item !== 'object') return false;
   if (item.isVideo === true || item.video === true) return true;
   if (item.is_video === true) return true;
-  // Instagram media_type: 1=image, 2=video, 8=carousel
   if (item.media_type === 2 || item.mediaType === 2) return true;
   if (isHttpUrl(item.videoUrl) || isHttpUrl(item.video_url) || isHttpUrl(item.video_versions?.[0]?.url)) return true;
   const typeName = asText(item.type || item.__typename || item.productType || '').toLowerCase();
@@ -570,7 +553,6 @@ function isVideoItem(item) {
 function extractPostImages(postItem) {
   if (!postItem || typeof postItem !== 'object') return null;
 
-  // Skip pure video posts early (not carousels that may contain some images)
   const itemTypeName = asText(postItem.type || postItem.__typename || postItem.productType || '').toLowerCase();
   const isCarouselType = itemTypeName.includes('sidecar') || itemTypeName.includes('carousel')
     || postItem.media_type === 8 || postItem.mediaType === 8 || (postItem.mediaCount || 0) > 1;
@@ -592,13 +574,11 @@ function extractPostImages(postItem) {
     for (const edge of edges) sidecarCandidates.push(edge?.node || edge);
   }
 
-  // Also check latestComments-style nested media and sideCar fields
   const sideCar = postItem.sideCar || postItem.sidecar;
   if (Array.isArray(sideCar)) {
     for (const item of sideCar) sidecarCandidates.push(item);
   }
 
-  // Some actors nest children under edge_sidecar_to_children
   const edgeAlt = postItem.edge_sidecar_to_children?.edges;
   if (Array.isArray(edgeAlt)) {
     for (const edge of edgeAlt) sidecarCandidates.push(edge?.node || edge);
@@ -609,7 +589,6 @@ function extractPostImages(postItem) {
     .map((m) => extractImageUrlFromMedia(m))
     .filter((u) => isHttpUrl(u));
 
-  // Also collect displayUrl from each child that has its own display_resources
   if (carouselImages.length === 0) {
     for (const child of sidecarCandidates) {
       if (!child || isVideoItem(child)) continue;
@@ -622,7 +601,6 @@ function extractPostImages(postItem) {
     }
   }
 
-  // Last resort for mixed carousels: extract video thumbnails so we still have *something*
   if (carouselImages.length === 0 && sidecarCandidates.length > 0) {
     for (const child of sidecarCandidates) {
       if (!child) continue;
@@ -631,12 +609,10 @@ function extractPostImages(postItem) {
     }
   }
 
-  // Always capture the post-level display image as a fallback thumbnail
   const postLevelImage = extractImageUrlFromMedia(postItem);
 
   if (carouselImages.length > 1) {
     const deduped = Array.from(new Set(carouselImages));
-    // Append post-level image as last-resort fallback (if not already in the list)
     if (postLevelImage && isHttpUrl(postLevelImage) && !deduped.includes(postLevelImage)) {
       deduped.push(postLevelImage);
     }
@@ -648,7 +624,6 @@ function extractPostImages(postItem) {
   }
 
   if (postLevelImage && !isVideoItem(postItem)) {
-    // Log when we expected a carousel but only got 1 image
     const typeName = asText(postItem.type || postItem.__typename || postItem.productType || '').toLowerCase();
     if (typeName.includes('sidecar') || typeName.includes('carousel') || postItem.mediaCount > 1) {
       console.warn(`[post-clone] CAROUSEL UNDEREXTRACTED: type=${typeName}, mediaCount=${postItem.mediaCount}, extracted=1`);
@@ -663,22 +638,11 @@ function extractPostImages(postItem) {
   return null;
 }
 
-/**
- * Resolve the owner username from a post/reel URL.
- * Strategies (in order):
- *  1. oEmbed API (no auth — works for non-restricted posts)
- *  2. Authenticated HTML fetch (uses session cookie — works for restricted)
- *  3. Parse from Apify restricted-item metadata (title / description fields)
- *
- * @param {string} postUrl   Full IG post URL
- * @param {object[]} [restrictedItems]  The Apify items that triggered the restricted error
- */
 async function resolveUsernameFromPostUrl(postUrl, restrictedItems) {
   const IG_USERNAME_RE = /[A-Za-z0-9._]{1,30}/;
   const RESERVED_SEGS = ['p', 'reel', 'tv', 'explore', 'accounts', 'stories', 'direct', 'about'];
   const isValidUsername = (u) => u && IG_USERNAME_RE.test(u) && !RESERVED_SEGS.includes(u.toLowerCase());
 
-  // --- Strategy 1: oEmbed (fast, no auth) ---
   try {
     const oembed = await axios.get('https://api.instagram.com/oembed/', {
       params: { url: postUrl },
@@ -696,7 +660,6 @@ async function resolveUsernameFromPostUrl(postUrl, restrictedItems) {
     console.warn(`[post-clone] oEmbed failed: ${e.message}`);
   }
 
-  // --- Strategy 2: Fetch post page WITH session cookie ---
   const sessionid = asText(apiKeyManager.getInstagramSessionId());
   if (sessionid) {
     try {
@@ -712,14 +675,11 @@ async function resolveUsernameFromPostUrl(postUrl, restrictedItems) {
         validateStatus: (s) => s >= 200 && s < 400,
       });
       const html = asText(res.data);
-      // Try multiple patterns found in IG HTML:
-      // "owner":{"username":"xxx"}  (JSON in script tag)
       const ownerMatch = html.match(/"owner"\s*:\s*\{[^}]*"username"\s*:\s*"([^"]+)"/);
       if (ownerMatch && isValidUsername(ownerMatch[1])) {
         console.log(`[post-clone] authenticated HTML resolved username (owner JSON): ${ownerMatch[1]}`);
         return ownerMatch[1];
       }
-      // <meta property="og:description" content="... @username ..." />
       const ogDesc = html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)/i);
       if (ogDesc) {
         const atMatch = ogDesc[1].match(/@([A-Za-z0-9._]+)/);
@@ -728,7 +688,6 @@ async function resolveUsernameFromPostUrl(postUrl, restrictedItems) {
           return atMatch[1];
         }
       }
-      // instagram.com/username in any link or canonical
       const linkMatch = html.match(/instagram\.com\/([A-Za-z0-9._]+)\/?["'\s]/);
       if (linkMatch && isValidUsername(linkMatch[1])) {
         console.log(`[post-clone] authenticated HTML resolved username (link): ${linkMatch[1]}`);
@@ -739,10 +698,8 @@ async function resolveUsernameFromPostUrl(postUrl, restrictedItems) {
     }
   }
 
-  // --- Strategy 3: Parse from Apify restricted-item metadata ---
   if (Array.isArray(restrictedItems)) {
     for (const item of restrictedItems) {
-      // Some scrapers set ownerUsername/username even on error items
       for (const key of ['ownerUsername', 'username', 'owner', 'userName']) {
         const val = asText(typeof item[key] === 'object' ? item[key]?.username : item[key]);
         if (isValidUsername(val)) {
@@ -750,7 +707,6 @@ async function resolveUsernameFromPostUrl(postUrl, restrictedItems) {
           return val;
         }
       }
-      // title/description may contain "@username" or "username on Instagram"
       for (const key of ['title', 'description']) {
         const text = asText(item[key]);
         if (!text) continue;
@@ -825,7 +781,6 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
   const firstSeg = (segments[0] || '').toLowerCase();
   const isPostLike = ['p', 'reel', 'tv'].includes(firstSeg);
   const profileUsername = !isPostLike ? asText(segments[0]) : '';
-  // Extract shortcode from post URLs like /p/ABC123/ or /reel/ABC123/
   const shortCode = isPostLike && segments[1] ? asText(segments[1]) : '';
 
   async function callActor(actorId, input) {
@@ -834,7 +789,6 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
 
   console.log(`[post-clone] session cookies: ${loginCookies ? 'present' : 'MISSING'}, shortCode=${shortCode || 'none'}, profileUsername=${profileUsername || 'none'}`);
 
-  // Fast path for profile URLs: use direct IG endpoint with session cookie.
   if (profileUsername) {
     try {
       const directItems = await fetchDirectIgProfilePosts(profileUsername, boundedLimit);
@@ -847,18 +801,13 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
     }
   }
 
-  // Use post-scraper as primary for profile URLs (it returns post rows more consistently).
   const primaryActorId = profileUsername ? PROFILE_POSTS_ACTOR_ID : DEFAULT_ACTOR_ID;
-  // For profile mode, prefer profile-scraper as fallback before generic scraper.
   const fallbackActorId = profileUsername ? PROFILE_ACTOR_ID : FALLBACK_ACTOR_ID;
   let run;
   let actorUsed = primaryActorId;
 
-  // Build input payloads for the primary actor — try multiple shapes to handle
-  // schema differences across actor versions.
   const primaryPayloads = [];
   if (profileUsername) {
-    // Profile actor: force posts mode first (some builds default to profile-metadata only).
     primaryPayloads.push({
       usernames: [profileUsername],
       resultsType: 'posts',
@@ -867,7 +816,6 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
       ...(loginCookies ? { loginCookies } : {}),
       ...(onlyPostsNewerThan ? { onlyPostsNewerThan } : {}),
     });
-    // Alternate schema variant accepted by some actor versions.
     primaryPayloads.push({
       directUrls: [url],
       startUrls: [{ url }],
@@ -877,15 +825,12 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
       ...(loginCookies ? { loginCookies } : {}),
       ...(onlyPostsNewerThan ? { onlyPostsNewerThan } : {}),
     });
-    // Legacy fallback shape.
     primaryPayloads.push({
       usernames: [profileUsername],
       resultsLimit: boundedLimit,
       ...(loginCookies ? { loginCookies } : {}),
     });
   } else {
-    // Post URL — try multiple input shapes that different actor versions accept.
-    // Shape 1: shortcodes array (most post-scraper actors prefer this)
     if (shortCode) {
       primaryPayloads.push({
         shortcodes: [shortCode],
@@ -894,7 +839,6 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
         ...(loginCookies ? { loginCookies } : {}),
       });
     }
-    // Shape 2: directUrls + startUrls (generic format)
     primaryPayloads.push({
       directUrls: [url],
       startUrls: [{ url }],
@@ -903,7 +847,6 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
       expandSlideshowImages: true,
       ...(loginCookies ? { loginCookies } : {}),
     });
-    // Shape 3: postUrls array
     primaryPayloads.push({
       postUrls: [url],
       resultsLimit: boundedLimit,
@@ -912,7 +855,6 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
     });
   }
 
-  // Try primary actor with multiple input shapes
   let primaryErr = null;
   for (let i = 0; i < primaryPayloads.length; i++) {
     try {
@@ -926,7 +868,6 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
     }
   }
 
-  // Fallback actor only if primary actor failed entirely
   if (!run) {
     console.warn(`[post-clone] primary actor failed, falling back to ${fallbackActorId}`);
     actorUsed = fallbackActorId;
@@ -950,7 +891,6 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
           }
       );
     } catch (fallbackErr) {
-      // Final retry without cookies in case actor schema rejects loginCookies.
       try {
         run = await callActor(
           fallbackActorId,
@@ -969,7 +909,6 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
             }
         );
       } catch {
-        // keep original fallbackErr
       }
       throw new AppError(
         `Apify actor run failed (${primaryActorId}): ${primaryErr?.message || 'unknown'} — fallback (${fallbackActorId}): ${fallbackErr.message}`,
@@ -992,8 +931,6 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
     throw new AppError(`Failed to read Apify dataset (${actorUsed}): ${err.message}`, 502, 'APIFY_ERROR');
   }
 
-  // Some profile actor runs return only profile metadata (no post rows).
-  // If that happens, force a posts-mode retry via the generic scraper.
   if (profileUsername) {
     const hasPostSignals = (rows) => (Array.isArray(rows) ? rows : []).some((row) => {
       if (!row || typeof row !== 'object') return false;
@@ -1051,7 +988,6 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
         console.warn(`[post-clone] retry via ${FALLBACK_ACTOR_ID} failed: ${retryErr.message}`);
       }
 
-      // Additional fallback: community actor shape (directUrls + posts mode).
       if (!hasPostSignals(items)) {
         try {
           const communityPayload = {
@@ -1077,7 +1013,6 @@ async function runPostActor({ url, limit, apifyToken, onlyPostsNewerThan }) {
         }
       }
 
-      // Last-resort fallback: call Instagram web_profile_info directly with session cookie.
       if (!hasPostSignals(items)) {
         try {
           const mapped = await fetchDirectIgProfilePosts(profileUsername, boundedLimit);
@@ -1125,7 +1060,7 @@ async function downloadImageToTemp(imageUrl, filePath) {
     } catch (err) {
       lastErr = err;
       if (err instanceof AppError) throw err;
-      try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch { /* cleanup best-effort */ }
+      try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch { }
       if (attempt < maxAttempts) {
         await new Promise((r) => setTimeout(r, 500 * attempt));
       }
@@ -1161,7 +1096,7 @@ async function resolveDownloadableImageUrl(url) {
     if (ogMatch && isHttpUrl(ogMatch[1])) {
       return ogMatch[1].replace(/&amp;/g, '&');
     }
-  } catch { /* HTML fetch failed — return original URL */ }
+  } catch { }
 
   return clean;
 }
@@ -1301,7 +1236,6 @@ async function processPostClone({
   const isCarousel = post.type === 'carousel' && post.imageUrls.length > 1;
   const slideArgs = { post, apiKey, character, activeRefs, mode, cosplayMode, baseReferenceImages, characterId, tempFiles, imageModel };
 
-  // --- Slide 0: always processed first (serves as reference for subsequent slides) ---
   let firstSlideOriginal = null;
   let firstSlideRecreated = null;
 
@@ -1320,7 +1254,6 @@ async function processPostClone({
     }
   }
 
-  // --- Slides 1+: run concurrently (they all use slide 0 as reference, independent of each other) ---
   if (post.imageUrls.length > 1) {
     const remainingIndices = [];
     for (let i = 1; i < post.imageUrls.length; i++) remainingIndices.push(i);
@@ -1336,7 +1269,6 @@ async function processPostClone({
     );
 
     const settled = await Promise.all(slidePromises);
-    // Insert in order so carousel slide order is preserved
     settled.sort((a, b) => a.i - b.i);
     for (const s of settled) {
       if (s.ok) {
@@ -1360,11 +1292,6 @@ function getItemShortcode(item) {
   return asText(item?.shortCode || item?.shortcode || item?.code || '');
 }
 
-/**
- * Some Apify actors return carousel slides as separate dataset items that
- * share the same shortcode.  This helper groups them so extractPostImages()
- * can treat the merged result as a single carousel.
- */
 function groupItemsByShortcode(items) {
   const byCode = new Map();
   const noCode = [];
@@ -1381,7 +1308,6 @@ function groupItemsByShortcode(items) {
       merged.push(group[0]);
       continue;
     }
-    // Merge: keep first item as parent, collect image URLs from siblings
     const parent = { ...group[0] };
     const extraImages = [];
     for (let i = 1; i < group.length; i++) {
@@ -1390,7 +1316,6 @@ function groupItemsByShortcode(items) {
       if (url) extraImages.push({ displayUrl: url, url });
     }
     if (extraImages.length > 0) {
-      // Inject siblings' images into parent's images array
       const existing = Array.isArray(parent.images) ? [...parent.images] : [];
       parent.images = [...existing, ...extraImages];
       console.log(`[post-clone] merged ${group.length} items into 1 carousel for shortCode=${sc} (${extraImages.length} extra images)`);
@@ -1411,7 +1336,6 @@ function collectNestedPostsFromContainer(container) {
     }
   };
 
-  // Common list shapes returned by profile actors
   if (Array.isArray(container.latestPosts)) pushArray(container.latestPosts);
   if (Array.isArray(container.latest_posts)) pushArray(container.latest_posts);
   if (Array.isArray(container.posts)) pushArray(container.posts);
@@ -1432,7 +1356,6 @@ function collectNestedPostsFromContainer(container) {
   const edgeTimelineAlt = container.edgeOwnerToTimelineMedia?.edges;
   if (Array.isArray(edgeTimelineAlt)) pushArray(edgeTimelineAlt);
 
-  // Some actor variants serialize or deeply nest latestPosts payloads.
   const isPostLikeNode = (value) => {
     if (!value || typeof value !== 'object') return false;
     const typeName = asText(value.__typename || value.type || value.media_type || '').toLowerCase();
@@ -1462,7 +1385,7 @@ function collectNestedPostsFromContainer(container) {
         if ((text.startsWith('{') || text.startsWith('['))) {
           try {
             stack.push({ value: JSON.parse(text), depth: depth + 1 });
-          } catch { /* ignore malformed embedded JSON */ }
+          } catch { }
         }
         continue;
       }
@@ -1523,7 +1446,6 @@ function expandProfileContainerItems(items) {
 function normalizePostsFromItems(items) {
   const normalizedInput = expandProfileContainerItems(items || []);
 
-  // --- Diagnostic logging of raw Apify dataset ---
   console.log(`[post-clone] normalizePostsFromItems: ${(normalizedInput || []).length} item(s)`);
   for (let i = 0; i < (normalizedInput || []).length; i++) {
     const item = normalizedInput[i];
@@ -1541,7 +1463,6 @@ function normalizePostsFromItems(items) {
     console.log(`[post-clone] item[${i}] arrays: images=${hasImages || 0}, carouselMedia=${hasCarouselMedia || 0}, children=${hasChildren || 0}, sideCar=${hasSideCar || 0}, edgeSidecar=${hasEdgeSidecar}`);
   }
 
-  // Check for error items returned by Apify (restricted pages, login walls, etc.)
   const errorItem = (normalizedInput || []).find((item) => {
     if (item?.restricted === true || item?.isRestricted === true) return true;
     const err = asText(item?.error).toLowerCase();
@@ -1567,7 +1488,6 @@ function normalizePostsFromItems(items) {
         'INSTAGRAM_RESTRICTED'
       );
     } else {
-      // For non-restricted errors, only throw if there's no extractable image
       const hasImage = extractImageUrlFromMedia(errorItem);
       if (!hasImage) {
         throw new AppError(
@@ -1579,7 +1499,6 @@ function normalizePostsFromItems(items) {
     }
   }
 
-  // Group items by shortcode to merge carousel slides returned as separate items
   const grouped = groupItemsByShortcode(normalizedInput || []);
 
   const posts = [];
@@ -1620,8 +1539,6 @@ async function handleClone({ url, characterId, mode, cosplayMode = false, postLi
       throw new AppError(availability.label, 422, 'INSTAGRAM_UNAVAILABLE');
     }
 
-    // Use limit 10 for single posts — Instagram carousels can have up to 10 slides,
-    // and some actors return each slide as a separate dataset item.
     let items = await runPostActor({
       url: cleanUrl,
       limit: profileMode ? postLimit : 10,
@@ -1632,13 +1549,10 @@ async function handleClone({ url, characterId, mode, cosplayMode = false, postLi
     try {
       posts = normalizePostsFromItems(items);
     } catch (normErr) {
-      // For restricted posts with a session, fall back to scraping via profile URL.
-      // The profile-scraper properly uses session cookies and returns full carousel data.
       if (normErr.code === 'INSTAGRAM_RESTRICTED' && buildLoginCookies()) {
         console.log(`[post-clone] restricted — attempting profile-based fallback`);
         const ownerUsername = await resolveUsernameFromPostUrl(cleanUrl, items);
         if (ownerUsername) {
-          // Extract shortcode from the post URL to find the matching post
           const parsedUrl = new URL(cleanUrl);
           const segs = parsedUrl.pathname.split('/').filter(Boolean);
           const targetShortcode = ['p', 'reel', 'tv'].includes(segs[0]?.toLowerCase()) ? segs[1] || '' : '';
@@ -1651,11 +1565,8 @@ async function handleClone({ url, characterId, mode, cosplayMode = false, postLi
             apifyToken: apifyApiKey,
           });
 
-          // Find matching post by shortcode or URL
           if (targetShortcode && profileItems.length > 0) {
-            // Match by shortcode field
             let matching = profileItems.filter(it => getItemShortcode(it) === targetShortcode);
-            // Also match by URL containing the shortcode
             if (matching.length === 0) {
               matching = profileItems.filter(it => {
                 const itemUrl = asText(it?.url || it?.inputUrl || it?.shortCodeUrl || '');
@@ -1666,11 +1577,9 @@ async function handleClone({ url, characterId, mode, cosplayMode = false, postLi
               console.log(`[post-clone] fallback: found ${matching.length} item(s) matching shortcode=${targetShortcode}`);
               items = matching;
             } else {
-              // Log available shortcodes for debugging
               const available = profileItems.map(it => getItemShortcode(it)).filter(Boolean).join(', ');
               console.warn(`[post-clone] fallback: shortcode ${targetShortcode} not found. Available: ${available}`);
 
-              // Retry once with higher limit in case the post is older
               console.log(`[post-clone] fallback: retrying profile scrape with limit=50`);
               const retryItems = await runPostActor({
                 url: profileUrl,
@@ -1716,7 +1625,6 @@ async function handleClone({ url, characterId, mode, cosplayMode = false, postLi
     const errors = [];
     const timeoutSec = profileMode ? PROFILE_ROUTE_TIMEOUT_MS / 1000 : ROUTE_TIMEOUT_MS / 1000;
 
-    // Profile mode: process 2 posts concurrently to cut wall-clock time roughly in half.
     const CONCURRENCY = profileMode ? 2 : 1;
 
     for (let batchStart = 0; batchStart < selected.length; batchStart += CONCURRENCY) {
@@ -1755,7 +1663,6 @@ async function handleClone({ url, characterId, mode, cosplayMode = false, postLi
           results.push(r.processed);
         } else {
           errors.push({ index: r.idx, sourceUrl: r.sourceUrl, error: r.error });
-          // For single-post mode, surface the error directly
           if (!profileMode) {
             throw new AppError(r.error, 502, 'POST_CLONE_FAILED');
           }
@@ -1772,7 +1679,6 @@ async function handleClone({ url, characterId, mode, cosplayMode = false, postLi
     }
     console.log(`[post-clone] profile scrape done: ${results.length} succeeded, ${errors.length} failed`);
 
-    // Save history entries (non-critical — never break clone on failure)
     for (const processed of results) {
       try {
         postCloneHistoryStore.save({
@@ -1792,15 +1698,11 @@ async function handleClone({ url, characterId, mode, cosplayMode = false, postLi
     for (const filePath of tempFiles) {
       try {
         if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
-      } catch { /* cleanup best-effort */ }
+      } catch { }
     }
   }
 }
 
-/**
- * POST /api/post-clone
- * Body: { postUrl, characterId, mode: "exact" | "creative", apifyApiKey? }
- */
 router.post('/', async (req, res, next) => {
   try {
     const { postUrl, characterId, mode = 'exact', cosplayMode = false, apifyApiKey, imageModel } = req.body || {};
@@ -1820,9 +1722,6 @@ router.post('/', async (req, res, next) => {
   }
 });
 
-// ---------------------
-// Style Focus CRUD
-// ---------------------
 const styleFocusStore = require('../services/styleFocusStore');
 
 router.get('/style-focus', (_req, res, next) => {
@@ -1845,10 +1744,6 @@ router.delete('/style-focus/:id', (req, res, next) => {
   catch (err) { next(err); }
 });
 
-// ---------------------
-// Clone History
-// ---------------------
-
 router.get('/history', (_req, res, next) => {
   try { res.json({ success: true, data: postCloneHistoryStore.list() }); }
   catch (err) { next(err); }
@@ -1859,17 +1754,12 @@ router.delete('/history/:id', (req, res, next) => {
   catch (err) { next(err); }
 });
 
-// ---------------------
-// Image Proxy (IG CDN → browser)
-// ---------------------
-
 router.get('/proxy-image', async (req, res, next) => {
   try {
     const url = asText(req.query.url);
     if (!url || !isHttpUrl(url)) {
       return res.status(400).json({ error: 'Missing or invalid url param' });
     }
-    // Only proxy known IG CDN domains
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
     const domainParts = host.split('.');
@@ -1893,7 +1783,6 @@ router.get('/proxy-image', async (req, res, next) => {
       validateStatus: (s) => s >= 200 && s < 400,
     });
     const ct = (response.headers['content-type'] || '').toLowerCase();
-    // Reject non-image responses (HTML error pages, login redirects, video streams)
     if (ct && !ct.startsWith('image/') && !ct.includes('octet-stream')) {
       response.data.destroy();
       return res.status(502).json({ error: `Upstream returned non-image: ${ct}` });
@@ -1907,13 +1796,9 @@ router.get('/proxy-image', async (req, res, next) => {
   }
 });
 
-// ---------------------
-// Cached Thumbnails (downloaded during /fetch, served locally)
-// ---------------------
-
 router.get('/thumb/:filename', (req, res, next) => {
   try {
-    const filename = path.basename(req.params.filename); // sanitize
+    const filename = path.basename(req.params.filename);
     if (!/^[a-f0-9-]+\.jpg$/i.test(filename)) {
       return res.status(400).json({ error: 'Invalid thumbnail filename' });
     }

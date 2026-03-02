@@ -1,5 +1,3 @@
-// server/services/brandVoiceManager.js
-
 const fs = require('node:fs');
 const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
@@ -76,10 +74,6 @@ class BrandVoiceManager {
     this._save();
     return { ...this._data };
   }
-
-  // -------------------------------------------------------------------------
-  // Persistence
-  // -------------------------------------------------------------------------
 
   _ensureDataDir() {
     const dir = path.dirname(DATA_FILE);

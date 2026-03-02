@@ -1,4 +1,3 @@
-// server/tests/referenceManager.test.js
 import { describe, it, expect } from 'vitest';
 const refManager = require('../services/referenceManager');
 
@@ -108,7 +107,6 @@ describe('referenceManager', () => {
     });
 
     it('accepts valid WebP magic bytes', () => {
-      // RIFF....WEBP
       const buf = Buffer.alloc(12);
       buf.write('RIFF', 0);
       buf.writeUInt32LE(100, 4);

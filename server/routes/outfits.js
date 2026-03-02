@@ -3,10 +3,6 @@ const outfitMemoryService = require('../services/outfitMemoryService');
 
 const router = express.Router();
 
-/**
- * GET /api/outfits
- * List all saved outfits.
- */
 router.get('/', (_req, res, next) => {
   try {
     const outfits = outfitMemoryService.getAllOutfits();
@@ -16,10 +12,6 @@ router.get('/', (_req, res, next) => {
   }
 });
 
-/**
- * POST /api/outfits
- * Create an outfit memory record.
- */
 router.post('/', (req, res, next) => {
   try {
     const outfit = outfitMemoryService.createOutfit(req.body);
@@ -29,10 +21,6 @@ router.post('/', (req, res, next) => {
   }
 });
 
-/**
- * DELETE /api/outfits/:id
- * Delete an outfit memory record by ID.
- */
 router.delete('/:id', (req, res, next) => {
   try {
     const result = outfitMemoryService.deleteOutfit(req.params.id);

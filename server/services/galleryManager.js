@@ -1,5 +1,3 @@
-// server/services/galleryManager.js
-
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -13,14 +11,10 @@ class GalleryManager {
   constructor() {
     this._ensureDirs();
     this._store = this._load();
-    // Cache of filenames known to exist on disk — avoids N sync existsSync per list()
     this._validFiles = new Set();
     this._validFilesAt = 0;
   }
 
-  /**
-   * Save a generated image to gallery. Returns gallery entry.
-   */
   save({ base64Data, mimeType, prompt, source, characterId, aspectRatio, seed, tags }) {
     if (!base64Data || !mimeType) {
       throw new AppError('Image data required for gallery', 400, 'VALIDATION_ERROR');
@@ -31,7 +25,6 @@ class GalleryManager {
     const filename = `${id}${ext}`;
     const filePath = path.join(UPLOADS_DIR, filename);
 
-    // Write image to disk
     const buffer = Buffer.from(base64Data, 'base64');
     fs.writeFileSync(filePath, buffer);
     this._validFiles.add(filename);
@@ -58,8 +51,6 @@ class GalleryManager {
   }
 
   list({ page, limit, tag } = {}) {
-    // Rebuild the on-disk file set at most once per 30 seconds to avoid
-    // N sync existsSync calls per request (can be thousands of images).
     const now = Date.now();
     if (now - this._validFilesAt > 30_000) {
       try {
@@ -80,7 +71,6 @@ class GalleryManager {
     results.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     const total = results.length;
 
-    // Paginate if page/limit provided
     const pg = parseInt(page, 10);
     const lim = parseInt(limit, 10);
     if (lim > 0 && pg > 0) {
@@ -235,7 +225,7 @@ class GalleryManager {
         const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
         if (Array.isArray(parsed)) return parsed;
       }
-    } catch { /* corrupt/missing gallery store — start fresh */ }
+    } catch {}
     return [];
   }
 

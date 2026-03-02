@@ -1,4 +1,3 @@
-// server/tests/promptBuilder.test.js
 import { describe, it, expect } from 'vitest';
 const promptBuilder = require('../services/promptBuilder');
 
@@ -91,7 +90,7 @@ describe('promptBuilder', () => {
     it('extracts sliding window phrases for 5+ word text', () => {
       const phrases = promptBuilder._extractPhrases('a b c d e f');
       expect(phrases.length).toBeGreaterThan(1);
-      expect(phrases[0]).toBe('a b c d e f'); // full text
+      expect(phrases[0]).toBe('a b c d e f');
     });
   });
 

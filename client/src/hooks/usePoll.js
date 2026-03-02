@@ -8,7 +8,6 @@ export function usePoll(fetchFn, intervalMs = 3000) {
   const activeRef = useRef(false);
   const failCountRef = useRef(0);
 
-  // Keep refs in sync to avoid stale closures in setTimeout
   useEffect(() => { fnRef.current = fetchFn; });
   useEffect(() => { activeRef.current = active; });
 
@@ -44,7 +43,6 @@ export function usePoll(fetchFn, intervalMs = 3000) {
       } catch {
         failCountRef.current += 1;
         if (failCountRef.current >= 30) {
-          console.warn('[usePoll] Stopped polling after 30 consecutive failures');
           setActive(false);
           activeRef.current = false;
           return;
@@ -63,7 +61,6 @@ export function usePoll(fetchFn, intervalMs = 3000) {
     };
   }, [active, intervalMs]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       activeRef.current = false;

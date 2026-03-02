@@ -12,7 +12,7 @@ const apiKeyManager = require('./apiKeyManager');
 const execFileAsync = promisify(execFile);
 const ffmpegPath = require('../utils/ffmpeg');
 const APIFY_BASE_URL = 'https://api.apify.com/v2/acts/apify~instagram-scraper/run-sync-get-dataset-items';
-const MAX_VIDEO_BYTES = 120 * 1024 * 1024; // 120MB
+const MAX_VIDEO_BYTES = 120 * 1024 * 1024;
 
 function looksLikeHttpUrl(value) {
   const text = asText(value);
@@ -61,7 +61,6 @@ async function getReelVideoUrlFromApify(reelUrl, apifyToken = '') {
       signal: AbortSignal.timeout(120_000),
     });
     if (!response.ok && loginCookies) {
-      // Retry once without cookies in case actor input schema rejects loginCookies.
       response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -122,7 +121,7 @@ async function downloadVideoToTemp(videoUrl) {
     bytes += chunk.length;
     if (bytes > MAX_VIDEO_BYTES) {
       fileStream.destroy();
-      try { fs.unlinkSync(filePath); } catch { /* cleanup best-effort */ }
+      try { fs.unlinkSync(filePath); } catch {}
       throw new AppError('Reel video is too large (max 120MB)', 413, 'VIDEO_TOO_LARGE');
     }
     fileStream.write(chunk);
@@ -159,8 +158,8 @@ async function extractFirstAndLastFrame(videoPath) {
   const firstBuffer = fs.readFileSync(firstFramePath);
   const lastBuffer = fs.readFileSync(lastFramePath);
 
-  try { fs.unlinkSync(firstFramePath); } catch { /* cleanup best-effort */ }
-  try { fs.unlinkSync(lastFramePath); } catch { /* cleanup best-effort */ }
+  try { fs.unlinkSync(firstFramePath); } catch {}
+  try { fs.unlinkSync(lastFramePath); } catch {}
 
   if (!firstBuffer.length || !lastBuffer.length) {
     throw new AppError('Failed to extract first/last frame from reel', 500, 'FRAME_EXTRACTION_EMPTY');
@@ -186,7 +185,7 @@ async function resolveReelFrames(reelUrl, options = {}) {
     const frames = await extractFirstAndLastFrame(videoPath);
     return { frames, videoUrl, apifyItem };
   } finally {
-    try { fs.unlinkSync(videoPath); } catch { /* cleanup best-effort */ }
+    try { fs.unlinkSync(videoPath); } catch {}
   }
 }
 

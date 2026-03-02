@@ -1,15 +1,9 @@
-// server/routes/niches.js
-
 const express = require('express');
 const nicheManager = require('../services/nicheManager');
 const { AppError } = require('../middleware/errorHandler');
 
 const router = express.Router();
 
-/**
- * GET /api/niches
- * List all niches (built-in + custom).
- */
 router.get('/', (_req, res, next) => {
   try {
     const niches = nicheManager.listNiches();
@@ -19,10 +13,6 @@ router.get('/', (_req, res, next) => {
   }
 });
 
-/**
- * GET /api/niches/:id
- * Get a single niche by ID.
- */
 router.get('/:id', (req, res, next) => {
   try {
     const niche = nicheManager.getNiche(req.params.id);
@@ -32,11 +22,6 @@ router.get('/:id', (req, res, next) => {
   }
 });
 
-/**
- * POST /api/niches
- * Create a custom niche.
- * Body: { name, tone, styleRules: [], emotionalTriggers: [], hookStrategy, ctaStyle }
- */
 router.post('/', (req, res, next) => {
   try {
     const niche = nicheManager.createNiche(req.body);
@@ -46,10 +31,6 @@ router.post('/', (req, res, next) => {
   }
 });
 
-/**
- * PATCH /api/niches/:id
- * Update a niche (partial update).
- */
 router.patch('/:id', (req, res, next) => {
   try {
     const niche = nicheManager.updateNiche(req.params.id, req.body);
@@ -59,10 +40,6 @@ router.patch('/:id', (req, res, next) => {
   }
 });
 
-/**
- * DELETE /api/niches/:id
- * Delete a niche.
- */
 router.delete('/:id', (req, res, next) => {
   try {
     const result = nicheManager.deleteNiche(req.params.id);

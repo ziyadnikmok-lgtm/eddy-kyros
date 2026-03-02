@@ -10,7 +10,6 @@
   --color-warning: #f59e0b;
   --color-danger: #ef4444;
 
-  /* Animation tokens for Radix + premium transitions */
   --animate-dialog-in: dialog-content-show 200ms cubic-bezier(0.16, 1, 0.3, 1);
   --animate-overlay-in: overlay-show 200ms ease-out;
   --animate-tooltip-in: tooltip-show 150ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -24,8 +23,6 @@
   ::selection { background: #3b82f640; }
   body { font-family: var(--font-sans); }
 }
-
-/* ── Keyframes ──────────────────────────────────────── */
 
 @keyframes shimmer {
   0% { background-position: -200% 0; }
@@ -46,7 +43,6 @@
   100% { transform: scale(2); opacity: 0; }
 }
 
-/* Dialog / Modal */
 @keyframes dialog-content-show {
   from { opacity: 0; scale: 0.95; }
   to { opacity: 1; scale: 1; }
@@ -57,19 +53,16 @@
   to { opacity: 1; }
 }
 
-/* Tooltip */
 @keyframes tooltip-show {
   from { opacity: 0; scale: 0.96; }
   to { opacity: 1; scale: 1; }
 }
 
-/* Toast */
 @keyframes toast-slide-in {
   from { opacity: 0; transform: translateX(calc(100% + 1rem)); }
   to { opacity: 1; transform: translateX(0); }
 }
 
-/* Collapsible content */
 @keyframes collapsible-expand {
   from { height: 0; opacity: 0; }
   to { height: var(--radix-collapsible-content-height); opacity: 1; }
@@ -80,30 +73,24 @@
   to { height: 0; opacity: 0; }
 }
 
-/* Dropdown / Context Menu */
 @keyframes dropdown-in {
   from { opacity: 0; scale: 0.95; transform: translateY(-4px); }
   to { opacity: 1; scale: 1; transform: translateY(0); }
 }
 
-/* Stagger fade for grid children */
 @keyframes stagger-fade-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Ambient glow pulse — subtle breathe on logo */
 @keyframes glow-breathe {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 0.7; }
 }
 
-/* GPU-accelerate logo glow animation */
 [style*="glow-breathe"] {
   will-change: opacity;
 }
-
-/* ── Custom utilities ───────────────────────────────── */
 
 @utility skeleton {
   background: linear-gradient(90deg, #18181b 25%, #27272a 50%, #18181b 75%);
@@ -138,7 +125,6 @@
   animation: spin-slow 0.7s linear infinite;
 }
 
-/* ── Premium: Gradient text utility ─────────────────── */
 @utility text-gradient {
   background: linear-gradient(135deg, #f4f4f5 0%, #a1a1aa 100%);
   -webkit-background-clip: text;
@@ -146,19 +132,16 @@
   background-clip: text;
 }
 
-/* ── Premium: Glass card surface ────────────────────── */
 @utility glass {
   background: rgba(24, 24, 27, 0.65);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
 
-/* ── Premium: Noise texture overlay ─────────────────── */
 @utility noise {
   position: relative;
 }
 
-/* Noise overlay - using CSS-only approach */
 .noise::after {
   content: "";
   position: absolute;
@@ -171,12 +154,10 @@
   background-size: 128px 128px;
 }
 
-/* ── Premium: Inset shadow for inputs ───────────────── */
 @utility inset-depth {
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 0 0 1px rgba(0, 0, 0, 0.05);
 }
 
-/* ── Premium: Ambient page glow ─────────────────────── */
 @utility ambient-glow {
   position: relative;
 }

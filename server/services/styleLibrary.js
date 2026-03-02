@@ -12,28 +12,17 @@ const PROFILES_FILE = path.join(DATA_DIR, 'analyzedProfiles.json');
 const VALID_CATEGORIES = ['pose', 'expression', 'outfit', 'scene', 'lighting', 'camera', 'vibe', 'accessories', 'format'];
 const VALID_SOURCE_TYPES = ['profile_analysis', 'post_clone', 'manual', 'json_import', 'backfill'];
 
-// Compose order follows Nano-Banana formula: environment → lighting → composition → subject → style → format
 const COMPOSE_ORDER = ['scene', 'lighting', 'camera', 'pose', 'expression', 'outfit', 'accessories', 'vibe', 'format'];
 
-// Identity-stripping patterns — removes face/body/skin/hair references
 const IDENTITY_PATTERNS = [
-  // "A woman with...", "A young woman...", "She is...", "She has..."
   /\b(?:a\s+)?(?:young|tall|short|slim|curvy|petite|athletic)?\s*(?:woman|girl|lady|female|man|boy|guy|male)\s+(?:with|who|has|having)\b[^.;]*/gi,
-  // "Her face...", "Her body...", "Her skin..."
   /\bher\s+(?:face|body|skin|hair|eyes|lips|nose|cheeks?|forehead|chin|jawline|eyebrows?|eyelashes?|complexion)\b[^.;]*/gi,
-  // "His face...", etc
   /\bhis\s+(?:face|body|skin|hair|eyes|lips|nose|cheeks?|forehead|chin|jawline|eyebrows?|eyelashes?|complexion)\b[^.;]*/gi,
-  // Skin tone descriptors
   /\b(?:fair|dark|light|olive|pale|tan(?:ned)?|brown|black|white|caramel|porcelain|ebony|ivory)\s*(?:skin(?:ned)?|complex(?:ion)?|tone)\b/gi,
-  // Hair color/style as identity
   /\b(?:blonde|brunette|redhead|black-haired|brown-haired|auburn)\b/gi,
-  // Eye color
   /\b(?:blue|green|brown|hazel|gray|grey)\s*eyes?\b/gi,
-  // Body proportions
   /\b(?:large|small|ample|flat|perky|full)\s*(?:bust|chest|breasts?|hips?|waist|thighs?|buttocks?)\b/gi,
-  // Height / weight
   /\b(?:\d+'?\d*"?\s*(?:tall|short)|(?:weighs?\s+)?\d+\s*(?:lbs?|kg|pounds?|kilos?))\b/gi,
-  // "She/He" at sentence start (convert to directive)
   /^(?:she|he)\s+(?:is|has|was|were|looks?|appears?|stands?|sits?|poses?)\s+/gim,
 ];
 
@@ -46,7 +35,6 @@ class StyleLibraryService {
     this._rebuildNormIndex();
   }
 
-  /** Build category→Set<normalizedText> index for O(1) exact-match duplicate checks */
   _rebuildNormIndex() {
     this._normIndex = new Map();
     for (const a of this._store) {
@@ -60,20 +48,12 @@ class StyleLibraryService {
     this._normIndex.get(category).add(key);
   }
 
-  // ─── Quality Gate & Duplicate Detection ────────────────
-
-  /**
-   * Check if a near-duplicate already exists in the store.
-   * Uses normalized exact match first, then Jaccard similarity > 0.6.
-   */
   isDuplicate(category, text) {
     const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ');
-    if (normalized.length < 5) return true; // too short = treat as duplicate
+    if (normalized.length < 5) return true;
 
-    // O(1) exact match via pre-built index
     if (this._normIndex.get(category)?.has(normalized)) return true;
 
-    // Jaccard similarity > 0.6 (fuzzy match still requires scan)
     const wordsNew = new Set(normalized.split(/\s+/));
     for (const a of this._store) {
       if (a.category !== category) continue;
@@ -86,20 +66,14 @@ class StyleLibraryService {
     return false;
   }
 
-  /**
-   * Minimum quality gate for atoms. Rejects tag-soup, truncated, and identity-leaked text.
-   * Returns { pass: boolean, reason?: string }.
-   */
   passesQualityGate(category, text) {
     const trimmed = (text || '').trim();
     const words = trimmed.split(/\s+/);
 
-    // Minimum length per category
     const minWords = { outfit: 4, pose: 4, scene: 5, lighting: 4, camera: 4, expression: 3, vibe: 4, accessories: 3, format: 3 };
     const minW = minWords[category] || 3;
     if (words.length < minW) return { pass: false, reason: `too short (${words.length} words, need ${minW})` };
 
-    // Reject identity leaks at the start
     if (/^(?:the|a)\s+(?:woman|girl|lady|man|boy|guy)\s+(?:wears?|is\s+wearing|has\s+on|is\s+dressed)/i.test(trimmed)) {
       return { pass: false, reason: 'identity leak' };
     }
@@ -107,7 +81,6 @@ class StyleLibraryService {
       return { pass: false, reason: 'identity leak (pronoun start)' };
     }
 
-    // Reject generic quality tags that AI generators already include
     if (/^(?:beautiful|pretty|gorgeous|stunning|4k|realistic|high quality|masterpiece|best quality|ultra)/i.test(trimmed) && words.length < 5) {
       return { pass: false, reason: 'generic quality tag' };
     }
@@ -115,21 +88,17 @@ class StyleLibraryService {
     return { pass: true };
   }
 
-  // ─── CRUD ───────────────────────────────────────────────
-
   createAtom(data, { skipDuplicateCheck = false } = {}) {
     this._validateAtomPayload(data);
 
     const text = data.text.trim();
 
-    // Quality gate
     const quality = this.passesQualityGate(data.category, text);
     if (!quality.pass) {
       log.info('style_library_quality_reject', { reason: quality.reason, text: text.substring(0, 60) });
       return null;
     }
 
-    // Duplicate check
     if (!skipDuplicateCheck && this.isDuplicate(data.category, text)) {
       log.info('style_library_duplicate_skip', { text: text.substring(0, 60) });
       return null;
@@ -165,11 +134,9 @@ class StyleLibraryService {
       this._validateAtomPayload(data);
       const text = data.text.trim();
 
-      // Quality gate
       const quality = this.passesQualityGate(data.category, text);
       if (!quality.pass) { skippedQuality++; continue; }
 
-      // Duplicate check (also checks against atoms added in this batch)
       if (!skipDuplicateCheck && this.isDuplicate(data.category, text)) { skippedDuplicate++; continue; }
 
       const atom = {
@@ -226,13 +193,11 @@ class StyleLibraryService {
       results = results.filter(a => a.text.toLowerCase().includes(q) || (a.tags && a.tags.some(t => t.includes(q))));
     }
 
-    // Sort: favorites first, then by most recent
     results = results.sort((a, b) => {
       if (a.favorite !== b.favorite) return b.favorite ? 1 : -1;
       return new Date(b.createdAt) - new Date(a.createdAt);
     });
 
-    // Pagination
     const page = Math.max(1, parseInt(filters.page) || 1);
     const limit = Math.min(200, Math.max(1, parseInt(filters.limit) || 50));
     const total = results.length;
@@ -302,12 +267,8 @@ class StyleLibraryService {
     return { removed: count };
   }
 
-  /**
-   * Find duplicate atoms (same category + identical normalized text).
-   * Returns { duplicateCount, groups } where groups maps a key to the array of atom IDs to remove (keeps one per group).
-   */
   findDuplicates() {
-    const groups = new Map(); // key -> [atom, atom, ...]
+    const groups = new Map();
     for (const atom of this._store) {
       const key = `${atom.category}::${atom.text.trim().toLowerCase().replace(/\s+/g, ' ')}`;
       if (!groups.has(key)) groups.set(key, []);
@@ -318,13 +279,11 @@ class StyleLibraryService {
     const toRemove = [];
     for (const [, group] of groups) {
       if (group.length <= 1) continue;
-      // Keep: favorite > highest usageCount > earliest createdAt
       group.sort((a, b) => {
         if (a.favorite !== b.favorite) return a.favorite ? -1 : 1;
         if ((a.usageCount || 0) !== (b.usageCount || 0)) return (b.usageCount || 0) - (a.usageCount || 0);
         return new Date(a.createdAt) - new Date(b.createdAt);
       });
-      // First one is the keeper, rest are duplicates
       for (let i = 1; i < group.length; i++) {
         toRemove.push(group[i].id);
       }
@@ -334,10 +293,6 @@ class StyleLibraryService {
     return { duplicateCount, removeIds: toRemove };
   }
 
-  /**
-   * Remove duplicate atoms, keeping one per (category + normalized text) group.
-   * Keeps: favorited > most used > earliest created.
-   */
   deleteDuplicates() {
     const { duplicateCount, removeIds } = this.findDuplicates();
     if (removeIds.length === 0) return { removed: 0 };
@@ -353,13 +308,10 @@ class StyleLibraryService {
     this._store = this._store.filter(a => a.source?.profileUsername !== username);
     this._rebuildNormIndex();
     this._persistStore();
-    // Also remove from analyzed profiles
     this._profiles = this._profiles.filter(p => p.username !== username);
     this._persistProfiles();
     return { removed: before - this._store.length };
   }
-
-  // ─── Compose ────────────────────────────────────────────
 
   composePrompt(atomIds) {
     if (!Array.isArray(atomIds) || atomIds.length === 0) {
@@ -371,14 +323,12 @@ class StyleLibraryService {
       throw new AppError('No valid atoms found for the given IDs', 404, 'ATOMS_NOT_FOUND');
     }
 
-    // Group by category
     const grouped = {};
     for (const atom of atoms) {
       if (!grouped[atom.category]) grouped[atom.category] = [];
       grouped[atom.category].push(atom.text);
     }
 
-    // Build in compose order
     const parts = [];
     for (const cat of COMPOSE_ORDER) {
       if (grouped[cat] && grouped[cat].length > 0) {
@@ -390,16 +340,6 @@ class StyleLibraryService {
     return parts.join('\n');
   }
 
-  // ─── Auto-Select ───────────────────────────────────────
-
-  /**
-   * Auto-select the most relevant atoms based on keyword matching.
-   * Returns an array of atom IDs (best match per category).
-   *
-   * @param {string[]} keywords - Words to match against atom text/tags
-   * @param {{ maxPerCategory?: number, excludeIds?: string[] }} options
-   * @returns {string[]} Array of selected atom IDs
-   */
   autoSelect(keywords, { maxPerCategory = 1, excludeIds = [] } = {}) {
     if (!Array.isArray(keywords) || keywords.length === 0) return [];
 
@@ -439,8 +379,6 @@ class StyleLibraryService {
     return selected;
   }
 
-  // ─── Stats & Usage ─────────────────────────────────────
-
   getStats() {
     const byCategory = {};
     const bySource = {};
@@ -468,8 +406,6 @@ class StyleLibraryService {
     }
   }
 
-  // ─── Profile Tracking ──────────────────────────────────
-
   getAnalyzedProfiles() {
     return this._profiles.map(p => {
       const atomCount = this._store.filter(a => a.source?.profileUsername === p.username).length;
@@ -494,17 +430,13 @@ class StyleLibraryService {
     this._persistProfiles();
   }
 
-  // ─── Identity Stripping ────────────────────────────────
-
   stripIdentity(text) {
     if (!text || typeof text !== 'string') return '';
     let cleaned = text;
     for (const pattern of IDENTITY_PATTERNS) {
-      // Reset lastIndex for global regexes
       pattern.lastIndex = 0;
       cleaned = cleaned.replace(pattern, '');
     }
-    // Clean up artifacts: double spaces, orphaned commas, leading/trailing punctuation
     cleaned = cleaned
       .replace(/,\s*,/g, ',')
       .replace(/\.\s*\./g, '.')
@@ -515,8 +447,6 @@ class StyleLibraryService {
     return cleaned;
   }
 
-  // ─── JSON Import Parser ────────────────────────────────
-
   importFromJSON(jsonData, sourceLabel = 'json_import') {
     if (!jsonData || typeof jsonData !== 'object') {
       throw new AppError('Invalid JSON data', 400, 'VALIDATION_ERROR');
@@ -524,67 +454,54 @@ class StyleLibraryService {
 
     const atoms = [];
 
-    // Detect format: array of prompt examples vs subject profile
     if (Array.isArray(jsonData)) {
-      // Prompt examples format (array of prompt objects)
       for (const item of jsonData) {
         if (!item || typeof item !== 'object') continue;
-        // Unwrap nested { prompt: { ... } } structure
         const prompt = item.prompt && typeof item.prompt === 'object' ? item.prompt : item;
         this._extractPromptExampleAtoms(prompt, sourceLabel, atoms);
       }
     } else {
-      // Subject profile format — style data may be at top level or nested under life_story
       const profileData = jsonData.life_story && typeof jsonData.life_story === 'object'
         ? jsonData.life_story
         : jsonData;
       this._extractSubjectProfileAtoms(profileData, sourceLabel, atoms);
     }
 
-    // Strip identity from all extracted atoms
     for (const atom of atoms) {
       atom.text = this.stripIdentity(atom.text);
     }
 
-    // Filter out empty or too-short atoms
     return atoms.filter(a => a.text && a.text.length >= 10);
   }
 
   _extractPromptExampleAtoms(prompt, sourceLabel, atoms) {
-    // outfit + fabric_contour → outfit
     const outfitParts = [prompt.outfit, prompt.fabric_contour].filter(Boolean);
     if (outfitParts.length) {
       atoms.push({ category: 'outfit', text: outfitParts.join('. '), tags: [], sourceField: 'outfit+fabric_contour', source: { type: 'json_import', sourceLabel } });
     }
 
-    // framing → camera
     if (prompt.framing) {
       atoms.push({ category: 'camera', text: prompt.framing, tags: [], sourceField: 'framing', source: { type: 'json_import', sourceLabel } });
     }
 
-    // pose + interaction → pose
     const poseParts = [prompt.pose, prompt.interaction].filter(Boolean);
     if (poseParts.length) {
       atoms.push({ category: 'pose', text: poseParts.join('. '), tags: [], sourceField: 'pose+interaction', source: { type: 'json_import', sourceLabel } });
     }
 
-    // expression + gaze → expression
     const exprParts = [prompt.expression, prompt.gaze].filter(Boolean);
     if (exprParts.length) {
       atoms.push({ category: 'expression', text: exprParts.join('. '), tags: [], sourceField: 'expression+gaze', source: { type: 'json_import', sourceLabel } });
     }
 
-    // lighting → lighting
     if (prompt.lighting) {
       atoms.push({ category: 'lighting', text: prompt.lighting, tags: [], sourceField: 'lighting', source: { type: 'json_import', sourceLabel } });
     }
 
-    // background → scene
     if (prompt.background) {
       atoms.push({ category: 'scene', text: prompt.background, tags: [], sourceField: 'background', source: { type: 'json_import', sourceLabel } });
     }
 
-    // style → vibe
     if (prompt.style) {
       atoms.push({ category: 'vibe', text: prompt.style, tags: [], sourceField: 'style', source: { type: 'json_import', sourceLabel } });
     }
@@ -593,12 +510,10 @@ class StyleLibraryService {
   _extractSubjectProfileAtoms(data, sourceLabel, atoms) {
     const src = { type: 'json_import', sourceLabel };
 
-    // ─── pose_inspiration.* → pose ───
     if (data.pose_inspiration && typeof data.pose_inspiration === 'object') {
       this._flattenToAtoms(data.pose_inspiration, 'pose', 'pose_inspiration', src, atoms);
     }
 
-    // ─── hand_interactions → pose ───
     if (Array.isArray(data.hand_interactions)) {
       for (const item of data.hand_interactions) {
         const text = typeof item === 'string' ? item : (item?.description || item?.text || JSON.stringify(item));
@@ -606,7 +521,6 @@ class StyleLibraryService {
       }
     }
 
-    // ─── expanded_expressions, emotional_range, camera_relationship → expression ───
     if (Array.isArray(data.expanded_expressions)) {
       for (const item of data.expanded_expressions) {
         const text = typeof item === 'string' ? item : (item?.description || item?.text || '');
@@ -623,7 +537,6 @@ class StyleLibraryService {
       }
     }
 
-    // ─── outfit_combos.* → outfit ───
     if (data.outfit_combos && typeof data.outfit_combos === 'object') {
       for (const [subcategory, items] of Object.entries(data.outfit_combos)) {
         if (Array.isArray(items)) {
@@ -637,7 +550,6 @@ class StyleLibraryService {
       }
     }
 
-    // ─── past_locations → scene ───
     if (Array.isArray(data.past_locations)) {
       for (const item of data.past_locations) {
         const text = typeof item === 'string' ? item : (item?.description || item?.text || '');
@@ -645,7 +557,6 @@ class StyleLibraryService {
       }
     }
 
-    // ─── locations_and_environments → scene + lighting ───
     if (Array.isArray(data.locations_and_environments)) {
       for (const loc of data.locations_and_environments) {
         if (!loc || typeof loc !== 'object') continue;
@@ -658,7 +569,6 @@ class StyleLibraryService {
       }
     }
 
-    // ─── scenes_and_activities.* → vibe (rich scene descriptions) ───
     if (data.scenes_and_activities && typeof data.scenes_and_activities === 'object') {
       for (const [sceneName, items] of Object.entries(data.scenes_and_activities)) {
         if (Array.isArray(items)) {
@@ -670,7 +580,6 @@ class StyleLibraryService {
       }
     }
 
-    // ─── outfit_formulas → outfit (combine top+bottom+shoes) ───
     if (Array.isArray(data.outfit_formulas)) {
       for (const formula of data.outfit_formulas) {
         if (!formula || typeof formula !== 'object') continue;
@@ -681,7 +590,6 @@ class StyleLibraryService {
       }
     }
 
-    // ─── wardrobe_catalog.* → outfit ───
     if (data.wardrobe_catalog && typeof data.wardrobe_catalog === 'object') {
       for (const [subcategory, items] of Object.entries(data.wardrobe_catalog)) {
         if (Array.isArray(items)) {
@@ -693,7 +601,6 @@ class StyleLibraryService {
       }
     }
 
-    // ─── past_moments → vibe ───
     if (Array.isArray(data.past_moments)) {
       for (const item of data.past_moments) {
         const text = typeof item === 'string' ? item : (item?.description || item?.text || '');
@@ -701,7 +608,6 @@ class StyleLibraryService {
       }
     }
 
-    // ─── photography_styles.technical_approach → camera ───
     if (data.photography_styles?.technical_approach) {
       const ta = data.photography_styles.technical_approach;
       if (Array.isArray(ta)) {
@@ -714,7 +620,6 @@ class StyleLibraryService {
       }
     }
 
-    // ─── generation_rules.lighting_and_atmosphere.keywords → lighting ───
     if (data.generation_rules?.lighting_and_atmosphere?.keywords) {
       const kw = data.generation_rules.lighting_and_atmosphere.keywords;
       if (Array.isArray(kw)) {
@@ -725,14 +630,12 @@ class StyleLibraryService {
       }
     }
 
-    // ─── recurring_visual_motifs, character_energy → vibe ───
     if (Array.isArray(data.recurring_visual_motifs)) {
       for (const item of data.recurring_visual_motifs) {
         const text = typeof item === 'string' ? item : (item?.description || item?.text || '');
         if (text) atoms.push({ category: 'vibe', text, tags: ['motif'], sourceField: 'recurring_visual_motifs', source: { ...src } });
       }
     } else if (data.recurring_visual_motifs?.elements) {
-      // Handle { elements: [...] } format
       this._flattenToAtoms(data.recurring_visual_motifs.elements, 'vibe', 'recurring_visual_motifs.elements', src, atoms);
     }
     if (data.character_energy && typeof data.character_energy === 'object') {
@@ -741,14 +644,12 @@ class StyleLibraryService {
       atoms.push({ category: 'vibe', text: data.character_energy, tags: ['energy'], sourceField: 'character_energy', source: { ...src } });
     }
 
-    // ─── accessories_catalog, accessory_styling_combos → accessories ───
     if (Array.isArray(data.accessories_catalog)) {
       for (const item of data.accessories_catalog) {
         const text = typeof item === 'string' ? item : (item?.description || item?.text || '');
         if (text) atoms.push({ category: 'accessories', text, tags: [], sourceField: 'accessories_catalog', source: { ...src } });
       }
     } else if (data.accessories_catalog && typeof data.accessories_catalog === 'object') {
-      // Handle { jewelry: [...], eyewear: [...], props: [...] } format
       for (const [subcat, items] of Object.entries(data.accessories_catalog)) {
         if (Array.isArray(items)) {
           for (const item of items) {
@@ -766,7 +667,6 @@ class StyleLibraryService {
     }
   }
 
-  /** Recursively flatten an object/array into atoms for a given category */
   _flattenToAtoms(obj, category, parentField, source, atoms) {
     if (Array.isArray(obj)) {
       for (const item of obj) {
@@ -795,8 +695,6 @@ class StyleLibraryService {
       }
     }
   }
-
-  // ─── Backfill from promptKnowledge ─────────────────────
 
   backfillFromPromptKnowledge() {
     const pkFile = path.join(DATA_DIR, 'promptKnowledge.json');
@@ -830,7 +728,6 @@ class StyleLibraryService {
       }
     }
 
-    // Filter duplicates (by text similarity)
     const unique = [];
     const seen = new Set();
     for (const atom of atoms) {
@@ -846,8 +743,6 @@ class StyleLibraryService {
     const created = this.createBulk(unique);
     return { imported: created.length };
   }
-
-  // ─── Validation ────────────────────────────────────────
 
   _validateId(id) {
     if (!id || typeof id !== 'string' || id.trim().length === 0) {
@@ -876,8 +771,6 @@ class StyleLibraryService {
       ...(source.sourceLabel ? { sourceLabel: source.sourceLabel } : {}),
     };
   }
-
-  // ─── File I/O ──────────────────────────────────────────
 
   _ensureDataFile(filePath) {
     const dir = path.dirname(filePath);

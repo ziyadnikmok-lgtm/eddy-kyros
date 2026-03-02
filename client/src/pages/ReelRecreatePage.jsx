@@ -6,8 +6,8 @@ import { useStepTimer } from '../hooks/useStepTimer';
 import { Card, Btn, Input, Badge, Spinner, ImageCard, Empty, StepProgress } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 import { IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
+import { IconVideo } from 'nucleo-glass';
 
-// Module-level session cache — survives unmount/remount when navigating away and back
 const _cache = {
   reelUrl: '',
   charId: '',
@@ -51,7 +51,6 @@ export default function ReelRecreatePage() {
   };
   const indexToStrength = (value) => STRENGTH_LEVELS[Math.max(0, Math.min(2, Number(value) || 1))];
 
-  // ── Session cache sync ──
   useEffect(() => { _cache.reelUrl = reelUrl; }, [reelUrl]);
   useEffect(() => { _cache.charId = charId; }, [charId]);
   useEffect(() => { _cache.result = result; }, [result]);
@@ -79,7 +78,6 @@ export default function ReelRecreatePage() {
 
   useEffect(() => {
     if (charId) charApi.get(charId).then(setCharDetail).catch(() => setCharDetail(null));
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear detail when no char selected
     else setCharDetail(null);
   }, [charId]);
 
@@ -144,7 +142,6 @@ export default function ReelRecreatePage() {
     }
 
     setRunSourceType('cached');
-    // Keep source frames visible but clear old recreations so the loading steps show.
     setResult((prev) => prev ? { ...prev, recreations: null } : prev);
 
     const activeRefIds = charDetail?.references?.filter((r) => r.isActive).map((r) => r.id) || [];
@@ -175,11 +172,6 @@ export default function ReelRecreatePage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Reel Copy</h1>
-        <p className="text-zinc-500 text-sm mt-1">Paste an Instagram reel URL to recreate first and last frame scenes with your selected character.</p>
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         <div className="lg:col-span-1 space-y-4">
           <Card className="space-y-4">
@@ -192,7 +184,6 @@ export default function ReelRecreatePage() {
             <div className="space-y-1">
               <span className="text-xs text-zinc-400 font-medium block">Or Upload Local Video</span>
               <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-dashed px-3 py-2 text-xs transition ${localVideoFile ? 'border-blue-500/40 bg-blue-500/5 text-blue-300' : 'border-zinc-700/80 text-zinc-300 hover:border-blue-500/30 hover:text-blue-300'}`}>
-                <span>{localVideoFile ? '🎬' : '🎥'}</span>
                 <input
                   type="file"
                   accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
@@ -357,7 +348,7 @@ export default function ReelRecreatePage() {
         <div className="lg:col-span-2 space-y-4">
           {!loading && !result && (
             <Card className="min-h-[360px] flex items-center justify-center">
-              <Empty icon="🎞" title="No reel processed yet" subtitle="Paste a reel URL and run recreation" />
+              <Empty icon={<IconVideo uniqueId="empty-reel" size={40} aria-hidden />} title="No reel processed yet" subtitle="Paste a reel URL and run recreation" />
             </Card>
           )}
 

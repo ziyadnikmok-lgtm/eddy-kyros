@@ -30,7 +30,6 @@ export class ErrorBoundary extends Component {
   }
 }
 
-/** Lightweight page-level boundary — resets without full reload. */
 export class PageErrorBoundary extends Component {
   constructor(props) {
     super(props);

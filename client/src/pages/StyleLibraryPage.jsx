@@ -14,7 +14,6 @@ const humanTag = t => t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()
 export default function StyleLibraryPage() {
   const { notify, consumePageParams } = useApp();
 
-  // Accept navigation params (e.g. sourceFilter from Profile Analyzer → View Atoms)
   const initParams = useMemo(() => consumePageParams(), []);
 
   const [atoms, setAtoms] = useState([]);
@@ -42,7 +41,6 @@ export default function StyleLibraryPage() {
   const [confirmAction, setConfirmAction] = useState(null);
   const [duplicateCount, setDuplicateCount] = useState(null);
 
-  // ─── Fetch ───────────────────────────────────────────
   const fetchAtoms = useCallback(async () => {
     setLoading(true);
     try {
@@ -63,13 +61,11 @@ export default function StyleLibraryPage() {
   useEffect(() => { fetchAtoms(); }, [fetchAtoms]);
   useEffect(() => { api.stats().then(setStats).catch(() => {}); }, [atoms.length]);
 
-  // Compose prompt when selection changes
   useEffect(() => {
     if (selectedIds.size === 0) { setComposedPrompt(''); return; }
     api.compose([...selectedIds]).then(r => setComposedPrompt(r.prompt)).catch(() => setComposedPrompt(''));
   }, [selectedIds]);
 
-  // Source labels for delete menu
   const sourceLabels = useMemo(() => {
     const map = {};
     atoms.forEach(a => {
@@ -79,7 +75,6 @@ export default function StyleLibraryPage() {
     return Object.entries(map);
   }, [atoms]);
 
-  // Group selected atoms by category for the side panel
   const selectedGrouped = useMemo(() => {
     const groups = {};
     for (const id of selectedIds) {
@@ -91,7 +86,6 @@ export default function StyleLibraryPage() {
     return groups;
   }, [selectedIds, atoms]);
 
-  // ─── Handlers ────────────────────────────────────────
   const toggleSelect = (id) => {
     setSelectedIds(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   };
@@ -127,7 +121,6 @@ export default function StyleLibraryPage() {
   const openDeleteMenu = () => {
     setShowDeleteMenu(v => {
       if (!v) {
-        // Opening — fetch duplicate count
         setDuplicateCount(null);
         api.getDuplicateCount().then(r => setDuplicateCount(r.duplicateCount)).catch(() => setDuplicateCount(0));
       }
@@ -155,20 +148,16 @@ export default function StyleLibraryPage() {
 
   const hasSelection = selectedIds.size > 0;
 
-  // ─── Render ──────────────────────────────────────────
   return (
     <>
     <div className="animate-in">
       <div className="flex gap-4">
 
-        {/* ── Left: Main Content ─────────────────────── */}
         <div className="flex-1 min-w-0 space-y-4">
 
-          {/* Header */}
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
-              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Style Library</h1>
-              {stats && <p className="text-xs text-zinc-500 mt-0.5">{stats.total} atoms</p>}
+              {stats && <p className="text-xs text-zinc-500">{stats.total} atoms</p>}
             </div>
             <div className="flex gap-2 items-center flex-wrap">
               <Btn variant="ghost" onClick={handleBackfill}>Backfill</Btn>
@@ -192,7 +181,6 @@ export default function StyleLibraryPage() {
             </div>
           </div>
 
-          {/* Category Tabs */}
           <div className="flex gap-1.5 flex-wrap">
             {CATEGORIES.map(cat => {
               const count = stats && cat !== 'all' ? stats.byCategory[cat] || 0 : 0;
@@ -213,7 +201,6 @@ export default function StyleLibraryPage() {
             })}
           </div>
 
-          {/* Search + Filters */}
           <div className="flex gap-2 items-center flex-wrap">
             <div className="flex-1 min-w-[180px]">
               <Input placeholder="Search atoms..." value={searchQ} onChange={e => { setSearchQ(e.target.value); setPage(1); }} />
@@ -251,7 +238,6 @@ export default function StyleLibraryPage() {
             )}
           </div>
 
-          {/* Atom Grid */}
           {loading ? (
             <div className="grid gap-2.5 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
               {Array.from({ length: 9 }).map((_, i) => (
@@ -290,12 +276,10 @@ export default function StyleLibraryPage() {
           )}
         </div>
 
-        {/* ── Right: Composer Side Panel ──────────────── */}
         {hasSelection && (
           <aside className="w-[320px] shrink-0">
             <div className="sticky top-0 max-h-[calc(100vh-7rem)] flex flex-col rounded-xl border border-zinc-700/80 bg-zinc-900 overflow-hidden">
 
-              {/* Header */}
               <div className="px-4 pt-4 pb-3 border-b border-zinc-800">
                 <div className="flex items-center justify-between">
                   <h2 className="text-sm font-semibold text-zinc-100">Composer</h2>
@@ -304,7 +288,6 @@ export default function StyleLibraryPage() {
                 <p className="text-[11px] text-zinc-500 mt-0.5">{selectedIds.size} atom{selectedIds.size !== 1 ? 's' : ''} selected</p>
               </div>
 
-              {/* Selected atoms by category */}
               <div className="flex-1 overflow-y-auto scroll-fade px-4 py-3 space-y-3">
                 {Object.entries(selectedGrouped).map(([cat, catAtoms]) => (
                   <div key={cat}>
@@ -326,7 +309,6 @@ export default function StyleLibraryPage() {
                   </div>
                 ))}
 
-                {/* Formatted preview */}
                 {composedPrompt && (
                   <div className="pt-2 border-t border-zinc-800">
                     <span className="text-[10px] uppercase tracking-wider text-zinc-600 mb-2 block">Prompt Preview</span>
@@ -355,7 +337,6 @@ export default function StyleLibraryPage() {
                 )}
               </div>
 
-              {/* Actions */}
               <div className="px-4 py-3 border-t border-zinc-800 space-y-2">
                 <div className="flex gap-2">
                   <Btn variant="primary" className="flex-1" onClick={copyComposed}>Copy Prompt</Btn>
@@ -372,7 +353,6 @@ export default function StyleLibraryPage() {
 
     </div>
 
-    {/* ── Modals (Radix Portal renders outside DOM tree automatically) */}
     <AddAtomModal open={showAddModal} onClose={() => setShowAddModal(false)} onSave={(atom) => { setAtoms(prev => [atom, ...prev]); setShowAddModal(false); notify('Atom created', 'success'); }} notify={notify} />
     <EditAtomModal open={!!editingAtom} atom={editingAtom} onClose={() => setEditingAtom(null)} onSave={(updated) => { setAtoms(prev => prev.map(a => a.id === updated.id ? updated : a)); setEditingAtom(null); notify('Atom updated', 'success'); }} notify={notify} />
     <Modal open={!!confirmAction} title="Confirm Delete" onClose={() => setConfirmAction(null)}>
@@ -389,7 +369,6 @@ export default function StyleLibraryPage() {
   );
 }
 
-// ─── Delete Menu ───────────────────────────────────────────
 function DeleteMenu({ selectedCount, sourceLabels, totalCount, duplicateCount, onDeleteSelected, onDeleteBySource, onDeleteDuplicates, onClearAll, onClose }) {
   return (
     <>
@@ -425,7 +404,6 @@ function DeleteMenu({ selectedCount, sourceLabels, totalCount, duplicateCount, o
   );
 }
 
-// ─── Atom Card ─────────────────────────────────────────────
 function AtomCard({ atom, selected, onToggleSelect, onToggleFavorite, onEdit, onDelete }) {
   return (
     <div
@@ -436,7 +414,6 @@ function AtomCard({ atom, selected, onToggleSelect, onToggleFavorite, onEdit, on
       }`}
       onClick={onToggleSelect}
     >
-      {/* Top row: badge + actions */}
       <div className="flex items-center justify-between gap-2 mb-1.5">
         <Badge color={CATEGORY_COLORS[atom.category] || 'zinc'}>{atom.category}</Badge>
         <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -452,10 +429,8 @@ function AtomCard({ atom, selected, onToggleSelect, onToggleFavorite, onEdit, on
         </div>
       </div>
 
-      {/* Text */}
       <p className="text-xs text-zinc-300 leading-relaxed line-clamp-3">{atom.text}</p>
 
-      {/* Tags */}
       {atom.tags?.length > 0 && (
         <div className="flex flex-wrap gap-1 mt-2">
           {atom.tags.slice(0, 3).map(tag => (
@@ -465,7 +440,6 @@ function AtomCard({ atom, selected, onToggleSelect, onToggleFavorite, onEdit, on
         </div>
       )}
 
-      {/* Selected indicator */}
       {selected && (
         <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-blue-500" />
       )}
@@ -473,7 +447,6 @@ function AtomCard({ atom, selected, onToggleSelect, onToggleFavorite, onEdit, on
   );
 }
 
-// ─── Add Atom Modal ────────────────────────────────────────
 function AddAtomModal({ open, onClose, onSave, notify }) {
   const [category, setCategory] = useState('pose');
   const [text, setText] = useState('');
@@ -504,13 +477,11 @@ function AddAtomModal({ open, onClose, onSave, notify }) {
   );
 }
 
-// ─── Edit Atom Modal ───────────────────────────────────────
 function EditAtomModal({ open, atom, onClose, onSave, notify }) {
   const [category, setCategory] = useState(atom?.category || 'pose');
   const [text, setText] = useState(atom?.text || '');
   const [tags, setTags] = useState((atom?.tags || []).join(', '));
 
-  // Sync state when a different atom is opened for editing
   useEffect(() => {
     if (atom) {
       setCategory(atom.category);
@@ -544,7 +515,6 @@ function EditAtomModal({ open, atom, onClose, onSave, notify }) {
   );
 }
 
-// ─── Import JSON Modal ─────────────────────────────────────
 function ImportJSONModal({ open, onClose, importPreview, setImportPreview, importLoading, setImportLoading, onImported, notify }) {
   const fileRef = useRef(null);
   const [sourceLabel, setSourceLabel] = useState('');

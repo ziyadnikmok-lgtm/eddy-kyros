@@ -1,4 +1,4 @@
-﻿function normalizeArray(value) {
+function normalizeArray(value) {
   return Array.isArray(value) ? value.filter((item) => item !== undefined && item !== null) : [];
 }
 
@@ -144,7 +144,6 @@ function buildDayImages({
     }
   }
 
-  // Ensure required output keys are present and strictly sampled from input data.
   return {
     carouselImages: carouselImages.map(({ pose, outfit: selectedOutfit, location: selectedLocation }) => ({
       pose,

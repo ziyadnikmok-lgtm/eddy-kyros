@@ -1,5 +1,3 @@
-// server/tests/errorHandler.test.js
-
 import { describe, it, expect, vi } from 'vitest';
 const { AppError, errorHandler } = require('../middleware/errorHandler');
 

@@ -1,8 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 
-// Map structured error codes from the API to user-friendly messages.
-// Falls back to err.message when no mapping exists.
 const ERROR_CODE_MAP = {
   TIMEOUT: 'Request timed out — the server may be busy. Try again in a moment.',
   RATE_LIMITED: 'Rate limit reached — wait a moment and retry.',
@@ -17,7 +15,6 @@ const ERROR_CODE_MAP = {
   INSTAGRAM_UNAVAILABLE: 'Instagram post is unavailable or private.',
 };
 
-// Some error codes are transient — use 'info' tone instead of 'error'
 const INFO_CODES = new Set(['TIMEOUT', 'RATE_LIMITED', 'GEMINI_TIMEOUT', 'GEMINI_TRANSIENT', 'TOO_MANY_JOBS']);
 
 function formatError(err) {
@@ -45,7 +42,6 @@ export function useAsync() {
   }, []);
 
   const run = useCallback(async (fn, { silent = false } = {}) => {
-    // Abort any previous in-flight call
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -58,7 +54,6 @@ export function useAsync() {
       return result;
     } catch (err) {
       if (!mountedRef.current) return undefined;
-      // Silently swallow abort errors from our own cancellation
       if (err?.name === 'AbortError') return undefined;
       setError(err);
       if (!silent) {

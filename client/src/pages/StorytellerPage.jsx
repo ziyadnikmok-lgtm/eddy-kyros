@@ -32,7 +32,6 @@ const LIFECYCLE_PHASES = [
   { key: 'archive', label: 'Archive', sub: '24+ hours', color: 'text-zinc-400', dot: 'bg-zinc-500' },
 ];
 
-/* ── Score Bar ────────────────────────────────────── */
 
 function ScoreBar({ label, value, max = 10, color = 'blue' }) {
   const pct = Math.round((value / max) * 100);
@@ -57,7 +56,6 @@ function ScoreBar({ label, value, max = 10, color = 'blue' }) {
   );
 }
 
-/* ── Explore Score Ring ───────────────────────────── */
 
 function ExploreScoreRing({ score }) {
   const radius = 36;
@@ -84,7 +82,6 @@ function ExploreScoreRing({ score }) {
   );
 }
 
-/* ── Main Page ────────────────────────────────────── */
 
 export default function StorytellerPage() {
   const { notify } = useApp();
@@ -227,13 +224,7 @@ export default function StorytellerPage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gradient">Storyteller</h1>
-        <p className="text-zinc-500 text-sm mt-1">AI-powered carousel captions with IG Intelligence — engagement optimization, Explore scoring, and post lifecycle strategy.</p>
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
-        {/* Controls */}
         <div className="lg:col-span-1 space-y-4">
           <Card className="space-y-4">
             <h3 className="text-sm font-semibold text-zinc-300">Select Images ({selectedImages.length}/10)</h3>
@@ -312,7 +303,6 @@ export default function StorytellerPage() {
               />
             )}
 
-            {/* ── IG Intelligence: Optimize For ── */}
             <div>
               <label className="mb-1.5 block text-xs font-medium text-zinc-400">Optimize For</label>
               <div className="grid grid-cols-3 gap-1.5">
@@ -346,7 +336,6 @@ export default function StorytellerPage() {
           </Card>
         </div>
 
-        {/* Output */}
         <div className="lg:col-span-2 space-y-4">
           {!result && !loading ? (
             <Card className="flex items-center justify-center py-20">
@@ -356,10 +345,8 @@ export default function StorytellerPage() {
             <StepProgress steps={STORY_STEPS} currentIndex={storyStepIndex} elapsedSec={elapsedSec} className="min-h-[360px]" />
           ) : result ? (
             <>
-              {/* ── IG Intelligence Panel ── */}
               {(ei || lt) && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Explore Score + Engagement Metrics */}
                   {ei && (
                     <Card className="animate-in space-y-3">
                       <div className="flex items-center gap-2 mb-1">
@@ -397,7 +384,6 @@ export default function StorytellerPage() {
                     </Card>
                   )}
 
-                  {/* Post Lifecycle Strategy */}
                   {lt && (
                     <Card className="animate-in space-y-3" style={{ animationDelay: '80ms' }}>
                       <Badge color="blue">Post Lifecycle Strategy</Badge>
@@ -425,13 +411,11 @@ export default function StorytellerPage() {
                 </div>
               )}
 
-              {/* ── Caption Results ── */}
               <div className="space-y-4">
                 <div className="flex justify-end">
                   <CopyBtn text={allText} className="!text-sm" />
                 </div>
 
-                {/* Hook */}
                 <Card className="animate-in border-l-4 !border-l-blue-500">
                   <div className="flex items-start justify-between">
                     <Badge color="blue">Hook</Badge>
@@ -440,7 +424,6 @@ export default function StorytellerPage() {
                   <p className="mt-2 text-zinc-100 font-medium leading-relaxed">{result.hook}</p>
                 </Card>
 
-                {/* Slides */}
                 {result.slides.map((s) => (
                   <Card key={s.slide} className="animate-in" style={{ animationDelay: `${s.slide * 60}ms` }}>
                     <div className="flex items-start justify-between">
@@ -451,7 +434,6 @@ export default function StorytellerPage() {
                   </Card>
                 ))}
 
-                {/* CTA */}
                 <Card className="animate-in border-l-4 !border-l-green-500">
                   <div className="flex items-start justify-between">
                     <Badge color="green">Final CTA</Badge>
@@ -460,7 +442,6 @@ export default function StorytellerPage() {
                   <p className="mt-2 text-zinc-100 font-medium leading-relaxed">{result.finalCTA}</p>
                 </Card>
 
-                {/* Hashtags */}
                 {result.hashtags?.length > 0 && (
                   <Card className="animate-in">
                     <div className="flex items-start justify-between mb-3">

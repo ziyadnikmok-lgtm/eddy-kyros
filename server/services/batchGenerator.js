@@ -1,5 +1,3 @@
-// server/services/batchGenerator.js
-
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -23,16 +21,11 @@ const sceneModeEngine = require('./sceneModeEngine');
 
 const cfg = require('../config');
 
-// Cache content type presets at module load (avoids blocking readFileSync per request)
 const _contentPresets = (() => {
   try {
     return JSON.parse(fs.readFileSync(path.join(require('../paths').DATA_DIR, 'contentTypePresets.json'), 'utf-8'));
   } catch { return []; }
 })();
-
-// ---------------------------------------------------------------------------
-// Constants (from central config)
-// ---------------------------------------------------------------------------
 
 const MAX_CONCURRENCY = cfg.BATCH_MAX_CONCURRENCY;
 const MAX_BATCH_SIZE = cfg.BATCH_MAX_SIZE;
@@ -42,10 +35,6 @@ const CLEANUP_INTERVAL_MS = cfg.BATCH_CLEANUP_INTERVAL_MS;
 const ALLOWED_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 const MAX_REFERENCE_BYTES = cfg.MAX_REFERENCE_BYTES;
 
-// ---------------------------------------------------------------------------
-// Concurrency-limited task runner
-// ---------------------------------------------------------------------------
-
 class TaskQueue {
   constructor(concurrency) {
     this._concurrency = concurrency;
@@ -53,10 +42,6 @@ class TaskQueue {
     this._queue = [];
   }
 
-  /**
-   * Enqueue an async function. Returns a promise that resolves/rejects
-   * with the function's result. Respects concurrency limit.
-   */
   enqueue(fn) {
     return new Promise((resolve, reject) => {
       this._queue.push({ fn, resolve, reject });
@@ -79,17 +64,10 @@ class TaskQueue {
   }
 }
 
-// Shared queue across all batch jobs — enforces global concurrency cap
 const globalQueue = new TaskQueue(MAX_CONCURRENCY);
 
-// ---------------------------------------------------------------------------
-// Job store
-// ---------------------------------------------------------------------------
-
-/** @type {Map<string, object>} */
 const jobs = new Map();
 
-// Persistent job store — saves completed job metadata (no image data) to survive restarts
 const JOB_STORE_PATH = require('../paths').BATCH_STORE;
 
 function _loadPersistedJobs() {
@@ -100,17 +78,16 @@ function _loadPersistedJobs() {
     if (!Array.isArray(entries)) return;
     const now = Date.now();
     for (const entry of entries) {
-      // Only restore non-expired finished jobs
       if (entry._completedAt && now - entry._completedAt <= JOB_TTL_MS) {
         jobs.set(entry.jobId, entry);
       }
     }
-  } catch { /* persisted store unavailable — start fresh */ }
+  } catch { }
 }
 
 let _persistPending = false;
 function _persistJobs() {
-  if (_persistPending) return; // coalesce rapid writes
+  if (_persistPending) return;
   _persistPending = true;
   queueMicrotask(() => {
     _persistPending = false;
@@ -118,8 +95,6 @@ function _persistJobs() {
       const dir = path.dirname(JOB_STORE_PATH);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-      // Only persist completed/failed/cancelled jobs (not running — those won't resume)
-      // Strip image base64 data from results to keep file small
       const entries = [];
       for (const job of jobs.values()) {
         if (job.status === 'running') continue;
@@ -142,10 +117,8 @@ function _persistJobs() {
   });
 }
 
-// Load on startup
 _loadPersistedJobs();
 
-// Periodic cleanup of expired jobs
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
   let removed = false;
@@ -158,35 +131,17 @@ const cleanupTimer = setInterval(() => {
   if (removed) _persistJobs();
 }, CLEANUP_INTERVAL_MS);
 
-// Prevent the timer from keeping Node alive when the process would otherwise exit
 if (cleanupTimer.unref) cleanupTimer.unref();
-
-// ---------------------------------------------------------------------------
-// Batch Generator
-// ---------------------------------------------------------------------------
 
 class BatchGenerator extends EventEmitter {
   constructor() {
     super();
-    this.setMaxListeners(50); // allow many concurrent SSE clients
+    this.setMaxListeners(50);
   }
 
-  // =========================================================================
-  // Public API
-  // =========================================================================
-
-  /**
-   * Start a batch job. Returns the job object immediately;
-   * processing continues asynchronously.
-   *
-   * @param {"variation"|"multi"|"override"} mode
-   * @param {object} config - Mode-specific configuration
-   * @returns {object} Initial job status
-   */
   startBatch(mode, config, generationOptions = {}) {
     this._validateMode(mode);
 
-    // Reject if too many jobs are already running
     let runningCount = 0;
     for (const job of jobs.values()) {
       if (job.status === 'running') runningCount++;
@@ -226,8 +181,6 @@ class BatchGenerator extends EventEmitter {
       throw new AppError('Batch produced 0 tasks. Check your config.', 400, 'EMPTY_BATCH');
     }
 
-    // For edit mode, hoist the shared base image to job level so it is stored
-    // once instead of duplicated across every task (~2MB × N tasks avoided).
     let sharedBaseImage = null;
     if (mode === 'edit') {
       const first = tasks.find((t) => t.baseImage && t.baseImage.base64Data);
@@ -273,8 +226,6 @@ class BatchGenerator extends EventEmitter {
     };
     jobs.set(jobId, job);
 
-    // Fire-and-forget — errors are captured per-task; guard against
-    // unhandled rejection from any unexpected top-level failure
     this._executeTasks(job, enrichedTasks).catch((err) => {
       const log = require('../utils/logger');
       log.error('batch_job_crash', { jobId, message: err?.message, stack: err?.stack });
@@ -288,9 +239,6 @@ class BatchGenerator extends EventEmitter {
     return this._toSafeJob(job);
   }
 
-  /**
-   * Get current job status.
-   */
   getJob(jobId) {
     if (!jobId || typeof jobId !== 'string') {
       throw new AppError('Job ID is required', 400, 'VALIDATION_ERROR');
@@ -302,9 +250,6 @@ class BatchGenerator extends EventEmitter {
     return this._toSafeJob(job);
   }
 
-  /**
-   * Cancel a running job. Already-completed results are preserved.
-   */
   cancelJob(jobId) {
     if (!jobId || typeof jobId !== 'string') {
       throw new AppError('Job ID is required', 400, 'VALIDATION_ERROR');
@@ -325,14 +270,6 @@ class BatchGenerator extends EventEmitter {
     return this._toSafeJob(job);
   }
 
-  // =========================================================================
-  // Task builders — one per mode
-  // =========================================================================
-
-  /**
-   * Mode A: Variation
-   * Same base prompt, multiple generations with seed/temperature variation.
-   */
   _buildVariationTasks(config) {
     const { prompt, count, randomizeSeed, temperatureRange, characterId, activeReferenceIds } = config || {};
 
@@ -341,7 +278,6 @@ class BatchGenerator extends EventEmitter {
     }
     const taskCount = this._validateCount(count);
 
-    // If characterId provided, resolve the prompt through identity lock
     let basePrompt = prompt.trim();
     if (characterId) {
       basePrompt = this._resolveCharacterPrompt(characterId, activeReferenceIds, prompt.trim());
@@ -371,10 +307,6 @@ class BatchGenerator extends EventEmitter {
     return tasks;
   }
 
-  /**
-   * Mode B: Multi-Prompt
-   * One image per distinct prompt.
-   */
   _buildMultiTasks(config) {
     const { prompts, temperature, seed, characterId, activeReferenceIds, styleAtomIds } = config || {};
 
@@ -405,10 +337,6 @@ class BatchGenerator extends EventEmitter {
     return tasks;
   }
 
-  /**
-   * Mode C: Override Iteration
-   * For each override set, build an identity-locked prompt and generate.
-   */
   _buildOverrideTasks(config) {
     const { characterId, overrideSets, prompt } = config || {};
 
@@ -422,7 +350,6 @@ class BatchGenerator extends EventEmitter {
       throw new AppError(`Max ${MAX_BATCH_SIZE} override sets per batch`, 400, 'BATCH_TOO_LARGE');
     }
 
-    // Validate character exists upfront
     const character = referenceManager.getCharacter(characterId);
 
     const tasks = [];
@@ -432,7 +359,6 @@ class BatchGenerator extends EventEmitter {
         throw new AppError(`overrideSets[${i}] must have a "referenceIds" array`, 400, 'VALIDATION_ERROR');
       }
 
-      // Validate that all referenced IDs exist
       for (const refId of set.referenceIds) {
         const exists = character.references.some((r) => r.id === refId);
         if (!exists) {
@@ -444,7 +370,6 @@ class BatchGenerator extends EventEmitter {
         }
       }
 
-      // Build identity-locked prompt for this set
       const activeRefs = referenceManager.getActiveReferences(characterId, set.referenceIds);
       const builtPrompt = promptBuilder.buildPrompt({
         masterPrompt: character.masterPrompt,
@@ -463,10 +388,6 @@ class BatchGenerator extends EventEmitter {
     return tasks;
   }
 
-  /**
-   * Mode D: Edit Existing Image
-   * Takes an existing image and generates multiple edited variations.
-   */
   _buildEditTasks(config) {
     const {
       imageId,
@@ -496,7 +417,6 @@ class BatchGenerator extends EventEmitter {
     const specificReferences = this._parseCustomReferenceImages(customReferenceImages);
 
     for (let i = 0; i < taskCount; i++) {
-      // Build a tweak-style prompt that preserves scene + applies modification
       const tweakPrompt = tweakBuilder.buildTweakPrompt({
         originalMetadata: original,
         modifications: { mood: modificationPrompt.trim() },
@@ -535,10 +455,6 @@ class BatchGenerator extends EventEmitter {
     return tasks;
   }
 
-  /**
-   * Mode E: Content Mix — distributes images across content categories
-   * using the 40/30/20/10 rule (lifestyle/personality/teasing/engagement).
-   */
   _buildContentMixTasks(config) {
     const {
       totalCount,
@@ -559,13 +475,11 @@ class BatchGenerator extends EventEmitter {
       throw new AppError(`Distribution must sum to 100%, got ${total}%`, 400, 'VALIDATION_ERROR');
     }
 
-    // Use cached content type presets (loaded once at module level)
     if (!_contentPresets || _contentPresets.length === 0) {
       throw new AppError('Content type presets not available', 500, 'PRESETS_MISSING');
     }
     const allPresets = _contentPresets;
 
-    // Distribute count across categories (last category gets remainder)
     const catCounts = {};
     let assigned = 0;
     for (let i = 0; i < categories.length; i++) {
@@ -617,21 +531,11 @@ class BatchGenerator extends EventEmitter {
     return tasks;
   }
 
-  // =========================================================================
-  // Execution engine
-  // =========================================================================
-
-  /**
-   * Execute all tasks against the global concurrency-limited queue.
-   * Errors are captured per-task — never crash the server.
-   */
   async _executeTasks(job, tasks) {
-    // Get API key once for the entire batch
     let apiKey;
     try {
       apiKey = apiKeyManager.getActiveKey();
     } catch (err) {
-      // Fatal: no key → fail entire job
       job.status = 'failed';
       job._completedAt = Date.now();
       for (let i = 0; i < tasks.length; i++) {
@@ -647,19 +551,17 @@ class BatchGenerator extends EventEmitter {
       return;
     }
 
-    // Pre-cache character data once per unique characterId to avoid N sync disk lookups
     const characterCache = new Map();
     for (const task of tasks) {
       if (task.characterId && !characterCache.has(task.characterId)) {
         try {
           characterCache.set(task.characterId, await this.getCharacterById(task.characterId));
-        } catch { /* will fail again per-task with proper error handling */ }
+        } catch { }
       }
     }
 
     const promises = tasks.map((task) =>
       globalQueue.enqueue(async () => {
-        // Check cancellation before starting
         if (job._cancelled) {
           job.results[task.index] = {
             index: task.index,
@@ -676,7 +578,6 @@ class BatchGenerator extends EventEmitter {
           if (task.characterId) {
             character = characterCache.get(task.characterId) || await this.getCharacterById(task.characterId);
             if (!task.disableCharacterReferenceImages) {
-              // Always include primary images first — they're the strongest identity anchors
               const profileImages = this._resolveProfileImage(task.characterId);
               if (profileImages) referenceImages.push(...profileImages);
 
@@ -686,13 +587,11 @@ class BatchGenerator extends EventEmitter {
 
               if (requestedRefIds && requestedRefIds.length > 0) {
                 for (const refId of requestedRefIds) {
-                  if (refId === '__profile__') continue; // already added above
-                  // Resolve to buffer immediately instead of pushing metadata
+                  if (refId === '__profile__') continue;
                   const resolved = this._resolveReferenceImage(task.characterId, { id: refId });
                   if (resolved) referenceImages.push(resolved);
                 }
               } else {
-                // No explicit IDs — use all active references
                 const refs = Array.isArray(character.references) ? character.references.filter((r) => r.isActive) : [];
                 for (const ref of refs) {
                   const resolved = this._resolveReferenceImage(task.characterId, ref);
@@ -702,7 +601,6 @@ class BatchGenerator extends EventEmitter {
             }
           }
 
-          // Build variation suffix for seed/temperature injection
           let taskPrompt = task.prompt;
           if (task.seed !== undefined) {
             taskPrompt += `\n[Seed: ${task.seed}]`;
@@ -836,7 +734,6 @@ class BatchGenerator extends EventEmitter {
           ].filter(Boolean).join('\n\n');
 
           const referenceParts = [];
-          // Resolve base image: prefer shared job-level copy to avoid per-task duplication
           const resolvedBaseImage = task.baseImage
             ? (job._sharedBaseImage || task.baseImage)
             : null;
@@ -874,7 +771,6 @@ class BatchGenerator extends EventEmitter {
             parts,
           });
 
-          // Re-check cancellation after expensive API call — skip storing results
           if (job._cancelled) {
             job.results[task.index] = {
               index: task.index,
@@ -885,7 +781,6 @@ class BatchGenerator extends EventEmitter {
             return;
           }
 
-          // Store in imageStore (in-memory for tweak/carousel)
           const stored = imageStore.store({
             basePrompt: task.prompt,
             characterId: task.characterId,
@@ -899,7 +794,6 @@ class BatchGenerator extends EventEmitter {
             source: 'batch',
           });
 
-          // Save to persistent gallery
           galleryManager.save({
             base64Data: result.image.base64Data,
             mimeType: result.image.mimeType,
@@ -939,10 +833,8 @@ class BatchGenerator extends EventEmitter {
       })
     );
 
-    // Wait for all tasks to settle
     await Promise.allSettled(promises);
 
-    // Final status (only if not already cancelled)
     if (!job._cancelled) {
       job.status = job.failed === job.total ? 'failed' : 'completed';
     }
@@ -950,10 +842,6 @@ class BatchGenerator extends EventEmitter {
     _persistJobs();
     this.emit('done', { jobId: job.jobId, status: job.status, completed: job.completed, failed: job.failed, total: job.total });
   }
-
-  // =========================================================================
-  // Helpers
-  // =========================================================================
 
   _validateMode(mode) {
     const valid = ['variation', 'multi', 'override', 'edit', 'content-mix'];
@@ -1024,7 +912,7 @@ class BatchGenerator extends EventEmitter {
         const styleLibrary = require('./styleLibrary');
         styleLibraryBlock = styleLibrary.composePrompt(config.styleAtomIds);
         config.styleAtomIds.forEach(id => styleLibrary.incrementUsage(id));
-      } catch { /* skip if atoms not found */ }
+      } catch { }
     }
 
     return {
@@ -1038,9 +926,6 @@ class BatchGenerator extends EventEmitter {
     };
   }
 
-  /**
-   * Resolve a prompt through the character identity lock system.
-   */
   _resolveCharacterPrompt(characterId, activeReferenceIds, userPrompt) {
     const character = referenceManager.getCharacter(characterId);
     const activeRefs = referenceManager.getActiveReferences(
@@ -1088,7 +973,6 @@ class BatchGenerator extends EventEmitter {
   _toInlineReferencePart(characterId, img) {
     if (!img) return null;
 
-    // Already has binary/base64 payload
     const directBase64 = this._convertToBase64(img);
     if (directBase64) {
       return {
@@ -1099,7 +983,6 @@ class BatchGenerator extends EventEmitter {
       };
     }
 
-    // Reference metadata object from character.references
     if (img.id) {
       const resolved = this._resolveReferenceImage(characterId, img);
       if (!resolved) return null;
@@ -1174,16 +1057,11 @@ class BatchGenerator extends EventEmitter {
     });
   }
 
-  /**
-   * Strip base64 image data from config for history persistence.
-   */
   _sanitizeConfigForHistory(mode, config) {
     if (!config) return null;
     const safe = { ...config };
-    // Remove any base64 image data from the config
     delete safe.customReferenceImages;
     delete safe.extraReferenceImage;
-    // Keep only text fields for multi prompts
     if (mode === 'multi' && Array.isArray(safe.prompts)) {
       safe.prompts = safe.prompts.map((p) => (typeof p === 'string' ? p.slice(0, 500) : ''));
     }
@@ -1196,10 +1074,6 @@ class BatchGenerator extends EventEmitter {
     return safe;
   }
 
-  /**
-   * Retry all failed tasks in a completed/failed job.
-   * Creates a new job with only the failed tasks' original config.
-   */
   retryFailed(jobId) {
     if (!jobId || typeof jobId !== 'string') {
       throw new AppError('Job ID is required', 400, 'VALIDATION_ERROR');
@@ -1215,25 +1089,21 @@ class BatchGenerator extends EventEmitter {
     }
     if (failedIndices.length === 0) throw new AppError('No failed tasks to retry', 400, 'NO_FAILED_TASKS');
 
-    // Re-create from stored config
     const config = job._config || {};
     const mode = job.mode;
     const genOpts = { aspectRatio: job.aspectRatio || '1:1', imageSize: job.imageSize || '1K' };
     genOpts.imageModel = job.imageModel || null;
 
-    // For multi mode, extract only failed prompts
     if (mode === 'multi' && Array.isArray(config.prompts)) {
       const retryConfig = { ...config, prompts: failedIndices.map(i => config.prompts[i]).filter(Boolean) };
       return this.startBatch(mode, retryConfig, genOpts);
     }
 
-    // For variation mode, retry with same count of failed
     if (mode === 'variation') {
       const retryConfig = { ...config, count: failedIndices.length };
       return this.startBatch(mode, retryConfig, genOpts);
     }
 
-    // For edit/content-mix, retry with failed count
     if (mode === 'edit') {
       const retryConfig = { ...config, count: failedIndices.length };
       return this.startBatch(mode, retryConfig, genOpts);
@@ -1244,13 +1114,9 @@ class BatchGenerator extends EventEmitter {
       return this.startBatch(mode, retryConfig, genOpts);
     }
 
-    // Fallback: re-run entire job config
     return this.startBatch(mode, config, genOpts);
   }
 
-  /**
-   * Remove a completed/failed/cancelled job from history.
-   */
   removeJob(jobId) {
     if (!jobId || typeof jobId !== 'string') {
       throw new AppError('Job ID is required', 400, 'VALIDATION_ERROR');
@@ -1263,9 +1129,6 @@ class BatchGenerator extends EventEmitter {
     return { removed: true };
   }
 
-  /**
-   * Queue status — how many tasks are pending in the global queue.
-   */
   queueStatus() {
     return {
       queueDepth: globalQueue._queue.length,
@@ -1275,9 +1138,6 @@ class BatchGenerator extends EventEmitter {
     };
   }
 
-  /**
-   * List all jobs, newest first. Optional status filter.
-   */
   listJobs(statusFilter) {
     const result = [];
     for (const job of jobs.values()) {
@@ -1287,9 +1147,6 @@ class BatchGenerator extends EventEmitter {
     return result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }
 
-  /**
-   * Summary counts for health/monitoring endpoints.
-   */
   jobStats() {
     let running = 0;
     let completed = 0;
@@ -1304,9 +1161,6 @@ class BatchGenerator extends EventEmitter {
     return { total: jobs.size, running, completed, failed, cancelled };
   }
 
-  /**
-   * Strip internal fields from job for API response.
-   */
   _toSafeJob(job) {
     const safe = {
       jobId: job.jobId,
@@ -1325,9 +1179,7 @@ class BatchGenerator extends EventEmitter {
   }
 }
 
-// Export constants for tests
 BatchGenerator.MAX_CONCURRENCY = MAX_CONCURRENCY;
 BatchGenerator.MAX_BATCH_SIZE = MAX_BATCH_SIZE;
 
-// Singleton
 module.exports = new BatchGenerator();

@@ -3,10 +3,6 @@ const { checkPostAvailability } = require('../services/instagramAvailabilityServ
 
 const router = express.Router();
 
-/**
- * POST /api/availability/check
- * Body: { url }
- */
 router.post('/check', async (req, res, next) => {
   try {
     const { url } = req.body || {};

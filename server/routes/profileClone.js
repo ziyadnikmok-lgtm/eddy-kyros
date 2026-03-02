@@ -11,13 +11,8 @@ const postCloneRoute = require('./postClone');
 
 const router = express.Router();
 const { TEMP_DIR } = require('../paths');
-const RECREATE_TIMEOUT_MS = 15 * 60_000; // 15 min for recreate (matches profile timeout)
+const RECREATE_TIMEOUT_MS = 15 * 60_000;
 
-/**
- * POST /api/profile-clone
- * Body: { profileUrl, characterId, postLimit, mode: "exact" | "creative", apifyApiKey? }
- * Original endpoint — kept for backwards compat.
- */
 router.post('/', async (req, res, next) => {
   try {
     const { profileUrl, characterId, postLimit = 5, mode = 'exact', apifyApiKey, imageModel } = req.body || {};
@@ -36,11 +31,6 @@ router.post('/', async (req, res, next) => {
   }
 });
 
-/**
- * POST /api/profile-clone/fetch
- * Scrape-only: runs Apify + normalizes posts, returns lightweight previews.
- * Body: { profileUrl, postLimit?, apifyApiKey? }
- */
 router.post('/fetch', async (req, res, next) => {
   try {
     const { profileUrl, postLimit = 9, apifyApiKey } = req.body || {};
@@ -57,18 +47,15 @@ router.post('/fetch', async (req, res, next) => {
     });
 
     const posts = postCloneRoute.normalizePostsFromItems(items);
-    // Match back to raw items to get accurate mediaCount
     const rawByUrl = new Map();
     for (const raw of (items || [])) {
       const u = asText(raw?.url || raw?.inputUrl || raw?.shortCodeUrl || '');
       if (u) rawByUrl.set(u, raw);
     }
 
-    // Download thumbnails server-side while CDN URLs are still fresh
     postCloneRoute.ensureThumbDir();
     const thumbPromises = posts.map(async (p) => {
       const urls = p.imageUrls || [];
-      // Try each slide URL until one succeeds
       for (const url of urls) {
         const filename = await postCloneRoute.cacheThumbnail(url);
         if (filename) return filename;
@@ -85,7 +72,7 @@ router.post('/fetch', async (req, res, next) => {
         sourceUrl: p.sourceUrl || '',
         imageUrls: p.imageUrls || [],
         slideCount: rawSlideCount > 1 ? rawSlideCount : (p.imageUrls || []).length,
-        thumbnail: thumbFilenames[i] || '', // cached local filename
+        thumbnail: thumbFilenames[i] || '',
       };
     });
 
@@ -96,11 +83,6 @@ router.post('/fetch', async (req, res, next) => {
   }
 });
 
-/**
- * POST /api/profile-clone/recreate
- * Process pre-fetched posts through Gemini — no Apify scrape needed.
- * Body: { posts: [{ type, sourceUrl, imageUrls }], characterId, mode }
- */
 router.post('/recreate', async (req, res, next) => {
   try {
     const { posts, characterId, mode = 'exact', cosplayMode = false, imageModel } = req.body || {};
@@ -116,7 +98,6 @@ router.post('/recreate', async (req, res, next) => {
       throw new AppError('"mode" must be "exact" or "creative"', 400, 'VALIDATION_ERROR');
     }
 
-    // Cap at 20 posts
     const selected = posts.slice(0, 20).map((p) => ({
       type: p.type || 'single',
       sourceUrl: asText(p.sourceUrl),
@@ -131,7 +112,6 @@ router.post('/recreate', async (req, res, next) => {
     const activeRefs = referenceManager.getActiveReferences(characterId, null);
     const apiKey = apiKeyManager.getActiveKey();
 
-    // Build reference images — includes primary image + active refs (same as single post clone)
     const baseReferenceImages = postCloneRoute.buildCharacterReferenceImages(characterId, activeRefs);
 
     const deadline = Date.now() + RECREATE_TIMEOUT_MS;
@@ -183,9 +163,8 @@ router.post('/recreate', async (req, res, next) => {
         }
       }
     } finally {
-      // Cleanup temp files — always runs even if an unexpected error escapes
       for (const filePath of tempFiles) {
-        try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch { /* best-effort */ }
+        try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch { }
       }
     }
 
@@ -197,7 +176,6 @@ router.post('/recreate', async (req, res, next) => {
       );
     }
 
-    // Save history entries
     for (const processed of results) {
       try {
         postCloneHistoryStore.save({

@@ -1,4 +1,3 @@
-// server/tests/galleryManager.test.js
 import { describe, it, expect } from 'vitest';
 const galleryManager = require('../services/galleryManager');
 
