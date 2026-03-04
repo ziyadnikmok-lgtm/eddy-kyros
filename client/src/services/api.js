@@ -10,6 +10,7 @@ const LONG_RUNNING_PATHS = [
   '/carousel/execute', '/carousel/follow-up',
   '/scene/recreate', '/story/generate',
   '/auto/plan', '/auto/execute',
+  '/video/generate',
 ];
 
 const EXTRA_LONG_PATHS = ['/profile-clone'];
@@ -114,7 +115,36 @@ export const keys = {
   setInstagramLogin: (username, password, twoFaSecret) => request('/keys/instagram-login', { method: 'PUT', body: { username, password, twoFaSecret: twoFaSecret || undefined } }),
   clearInstagramLogin: () => request('/keys/instagram-login', { method: 'DELETE' }),
   igAutoRefresh: () => request('/keys/ig-auto-refresh', { method: 'POST' }),
+  getWavespeed: () => request('/keys/wavespeed'),
+  setWavespeed: (apiKey) => request('/keys/wavespeed', { method: 'PUT', body: { apiKey } }),
+  clearWavespeed: () => request('/keys/wavespeed', { method: 'DELETE' }),
   healthCheck: () => request('/keys/health-check'),
+};
+
+export const video = {
+  generate: (body) => request('/video/generate', { method: 'POST', body }),
+  status: (taskId) => request(`/video/${taskId}/status`),
+  history: () => request('/video/history'),
+  removeHistory: (id) => request(`/video/history/${id}`, { method: 'DELETE' }),
+  fileUrl: (filename) => `${BASE}/video/file/${filename}`,
+  bulkDownload: async (ids) => {
+    const res = await fetch(`${BASE}/video/bulk-download`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    if (!res.ok) {
+      const json = await res.json().catch(() => null);
+      throw new Error(json?.error?.message || `Download failed (${res.status})`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `videos-${Date.now()}.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
 };
 
 export const characters = {

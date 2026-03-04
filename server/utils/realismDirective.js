@@ -1,20 +1,15 @@
 const REALISM_DIRECTIVE = [
-  '[PHOTOGRAPHY REALISM DIRECTIVE]',
-  'This must look like a real photograph — NOT digital art, NOT anime, NOT 3D render, NOT an illustration, NOT a cartoon, NOT CGI.',
+  '[IPHONE PHOTOGRAPHY DIRECTIVE]',
+  'This must look like a real iPhone photograph — NOT digital art, anime, 3D render, illustration, cartoon, or CGI.',
   '',
-  'Camera feel: Shot on an iPhone. 26mm wide lens, handheld with slight tilt, uncentered framing, casual composition.',
+  'Shot on iPhone. 26mm wide lens, handheld, slightly imperfect framing. Natural skin texture, real-world lighting, candid feel. Should look like a real Instagram post, not a magazine ad or studio shoot.',
   '',
-  'NATURAL PHOTO QUALITY: Keep the output looking like a real, naturally-taken photo. Do NOT upgrade to professional studio lighting, commercial retouching, or editorial polish. Preserve a candid, authentic, slightly imperfect feel — natural skin texture, casual framing, real-world lighting. The result should look like it belongs on a real Instagram feed, not in a magazine ad.',
+  'Honor BRIGHTNESS score and shadow % exactly. Dark stays dark. No added fill light.',
+  'Clothing fits realistically. No anatomical alteration.',
+  'Deep depth of field — most of frame in focus. No heavy bokeh unless prompted.',
   '',
-  'LIGHTING PRESERVATION: If the prompt specifies a BRIGHTNESS score or shadow percentages, honor them exactly. Dark scenes must stay dark. Do NOT brighten, add fill light, or soften shadows beyond what is described. Match the described color temperature.',
-  '',
-  'BODY LOCK: Clothing fits realistically without altering the underlying anatomical scale.',
-  '',
-  'DEPTH OF FIELD: Keep background sharpness consistent with a real phone camera. Do NOT add heavy artificial bokeh or background blur unless the prompt explicitly requests it. Phone cameras have deep depth of field — most of the frame should be in focus.',
-  '',
-  'NEVER use these aesthetics: hyper-realistic, 8k, masterpiece, ultra HD, sharp focus, cinematic lighting, perfect bokeh, heavy bokeh, studio lighting, symmetrical face, anime, cartoon, CGI, digital painting.',
-  'The image should look like a natural photo posted on Instagram.',
-  '[END PHOTOGRAPHY REALISM DIRECTIVE]',
+  'NEVER: hyper-realistic, 8k, masterpiece, ultra HD, cinematic lighting, studio lighting, perfect bokeh, DSLR, high-ISO, professional photography, symmetrical face, anime, CGI.',
+  '[END IPHONE PHOTOGRAPHY DIRECTIVE]',
 ].join('\n');
 
 module.exports = REALISM_DIRECTIVE;

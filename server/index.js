@@ -62,6 +62,7 @@ const templatesRouter = require('./routes/templates');
 const styleLibraryRouter = require('./routes/styleLibrary');
 const profileAnalyzerRouter = require('./routes/profileAnalyzer');
 const captionTemplatesRouter = require('./routes/captionTemplates');
+const videoRouter = require('./routes/video');
 const imageStore = require('./services/imageStore');
 const batchGenerator = require('./services/batchGenerator');
 const log = require('./utils/logger');
@@ -155,6 +156,7 @@ app.use('/api/templates', templatesRouter);
 app.use('/api/style-library', styleLibraryRouter);
 app.use('/api/profile-analyzer', profileAnalyzerRouter);
 app.use('/api/caption-templates', captionTemplatesRouter);
+app.use('/api/video', generateLimiter, videoRouter);
 
 const { CLIENT_DIST } = require('./paths');
 if (fs.existsSync(CLIENT_DIST)) {

@@ -20,6 +20,7 @@ export function usePoll(fetchFn, intervalMs = 3000) {
 
   const start = useCallback(() => {
     failCountRef.current = 0;
+    setData(null);
     setActive(true);
     activeRef.current = true;
   }, []);

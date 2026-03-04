@@ -35,6 +35,8 @@ const StyleLibraryPage = lazy(() => import('./pages/StyleLibraryPage'));
 const ProfileAnalyzerPage = lazy(() => import('./pages/ProfileAnalyzerPage'));
 const PromptBuilderPage = lazy(() => import('./pages/PromptBuilderPage'));
 const ApiKeysPage = lazy(() => import('./pages/ApiKeysPage'));
+const VideoPage = lazy(() => import('./pages/VideoPage'));
+const VideoGalleryPage = lazy(() => import('./pages/VideoGalleryPage'));
 
 const NAV_ICONS = {
   generate: IconBadgeSparkle,
@@ -42,6 +44,8 @@ const NAV_ICONS = {
   auto: IconBolt,
   carousel: IconLayers,
   scene: IconCamera,
+  video: IconVideo,
+  videoGallery: IconVideo,
   reel: IconVideo,
   postClone: IconDuplicate,
   styleLibrary: IconColorPalette,
@@ -59,6 +63,7 @@ const NAV_SECTIONS = [
     items: [
       { id: 'generate', label: 'Generate' },
       { id: 'batch', label: 'Batch' },
+      { id: 'video', label: 'Video' },
       { id: 'auto', label: 'Auto Generator' },
     ],
   },
@@ -84,6 +89,7 @@ const NAV_SECTIONS = [
     label: 'Manage',
     items: [
       { id: 'gallery', label: 'Gallery' },
+      { id: 'videoGallery', label: 'Video Gallery' },
       { id: 'characters', label: 'Characters' },
       { id: 'keys', label: 'API Keys' },
     ],
@@ -108,6 +114,7 @@ function SidebarHeader() {
 const PAGE_DESCRIPTIONS = {
   generate: 'Create a single image with full control',
   batch: 'Generate multiple images in parallel',
+  video: 'Generate videos from images using AI',
   auto: 'AI-planned multi-day content schedules',
   carousel: 'Generate slide variations from a source image',
   scene: 'Upload a scene and recreate it with your character',
@@ -118,6 +125,7 @@ const PAGE_DESCRIPTIONS = {
   profileAnalyzer: 'Extract style patterns from Instagram profiles',
   storyteller: 'Generate captions and hashtags for images',
   gallery: 'Browse and manage all generated images',
+  videoGallery: 'Browse and manage all generated videos',
   characters: 'Manage character identities and references',
   keys: 'Configure API keys and connections',
 };
@@ -133,6 +141,8 @@ const PAGES = {
   promptBuilder: PromptBuilderPage,
   profileAnalyzer: ProfileAnalyzerPage,
   storyteller: StorytellerPage,
+  video: VideoPage,
+  videoGallery: VideoGalleryPage,
   auto: AutoGeneratorPage,
   gallery: GalleryPage,
   characters: CharactersPage,

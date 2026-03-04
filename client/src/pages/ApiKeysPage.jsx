@@ -14,6 +14,8 @@ export default function ApiKeysPage() {
   const [apifyInfo, setApifyInfo] = useState({ hasApifyKey: false, maskedKey: '', updatedAt: null });
   const [instagramSessionId, setInstagramSessionId] = useState('');
   const [instagramSessionInfo, setInstagramSessionInfo] = useState({ hasInstagramSession: false, maskedValue: '', updatedAt: null });
+  const [wavespeedKey, setWavespeedKey] = useState('');
+  const [wavespeedInfo, setWavespeedInfo] = useState({ hasWavespeedKey: false, maskedKey: '', updatedAt: null });
   const [igLoginUsername, setIgLoginUsername] = useState('');
   const [igLoginPassword, setIgLoginPassword] = useState('');
   const [igLogin2faSecret, setIgLogin2faSecret] = useState('');
@@ -38,11 +40,12 @@ export default function ApiKeysPage() {
   });
 
   const load = () => runList(async () => {
-    const [data, apify, igSession, igLogin] = await Promise.all([
-      keysApi.list(), keysApi.getApify(), keysApi.getInstagramSession(), keysApi.getInstagramLogin(),
+    const [data, apify, ws, igSession, igLogin] = await Promise.all([
+      keysApi.list(), keysApi.getApify(), keysApi.getWavespeed(), keysApi.getInstagramSession(), keysApi.getInstagramLogin(),
     ]);
     setKeyList(data);
     setApifyInfo(apify || { hasApifyKey: false, maskedKey: '', updatedAt: null });
+    setWavespeedInfo(ws || { hasWavespeedKey: false, maskedKey: '', updatedAt: null });
     setInstagramSessionInfo(igSession || { hasInstagramSession: false, maskedValue: '', updatedAt: null });
     setIgLoginInfo(igLogin || { hasInstagramLogin: false, maskedUsername: '', maskedPassword: '', updatedAt: null });
     const act = data.find((k) => k.isActive);
@@ -88,6 +91,24 @@ export default function ApiKeysPage() {
     await keysApi.clearApify();
     setApifyKey('');
     notify('Apify key removed', 'success');
+    await load();
+  });
+
+  const handleSaveWavespeed = () => run(async () => {
+    if (!wavespeedKey.trim()) {
+      notify('WaveSpeed key is required', 'error');
+      return;
+    }
+    await keysApi.setWavespeed(wavespeedKey.trim());
+    setWavespeedKey('');
+    notify('WaveSpeed key saved', 'success');
+    await load();
+  });
+
+  const handleClearWavespeed = () => run(async () => {
+    await keysApi.clearWavespeed();
+    setWavespeedKey('');
+    notify('WaveSpeed key removed', 'success');
     await load();
   });
 
@@ -157,7 +178,7 @@ export default function ApiKeysPage() {
         {!health && loadingHealth ? (
           <div className="flex justify-center py-4"><Spinner size={20} /></div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
             <div className="rounded-lg border border-zinc-700/60 bg-zinc-900/30 p-3 space-y-1.5">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium text-zinc-200">Gemini</span>
@@ -174,6 +195,15 @@ export default function ApiKeysPage() {
               </div>
               <div className="text-xs text-zinc-400">{health?.apify?.message || 'No data yet'}</div>
               {health?.apify?.latencyMs != null && <div className="text-[11px] text-zinc-500 font-mono">{health.apify.latencyMs}ms</div>}
+            </div>
+
+            <div className="rounded-lg border border-zinc-700/60 bg-zinc-900/30 p-3 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-zinc-200">WaveSpeed</span>
+                <Badge color={badgeColorForStatus(health?.wavespeed?.status)}>{health?.wavespeed?.status || 'unknown'}</Badge>
+              </div>
+              <div className="text-xs text-zinc-400">{health?.wavespeed?.message || 'No data yet'}</div>
+              {health?.wavespeed?.latencyMs != null && <div className="text-[11px] text-zinc-500 font-mono">{health.wavespeed.latencyMs}ms</div>}
             </div>
 
             <div className="rounded-lg border border-zinc-700/60 bg-zinc-900/30 p-3 space-y-1.5">
@@ -235,6 +265,33 @@ export default function ApiKeysPage() {
           </div>
         ) : (
           <div className="text-xs text-zinc-500">No Apify key stored</div>
+        )}
+      </Card>
+
+      <Card className="space-y-4">
+        <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">WaveSpeed Key</h3>
+        <Input
+          label="WaveSpeed API Key"
+          placeholder="wsa_..."
+          type="password"
+          value={wavespeedKey}
+          onChange={(e) => setWavespeedKey(e.target.value)}
+        />
+        <p className="text-xs text-zinc-500">Required for Video Generation (Kling, Grok models). Get your key at wavespeed.ai/accesskey</p>
+        <div className="flex items-center gap-2">
+          <Btn onClick={handleSaveWavespeed} disabled={loading || !wavespeedKey.trim()}>
+            {loading ? <Spinner size={16} /> : null} Save WaveSpeed Key
+          </Btn>
+          <Btn variant="secondary" onClick={() => setConfirmAction({ title: 'Remove WaveSpeed key?', message: 'Video generation will stop working without a WaveSpeed API key.', onConfirm: handleClearWavespeed, label: 'Remove' })} disabled={loading || !wavespeedInfo?.hasWavespeedKey}>
+            Clear
+          </Btn>
+        </div>
+        {wavespeedInfo?.hasWavespeedKey ? (
+          <div className="text-xs text-zinc-400">
+            <span className="font-medium text-zinc-300">Stored:</span> <span className="font-mono">{wavespeedInfo.maskedKey}</span>
+          </div>
+        ) : (
+          <div className="text-xs text-zinc-500">No WaveSpeed key stored</div>
         )}
       </Card>
 

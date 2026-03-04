@@ -68,6 +68,14 @@ export const EXPRESSION_MODES = [
   { value: 'subtle_pout_raised_brows', label: 'Subtle Pout + Raised Brows' },
 ];
 
+export const VIDEO_MODELS = [
+  { id: 'kling-v2.5-turbo-std', label: 'Kling v2.5 Std', desc: 'Fast standard quality', durations: [5, 10] },
+  { id: 'kling-v2.5-turbo-pro', label: 'Kling v2.5 Pro', desc: 'Higher quality, end-frame support', durations: [5, 10] },
+  { id: 'grok-imagine-video', label: 'Grok Video', desc: 'X.AI model, 720p/480p', durations: [6, 10] },
+  { id: 'kling-v2.6-motion', label: 'Kling v2.6 Motion', desc: 'Transfer motion from reference video', durations: [5] },
+  { id: 'kling-v2.6-motion-pro', label: 'Kling v2.6 Pro Motion', desc: 'Pro quality motion transfer', durations: [5] },
+];
+
 export const SCENE_MODES = [
   { value: 'none', label: 'None' },
   { value: 'bathroom_mirror_snap', label: 'Bathroom Mirror Snap' },

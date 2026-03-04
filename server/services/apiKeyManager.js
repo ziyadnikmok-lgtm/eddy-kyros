@@ -145,6 +145,43 @@ class ApiKeyManager {
     return { removed: true };
   }
 
+  setWavespeedKey(apiKey) {
+    if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 10) {
+      throw new AppError('A valid WaveSpeed API key is required (min 10 chars)', 400, 'VALIDATION_ERROR');
+    }
+    const value = apiKey.trim();
+    this._store.wavespeedKeyEncrypted = this._encrypt(value);
+    this._store.wavespeedKeyMasked = this._maskKey(value);
+    this._store.wavespeedUpdatedAt = new Date().toISOString();
+    this._saveStore();
+    return {
+      hasWavespeedKey: true,
+      maskedKey: this._store.wavespeedKeyMasked,
+      updatedAt: this._store.wavespeedUpdatedAt,
+    };
+  }
+
+  getWavespeedKey() {
+    if (!this._store.wavespeedKeyEncrypted) return '';
+    return this._decrypt(this._store.wavespeedKeyEncrypted);
+  }
+
+  getWavespeedKeyInfo() {
+    return {
+      hasWavespeedKey: !!this._store.wavespeedKeyEncrypted,
+      maskedKey: this._store.wavespeedKeyMasked || '',
+      updatedAt: this._store.wavespeedUpdatedAt || null,
+    };
+  }
+
+  clearWavespeedKey() {
+    this._store.wavespeedKeyEncrypted = null;
+    this._store.wavespeedKeyMasked = '';
+    this._store.wavespeedUpdatedAt = null;
+    this._saveStore();
+    return { removed: true };
+  }
+
   setInstagramSessionId(sessionid) {
     if (!sessionid || typeof sessionid !== 'string' || sessionid.trim().length < 8) {
       throw new AppError('A valid Instagram sessionid is required', 400, 'VALIDATION_ERROR');
@@ -352,6 +389,9 @@ class ApiKeyManager {
             igLogin2faSecretEncrypted: parsed.igLogin2faSecretEncrypted || null,
             igLogin2faSecretMasked: parsed.igLogin2faSecretMasked || '',
             igLoginUpdatedAt: parsed.igLoginUpdatedAt || null,
+            wavespeedKeyEncrypted: parsed.wavespeedKeyEncrypted || null,
+            wavespeedKeyMasked: parsed.wavespeedKeyMasked || '',
+            wavespeedUpdatedAt: parsed.wavespeedUpdatedAt || null,
           };
         }
       }
@@ -364,6 +404,9 @@ class ApiKeyManager {
       apifyKeyEncrypted: null,
       apifyKeyMasked: '',
       apifyUpdatedAt: null,
+      wavespeedKeyEncrypted: null,
+      wavespeedKeyMasked: '',
+      wavespeedUpdatedAt: null,
       instagramSessionEncrypted: null,
       instagramSessionMasked: '',
       instagramSessionUpdatedAt: null,

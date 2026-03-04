@@ -187,6 +187,39 @@ router.delete('/apify', (_req, res, next) => {
   }
 });
 
+router.get('/wavespeed', (_req, res, next) => {
+  try {
+    const data = apiKeyManager.getWavespeedKeyInfo();
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/wavespeed', (req, res, next) => {
+  try {
+    const { apiKey } = req.body || {};
+    if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length === 0) {
+      throw new AppError('"apiKey" is required and must be a non-empty string', 400, 'VALIDATION_ERROR');
+    }
+    const data = apiKeyManager.setWavespeedKey(apiKey);
+    invalidateHealthCache();
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/wavespeed', (_req, res, next) => {
+  try {
+    const data = apiKeyManager.clearWavespeedKey();
+    invalidateHealthCache();
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/instagram-session', (_req, res, next) => {
   try {
     const data = apiKeyManager.getInstagramSessionInfo();
@@ -293,6 +326,47 @@ async function checkInstagramSessionHealth() {
   }
 }
 
+async function checkWavespeedHealth() {
+  const started = Date.now();
+  const token = (apiKeyManager.getWavespeedKey() || '').trim();
+  if (!token) {
+    return {
+      configured: false,
+      live: false,
+      status: 'missing',
+      latencyMs: Date.now() - started,
+      message: 'No WaveSpeed key stored',
+    };
+  }
+
+  try {
+    const resp = await withTimeout(
+      fetch('https://api.wavespeed.ai/api/v3/predictions/health-ping', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+      HEALTH_TIMEOUT_MS,
+      'WaveSpeed'
+    );
+    const ok = resp.status === 200 || resp.status === 404;
+    return {
+      configured: true,
+      live: resp.status !== 401 && resp.status !== 403,
+      status: resp.status === 401 || resp.status === 403 ? 'invalid' : 'ok',
+      latencyMs: Date.now() - started,
+      message: resp.status === 401 ? 'Invalid API key' : resp.status === 403 ? 'Key restricted' : 'WaveSpeed connected',
+    };
+  } catch (err) {
+    return {
+      configured: true,
+      live: false,
+      status: 'error',
+      latencyMs: Date.now() - started,
+      message: sanitizeErrorMessage(err),
+    };
+  }
+}
+
 const HEALTH_CACHE_TTL_MS = 30_000;
 let _healthSnapshot = { cache: null, ts: 0 };
 
@@ -307,10 +381,11 @@ router.get('/health-check', async (_req, res, next) => {
       return res.json({ success: true, data: { ...snap.cache, cached: true } });
     }
 
-    const [gemini, apify, ig] = await Promise.all([
+    const [gemini, apify, ig, wavespeed] = await Promise.all([
       checkGeminiHealth(),
       checkApifyHealth(),
       checkInstagramSessionHealth(),
+      checkWavespeedHealth(),
     ]);
 
     const allMissing = [gemini, apify].every((item) => item.status === 'missing');
@@ -323,6 +398,7 @@ router.get('/health-check', async (_req, res, next) => {
       gemini,
       apify,
       instagramSession: ig,
+      wavespeed,
     };
     _healthSnapshot = { cache: result, ts: Date.now() };
 

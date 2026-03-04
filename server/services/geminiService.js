@@ -366,24 +366,19 @@ class GeminiService {
     try {
       const genAI = getClient(apiKey);
 
-      const prompt = `Analyze this image and extract the scene details as structured JSON. Be extremely detailed and specific. Use directive tone (NOT "she is" or "the woman"). Return ONLY valid JSON with no markdown fences or extra text.
+      const prompt = `Analyze this image and extract scene details as structured JSON. Be concise — no filler, no repetition across fields. Directive tone (NOT "she is"). Return ONLY valid JSON, no markdown fences.
 
 {
-  "environment": "detailed description of the environment/setting — room type, wall material/color, visible furniture, fixtures, mirrors, doors, tiles, etc.",
-  "lighting": "CRITICAL FIELD — include ALL: 1) BRIGHTNESS SCORE 1-10 (1=near-black, 3=dark/nighttime, 5=medium, 7=bright, 10=blown-out). 2) SHADOW COVERAGE: percentage of frame in shadow. 3) KEY LIGHT: source type (flash/lamp/sun/window/etc.), direction, intensity, color temperature (estimated Kelvin). 4) FILL LIGHT: ambient level, how much shadows get filled. 5) SHADOW CHARACTER: hard/soft edges, how black are deepest shadows. 6) MOOD: one sentence summary. Example: 'Brightness 3/10. 65% deep shadow. Direct camera flash, cool 5500K. No fill light. Hard shadows, crushed blacks. Dark gritty nighttime with flash-lit subject.'",
-  "cameraAngle": "camera position, angle, height relative to subject, tilt, distance, estimated focal length, depth of field, selfie vs third-person",
-  "composition": "layout, rule of thirds placement, leading lines, visual flow, subject positioning within frame",
-  "mood": "overall mood and emotional tone",
-  "objects": "every visible object — phone, jewelry, necklaces, rings, earrings, bags, furniture, decorations, etc. Be specific about each item",
-  "depth": "foreground, midground, background layering and blur/bokeh",
-  "timeOfDay": "estimated time of day based on lighting",
-  "perspective": "wide, medium, close-up, macro, etc.",
-  "framingStyle": "centered, off-center, environmental portrait, etc.",
-  "pose": "full body position and posture — standing/sitting/lying down/reclining/kneeling, weight distribution, torso angle, limb placement, hand positions and what they interact with (phone, face, hair, prop). Directive tone. Example: 'Lying face-up on bed, left arm extended above head, right hand resting on stomach, knees slightly bent, head tilted left toward camera'",
-  "expression": "facial mood, gaze direction and intensity, mouth position, emotional read. Directive tone. Example: 'Soft direct gaze into lens, lips slightly parted, relaxed brow, subtle pout conveying quiet confidence'",
-  "outfit": "EXTREMELY detailed clothing description — garment type (dress/top/skirt/shorts/pants), fabric material (sequin/silk/cotton/leather), color, pattern, neckline shape (V-neck/plunging/round), sleeve style, length (mini/midi/maxi), fit (tight/loose/bodycon), any cutouts, zippers, buttons, pockets. Describe EVERY visible garment piece separately. Do NOT make clothing more conservative than it actually is.",
-  "hair": "hair color, length, texture (straight/wavy/curly), styling (down/up/ponytail/braid), parting, any hair accessories, volume, how it falls around face and shoulders",
-  "format": "photo quality level — casual phone photo, candid snapshot, amateur selfie, semi-professional, or professional studio shot. Include post-processing aesthetic (raw/edited/filtered/grain/color grading). Be honest about the quality level."
+  "environment": "Setting, surfaces, furniture, and notable objects (jewelry, phone, drinks, decor) — all in one concise description. Don't repeat items across fields.",
+  "lighting": "Brightness X/10. Shadow coverage %. Key light source + direction + color temp. Shadow character (hard/soft). One-line mood. Example: 'Brightness 3/10. 65% shadow. Camera flash, cool 5500K. Hard shadows, crushed blacks. Dark gritty nighttime.'",
+  "camera": "Angle, height, distance, framing style (centered/off-center/environmental), perspective (wide/medium/close-up), selfie vs third-person. One concise line.",
+  "composition": "Subject placement, layout, visual flow, foreground/background layering, blur/bokeh if present.",
+  "mood": "Emotional tone + time of day. One sentence.",
+  "pose": "Full body position — posture, limb placement, hand positions, weight distribution. Directive tone. Example: 'Recline on sofa, right hand holding glass, left arm behind body, head tilted back, legs extended.'",
+  "expression": "Gaze, mouth, brow, emotion. Directive tone. Example: 'Eyes closed, soft smile, chin tilted up, serene.'",
+  "outfit": "Each garment: type, fabric, color, fit, neckline, length. Be accurate — do NOT make clothing more conservative than shown.",
+  "hair": "Color, length, texture, styling, how it falls.",
+  "format": "Always describe as iPhone photo. Note the vibe: casual selfie, candid, handheld snapshot, etc. Mention any visible grain, warm/cool tones, or filters. Do NOT say professional, studio, high-ISO, or DSLR."
 }`;
 
       const response = await withTimeout(

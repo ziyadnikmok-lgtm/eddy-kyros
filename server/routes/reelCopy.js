@@ -85,6 +85,8 @@ function stripTattoosFromSceneData(sceneData) {
   for (const [key, value] of Object.entries(cleaned)) {
     if (typeof value === 'string') cleaned[key] = stripTattooMentions(value);
   }
+  // Remove hair from source scene data — hair must come from character identity refs, not source person
+  delete cleaned.hair;
   return cleaned;
 }
 
@@ -315,10 +317,10 @@ function buildFirstFrameLockBlock(sceneData, poseStrength, envStrength, poseEnab
     'Non-negotiable lock points:',
     `- Exact environment/setting: ${sceneData.environment || 'match source exactly'}`,
     `- Exact lighting behavior and color temperature: ${sceneData.lighting || 'match source exactly'}`,
-    `- Exact camera angle and framing: ${sceneData.cameraAngle || 'match source exactly'}`,
-    `- Exact composition and background object placement: ${sceneData.composition || 'match source exactly'}`,
+    `- Exact camera angle and framing: ${sceneData.camera || sceneData.cameraAngle || 'match source exactly'}`,
+    `- Exact composition and background placement: ${sceneData.composition || 'match source exactly'}`,
     sceneData.outfit ? `- OUTFIT LOCK (match exactly): ${sceneData.outfit}` : '- Wardrobe continuity lock: preserve garment structure, drape behavior, and silhouette exactly as in source.',
-    sceneData.hair ? `- HAIR LOCK: ${sceneData.hair}` : null,
+    '- HAIR: Use the character\'s own hair from identity references. Do NOT copy hair color, length, or style from the source person.',
     poseEnabled ? `- ${poseLockInstruction(poseStrength, 'first')}` : null,
     envEnabled ? '- Environment/lighting lock: keep room structure, framing geometry, and lighting behavior closely aligned to source.' : null,
     '- Strict character identity lock: preserve face and overall silhouette consistency from character references.',
@@ -326,7 +328,6 @@ function buildFirstFrameLockBlock(sceneData, poseStrength, envStrength, poseEnab
     '- Do not copy the source person face or biometric identity; copy only pose/composition/scene/outfit.',
     '- Tattoo exclusion: ignore tattoos/body ink from the source and do not render tattoos in output.',
     '- Keep proportions and styling consistent with the selected character identity lock.',
-    sceneData.objects ? `- Accessories/objects lock: ${sceneData.objects}` : null,
     '- Only include objects/devices the subject is visibly holding in the source frame. Do NOT add a phone, camera, or any handheld object unless it is clearly present in the source.',
     '- Do not stylize, do not editorialize, do not swap location or lighting setup.',
   ].filter(Boolean).join('\n');
@@ -341,9 +342,7 @@ function buildFollowUpLockBlock({ firstGeneratedScene, targetScene, poseStrength
       ? `- OUTFIT LOCK (must match first frame exactly): ${firstGeneratedScene.outfit}`
       : '- Keep same outfit material, garment structure, and drape behavior from frame 1 recreation.';
   }
-  const hairLock = firstGeneratedScene.hair
-    ? `- HAIR LOCK (must match first frame): ${firstGeneratedScene.hair}`
-    : null;
+  const hairLock = '- HAIR: Keep the character\'s own hair from identity references. Do NOT copy source person hair.';
 
   if (withSourceRef) {
     return [
@@ -366,7 +365,7 @@ function buildFollowUpLockBlock({ firstGeneratedScene, targetScene, poseStrength
       outfitTransition && targetLighting
         ? `- LIGHTING CHANGE: The lighting MUST change from the first frame. Apply this lighting: ${targetLighting}. Do NOT use the first frame's lighting.`
         : `- Lighting anchor: ${firstGeneratedScene.lighting || 'same lighting mood as reference 2'}`,
-      `- Camera anchor: ${firstGeneratedScene.cameraAngle || 'similar camera angle/framing as reference 2'}`,
+      `- Camera anchor: ${firstGeneratedScene.camera || firstGeneratedScene.cameraAngle || 'similar camera angle/framing as reference 2'}`,
       envEnabled ? `- ${environmentLockInstruction(envStrength)}` : null,
       '- Minor background/detail differences are allowed; do not hard-copy every object position.',
       outfitLock,
@@ -375,9 +374,8 @@ function buildFollowUpLockBlock({ firstGeneratedScene, targetScene, poseStrength
       '- Identity priority rule: selected character references ALWAYS override source-subject identity. Never copy face or identity from Reference 1.',
       '',
       'Pose target from Reference 1 (source last frame):',
-      `- Target camera/framing: ${targetScene.framingStyle || targetScene.cameraAngle || 'match Reference 1 framing'}`,
+      `- Target camera/framing: ${targetScene.camera || targetScene.cameraAngle || 'match Reference 1 framing'}`,
       `- Target composition: ${targetScene.composition || 'match Reference 1 composition'}`,
-      `- Target visible elements: ${targetScene.objects || 'match Reference 1 details'}`,
       poseEnabled ? `- ${poseLockInstruction(poseStrength, 'followup')}` : null,
       '- Must not keep first-frame pose; explicitly change body position, arm placement, and head angle to match Reference 1 (source last frame).',
       '- Only include objects/devices the subject is visibly holding in Reference 1. Do NOT add a phone, camera, or any handheld object unless clearly present in the source last frame.',
@@ -399,7 +397,7 @@ function buildFollowUpLockBlock({ firstGeneratedScene, targetScene, poseStrength
     outfitTransition && targetLighting
       ? `- LIGHTING TRANSITION: Do NOT copy the first frame lighting. Use this lighting instead: ${targetLighting}`
       : `- Lighting anchor: ${firstGeneratedScene.lighting || 'same lighting mood as reference 1'}`,
-    `- Camera anchor: ${firstGeneratedScene.cameraAngle || 'similar camera angle/framing as reference 1'}`,
+    `- Camera anchor: ${firstGeneratedScene.camera || firstGeneratedScene.cameraAngle || 'similar camera angle/framing as reference 1'}`,
     envEnabled ? `- ${environmentLockInstruction(envStrength)}` : null,
     '- Minor background/detail differences are allowed; do not hard-copy every object position.',
     outfitLock,
@@ -409,9 +407,8 @@ function buildFollowUpLockBlock({ firstGeneratedScene, targetScene, poseStrength
     '- Tattoo exclusion: ignore tattoos/body ink from source frames and do not generate tattoos in output.',
     '',
     'Pose target (from text description below — match as closely as possible):',
-    `- Target camera/framing: ${targetScene.framingStyle || targetScene.cameraAngle || 'match target framing'}`,
+    `- Target camera/framing: ${targetScene.camera || targetScene.cameraAngle || 'match target framing'}`,
     `- Target composition: ${targetScene.composition || 'match target composition'}`,
-    `- Target visible elements: ${targetScene.objects || 'match target details'}`,
     poseEnabled ? `- ${poseLockInstruction(poseStrength, 'followup')}` : null,
     '- Must not keep first-frame pose; explicitly change body position, arm placement, and head angle to match the pose description below.',
     '- Only include objects/devices the subject is visibly holding in the target pose. Do NOT add a phone, camera, or any handheld object unless described in the pose target.',

@@ -6,9 +6,8 @@ const promptBuilder = require('./promptBuilder');
 const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 const SCENE_FIELDS = [
-  'environment', 'lighting', 'cameraAngle', 'composition',
-  'mood', 'objects', 'depth', 'timeOfDay', 'perspective', 'framingStyle',
-  'pose', 'expression', 'outfit', 'hair', 'format',
+  'environment', 'lighting', 'camera', 'composition',
+  'mood', 'pose', 'expression', 'outfit', 'hair', 'format',
 ];
 
 class SceneAnalyzer {
@@ -53,25 +52,20 @@ class SceneAnalyzer {
     const preservationRules = [
       '',
       '[SCENE PRESERVATION — LOCKED]',
-      'Recreate the exact scene described above with this character.',
-      'Maintain precisely:',
-      `  - Camera angle: ${sceneData.cameraAngle || 'as described'}`,
+      'Recreate the exact scene with this character. Maintain:',
+      `  - Camera: ${sceneData.camera || 'as described'}`,
       `  - Lighting: ${sceneData.lighting || 'as described'}`,
       `  - Composition: ${sceneData.composition || 'as described'}`,
-      `  - Framing: ${sceneData.framingStyle || 'as described'}`,
-      `  - Depth: ${sceneData.depth || 'as described'}`,
       `  - Mood: ${sceneData.mood || 'as described'}`,
-      sceneData.outfit ? `  - Outfit (EXACT match required): ${sceneData.outfit}` : null,
+      sceneData.outfit ? `  - Outfit (EXACT): ${sceneData.outfit}` : null,
       sceneData.hair ? `  - Hair: ${sceneData.hair}` : null,
-      sceneData.pose ? `  - POSE LOCK — MANDATORY: ${sceneData.pose}. The character MUST be in this exact body position. Do NOT default to standing or sitting if the pose describes lying down, reclining, or any other non-upright position.` : null,
-      sceneData.expression ? `  - EXPRESSION LOCK: ${sceneData.expression}` : null,
-      'The character must be placed naturally within this scene.',
-      'Do not alter the character identity in any way.',
+      sceneData.pose ? `  - POSE LOCK: ${sceneData.pose}. MUST match this exact body position — do NOT default to standing/sitting.` : null,
+      sceneData.expression ? `  - EXPRESSION: ${sceneData.expression}` : null,
+      'Place the character naturally. Do not alter identity.',
       '[END SCENE PRESERVATION]',
       '',
-      'LIGHTING FIDELITY — MANDATORY: If the lighting description contains a BRIGHTNESS X/10 score and shadow coverage percentage, honor them precisely. A score of 3/10 means the image must be DARK. Do NOT brighten, add fill light, or soften shadows beyond what is described.',
-      'VISUAL QUALITY: Match the photo quality of the source. If it is a casual phone photo, candid snapshot, or amateur selfie — keep that natural, unpolished feel. Do NOT upgrade to professional studio lighting or commercial retouching unless the source is clearly a professional shot.',
-      'BODY & OUTFIT FIDELITY: Render the outfit exactly as described — do NOT add extra fabric, raise necklines, lengthen hemlines, or make clothing more conservative.',
+      'Honor BRIGHTNESS score and shadow % exactly. Dark scenes stay dark.',
+      'OUTFIT FIDELITY: Render exactly as described — no added fabric, no raised necklines.',
       '',
       REALISM_DIRECTIVE,
     ].filter(Boolean).join('\n');
@@ -83,20 +77,15 @@ class SceneAnalyzer {
     const parts = [];
 
     if (sceneData.environment) parts.push(`Setting: ${sceneData.environment}.`);
-    if (sceneData.timeOfDay) parts.push(`Time of day: ${sceneData.timeOfDay}.`);
     if (sceneData.lighting) parts.push(`Lighting: ${sceneData.lighting}.`);
-    if (sceneData.mood) parts.push(`Mood: ${sceneData.mood}.`);
-    if (sceneData.cameraAngle) parts.push(`Camera: ${sceneData.cameraAngle}.`);
-    if (sceneData.perspective) parts.push(`Perspective: ${sceneData.perspective}.`);
-    if (sceneData.framingStyle) parts.push(`Framing: ${sceneData.framingStyle}.`);
+    if (sceneData.camera) parts.push(`Camera: ${sceneData.camera}.`);
     if (sceneData.composition) parts.push(`Composition: ${sceneData.composition}.`);
-    if (sceneData.depth) parts.push(`Depth: ${sceneData.depth}.`);
-    if (sceneData.objects) parts.push(`Key elements: ${sceneData.objects}.`);
+    if (sceneData.mood) parts.push(`Mood: ${sceneData.mood}.`);
     if (sceneData.pose) parts.push(`Pose: ${sceneData.pose}.`);
     if (sceneData.expression) parts.push(`Expression: ${sceneData.expression}.`);
     if (sceneData.outfit) parts.push(`Outfit: ${sceneData.outfit}.`);
     if (sceneData.hair) parts.push(`Hair: ${sceneData.hair}.`);
-    if (sceneData.format) parts.push(`Photo quality: ${sceneData.format}.`);
+    if (sceneData.format) parts.push(`Format: ${sceneData.format}.`);
 
     return parts.join(' ') || 'A detailed scene.';
   }
