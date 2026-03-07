@@ -194,11 +194,12 @@ export const gallery = {
   remove: (id) => request(`/gallery/${id}`, { method: 'DELETE' }),
   toggleFavorite: (id) => request(`/gallery/${id}/favorite`, { method: 'PATCH' }),
   bulkRemove: (ids) => request('/gallery/bulk', { method: 'DELETE', body: { ids } }),
-  bulkDownload: async (ids) => {
+  spoofStatus: () => request('/gallery/spoof-status'),
+  bulkDownload: async (ids, { spoof = true } = {}) => {
     const res = await fetch(`${BASE}/gallery/bulk-download`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids }),
+      body: JSON.stringify({ ids, spoof }),
     });
     if (!res.ok) {
       const json = await res.json().catch(() => null);
@@ -213,6 +214,7 @@ export const gallery = {
     URL.revokeObjectURL(url);
   },
   imageUrl: (id) => `${BASE}/gallery/${id}/image`,
+  spoofedDownloadUrl: (id) => `${BASE}/gallery/${id}/download-spoofed`,
   openFolder: (id) => request(`/gallery/${id}/open-folder`, { method: 'POST' }),
   listTags: () => request('/gallery/tags'),
   updateTags: (id, tags) => request(`/gallery/${id}/tags`, { method: 'PATCH', body: { tags } }),
@@ -295,6 +297,13 @@ export const captionTemplates = {
   remove: (id) => request(`/caption-templates/${id}`, { method: 'DELETE' }),
   suggest: (category, limit) => request(`/caption-templates/suggest?category=${encodeURIComponent(category || '')}&limit=${limit || 5}`),
   markUsed: (id) => request(`/caption-templates/${id}/use`, { method: 'POST' }),
+};
+
+export const outfits = {
+  list: (characterId) => request(`/outfits${characterId ? `?characterId=${characterId}` : ''}`),
+  create: (data) => request('/outfits', { method: 'POST', body: data }),
+  update: (id, data) => request(`/outfits/${id}`, { method: 'PATCH', body: data }),
+  remove: (id) => request(`/outfits/${id}`, { method: 'DELETE' }),
 };
 
 export const availability = {

@@ -2,8 +2,30 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { gallery as galleryApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
-import { Btn, Spinner, Skeleton, Empty, Badge, Modal, ConfirmDialog } from '../components/UI';
+import { Btn, Spinner, Skeleton, Empty, Badge, Modal, ConfirmDialog, Toggle } from '../components/UI';
 import { IconImage, IconMagnifier } from 'nucleo-glass';
+
+const SOURCE_TO_PAGE = {
+  'generate': 'generate',
+  'batch': 'batch',
+  'carousel': 'carousel',
+  'scene-recreate': 'scene',
+  'post-clone': 'postClone',
+  'reel-copy': 'reel',
+  'reel-recreate': 'reel',
+  'tweak': 'generate',
+};
+
+const SOURCE_LABELS = {
+  'generate': 'Generate',
+  'batch': 'Batch',
+  'carousel': 'Carousel',
+  'scene-recreate': 'Scene',
+  'post-clone': 'Post Clone',
+  'reel-copy': 'Reel Copy',
+  'reel-recreate': 'Reel',
+  'tweak': 'Generate',
+};
 
 const SORT_OPTIONS = [
   { value: 'newest', label: 'Newest' },
@@ -17,8 +39,50 @@ import useImageLightbox from '../components/lightbox/useImageLightbox';
 
 const PAGE_SIZE = 24;
 
+function PromptDisplay({ prompt, onCopy }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!prompt) return <p className="text-sm text-zinc-500 italic">No prompt</p>;
+
+  const sections = prompt.split(/\n{2,}|\[(?:END\s)?[A-Z\s/—]+\]/g).map(s => s.trim()).filter(s => s && !s.startsWith('['));
+  const isLong = prompt.length > 120;
+
+  if (!expanded) {
+    return (
+      <div className="group/prompt">
+        <p className="text-sm text-zinc-300 line-clamp-2 select-text">{sections[0] || prompt}</p>
+        {isLong && (
+          <button onClick={() => setExpanded(true)}
+            className="text-[10px] text-zinc-600 hover:text-blue-400 transition cursor-pointer mt-0.5">
+            Show full prompt
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5 rounded-lg bg-zinc-800/40 border border-zinc-700/40 p-2.5 -mx-1">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Prompt</span>
+        <div className="flex gap-2">
+          <button onClick={() => onCopy(prompt)} className="text-[10px] text-blue-400 hover:text-blue-300 transition cursor-pointer">
+            Copy all
+          </button>
+          <button onClick={() => setExpanded(false)} className="text-[10px] text-zinc-500 hover:text-zinc-300 transition cursor-pointer">
+            Collapse
+          </button>
+        </div>
+      </div>
+      <p className="text-sm text-zinc-300 select-text whitespace-pre-wrap break-words leading-relaxed">
+        {prompt}
+      </p>
+    </div>
+  );
+}
+
 export default function GalleryPage() {
-  const { notify } = useApp();
+  const { notify, navigateTo } = useApp();
   const { run } = useAsync();
   const { openLightbox, LightboxComponent } = useImageLightbox();
 
@@ -46,6 +110,8 @@ export default function GalleryPage() {
 
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const sentinelRef = useRef(null);
+  const [spoofAvailable, setSpoofAvailable] = useState(false);
+  const [spoofEnabled, setSpoofEnabled] = useState(true);
 
   const availableSources = useMemo(() => {
     const s = new Set(images.map((i) => i.source).filter(Boolean));
@@ -98,7 +164,7 @@ export default function GalleryPage() {
 
   const loadTags = () => { galleryApi.listTags().then(setAllTags).catch(() => {}); };
 
-  useEffect(() => { load(); loadTags(); }, []);
+  useEffect(() => { load(); loadTags(); galleryApi.spoofStatus().then((r) => setSpoofAvailable(r.available)).catch(() => {}); }, []);
 
   useEffect(() => { setVisibleCount(PAGE_SIZE); }, [filteredImages]);
 
@@ -126,10 +192,17 @@ export default function GalleryPage() {
   });
 
   const handleDownload = (id, filename) => {
-    const a = document.createElement('a');
-    a.href = galleryApi.imageUrl(id);
-    a.download = filename || `gallery_${id}.png`;
-    a.click();
+    if (spoofAvailable && spoofEnabled) {
+      const a = document.createElement('a');
+      a.href = galleryApi.spoofedDownloadUrl(id);
+      a.download = '';
+      a.click();
+    } else {
+      const a = document.createElement('a');
+      a.href = galleryApi.imageUrl(id);
+      a.download = filename || `gallery_${id}.png`;
+      a.click();
+    }
   };
 
   const handleToggleFavorite = useCallback((id) => {
@@ -144,6 +217,19 @@ export default function GalleryPage() {
     navigator.clipboard.writeText(text)
       .then(() => notify('Prompt copied', 'success'))
       .catch(() => notify('Failed to copy prompt', 'error'));
+  }
+
+  function handleRecreate(img) {
+    const pageId = SOURCE_TO_PAGE[img.source] || 'generate';
+    const label = SOURCE_LABELS[img.source] || 'Generate';
+    navigateTo(pageId, {
+      recreate: true,
+      prompt: img.prompt || '',
+      characterId: img.characterId || '',
+      aspectRatio: img.aspectRatio || '',
+      sourceImageId: img.id,
+    });
+    notify(`Opened ${label} with settings from this image`, 'info');
   }
 
   const toggleSelection = useCallback((id) => {
@@ -184,8 +270,8 @@ export default function GalleryPage() {
     if (ids.length === 0) return;
     setBulkLoading(true);
     try {
-      await galleryApi.bulkDownload(ids);
-      notify(`Downloading ${ids.length} images`, 'success');
+      await galleryApi.bulkDownload(ids, { spoof: spoofEnabled && spoofAvailable });
+      notify(`Downloading ${ids.length} images${spoofEnabled && spoofAvailable ? ' (iPhone spoofed)' : ''}`, 'success');
     } catch (err) {
       notify(err.message || 'Download failed', 'error');
     } finally {
@@ -250,6 +336,9 @@ export default function GalleryPage() {
               <Btn variant="secondary" onClick={handleBulkDownload} disabled={selectedIds.size === 0 || bulkLoading} className="!px-2.5 !py-1.5 !text-xs sm:!px-4 sm:!py-2.5 sm:!text-sm">
                 DL
               </Btn>
+              {spoofAvailable && (
+                <Toggle checked={spoofEnabled} onChange={setSpoofEnabled} label="iPhone" />
+              )}
               <Btn variant="danger" onClick={() => setBulkDeleteConfirm(true)} disabled={selectedIds.size === 0 || bulkLoading} className="!px-2.5 !py-1.5 !text-xs sm:!px-4 sm:!py-2.5 sm:!text-sm">
                 Del
               </Btn>
@@ -257,6 +346,9 @@ export default function GalleryPage() {
             </>
           ) : (
             <>
+              {spoofAvailable && (
+                <Toggle checked={spoofEnabled} onChange={setSpoofEnabled} label="iPhone" />
+              )}
               <Btn variant="secondary" onClick={() => setBulkMode(true)} disabled={loadingList || images.length === 0}>Select</Btn>
               <Btn variant="secondary" onClick={load} disabled={loadingList}>Refresh</Btn>
             </>
@@ -433,6 +525,10 @@ export default function GalleryPage() {
                   {!bulkMode && (
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 flex flex-col justify-end p-3">
                       <div className="flex gap-1.5 pointer-events-auto">
+                        <button onClick={() => handleRecreate(img)} aria-label="Recreate"
+                          className="flex-1 rounded-md bg-blue-600/90 px-2 py-1.5 text-xs text-white hover:bg-blue-500 transition cursor-pointer text-center">
+                          Recreate
+                        </button>
                         <button onClick={() => handleDownload(img.id, img.filename)} aria-label="Download image"
                           className="flex-1 rounded-md bg-zinc-800/90 px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 transition cursor-pointer text-center">
                           Download
@@ -450,9 +546,7 @@ export default function GalleryPage() {
                   )}
                 </div>
                 <div className="px-3 py-2.5 space-y-1">
-                  <div onClick={() => copyPromptToClipboard(img.prompt)} className="cursor-pointer hover:text-blue-400 transition-colors text-sm text-zinc-300 line-clamp-3" title={img.prompt}>
-                    {img.prompt}
-                  </div>
+                  <PromptDisplay prompt={img.prompt} onCopy={copyPromptToClipboard} />
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[10px] text-zinc-500">{formatDate(img.createdAt)}</span>
                     {img.aspectRatio && <Badge color="zinc">{img.aspectRatio}</Badge>}

@@ -3,9 +3,12 @@ const outfitMemoryService = require('../services/outfitMemoryService');
 
 const router = express.Router();
 
-router.get('/', (_req, res, next) => {
+router.get('/', (req, res, next) => {
   try {
-    const outfits = outfitMemoryService.getAllOutfits();
+    const { characterId } = req.query;
+    const outfits = characterId
+      ? outfitMemoryService.getOutfitsByCharacter(characterId)
+      : outfitMemoryService.getAllOutfits();
     res.json({ success: true, data: outfits });
   } catch (err) {
     next(err);
@@ -16,6 +19,15 @@ router.post('/', (req, res, next) => {
   try {
     const outfit = outfitMemoryService.createOutfit(req.body);
     res.status(201).json({ success: true, data: outfit });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch('/:id', (req, res, next) => {
+  try {
+    const outfit = outfitMemoryService.updateOutfit(req.params.id, req.body);
+    res.json({ success: true, data: outfit });
   } catch (err) {
     next(err);
   }

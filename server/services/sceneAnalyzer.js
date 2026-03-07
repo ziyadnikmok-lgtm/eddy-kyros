@@ -67,10 +67,29 @@ class SceneAnalyzer {
       'Honor BRIGHTNESS score and shadow % exactly. Dark scenes stay dark.',
       'OUTFIT FIDELITY: Render exactly as described — no added fabric, no raised necklines.',
       '',
+      this._buildDarknessEnforcement(sceneData),
       REALISM_DIRECTIVE,
     ].filter(Boolean).join('\n');
 
     return basePrompt + preservationRules;
+  }
+
+  _buildDarknessEnforcement(sceneData) {
+    const text = sceneData.lighting || '';
+    const match = text.match(/Brightness\s+(\d+)\s*\/\s*10/i);
+    if (!match) return null;
+    const score = parseInt(match[1], 10);
+    if (score > 4) return null;
+    return [
+      `[DARKNESS ENFORCEMENT — BRIGHTNESS ${score}/10]`,
+      `This is a LOW-LIGHT scene. The overall image must be DARK.`,
+      `Most of the frame must be in shadow or near-black. Only the subject hit by the light source should be lit.`,
+      `Do NOT add ambient light, fill light, blue-hour glow, or window light that was not described.`,
+      `Do NOT brighten shadows. Crushed blacks must stay crushed. Background must be dark/near-black.`,
+      `The ONLY light source is whatever the prompt describes (flash, streetlight, lamp, etc).`,
+      `Think: dark room, phone flash — NOT a well-lit studio.`,
+      `[END DARKNESS ENFORCEMENT]`,
+    ].join('\n');
   }
 
   _sceneToDescription(sceneData) {

@@ -90,7 +90,7 @@ const _cache = {
 };
 
 export default function GeneratePage() {
-  const { notify, activeKey, characters: chars, sceneMemories, outfits } = useApp();
+  const { notify, activeKey, characters: chars, sceneMemories, outfits, consumePageParams } = useApp();
   const { loading, run } = useAsync();
   const busyRef = useRef(false);
   const { openLightbox, LightboxComponent } = useImageLightbox();
@@ -194,6 +194,23 @@ export default function GeneratePage() {
     const res = sessionStorage.getItem('pb_resolutionTier');
     if (ar) { update({ aspectRatio: ar }); sessionStorage.removeItem('pb_aspectRatio'); }
     if (res) { update({ resolutionTier: res }); sessionStorage.removeItem('pb_resolutionTier'); }
+  }, []);
+
+  const [recreateSourceId, setRecreateSourceId] = useState(null);
+
+  useEffect(() => {
+    const params = consumePageParams();
+    if (params.recreate) {
+      const changes = {};
+      if (params.prompt) changes.prompt = params.prompt;
+      if (params.aspectRatio) changes.aspectRatio = params.aspectRatio;
+      if (params.characterId) {
+        changes.useCharacter = true;
+        changes.selectedCharId = params.characterId;
+      }
+      if (params.sourceImageId) setRecreateSourceId(params.sourceImageId);
+      if (Object.keys(changes).length > 0) update(changes);
+    }
   }, []);
 
   useEffect(() => {
@@ -302,6 +319,7 @@ export default function GeneratePage() {
     }
     const data = await genApi.image(body);
     setResult(data);
+    setRecreateSourceId(null);
     setHistory((h) => [{
       imageId: data.imageId,
       galleryId: data.galleryId || data.imageId,
@@ -556,7 +574,17 @@ export default function GeneratePage() {
                   <select value={outfitId} onChange={(e) => update({ outfitId: e.target.value })}
                     className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer">
                     <option value="">None</option>
-                    {outfits.map((outfit) => <option key={outfit.id} value={outfit.id}>{outfit.name}</option>)}
+                    {(() => {
+                      const charOutfits = outfits.filter((o) => o.characterId && o.characterId === selectedCharId);
+                      const shared = outfits.filter((o) => !o.characterId);
+                      const other = outfits.filter((o) => o.characterId && o.characterId !== selectedCharId);
+                      return (<>
+                        {charOutfits.length > 0 && <optgroup label="Character Wardrobe">{charOutfits.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</optgroup>}
+                        {shared.length > 0 && <optgroup label="Shared">{shared.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</optgroup>}
+                        {other.length > 0 && <optgroup label="Other Characters">{other.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</optgroup>}
+                        {charOutfits.length === 0 && shared.length === 0 && other.length === 0 && outfits.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                      </>);
+                    })()}
                   </select>
                 </div>
                 <div>
@@ -874,6 +902,16 @@ export default function GeneratePage() {
         </div>
 
         <div className="lg:col-span-2 space-y-4">
+          {recreateSourceId && !result && !loading && (
+            <Card className="animate-in !p-3">
+              <div className="flex items-center gap-3 mb-2">
+                <span className="text-xs font-medium text-zinc-400 uppercase tracking-wide">Recreating from</span>
+                <button onClick={() => setRecreateSourceId(null)} className="ml-auto text-zinc-500 hover:text-zinc-300 text-xs">Dismiss</button>
+              </div>
+              <img src={`/api/gallery/${recreateSourceId}/image`} alt="Source" className="rounded-lg max-h-80 w-full object-contain bg-black/30" />
+            </Card>
+          )}
+
           {loading && (
             <div className="flex items-center justify-center min-h-[calc(100vh-10rem)]">
               <StepProgress steps={GENERATE_STEPS} currentIndex={generateStepIndex} elapsedSec={elapsedSec} className="w-full max-w-md" />

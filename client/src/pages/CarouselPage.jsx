@@ -64,7 +64,7 @@ const _cache = {
 };
 
 export default function CarouselPage() {
-  const { notify, characters: chars } = useApp();
+  const { notify, characters: chars, consumePageParams } = useApp();
   const { openLightbox, LightboxComponent } = useImageLightbox();
 
   const [selectedImageId, setSelectedImageId] = useState(_cache.selectedImageId);
@@ -119,6 +119,15 @@ export default function CarouselPage() {
   useEffect(() => { _cache.carouselMode = carouselMode; }, [carouselMode]);
   useEffect(() => { _cache.pollTopic = pollTopic; }, [pollTopic]);
   useEffect(() => { _cache.pollCount = pollCount; }, [pollCount]);
+
+  useEffect(() => {
+    const params = consumePageParams();
+    if (params.recreate) {
+      if (params.characterId) setCharacterId(params.characterId);
+      if (params.aspectRatio) setAspectRatio(params.aspectRatio);
+      if (params.sourceImageId) setSelectedImageId(params.sourceImageId);
+    }
+  }, []);
 
   const selectableImages = [...uploadedImages, ...galleryImages];
   const selectedImage = selectableImages.find((img) => img.id === selectedImageId);

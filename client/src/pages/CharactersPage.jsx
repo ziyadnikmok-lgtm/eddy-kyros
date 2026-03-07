@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { characters as charApi } from '../services/api';
+import { characters as charApi, outfits as outfitApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
 import { Card, Btn, Input, Textarea, Modal, Badge, Spinner, Empty, ConfirmDialog } from '../components/UI';
@@ -57,6 +57,8 @@ export default function CharactersPage() {
         <CharacterDetail char={selected} onUpdate={() => { load(); selectChar(selected.id); }} onDelete={() => { setSelected(null); load(); }}
           onAddRef={() => setShowAddRef(true)} />
       )}
+
+      {selected && <Wardrobe characterId={selected.id} characterName={selected.name} />}
 
       <CreateCharacterModal open={showCreate} onClose={() => setShowCreate(false)} onCreated={() => { setShowCreate(false); load(); }} />
       {selected && <AddReferenceModal open={showAddRef} onClose={() => setShowAddRef(false)} characterId={selected.id} onAdded={() => { setShowAddRef(false); selectChar(selected.id); }} />}
@@ -327,6 +329,236 @@ function AddReferenceModal({ open, onClose, characterId, onAdded }) {
         </label>
         <Btn onClick={handleAdd} disabled={loading || !file || !overridePrompt.trim()} className="w-full">
           {loading ? <Spinner size={16} /> : null} Add Reference
+        </Btn>
+      </div>
+    </Modal>
+  );
+}
+
+const OUTFIT_FIELDS = [
+  { key: 'top', label: 'Top', placeholder: 'e.g. White cropped tank top' },
+  { key: 'bottom', label: 'Bottom', placeholder: 'e.g. High-waisted black jeans' },
+  { key: 'footwear', label: 'Footwear', placeholder: 'e.g. White sneakers' },
+  { key: 'accessories', label: 'Accessories', placeholder: 'e.g. Gold hoop earrings, thin chain necklace' },
+];
+
+const TAG_PRESETS = ['Casual', 'Formal', 'Sporty', 'Streetwear', 'Beach', 'Evening', 'Cozy', 'Bold'];
+
+function Wardrobe({ characterId, characterName }) {
+  const { notify, refreshOutfits } = useApp();
+  const { loading, run } = useAsync();
+  const [outfits, setOutfits] = useState([]);
+  const [editingOutfit, setEditingOutfit] = useState(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const load = () => {
+    outfitApi.list(characterId).then(setOutfits).catch(() => setOutfits([]));
+  };
+
+  useEffect(() => { load(); }, [characterId]);
+
+  const handleDelete = (id) => run(async () => {
+    await outfitApi.remove(id);
+    notify('Outfit deleted', 'success');
+    setConfirmDelete(null);
+    load();
+    refreshOutfits();
+  });
+
+  const charOutfits = outfits.filter((o) => o.characterId === characterId);
+  const sharedOutfits = outfits.filter((o) => !o.characterId);
+
+  return (
+    <Card className="animate-in space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-base font-semibold text-zinc-200">Wardrobe</h3>
+          <p className="text-xs text-zinc-500 mt-0.5">{charOutfits.length} outfit{charOutfits.length !== 1 ? 's' : ''} for {characterName}{sharedOutfits.length > 0 ? ` + ${sharedOutfits.length} shared` : ''}</p>
+        </div>
+        <Btn variant="secondary" className="!text-xs !py-1.5" onClick={() => setShowCreate(true)}>+ Outfit</Btn>
+      </div>
+
+      {outfits.length === 0 ? (
+        <p className="text-sm text-zinc-500 py-4 text-center">No outfits yet. Create one to use in generation.</p>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {outfits.map((outfit) => (
+            <OutfitCard key={outfit.id} outfit={outfit} isShared={!outfit.characterId}
+              onEdit={() => setEditingOutfit(outfit)}
+              onDelete={() => setConfirmDelete(outfit)} />
+          ))}
+        </div>
+      )}
+
+      <OutfitModal
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        characterId={characterId}
+        onSaved={() => { setShowCreate(false); load(); refreshOutfits(); }}
+      />
+      <OutfitModal
+        open={!!editingOutfit}
+        onClose={() => setEditingOutfit(null)}
+        outfit={editingOutfit}
+        characterId={characterId}
+        onSaved={() => { setEditingOutfit(null); load(); refreshOutfits(); }}
+      />
+      <ConfirmDialog
+        open={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={() => confirmDelete && handleDelete(confirmDelete.id)}
+        title={`Delete "${confirmDelete?.name}"?`}
+        message="This outfit will be permanently removed. This cannot be undone."
+        confirmLabel="Delete Outfit"
+      />
+    </Card>
+  );
+}
+
+function OutfitCard({ outfit, isShared, onEdit, onDelete }) {
+  const summary = [outfit.top, outfit.bottom, outfit.footwear].filter(Boolean).join(' / ');
+
+  return (
+    <div className="rounded-lg border border-zinc-700/40 bg-zinc-900/30 p-3 space-y-2 hover:border-zinc-600 transition group">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-zinc-200 truncate">{outfit.name}</span>
+            {isShared && <Badge color="zinc">Shared</Badge>}
+          </div>
+          <p className="text-xs text-zinc-500 mt-0.5 line-clamp-1">{summary}</p>
+        </div>
+        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition shrink-0">
+          <button onClick={onEdit} className="text-xs text-zinc-500 hover:text-blue-400 cursor-pointer transition px-1">Edit</button>
+          <button onClick={onDelete} className="text-xs text-zinc-500 hover:text-red-400 cursor-pointer transition px-1">Del</button>
+        </div>
+      </div>
+
+      {outfit.accessories && (
+        <p className="text-[11px] text-zinc-500"><span className="text-zinc-600">Acc:</span> {outfit.accessories}</p>
+      )}
+
+      {(outfit.hairstyleOverride || outfit.makeupOverride) && (
+        <div className="flex gap-2 flex-wrap">
+          {outfit.hairstyleOverride && <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">Hair: {outfit.hairstyleOverride}</span>}
+          {outfit.makeupOverride && <span className="text-[10px] px-1.5 py-0.5 rounded bg-pink-500/10 text-pink-400 border border-pink-500/20">Makeup: {outfit.makeupOverride}</span>}
+        </div>
+      )}
+
+      {outfit.tags?.length > 0 && (
+        <div className="flex gap-1 flex-wrap">
+          {outfit.tags.map((tag) => (
+            <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700/50">{tag}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OutfitModal({ open, onClose, outfit, characterId, onSaved }) {
+  const { notify } = useApp();
+  const { loading, run } = useAsync();
+  const isEdit = !!outfit;
+
+  const [name, setName] = useState('');
+  const [top, setTop] = useState('');
+  const [bottom, setBottom] = useState('');
+  const [footwear, setFootwear] = useState('');
+  const [accessories, setAccessories] = useState('');
+  const [hairstyleOverride, setHairstyleOverride] = useState('');
+  const [makeupOverride, setMakeupOverride] = useState('');
+  const [tags, setTags] = useState([]);
+  const [assignToChar, setAssignToChar] = useState(true);
+
+  useEffect(() => {
+    if (open) {
+      setName(outfit?.name || '');
+      setTop(outfit?.top || '');
+      setBottom(outfit?.bottom || '');
+      setFootwear(outfit?.footwear || '');
+      setAccessories(outfit?.accessories || '');
+      setHairstyleOverride(outfit?.hairstyleOverride || '');
+      setMakeupOverride(outfit?.makeupOverride || '');
+      setTags(outfit?.tags || []);
+      setAssignToChar(outfit ? !!outfit.characterId : true);
+    }
+  }, [open, outfit]);
+
+  const toggleTag = (tag) => {
+    setTags((prev) => prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]);
+  };
+
+  const handleSave = () => run(async () => {
+    if (!name.trim() || !top.trim() || !bottom.trim() || !accessories.trim() || !footwear.trim()) {
+      notify('Name, top, bottom, accessories, and footwear are required', 'error');
+      return;
+    }
+    const payload = {
+      name: name.trim(),
+      top: top.trim(),
+      bottom: bottom.trim(),
+      footwear: footwear.trim(),
+      accessories: accessories.trim(),
+      hairstyleOverride: hairstyleOverride.trim() || undefined,
+      makeupOverride: makeupOverride.trim() || undefined,
+      tags,
+      characterId: assignToChar ? characterId : null,
+    };
+
+    if (isEdit) {
+      await outfitApi.update(outfit.id, payload);
+      notify('Outfit updated', 'success');
+    } else {
+      await outfitApi.create(payload);
+      notify('Outfit created', 'success');
+    }
+    onSaved();
+  });
+
+  const canSave = name.trim() && top.trim() && bottom.trim() && accessories.trim() && footwear.trim();
+
+  return (
+    <Modal open={open} onClose={onClose} title={isEdit ? 'Edit Outfit' : 'New Outfit'}>
+      <div className="space-y-4">
+        <Input label="Outfit Name" required placeholder="e.g. Casual Summer" value={name} onChange={(e) => setName(e.target.value)} />
+
+        {OUTFIT_FIELDS.map((f) => {
+          const setters = { top: setTop, bottom: setBottom, footwear: setFootwear, accessories: setAccessories };
+          const values = { top, bottom, footwear, accessories };
+          return (
+            <Input key={f.key} label={f.label} required placeholder={f.placeholder}
+              value={values[f.key]} onChange={(e) => setters[f.key](e.target.value)} />
+          );
+        })}
+
+        <Input label="Hairstyle Override" placeholder="Leave empty to keep character default"
+          value={hairstyleOverride} onChange={(e) => setHairstyleOverride(e.target.value)} />
+
+        <Input label="Makeup Override" placeholder="Leave empty to keep character default"
+          value={makeupOverride} onChange={(e) => setMakeupOverride(e.target.value)} />
+
+        <div>
+          <span className="text-sm text-zinc-400 font-medium block mb-1.5">Tags</span>
+          <div className="flex flex-wrap gap-2">
+            {TAG_PRESETS.map((tag) => (
+              <button key={tag} type="button" onClick={() => toggleTag(tag)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition cursor-pointer ${tags.includes(tag) ? 'bg-blue-600 text-white' : 'bg-zinc-700/60 text-zinc-300 hover:bg-zinc-700'}`}>
+                {tag}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <label className="flex items-center gap-2.5 cursor-pointer select-none text-sm">
+          <input type="checkbox" checked={assignToChar} onChange={(e) => setAssignToChar(e.target.checked)}
+            className="rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-blue-500/30" />
+          <span className="text-zinc-400">Assign to this character</span>
+        </label>
+
+        <Btn onClick={handleSave} disabled={loading || !canSave} className="w-full">
+          {loading ? <Spinner size={16} /> : null} {isEdit ? 'Save Changes' : 'Create Outfit'}
         </Btn>
       </div>
     </Modal>

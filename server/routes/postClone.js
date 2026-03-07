@@ -307,6 +307,24 @@ function buildCarouselDeltaPrompt(mode) {
   ].join('\n');
 }
 
+function buildDarknessEnforcement(structured) {
+  const prompt = structured.full_prompt || structured.lighting || '';
+  const match = prompt.match(/BRIGHTNESS\s+(\d+)\s*\/\s*10/i);
+  if (!match) return null;
+  const score = parseInt(match[1], 10);
+  if (score > 4) return null;
+  return [
+    `[DARKNESS ENFORCEMENT — BRIGHTNESS ${score}/10]`,
+    `This is a LOW-LIGHT scene. The overall image must be DARK.`,
+    `Most of the frame must be in shadow or near-black. Only the subject hit by the light source should be lit.`,
+    `Do NOT add ambient light, fill light, blue-hour glow, or window light that was not described.`,
+    `Do NOT brighten shadows. Crushed blacks must stay crushed. Background must be dark/near-black.`,
+    `The ONLY light source is whatever the prompt describes (flash, streetlight, lamp, etc).`,
+    `Think: dark room, phone flash — NOT a well-lit studio.`,
+    `[END DARKNESS ENFORCEMENT]`,
+  ].join('\n');
+}
+
 function buildGenerationPrompt({ character, activeRefs, mode, cosplayMode = false, structured, isDelta }) {
   const userPrompt = [
     mode === 'creative'
@@ -332,6 +350,7 @@ function buildGenerationPrompt({ character, activeRefs, mode, cosplayMode = fals
     structured.expression && structured.expression !== 'same as slide 1'
       ? `EXPRESSION LOCK: ${structured.expression}`
       : null,
+    buildDarknessEnforcement(structured),
     structured.full_prompt || '',
   ].filter(Boolean).join('\n');
 

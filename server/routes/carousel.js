@@ -613,7 +613,7 @@ router.post('/execute', async (req, res, next) => {
 
     const jobIds = startMultiBatches(
       entries,
-      { aspectRatio: finalAspectRatio, imageSize: finalImageSize, imageModel },
+      { aspectRatio: finalAspectRatio, imageSize: finalImageSize, imageModel, gallerySource: 'carousel' },
       { characterId, activeReferenceIds: resolvedActiveReferenceIds }
     );
 
@@ -720,6 +720,7 @@ router.post('/follow-up', async (req, res, next) => {
           aspectRatio: finalAspectRatio,
           imageSize: finalImageSize,
           imageModel,
+          gallerySource: 'carousel',
         });
         jobIds.push(job.jobId);
       }
@@ -744,6 +745,7 @@ router.post('/follow-up', async (req, res, next) => {
         aspectRatio: finalAspectRatio,
         imageSize: finalImageSize,
         imageModel,
+        gallerySource: 'carousel',
       });
       jobId = job.jobId;
       jobIds = [job.jobId];
@@ -879,7 +881,7 @@ Return JSON only:
 
     const jobIds = startMultiBatches(
       entries,
-      { aspectRatio: finalAspectRatio, imageSize: finalImageSize, imageModel },
+      { aspectRatio: finalAspectRatio, imageSize: finalImageSize, imageModel, gallerySource: 'carousel' },
       { characterId: characterId || null, activeReferenceIds: resolvedActiveReferenceIds }
     );
 

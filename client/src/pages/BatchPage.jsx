@@ -66,7 +66,7 @@ const _cache = {
 };
 
 export default function BatchPage() {
-  const { notify, characters: chars, sceneMemories, outfits } = useApp();
+  const { notify, characters: chars, sceneMemories, outfits, consumePageParams } = useApp();
   const { loading, run } = useAsync();
   const busyRef = useRef(false);
   const { openLightbox, LightboxComponent } = useImageLightbox();
@@ -137,6 +137,19 @@ export default function BatchPage() {
   useEffect(() => { _cache.expandedJobId = expandedJobId; }, [expandedJobId]);
   useEffect(() => { _cache.queueStats = queueStats; }, [queueStats]);
   useEffect(() => { _cache.statusFilter = statusFilter; }, [statusFilter]);
+
+  useEffect(() => {
+    const params = consumePageParams();
+    if (params.recreate) {
+      const changes = {};
+      if (params.prompt) changes.prompt = params.prompt;
+      if (params.aspectRatio) changes.aspectRatio = params.aspectRatio;
+      if (params.characterId) {
+        changes.charId = params.characterId;
+      }
+      if (Object.keys(changes).length > 0) update(changes);
+    }
+  }, []);
 
   const fetchHistory = async () => {
     setHistoryLoading(true);
@@ -436,7 +449,17 @@ export default function BatchPage() {
               <select value={outfitId} onChange={(e) => update({ outfitId: e.target.value })}
                 className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer">
                 <option value="">None</option>
-                {outfits.map((outfit) => <option key={outfit.id} value={outfit.id}>{outfit.name}</option>)}
+                {(() => {
+                  const charOutfits = outfits.filter((o) => o.characterId && o.characterId === characterId);
+                  const shared = outfits.filter((o) => !o.characterId);
+                  const other = outfits.filter((o) => o.characterId && o.characterId !== characterId);
+                  return (<>
+                    {charOutfits.length > 0 && <optgroup label="Character Wardrobe">{charOutfits.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</optgroup>}
+                    {shared.length > 0 && <optgroup label="Shared">{shared.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</optgroup>}
+                    {other.length > 0 && <optgroup label="Other Characters">{other.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</optgroup>}
+                    {charOutfits.length === 0 && shared.length === 0 && other.length === 0 && outfits.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  </>);
+                })()}
               </select>
             </div>
             <div>

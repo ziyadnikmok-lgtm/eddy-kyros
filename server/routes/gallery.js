@@ -5,9 +5,14 @@ const { AppError } = require('../middleware/errorHandler');
 const { createMultipartParser } = require('../middleware/multipartParser');
 
 const archiver = require('archiver');
+const iosSpoofService = require('../services/iosSpoofService');
 
 const router = express.Router();
 const parseMultipartIfNeeded = createMultipartParser({ fallback: parseImageUpload });
+
+router.get('/spoof-status', (_req, res) => {
+  res.json({ success: true, data: { available: iosSpoofService.isAvailable() } });
+});
 
 router.get('/', (req, res, next) => {
   try {
@@ -90,9 +95,10 @@ router.delete('/bulk', (req, res, next) => {
   }
 });
 
-router.post('/bulk-download', (req, res, next) => {
+router.post('/bulk-download', async (req, res, next) => {
+  const cleanups = [];
   try {
-    const { ids } = req.body;
+    const { ids, spoof } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) {
       throw new AppError('ids array is required', 400, 'VALIDATION_ERROR');
     }
@@ -105,6 +111,22 @@ router.post('/bulk-download', (req, res, next) => {
       throw new AppError('No valid images found', 404, 'NOT_FOUND');
     }
 
+    const shouldSpoof = spoof !== false && iosSpoofService.isAvailable();
+    let outputFiles = files;
+
+    if (shouldSpoof) {
+      const spoofed = await iosSpoofService.spoofBatch(files.map((f) => f.filePath));
+      outputFiles = [];
+      for (let i = 0; i < files.length; i++) {
+        if (spoofed[i]) {
+          outputFiles.push({ filePath: spoofed[i].filePath, filename: spoofed[i].filename });
+          cleanups.push(spoofed[i].cleanup);
+        } else {
+          outputFiles.push(files[i]);
+        }
+      }
+    }
+
     res.set('Content-Type', 'application/zip');
     res.set('Content-Disposition', `attachment; filename="gallery-${Date.now()}.zip"`);
 
@@ -113,12 +135,14 @@ router.post('/bulk-download', (req, res, next) => {
     res.on('close', () => { if (!archive.pointer()) archive.abort(); });
     archive.pipe(res);
 
-    for (const file of files) {
+    for (const file of outputFiles) {
       archive.file(file.filePath, { name: file.filename });
     }
 
-    archive.finalize();
+    await archive.finalize();
+    for (const fn of cleanups) fn();
   } catch (err) {
+    for (const fn of cleanups) fn();
     next(err);
   }
 });
@@ -168,6 +192,24 @@ router.get('/:id/image', (req, res, next) => {
     res.set('Cache-Control', 'private, max-age=3600');
     res.sendFile(filePath);
   } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/:id/download-spoofed', async (req, res, next) => {
+  let cleanup = null;
+  try {
+    if (!iosSpoofService.isAvailable()) {
+      throw new AppError('iOS spoof tools not available', 503, 'SPOOF_UNAVAILABLE');
+    }
+    const { filePath } = galleryManager.getFilePath(req.params.id);
+    const result = await iosSpoofService.spoofImage(filePath);
+    cleanup = result.cleanup;
+    res.set('Content-Type', 'image/jpeg');
+    res.set('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.sendFile(result.filePath, () => { if (cleanup) cleanup(); });
+  } catch (err) {
+    if (cleanup) cleanup();
     next(err);
   }
 });

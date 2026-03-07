@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import { postClone as postCloneApi, postCloneHistory as historyApi, styleFocus as styleFocusApi, availability as availabilityApi, keys as keysApi } from '../services/api';
+import { postClone as postCloneApi, postCloneHistory as historyApi, styleFocus as styleFocusApi, availability as availabilityApi, keys as keysApi, gallery as galleryApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
 import { useStepTimer } from '../hooks/useStepTimer';
@@ -750,6 +750,21 @@ export default function PostClonePage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] text-zinc-600">{new Date(entry.createdAt).toLocaleDateString()}</span>
+                    {(entry.galleryIds || []).length > 0 && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await galleryApi.bulkDownload(entry.galleryIds);
+                          } catch (err) {
+                            notify(err.message || 'Download failed', 'error');
+                          }
+                        }}
+                        className="text-[10px] text-zinc-600 hover:text-blue-400 transition-colors cursor-pointer"
+                      >
+                        Download ZIP
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={async () => {
