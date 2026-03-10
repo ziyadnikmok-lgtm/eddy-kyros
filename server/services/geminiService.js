@@ -69,7 +69,7 @@ class GeminiService {
   const refSig = Array.isArray(options.referenceImages) && options.referenceImages.length > 0
     ? `:refs${options.referenceImages.length}:${(options.referenceImages[0]?.base64Data || '').length}`
     : ':noref';
-  const dedupKey = `img:${crypto.createHash('md5').update(prompt.trim() + (options.aspectRatio || '') + (options.imageSize || '') + refSig).digest('hex')}`;
+  const dedupKey = `img:${crypto.createHash('sha256').update(prompt.trim() + (options.aspectRatio || '') + (options.imageSize || '') + refSig).digest('hex')}`;
   return dedupRequest(dedupKey, () => this._generateImageInner(apiKey, prompt, options));
   }
 

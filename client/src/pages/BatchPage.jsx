@@ -199,6 +199,7 @@ function BatchResultsWithReformat({ results, imageUrls, onLightbox }) {
             className={`cursor-pointer rounded-xl transition-all duration-150 ${selectedIdx === i ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-zinc-900' : 'hover:opacity-90'}`}
           >
             <ImageCard
+              src={r.image?.base64Data ? undefined : (r.imageId ? `/api/gallery/${r.imageId}/image` : undefined)}
               base64={r.image?.base64Data}
               mimeType={r.image?.mimeType}
               meta={{ seed: r.seed, identityConfidence: r.image?.validation?.identity_match_score }}
@@ -593,8 +594,12 @@ export default function BatchPage() {
 
   const isRunning = job?.status === 'running';
   const completed = (job?.completed || 0) + (job?.failed || 0);
-  const successfulResults = (job?.results || []).filter((r) => r?.success && r?.image?.base64Data);
-  const jobImageUrls = successfulResults.map((r) => `data:${r.image?.mimeType || 'image/png'};base64,${r.image?.base64Data}`);
+  const successfulResults = (job?.results || []).filter((r) => r?.success && (r?.image?.base64Data || r?.hasImage));
+  const jobImageUrls = successfulResults.map((r) =>
+    r.image?.base64Data
+      ? `data:${r.image?.mimeType || 'image/png'};base64,${r.image?.base64Data}`
+      : `/api/gallery/${r.imageId}/image`
+  );
 
   useEffect(() => {
     if (!isRunning) {

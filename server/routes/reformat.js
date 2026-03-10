@@ -1,5 +1,6 @@
 const express = require('express');
 const fs = require('node:fs');
+const sharp = require('sharp');
 const apiKeyManager = require('../services/apiKeyManager');
 const geminiService = require('../services/geminiService');
 const imageStore = require('../services/imageStore');
@@ -89,7 +90,6 @@ router.post('/', async (req, res, next) => {
     });
 
     // Convert to PNG for quality consistency
-    const sharp = require('sharp');
     let finalBase64 = result.image.base64Data;
     let finalMime = result.image.mimeType || 'image/png';
     try {

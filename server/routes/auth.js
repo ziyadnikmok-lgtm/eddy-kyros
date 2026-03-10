@@ -1,9 +1,19 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const { verifyCredentials, generateToken, verifyToken, COOKIE_NAME } = require('../auth');
 
 const router = express.Router();
 
-router.post('/login', async (req, res) => {
+// Fix #17: Rate limit login to prevent brute force
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 attempts per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many login attempts — try again in 15 minutes' },
+});
+
+router.post('/login', loginLimiter, async (req, res) => {
   const { username, password, rememberMe } = req.body || {};
   if (!username || !password) {
     return res.status(400).json({ success: false, error: 'Username and password required' });
@@ -12,7 +22,7 @@ router.post('/login', async (req, res) => {
   if (!valid) {
     return res.status(401).json({ success: false, error: 'Invalid credentials' });
   }
-  const token = generateToken(!!rememberMe);
+  const token = generateToken(username, !!rememberMe);
   const maxAge = rememberMe ? 30 * 24 * 60 * 60 * 1000 : undefined; // 30 days or session
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,

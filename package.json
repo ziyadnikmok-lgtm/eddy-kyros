@@ -1,6 +1,6 @@
 {
   "name": "ai-content-studio",
-  "version": "1.0.0",
+  "version": "8.1.0",
   "description": "Local AI Content Generation Studio - Backend",
   "scripts": {
     "start": "node server/index.js",

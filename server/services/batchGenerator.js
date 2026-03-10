@@ -19,6 +19,7 @@ const poseEngine = require('./poseEngine');
 const expressionEngine = require('./expressionEngine');
 const sceneModeEngine = require('./sceneModeEngine');
 
+const { parseReferenceImagePayload, parseCustomReferenceImages: _parseCustomRefImages, ALLOWED_IMAGE_MIME_TYPES, MAX_REFERENCE_BYTES } = require('../utils/referenceImageParser');
 const cfg = require('../config');
 
 const _contentPresets = (() => {
@@ -32,8 +33,7 @@ const MAX_BATCH_SIZE = cfg.BATCH_MAX_SIZE;
 const MAX_RUNNING_JOBS = cfg.BATCH_MAX_RUNNING_JOBS;
 const JOB_TTL_MS = cfg.BATCH_JOB_TTL_MS;
 const CLEANUP_INTERVAL_MS = cfg.BATCH_CLEANUP_INTERVAL_MS;
-const ALLOWED_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
-const MAX_REFERENCE_BYTES = cfg.MAX_REFERENCE_BYTES;
+// ALLOWED_IMAGE_MIME_TYPES and MAX_REFERENCE_BYTES imported from utils/referenceImageParser
 
 class TaskQueue {
   constructor(concurrency) {
@@ -811,10 +811,8 @@ class BatchGenerator extends EventEmitter {
             index: task.index,
             success: true,
             imageId: stored.imageId,
-            image: {
-              mimeType: result.image.mimeType,
-              base64Data: result.image.base64Data,
-            },
+            // Don't store base64 in job results — images are in gallery + imageStore
+            hasImage: true,
             text: result.text || null,
             aspectRatio: job.aspectRatio,
             imageSize: job.imageSize,
@@ -999,64 +997,13 @@ class BatchGenerator extends EventEmitter {
     return null;
   }
 
-  _parseReferenceImagePayload(value, fieldName = 'referenceImage') {
-    if (!value) return null;
-
-    const source = typeof value === 'string'
-      ? value
-      : (typeof value === 'object' && typeof value.image === 'string' ? value.image : null);
-
-    if (!source) {
-      throw new AppError(`${fieldName} must be a data URI string or an object with { image }`, 400, 'VALIDATION_ERROR');
-    }
-
-    const dataUriMatch = source.match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/);
-    if (dataUriMatch) {
-      const mimeType = dataUriMatch[1];
-      const base64Data = dataUriMatch[2];
-      const byteLength = Buffer.byteLength(base64Data, 'base64');
-      if (byteLength > MAX_REFERENCE_BYTES) {
-        throw new AppError(`${fieldName} exceeds max size of 10MB`, 400, 'FILE_TOO_LARGE');
-      }
-      return { mimeType, base64Data };
-    }
-
-    if (typeof value !== 'object') {
-      throw new AppError(`${fieldName} must be a valid data URI`, 400, 'VALIDATION_ERROR');
-    }
-
-    const mimeType = typeof value.mimeType === 'string' ? value.mimeType.trim() : '';
-    const base64Data = typeof value.base64Data === 'string' ? value.base64Data.trim() : '';
-
-    if (!mimeType || !base64Data) {
-      throw new AppError(`${fieldName} object must include mimeType and base64Data`, 400, 'VALIDATION_ERROR');
-    }
-    if (!ALLOWED_IMAGE_MIME_TYPES.includes(mimeType)) {
-      throw new AppError(`${fieldName} mimeType must be one of: ${ALLOWED_IMAGE_MIME_TYPES.join(', ')}`, 400, 'INVALID_FILE_TYPE');
-    }
-    const byteLength = Buffer.byteLength(base64Data, 'base64');
-    if (byteLength > MAX_REFERENCE_BYTES) {
-      throw new AppError(`${fieldName} exceeds max size of 10MB`, 400, 'FILE_TOO_LARGE');
-    }
-    return { mimeType, base64Data };
+  // Use shared utility from utils/referenceImageParser.js
+  _parseReferenceImagePayload(value, fieldName) {
+    return parseReferenceImagePayload(value, fieldName);
   }
 
   _parseCustomReferenceImages(value) {
-    if (!Array.isArray(value) || value.length === 0) return [];
-    return value.map((item, index) => {
-      const parsed = this._parseReferenceImagePayload(item, `customReferenceImages[${index}]`);
-      const referenceType = (item && typeof item.referenceType === 'string')
-        ? item.referenceType.trim().toLowerCase()
-        : 'item';
-      const note = (item && typeof item.note === 'string')
-        ? item.note.trim()
-        : '';
-      return {
-        ...parsed,
-        referenceType: referenceType || 'item',
-        note,
-      };
-    });
+    return _parseCustomRefImages(value);
   }
 
   _sanitizeConfigForHistory(mode, config) {
@@ -1163,7 +1110,16 @@ class BatchGenerator extends EventEmitter {
     return { total: jobs.size, running, completed, failed, cancelled };
   }
 
-  _toSafeJob(job) {
+  _toSafeJob(job, includeImages = false) {
+    const results = (job.results || []).map((r) => {
+      if (!r) return r;
+      if (!includeImages && r.image) {
+        // Strip base64 from GET responses to prevent 200MB+ JSON payloads
+        const { image, ...rest } = r;
+        return { ...rest, hasImage: true, galleryUrl: r.imageId ? `/api/gallery/${r.imageId}/image` : null };
+      }
+      return r;
+    });
     const safe = {
       jobId: job.jobId,
       mode: job.mode,
@@ -1171,7 +1127,7 @@ class BatchGenerator extends EventEmitter {
       total: job.total,
       completed: job.completed,
       failed: job.failed,
-      results: job.results,
+      results,
       createdAt: job.createdAt,
       aspectRatio: job.aspectRatio || null,
       completedAt: job._completedAt ? new Date(job._completedAt).toISOString() : null,

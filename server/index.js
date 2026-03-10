@@ -25,11 +25,12 @@ if (!process.env.ENCRYPTION_SECRET || process.env.ENCRYPTION_SECRET.length < 32)
 }
 
 process.on('unhandledRejection', (reason) => {
-  console.error('[FATAL] Unhandled promise rejection:', reason?.stack || reason?.message || reason);
-  process.exit(1);
+  console.error('[ERROR] Unhandled promise rejection:', reason?.stack || reason?.message || reason);
+  // Log but don't crash — batch jobs and other async work shouldn't kill the server
 });
 process.on('uncaughtException', (err) => {
-  console.error('[FATAL] Uncaught exception:', err.message);
+  console.error('[FATAL] Uncaught exception:', err.message, err.stack);
+  // Uncaught exceptions are truly fatal — exit for Docker to restart
   process.exit(1);
 });
 
@@ -129,7 +130,7 @@ app.get('/api/health', (_req, res) => {
     data: {
       status: 'ok',
       timestamp: new Date().toISOString(),
-      version: '1.0.0',
+      version: require('../package.json').version,
       uptime: Math.round(process.uptime()),
       memoryMB: Math.round(process.memoryUsage().rss / (1024 * 1024)),
       imageStore: imageStore.stats(),
@@ -168,7 +169,19 @@ app.use('/api/video', generateLimiter, videoRouter);
 
 const { CLIENT_DIST } = require('./paths');
 if (fs.existsSync(CLIENT_DIST)) {
-  app.use(express.static(CLIENT_DIST, { maxAge: '7d', etag: true }));
+  app.use(express.static(CLIENT_DIST, {
+    maxAge: '7d',
+    etag: true,
+    // Don't serve index.html via static — let catch-all handle it with no-cache headers
+    index: false,
+    setHeaders(res, filePath) {
+      // HTML files should not be cached aggressively
+      if (filePath.endsWith('.html')) {
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+        res.set('Pragma', 'no-cache');
+      }
+    },
+  }));
   app.get('*splat', (_req, res) => {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.set('Pragma', 'no-cache');

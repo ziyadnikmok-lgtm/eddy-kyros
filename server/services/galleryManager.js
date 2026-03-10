@@ -52,7 +52,8 @@ class GalleryManager {
 
   list({ page, limit, tag } = {}) {
     const now = Date.now();
-    if (now - this._validFilesAt > 30_000) {
+    // Revalidate file list every 2 minutes (was 30s — too aggressive for large galleries)
+    if (now - this._validFilesAt > 120_000) {
       try {
         const files = fs.readdirSync(UPLOADS_DIR);
         this._validFiles = new Set(files);

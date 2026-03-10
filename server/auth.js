@@ -8,29 +8,27 @@ function getJwtSecret() {
 }
 
 function getCredentials() {
+  const hash = process.env.AUTH_PASSWORD_HASH || '';
+  if (!hash) {
+    console.warn('[auth] AUTH_PASSWORD_HASH not set — login will fail. Set a bcrypt hash in env vars.');
+  }
   return {
     username: process.env.AUTH_USERNAME || 'admin',
-    passwordHash: process.env.AUTH_PASSWORD_HASH || '',
-    passwordPlain: process.env.AUTH_PASSWORD || '',
+    passwordHash: hash,
   };
 }
 
 async function verifyCredentials(username, password) {
   const creds = getCredentials();
   if (username !== creds.username) return false;
-  if (creds.passwordHash) {
-    return bcrypt.compare(password, creds.passwordHash);
-  }
-  if (creds.passwordPlain) {
-    return password === creds.passwordPlain;
-  }
-  return false;
+  if (!creds.passwordHash) return false;
+  return bcrypt.compare(password, creds.passwordHash);
 }
 
-function generateToken(rememberMe) {
+function generateToken(username, rememberMe) {
   const secret = getJwtSecret();
   const expiresIn = rememberMe ? '30d' : '24h';
-  return jwt.sign({ auth: true, v: 1 }, secret, { expiresIn });
+  return jwt.sign({ auth: true, v: 2, sub: username }, secret, { expiresIn });
 }
 
 function verifyToken(token) {
@@ -43,9 +41,14 @@ function verifyToken(token) {
 
 const COOKIE_NAME = 'aistudio_token';
 
+// Static asset extensions to skip auth on
+const STATIC_EXTENSIONS = /\.(js|css|png|jpg|jpeg|gif|svg|ico|woff2?|ttf|eot|map)$/;
+
 function authMiddleware(req, res, next) {
-  // Auth endpoints always pass through
-  if (req.path.startsWith('/api/auth/')) return next();
+  // Auth endpoints and health check always pass through
+  if (req.path.startsWith('/api/auth/') || req.path === '/api/health') return next();
+  // Static assets don't need auth checks (served by express.static)
+  if (STATIC_EXTENSIONS.test(req.path)) return next();
 
   const token = req.cookies?.[COOKIE_NAME];
   if (!token || !verifyToken(token)) {
@@ -54,6 +57,14 @@ function authMiddleware(req, res, next) {
     }
     // Non-API routes: serve index.html (React handles /login redirect)
     return next();
+  }
+  // Basic CSRF check: non-GET API requests must have JSON content-type or X-Requested-With
+  if (req.path.startsWith('/api/') && req.method !== 'GET') {
+    const ct = req.headers['content-type'] || '';
+    const xhr = req.headers['x-requested-with'];
+    if (!ct.includes('application/json') && !ct.includes('multipart/form-data') && !xhr) {
+      return res.status(403).json({ success: false, error: 'CSRF check failed' });
+    }
   }
   next();
 }

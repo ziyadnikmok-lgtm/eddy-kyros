@@ -1,4 +1,5 @@
 const express = require('express');
+const sharp = require('sharp');
 const galleryManager = require('../services/galleryManager');
 const { parseImageUpload } = require('../middleware/upload');
 const { AppError } = require('../middleware/errorHandler');
@@ -223,35 +224,12 @@ router.delete('/:id', (req, res, next) => {
   }
 });
 
-router.post('/:id/open-folder', (req, res, next) => {
-  try {
-    const { filePath } = galleryManager.getFilePath(req.params.id);
-    const folderPath = galleryManager.getFolderPath();
-
-    const { execFile } = require('node:child_process');
-    const platform = process.platform;
-
-    if (platform === 'win32') {
-      execFile('explorer', ['/select,', filePath], () => {});
-    } else if (platform === 'darwin') {
-      execFile('open', ['-R', filePath], () => {});
-    } else {
-      execFile('xdg-open', [folderPath], () => {});
-    }
-
-    res.json({ success: true, data: { opened: folderPath, selected: filePath } });
-  } catch (err) {
-    next(err);
-  }
-});
-
-module.exports = router;
+// open-folder removed — no desktop in Docker container
 
 // Thumbnail endpoint — serves a small preview for mobile gallery pickers
 router.get('/:id/thumb', async (req, res, next) => {
   try {
     const { filePath } = galleryManager.getFilePath(req.params.id);
-    const sharp = require('sharp');
     const buf = await sharp(filePath)
       .resize({ width: 300, withoutEnlargement: true })
       .jpeg({ quality: 60 })
@@ -263,3 +241,5 @@ router.get('/:id/thumb', async (req, res, next) => {
     next(err);
   }
 });
+
+module.exports = router;
