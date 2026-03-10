@@ -796,7 +796,7 @@ class BatchGenerator extends EventEmitter {
             source: job.gallerySource || 'batch',
           });
 
-          galleryManager.save({
+          const galleryEntry = galleryManager.save({
             base64Data: result.image.base64Data,
             mimeType: result.image.mimeType,
             prompt: (task.userPrompt || task.prompt || '').slice(0, 500),
@@ -811,6 +811,7 @@ class BatchGenerator extends EventEmitter {
             index: task.index,
             success: true,
             imageId: stored.imageId,
+            galleryId: galleryEntry?.id || null,
             // Don't store base64 in job results — images are in gallery + imageStore
             hasImage: true,
             text: result.text || null,
@@ -1113,12 +1114,14 @@ class BatchGenerator extends EventEmitter {
   _toSafeJob(job, includeImages = false) {
     const results = (job.results || []).map((r) => {
       if (!r) return r;
+      // Add galleryUrl for client to load images
+      const galleryUrl = r.galleryId ? `/api/gallery/${r.galleryId}/image` : (r.imageId ? `/api/gallery/${r.imageId}/image` : null);
       if (!includeImages && r.image) {
         // Strip base64 from GET responses to prevent 200MB+ JSON payloads
         const { image, ...rest } = r;
-        return { ...rest, hasImage: true, galleryUrl: r.imageId ? `/api/gallery/${r.imageId}/image` : null };
+        return { ...rest, hasImage: true, galleryUrl };
       }
-      return r;
+      return { ...r, galleryUrl };
     });
     const safe = {
       jobId: job.jobId,

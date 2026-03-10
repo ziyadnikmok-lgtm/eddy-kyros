@@ -48,10 +48,10 @@ async function spoofImage(inputPath) {
     await sharp(inputPath)
       .rotate() // auto-rotate based on existing EXIF before stripping
       .jpeg({
-        quality: 88,
+        quality: 97,
         progressive: true,
-        chromaSubsampling: '4:2:0',
-        mozjpeg: true, // use mozjpeg encoder if available in sharp build
+        chromaSubsampling: '4:4:4', // no chroma subsampling — preserves color detail
+        mozjpeg: true,
       })
       .withExif(exifBuf)
       .toFile(outPath);

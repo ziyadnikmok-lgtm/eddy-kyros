@@ -193,6 +193,17 @@ router.get('/:id/image', (req, res, next) => {
     res.set('Cache-Control', 'private, max-age=3600');
     res.sendFile(filePath);
   } catch (err) {
+    // Fallback: try imageStore (batch results may reference imageStore IDs)
+    try {
+      const imageStore = require('../services/imageStore');
+      const entry = imageStore.get(req.params.id);
+      if (entry?.image?.base64Data) {
+        const buf = Buffer.from(entry.image.base64Data, 'base64');
+        res.set('Content-Type', entry.image.mimeType || 'image/png');
+        res.set('Cache-Control', 'private, max-age=3600');
+        return res.send(buf);
+      }
+    } catch {}
     next(err);
   }
 });
