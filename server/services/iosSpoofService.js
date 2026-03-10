@@ -1,70 +1,60 @@
-const { execFile } = require('node:child_process');
+const sharp = require('sharp');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { promisify } = require('node:util');
 
-const execFileAsync = promisify(execFile);
+// iPhone 16 Pro EXIF data as an Exif buffer
+// We build a minimal EXIF IFD with Make, Model, LensMake, LensModel, FocalLength, FNumber
+// For simplicity, we use sharp's withExifMerge which writes EXIF tags
 
-// AIO tools directory — contains cjpeg-static.exe, exiftool.exe.exe
-const AIO_DIR = path.resolve('C:/Users/X/Pictures/AIOFM/PICTOOLS/AIO');
-const CJPEG = path.join(AIO_DIR, 'cjpeg-static.exe');
-const EXIFTOOL = path.join(AIO_DIR, 'exiftool.exe.exe');
-
-const EXIF_ARGS = [
-  '-overwrite_original',
-  '-Make=Apple',
-  '-Model=iPhone 16 Pro',
-  '-LensMake=Apple',
-  '-LensModel=iPhone 16 Pro back triple camera 6.765mm f/1.78',
-  '-FocalLength=6.8 mm',
-  '-FNumber=1.8',
-];
-
-let _available = null;
+const IPHONE_EXIF = {
+  IFD0: {
+    Make: 'Apple',
+    Model: 'iPhone 16 Pro',
+    Software: '18.0',
+  },
+  IFD2: {
+    LensMake: 'Apple',
+    LensModel: 'iPhone 16 Pro back triple camera 6.765mm f/1.78',
+    FocalLength: '6765/1000',
+    FNumber: '178/100',
+  },
+};
 
 function isAvailable() {
-  if (_available !== null) return _available;
-  _available = fs.existsSync(CJPEG) && fs.existsSync(EXIFTOOL);
-  return _available;
+  // Always available — uses sharp (pure Node.js, no external binaries)
+  return true;
 }
 
 /**
  * Process a single image through the iOS spoof pipeline:
- * 1. Compress with mozjpeg (quality 88, progressive)
- * 2. Strip ALL metadata
+ * 1. Convert to progressive JPEG at quality 88 (mimics iPhone camera output)
+ * 2. Strip ALL existing metadata
  * 3. Inject iPhone 16 Pro EXIF
  *
  * @param {string} inputPath — path to source image file
  * @returns {{ filePath: string, filename: string, cleanup: () => void }}
  */
 async function spoofImage(inputPath) {
-  if (!isAvailable()) {
-    throw new Error('iOS spoof tools not available');
-  }
-
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'iosspoof-'));
   const rand = Math.floor(Math.random() * 90000) + 10000;
   const outName = `IMG_${rand}.jpg`;
   const outPath = path.join(tmpDir, outName);
 
   try {
-    // Step 1: Compress with mozjpeg
-    const { stdout } = await execFileAsync(CJPEG, [
-      '-quality', '88',
-      '-sample', '2x2',
-      '-optimize',
-      '-progressive',
-      inputPath,
-    ], { maxBuffer: 50 * 1024 * 1024, encoding: 'buffer' });
+    // Build minimal EXIF buffer with iPhone metadata
+    const exifBuf = buildExifBuffer(IPHONE_EXIF);
 
-    fs.writeFileSync(outPath, stdout);
-
-    // Step 2: Strip all metadata
-    await execFileAsync(EXIFTOOL, ['-overwrite_original', '-all=', outPath]);
-
-    // Step 3: Inject iPhone 16 Pro metadata
-    await execFileAsync(EXIFTOOL, [...EXIF_ARGS, outPath]);
+    await sharp(inputPath)
+      .rotate() // auto-rotate based on existing EXIF before stripping
+      .jpeg({
+        quality: 88,
+        progressive: true,
+        chromaSubsampling: '4:2:0',
+        mozjpeg: true, // use mozjpeg encoder if available in sharp build
+      })
+      .withExif(exifBuf)
+      .toFile(outPath);
 
     return {
       filePath: outPath,
@@ -77,6 +67,15 @@ async function spoofImage(inputPath) {
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
     throw err;
   }
+}
+
+/**
+ * Build a minimal EXIF buffer that sharp can use via .withExif()
+ * sharp.withExif() expects a plain object keyed by IFD name → tag name → value
+ */
+function buildExifBuffer(exifData) {
+  // sharp >= 0.33 accepts { IFD0: { Make: '...', ... }, IFD2: { ... } }
+  return exifData;
 }
 
 /**
@@ -102,7 +101,6 @@ async function spoofBatch(filePaths) {
       usedNames.add(result.filename);
       results.push(result);
     } catch {
-      // If one image fails, skip it and continue
       results.push(null);
     }
   }

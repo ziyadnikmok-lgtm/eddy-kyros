@@ -58,8 +58,9 @@ function authMiddleware(req, res, next) {
     // Non-API routes: serve index.html (React handles /login redirect)
     return next();
   }
-  // Basic CSRF check: non-GET API requests must have JSON content-type or X-Requested-With
-  if (req.path.startsWith('/api/') && req.method !== 'GET') {
+  // Basic CSRF check: non-GET API requests must have JSON content-type, multipart, or be DELETE/PATCH
+  // DELETE and PATCH are safe — HTML forms can only submit GET/POST
+  if (req.path.startsWith('/api/') && req.method === 'POST') {
     const ct = req.headers['content-type'] || '';
     const xhr = req.headers['x-requested-with'];
     if (!ct.includes('application/json') && !ct.includes('multipart/form-data') && !xhr) {
