@@ -215,7 +215,8 @@ export const gallery = {
   },
   imageUrl: (id) => `${BASE}/gallery/${id}/image`,
   spoofedDownloadUrl: (id) => `${BASE}/gallery/${id}/download-spoofed`,
-  openFolder: (id) => request(`/gallery/${id}/open-folder`, { method: 'POST' }),
+  // openFolder removed — no desktop in Docker container
+  thumbUrl: (id) => `${BASE}/gallery/${id}/thumb`,
   listTags: () => request('/gallery/tags'),
   updateTags: (id, tags) => request(`/gallery/${id}/tags`, { method: 'PATCH', body: { tags } }),
   addTag: (id, tag) => request(`/gallery/${id}/tags`, { method: 'POST', body: { tag } }),

@@ -81,10 +81,22 @@ function PromptDisplay({ prompt, onCopy }) {
   );
 }
 
+function useIsMobile(breakpoint = 768) {
+  const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < breakpoint);
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
+    const handler = (e) => setMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, [breakpoint]);
+  return mobile;
+}
+
 export default function GalleryPage() {
   const { notify, navigateTo } = useApp();
   const { run } = useAsync();
   const { openLightbox, LightboxComponent } = useImageLightbox();
+  const isMobile = useIsMobile();
 
   const [images, setImages] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
@@ -184,11 +196,6 @@ export default function GalleryPage() {
     setImages((prev) => prev.filter((i) => i.id !== id));
     setSelectedIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
     notify('Image deleted', 'success');
-  });
-
-  const handleOpenFolder = (id) => run(async () => {
-    await galleryApi.openFolder(id);
-    notify('Opening folder...', 'info');
   });
 
   const handleDownload = (id, filename) => {
@@ -395,7 +402,7 @@ export default function GalleryPage() {
           </div>
 
           {showFilters && (
-            <div className="flex items-center gap-2 flex-wrap rounded-lg border border-zinc-700/50 bg-zinc-800/40 p-2.5 animate-in">
+            <div className="flex items-center gap-2 flex-wrap rounded-lg border border-zinc-700/50 bg-zinc-800/40 p-2.5 animate-in max-h-[40vh] overflow-y-auto">
               {availableSources.length > 1 && (
                 <select
                   value={sourceFilter}
@@ -487,7 +494,7 @@ export default function GalleryPage() {
                 <div className="bg-zinc-900 relative overflow-hidden" style={{ minHeight: loadedImages.has(img.id) ? undefined : 200 }}>
                   {!loadedImages.has(img.id) && <div className="skeleton absolute inset-0" />}
                   <img
-                    src={galleryApi.imageUrl(img.id)}
+                    src={isMobile ? `/api/gallery/${img.id}/thumb` : galleryApi.imageUrl(img.id)}
                     alt={img.prompt ? (img.prompt.length > 100 ? img.prompt.slice(0, 100) + '…' : img.prompt) : 'Generated image'}
                     className={`w-full h-auto object-contain transition-all duration-300 group-hover:scale-[1.01] ${loadedImages.has(img.id) ? 'opacity-100' : 'opacity-0'}`}
                     loading="lazy"
@@ -523,26 +530,33 @@ export default function GalleryPage() {
                   )}
 
                   {!bulkMode && (
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 flex flex-col justify-end p-3">
-                      <div className="flex gap-1.5 pointer-events-auto">
-                        <button onClick={() => handleRecreate(img)} aria-label="Recreate"
-                          className="flex-1 rounded-md bg-blue-600/90 px-2 py-1.5 text-xs text-white hover:bg-blue-500 transition cursor-pointer text-center">
-                          Recreate
-                        </button>
-                        <button onClick={() => handleDownload(img.id, img.filename)} aria-label="Download image"
-                          className="flex-1 rounded-md bg-zinc-800/90 px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 transition cursor-pointer text-center">
-                          Download
-                        </button>
-                        <button onClick={() => handleOpenFolder(img.id)} aria-label="Open folder"
-                          className="rounded-md bg-zinc-800/90 px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 transition cursor-pointer">
-                          Folder
-                        </button>
-                        <button onClick={() => setDeleteConfirmId(img.id)} aria-label="Delete image"
-                          className="rounded-md bg-red-600/80 px-2 py-1.5 text-xs text-white hover:bg-red-500 transition cursor-pointer">
-                          Delete
-                        </button>
+                    <>
+                      {/* Desktop: hover overlay */}
+                      <div className="hidden md:flex absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 flex-col justify-end p-3">
+                        <div className="flex gap-1.5 pointer-events-auto">
+                          <button onClick={() => handleRecreate(img)} aria-label="Recreate"
+                            className="flex-1 rounded-md bg-blue-600/90 px-2 py-1.5 text-xs text-white hover:bg-blue-500 transition cursor-pointer text-center">
+                            Recreate
+                          </button>
+                          <button onClick={() => handleDownload(img.id, img.filename)} aria-label="Download image"
+                            className="flex-1 rounded-md bg-zinc-800/90 px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 transition cursor-pointer text-center">
+                            Download
+                          </button>
+                          <button onClick={() => setDeleteConfirmId(img.id)} aria-label="Delete image"
+                            className="rounded-md bg-red-600/80 px-2 py-1.5 text-xs text-white hover:bg-red-500 transition cursor-pointer">
+                            Delete
+                          </button>
+                        </div>
                       </div>
-                    </div>
+                      {/* Mobile: always-visible bottom action bar */}
+                      <div className="md:hidden absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent pt-6 pb-1.5 px-1.5">
+                        <div className="flex gap-1">
+                          <button onClick={() => handleRecreate(img)} className="flex-1 rounded-md bg-blue-600/90 py-1.5 text-[10px] text-white active:bg-blue-500 text-center">Recreate</button>
+                          <button onClick={() => handleDownload(img.id, img.filename)} className="flex-1 rounded-md bg-zinc-800/90 py-1.5 text-[10px] text-zinc-200 active:bg-zinc-700 text-center">DL</button>
+                          <button onClick={() => setDeleteConfirmId(img.id)} className="rounded-md bg-red-600/80 px-2 py-1.5 text-[10px] text-white active:bg-red-500">✕</button>
+                        </div>
+                      </div>
+                    </>
                   )}
                 </div>
                 <div className="px-3 py-2.5 space-y-1">

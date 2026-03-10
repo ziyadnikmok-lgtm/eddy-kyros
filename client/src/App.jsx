@@ -100,7 +100,7 @@ const NAV_SECTIONS = [
 
 const ALL_NAV_ITEMS = NAV_SECTIONS.flatMap((s) => s.items);
 
-const APP_VERSION = '8.0';
+const APP_VERSION = '8.1.0';
 
 function SidebarHeader() {
   return (
@@ -269,7 +269,7 @@ function MainApp() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 lg:p-6 ambient-glow">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 lg:p-6 safe-bottom ambient-glow">
           <div className="relative mx-auto max-w-6xl">
             <PageErrorBoundary pageKey={page}>
               <Suspense fallback={<PageFallback />}>

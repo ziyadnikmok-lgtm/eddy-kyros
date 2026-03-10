@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-const APP_VERSION = '8.0';
+const APP_VERSION = '8.1.0';
 
 export default function LoginPage({ onLogin }) {
   const [username, setUsername] = useState('');

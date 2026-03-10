@@ -231,8 +231,8 @@ router.get('/:id/thumb', async (req, res, next) => {
   try {
     const { filePath } = galleryManager.getFilePath(req.params.id);
     const buf = await sharp(filePath)
-      .resize({ width: 300, withoutEnlargement: true })
-      .jpeg({ quality: 60 })
+      .resize({ width: 400, withoutEnlargement: true })
+      .jpeg({ quality: 70 })
       .toBuffer();
     res.set('Content-Type', 'image/jpeg');
     res.set('Cache-Control', 'private, max-age=86400');

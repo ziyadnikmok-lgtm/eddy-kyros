@@ -21,7 +21,15 @@
 @layer base {
   * { scrollbar-width: thin; scrollbar-color: #3f3f46 transparent; }
   ::selection { background: #3b82f640; }
-  body { font-family: var(--font-sans); }
+  body { font-family: var(--font-sans); -webkit-tap-highlight-color: transparent; }
+  button, a, [role="button"], input, select, textarea { touch-action: manipulation; }
+}
+
+@layer utilities {
+  .scrollbar-none { scrollbar-width: none; -ms-overflow-style: none; }
+  .scrollbar-none::-webkit-scrollbar { display: none; }
+  .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0); }
+  .safe-top { padding-top: env(safe-area-inset-top, 0); }
 }
 
 @keyframes shimmer {

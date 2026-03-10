@@ -86,7 +86,7 @@ function ReformatModePanel() {
         {loadingGallery ? (
           <div className="flex justify-center py-4"><Spinner /></div>
         ) : (
-          <div className="grid grid-cols-2 auto-rows-[100px] gap-2 max-h-[45vh] overflow-y-auto rounded-xl border border-zinc-800 bg-[#111] p-2">
+          <div className="grid grid-cols-2 auto-rows-[140px] sm:auto-rows-[100px] gap-2 max-h-[45vh] overflow-y-auto rounded-xl border border-zinc-800 bg-[#111] p-2">
             {/* Upload button */}
             <label className="w-full h-full flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-700 bg-zinc-900/70 text-zinc-400 cursor-pointer hover:border-blue-500/70 hover:text-zinc-200 transition">
               <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleUpload} />
@@ -628,10 +628,10 @@ export default function BatchPage() {
       <Card className="space-y-5">
         <div>
           <span className="text-sm text-zinc-400 font-medium mb-2 flex items-center gap-1.5">Mode <Hint text="Variation: same prompt, multiple outputs. Multi-Prompt: different prompt per image. Override: same scene, different references. Edit: modify an existing image. Reformat: convert image to a different aspect ratio." /></span>
-          <div className="flex flex-wrap gap-2">
-            {[['variation', 'Variation'], ['multi', 'Multi-Prompt'], ['override', 'Override'], ['edit', 'Edit Image'], ['content-mix', 'Content Mix'], ['reformat', 'Reformat']].map(([m, label]) => (
+          <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-none sm:flex-wrap sm:overflow-visible sm:pb-0 sm:gap-2">
+            {[['variation', 'Variation'], ['multi', 'Multi'], ['override', 'Override'], ['edit', 'Edit'], ['content-mix', 'Mix'], ['reformat', 'Reformat']].map(([m, label]) => (
               <button key={m} onClick={() => update({ mode: m })}
-                className={`rounded-lg px-3 py-2 text-sm font-medium transition cursor-pointer ${mode === m ? 'bg-blue-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}`}>
+                className={`rounded-lg px-3 py-2 text-xs sm:text-sm font-medium transition cursor-pointer whitespace-nowrap flex-shrink-0 ${mode === m ? 'bg-blue-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}`}>
                 {label}
               </button>
             ))}

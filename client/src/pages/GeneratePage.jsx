@@ -385,6 +385,20 @@ export default function GeneratePage() {
         </div>
       )}
 
+      {/* Mobile: show result/loading at top so users don't have to scroll past the form */}
+      <div className="lg:hidden space-y-4">
+        {loading && (
+          <StepProgress steps={GENERATE_STEPS} currentIndex={generateStepIndex} elapsedSec={elapsedSec} className="w-full" />
+        )}
+        {result && !loading && (
+          <Card className="animate-in !p-3">
+            <ImageCard base64={result.image?.base64Data} mimeType={result.image?.mimeType}
+              meta={{ imageId: result.imageId, identityConfidence: result.image?.validation?.identity_match_score }}
+              onSelect={() => result.image?.base64Data && openLightbox([`data:${result.image?.mimeType || 'image/png'};base64,${result.image?.base64Data}`], 0)} />
+          </Card>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         <div className="lg:col-span-1 space-y-4">
           <Card className="space-y-4">
@@ -901,7 +915,7 @@ export default function GeneratePage() {
           </Card>
         </div>
 
-        <div className="lg:col-span-2 space-y-4">
+        <div className="hidden lg:block lg:col-span-2 space-y-4">
           {recreateSourceId && !result && !loading && (
             <Card className="animate-in !p-3">
               <div className="flex items-center gap-3 mb-2">
