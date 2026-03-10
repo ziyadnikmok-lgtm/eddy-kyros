@@ -26,7 +26,7 @@ class GalleryManager {
     const filePath = path.join(UPLOADS_DIR, filename);
 
     const buffer = Buffer.from(base64Data, 'base64');
-    fs.writeFileSync(filePath, buffer);
+    fs.writeFileSync(filePath, buffer); // sync is intentional — entry depends on file being written
     this._validFiles.add(filename);
 
     const entry = {
@@ -54,11 +54,11 @@ class GalleryManager {
     const now = Date.now();
     // Revalidate file list every 2 minutes (was 30s — too aggressive for large galleries)
     if (now - this._validFilesAt > 120_000) {
+      this._validFilesAt = now; // set immediately to prevent thundering herd
       try {
         const files = fs.readdirSync(UPLOADS_DIR);
         this._validFiles = new Set(files);
       } catch { this._validFiles = new Set(); }
-      this._validFilesAt = now;
     }
 
     let results = this._store
@@ -92,6 +92,9 @@ class GalleryManager {
     const entry = this._store.find((e) => e.id === id);
     if (!entry) throw new AppError('Gallery image not found', 404, 'NOT_FOUND');
     const fp = path.join(UPLOADS_DIR, entry.filename);
+    if (!path.resolve(fp).startsWith(path.resolve(UPLOADS_DIR))) {
+      throw new AppError('Invalid file path', 403, 'INVALID_PATH');
+    }
     if (!fs.existsSync(fp)) throw new AppError('Image file missing from disk', 404, 'FILE_MISSING');
     return { filePath: fp, mimeType: entry.mimeType };
   }
@@ -102,7 +105,7 @@ class GalleryManager {
 
     const entry = this._store[idx];
     const fp = path.join(UPLOADS_DIR, entry.filename);
-    if (fs.existsSync(fp)) fs.unlinkSync(fp);
+    if (path.resolve(fp).startsWith(path.resolve(UPLOADS_DIR)) && fs.existsSync(fp)) fs.unlinkSync(fp);
     this._validFiles.delete(entry.filename);
 
     this._store.splice(idx, 1);

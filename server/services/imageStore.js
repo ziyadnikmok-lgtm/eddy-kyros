@@ -103,7 +103,7 @@ class ImageStore {
       let evicted = 0;
       for (const [oldId, oldEntry] of images) {
         if (_totalBytes <= MAX_STORE_BYTES) break;
-        _totalBytes -= (oldEntry._estimatedBytes || 0);
+        _totalBytes = Math.max(0, _totalBytes - (oldEntry._estimatedBytes || 0));
         images.delete(oldId);
         evicted++;
       }

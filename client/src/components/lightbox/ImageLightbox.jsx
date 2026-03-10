@@ -199,7 +199,7 @@ export default function ImageLightbox({
       className={`fixed inset-0 z-[120] flex items-center justify-center p-4 transition-opacity duration-200 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
       aria-hidden={!isOpen}
     >
-      <div className="absolute inset-0 bg-black/85 backdrop-blur-md" onClick={onClose} role="button" aria-label="Close lightbox" tabIndex={-1} />
+      <div className="absolute inset-0 bg-black/85 backdrop-blur-md" onClick={onClose} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClose?.(); }} role="button" aria-label="Close lightbox" tabIndex={0} />
 
       <div className="absolute top-4 right-4 z-[2] flex items-center gap-2">
         <button

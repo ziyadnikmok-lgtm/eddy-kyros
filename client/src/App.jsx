@@ -287,31 +287,5 @@ function MainApp() {
 }
 
 export default function App() {
-  const [authChecked, setAuthChecked] = useState(false);
-  const [authenticated, setAuthenticated] = useState(false);
-
-  useEffect(() => {
-    fetch('/api/auth/me')
-      .then(r => r.json())
-      .then(d => { setAuthenticated(!!d.authenticated); setAuthChecked(true); })
-      .catch(() => { setAuthenticated(false); setAuthChecked(true); });
-  }, []);
-
-  if (!authChecked) {
-    return (
-      <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
-        <Spinner />
-      </div>
-    );
-  }
-
-  if (!authenticated) {
-    return (
-      <Suspense fallback={<div className="min-h-screen bg-[#0a0a0f]" />}>
-        <LoginPage onLogin={() => setAuthenticated(true)} />
-      </Suspense>
-    );
-  }
-
   return <MainApp />;
 }

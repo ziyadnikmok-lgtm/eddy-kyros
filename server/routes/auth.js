@@ -24,9 +24,10 @@ router.post('/login', loginLimiter, async (req, res) => {
   }
   const token = generateToken(username, !!rememberMe);
   const maxAge = rememberMe ? 30 * 24 * 60 * 60 * 1000 : undefined; // 30 days or session
+  const isSecure = process.env.NODE_ENV === 'production' || req.protocol === 'https';
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
-    secure: true,
+    secure: isSecure,
     sameSite: 'lax',
     ...(maxAge ? { maxAge } : {}),
   });
@@ -34,7 +35,8 @@ router.post('/login', loginLimiter, async (req, res) => {
 });
 
 router.post('/logout', (req, res) => {
-  res.clearCookie(COOKIE_NAME, { httpOnly: true, secure: true, sameSite: 'lax' });
+  const isSecure = process.env.NODE_ENV === 'production' || req.protocol === 'https';
+  res.clearCookie(COOKIE_NAME, { httpOnly: true, secure: isSecure, sameSite: 'lax' });
   res.json({ success: true });
 });
 

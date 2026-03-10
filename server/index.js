@@ -102,7 +102,10 @@ app.use(express.json({ limit: cfg.JSON_BODY_LIMIT }));
 app.use(cookieParser());
 app.use(compressionMiddleware(cfg.COMPRESSION_MIN_BYTES));
 app.use('/api/auth', authRouter);
-app.use(authMiddleware);
+if (process.env.NODE_ENV === 'production') {
+  app.use(authMiddleware);
+}
+// In development, auth is disabled — enable by setting NODE_ENV=production
 
 app.use((req, res, next) => {
   if (req.path === '/api/health') return next();
@@ -208,7 +211,7 @@ app.use(errorHandler);
   }
 })();
 
-(function cleanStaleTempFiles() {
+function cleanStaleTempFiles() {
   const { TEMP_DIR } = require('./paths');
   const tempDirs = [
     TEMP_DIR,
@@ -223,18 +226,27 @@ app.use(errorHandler);
         try {
           const fullPath = path.join(dir, file);
           const stat = fs.statSync(fullPath);
+          if (stat.isDirectory()) continue;
           if (Date.now() - stat.mtimeMs > cfg.STALE_TEMP_FILE_AGE_MS) {
             fs.unlinkSync(fullPath);
             cleaned++;
           }
-        } catch {}
+        } catch (err) {
+          log.warn('temp_cleanup_file_error', { file, error: err.message });
+        }
       }
-    } catch {}
+    } catch (err) {
+      log.warn('temp_cleanup_dir_error', { dir, error: err.message });
+    }
   }
   if (cleaned > 0) {
     log.info('temp_cleanup', { cleaned });
   }
-})();
+}
+cleanStaleTempFiles();
+// Periodic cleanup every 30 minutes
+const _tempCleanupTimer = setInterval(cleanStaleTempFiles, 30 * 60 * 1000);
+if (_tempCleanupTimer.unref) _tempCleanupTimer.unref();
 
 const server = app.listen(PORT, HOST, () => {
   console.log('');

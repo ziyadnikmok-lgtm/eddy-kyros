@@ -1,4 +1,4 @@
-import { createElement, useCallback, useEffect, useRef, useState } from 'react';
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ImageLightbox from './ImageLightbox';
 
 const CLOSE_ANIMATION_MS = 220;
@@ -45,16 +45,18 @@ export function useImageLightbox() {
     setCurrentIndex(index);
   }, []);
 
-  const LightboxComponent = useCallback(() => {
-    if (!isVisible) return null;
-
-    return createElement(ImageLightbox, {
-      isOpen,
-      imageUrls,
-      currentIndex,
-      onClose: closeLightbox,
-      onIndexChange: handleIndexChange,
-    });
+  // useMemo for a stable component reference — avoids re-mount on every render
+  const LightboxComponent = useMemo(() => {
+    return function LightboxWrapper() {
+      if (!isVisible) return null;
+      return createElement(ImageLightbox, {
+        isOpen,
+        imageUrls,
+        currentIndex,
+        onClose: closeLightbox,
+        onIndexChange: handleIndexChange,
+      });
+    };
   }, [closeLightbox, currentIndex, handleIndexChange, imageUrls, isOpen, isVisible]);
 
   return { openLightbox, LightboxComponent };

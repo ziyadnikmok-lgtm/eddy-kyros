@@ -72,7 +72,7 @@ router.post('/', async (req, res, next) => {
       imageModel,
     } = req.body;
     const finalAspectRatio = VALID_ASPECT_RATIOS.includes(aspectRatio) ? aspectRatio : '1:1';
-    const finalImageSize = VALID_IMAGE_SIZES.includes(resolutionTier) ? resolutionTier : '1K';
+    const finalImageSize = VALID_IMAGE_SIZES.includes(resolutionTier) ? resolutionTier : '2K';
 
     let finalPrompt;
     let characterName = null;
@@ -159,7 +159,10 @@ router.post('/', async (req, res, next) => {
       try {
         styleLibraryBlock = styleLibrary.composePrompt(styleAtomIds);
         styleAtomIds.forEach(id => styleLibrary.incrementUsage(id));
-      } catch { }
+      } catch (err) {
+        const log = require('../utils/logger');
+        log.warn('style_atom_compose_failed', { error: err.message });
+      }
     }
 
     let styleFocusBlock = '';
@@ -172,7 +175,10 @@ router.post('/', async (req, res, next) => {
         if (attrs.length > 0) {
           styleFocusBlock = `[STYLE FOCUS — Visual DNA]\n${attrs.join('\n')}\n[END STYLE FOCUS]`;
         }
-      } catch { }
+      } catch (err) {
+        const log = require('../utils/logger');
+        log.warn('style_focus_resolve_failed', { error: err.message });
+      }
     }
 
     if (sceneMemory || outfit || cameraProfile || poseFromMode || expressionFromMode || sceneFromMode || styleLibraryBlock || styleFocusBlock) {

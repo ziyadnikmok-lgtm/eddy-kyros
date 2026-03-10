@@ -107,6 +107,7 @@ export function Toggle({ checked, onChange, label }) {
         type="button"
         role="switch"
         aria-checked={checked}
+        aria-label={label ? `Toggle ${label}` : undefined}
         onClick={() => onChange(!checked)}
         className={cn(
           'relative h-6 w-11 rounded-full transition-all duration-200',

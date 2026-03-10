@@ -1,5 +1,6 @@
 const { GoogleGenAI, Modality, ThinkingLevel } = require('@google/genai');
 const crypto = require('node:crypto');
+const sharp = require('sharp');
 const { AppError } = require('../middleware/errorHandler');
 const { dedupRequest } = require('../utils/dedup');
 const cfg = require('../config');
@@ -81,7 +82,7 @@ class GeminiService {
       responseModalities: [Modality.TEXT, Modality.IMAGE],
       imageConfig: {
         aspectRatio: options.aspectRatio || "1:1",
-        imageSize: options.imageSize || "1K",
+        imageSize: options.imageSize || "2K",
       },
     };
     if (MINIMAL_THINKING_IMAGE_MODELS.has(selectedImageModel)) {
@@ -107,6 +108,13 @@ class GeminiService {
         const parsed = this._parseImageResponse(response);
 
         if (parsed.imageResult) {
+          // Convert to lossless PNG if Gemini returned JPEG/WebP
+          if (parsed.imageResult.mimeType !== 'image/png') {
+            const inputBuf = Buffer.from(parsed.imageResult.base64Data, 'base64');
+            const pngBuf = await sharp(inputBuf).png({ compressionLevel: 6 }).toBuffer();
+            parsed.imageResult.base64Data = pngBuf.toString('base64');
+            parsed.imageResult.mimeType = 'image/png';
+          }
           return { image: parsed.imageResult, text: parsed.textResult || null, modelUsed: selectedImageModel };
         }
 

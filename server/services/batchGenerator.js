@@ -82,7 +82,10 @@ function _loadPersistedJobs() {
         jobs.set(entry.jobId, entry);
       }
     }
-  } catch { }
+  } catch (err) {
+    const log = require('../utils/logger');
+    log.warn('batch_load_failed', { message: err.message });
+  }
 }
 
 let _persistPending = false;
@@ -155,7 +158,7 @@ class BatchGenerator extends EventEmitter {
     }
 
     const aspectRatio = generationOptions.aspectRatio || '1:1';
-    const imageSize = generationOptions.imageSize || '1K';
+    const imageSize = generationOptions.imageSize || '2K';
     const imageModel = generationOptions.imageModel || null;
     const gallerySource = generationOptions.gallerySource || 'batch';
 
@@ -913,7 +916,10 @@ class BatchGenerator extends EventEmitter {
         const styleLibrary = require('./styleLibrary');
         styleLibraryBlock = styleLibrary.composePrompt(config.styleAtomIds);
         config.styleAtomIds.forEach(id => styleLibrary.incrementUsage(id));
-      } catch { }
+      } catch (err) {
+        const log = require('../utils/logger');
+        log.warn('batch_style_library_failed', { error: err.message });
+      }
     }
 
     return {
@@ -1041,7 +1047,7 @@ class BatchGenerator extends EventEmitter {
 
     const config = job._config || {};
     const mode = job.mode;
-    const genOpts = { aspectRatio: job.aspectRatio || '1:1', imageSize: job.imageSize || '1K' };
+    const genOpts = { aspectRatio: job.aspectRatio || '1:1', imageSize: job.imageSize || '2K' };
     genOpts.imageModel = job.imageModel || null;
 
     if (mode === 'multi' && Array.isArray(config.prompts)) {

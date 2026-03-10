@@ -14,7 +14,9 @@ router.post('/', parseMultipartIfNeeded, (req, res, next) => {
   try {
     let { mode, config } = req.body || {};
     if (typeof config === 'string') {
-      try { config = JSON.parse(config); } catch { }
+      try { config = JSON.parse(config); } catch {
+        throw new AppError('Invalid JSON in config field', 400, 'VALIDATION_ERROR');
+      }
     }
     const validRatios = ['1:1', '16:9', '9:16', '4:3', '3:4', '4:5'];
     const validSizes = ['1K', '2K', '4K'];
@@ -27,7 +29,7 @@ router.post('/', parseMultipartIfNeeded, (req, res, next) => {
     const finalImageSize =
       validSizes.includes(req.body.resolutionTier)
         ? req.body.resolutionTier
-        : '1K';
+        : '2K';
     const imageModel =
       typeof req.body.imageModel === 'string' && req.body.imageModel.trim().length > 0
         ? req.body.imageModel.trim()

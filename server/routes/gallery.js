@@ -137,7 +137,8 @@ router.post('/bulk-download', async (req, res, next) => {
     archive.pipe(res);
 
     for (const file of outputFiles) {
-      archive.file(file.filePath, { name: file.filename });
+      const safeName = (file.filename || 'image').replace(/[\/\\:*?"<>|]/g, '_');
+      archive.file(file.filePath, { name: safeName });
     }
 
     await archive.finalize();

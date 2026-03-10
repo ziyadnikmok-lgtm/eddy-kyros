@@ -17,7 +17,7 @@ router.post('/generate', async (req, res, next) => {
     const finalImageSize =
       validSizes.includes(req.body.resolutionTier)
         ? req.body.resolutionTier
-        : '1K';
+        : '2K';
 
     if (req.body.aspectRatio !== undefined && typeof req.body.aspectRatio !== 'string') {
       throw new AppError('"aspectRatio" must be a string', 400, 'VALIDATION_ERROR');

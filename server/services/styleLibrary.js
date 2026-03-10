@@ -55,12 +55,18 @@ class StyleLibraryService {
     if (this._normIndex.get(category)?.has(normalized)) return true;
 
     const wordsNew = new Set(normalized.split(/\s+/));
+    if (wordsNew.size === 0) return true;
+
     for (const a of this._store) {
       if (a.category !== category) continue;
       const wordsExisting = new Set(a.text.trim().toLowerCase().split(/\s+/));
-      const intersection = new Set([...wordsNew].filter(w => wordsExisting.has(w)));
-      const union = new Set([...wordsNew, ...wordsExisting]);
-      if (union.size > 0 && intersection.size / union.size > 0.6) return true;
+      // Inline Jaccard — avoid allocating intermediate Sets
+      let intersectionSize = 0;
+      for (const w of wordsNew) {
+        if (wordsExisting.has(w)) intersectionSize++;
+      }
+      const unionSize = wordsNew.size + wordsExisting.size - intersectionSize;
+      if (unionSize > 0 && intersectionSize / unionSize > 0.6) return true;
     }
 
     return false;

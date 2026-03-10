@@ -32,7 +32,10 @@ function compressionMiddleware(minBytes = 1024) {
           res.setHeader('Content-Length', compressed.length);
           res.end(compressed);
         })
-        .catch(() => {
+        .catch((err) => {
+          if (process.env.NODE_ENV !== 'test') {
+            console.warn('[WARN] Gzip compression failed:', err.message);
+          }
           if (!res.headersSent) originalJson(data);
         });
     };

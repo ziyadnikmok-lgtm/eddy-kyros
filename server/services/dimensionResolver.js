@@ -1,7 +1,7 @@
 const { AppError } = require('../middleware/errorHandler');
 
 const DEFAULT_ASPECT_RATIO = '1:1';
-const DEFAULT_RESOLUTION_TIER = '1K';
+const DEFAULT_RESOLUTION_TIER = '2K';
 
 const DIMENSION_TABLE = {
   '1K': {

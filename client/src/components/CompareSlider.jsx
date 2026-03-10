@@ -10,6 +10,7 @@ export default function CompareSlider({
 }) {
   const containerRef = useRef(null);
   const [pos, setPos] = useState(50);
+  const draggingRef = useRef(false);
   const [dragging, setDragging] = useState(false);
 
   const updatePos = useCallback((clientX) => {
@@ -19,18 +20,19 @@ export default function CompareSlider({
   }, []);
 
   const onPointerDown = useCallback((e) => {
+    draggingRef.current = true;
     setDragging(true);
     updatePos(e.clientX);
   }, [updatePos]);
 
   const onPointerMove = useCallback((e) => {
-    if (!dragging) return;
+    if (!draggingRef.current) return;
     updatePos(e.clientX);
-  }, [dragging, updatePos]);
+  }, [updatePos]);
 
   useEffect(() => {
     if (!dragging) return;
-    const up = () => setDragging(false);
+    const up = () => { draggingRef.current = false; setDragging(false); };
     window.addEventListener('pointerup', up);
     return () => window.removeEventListener('pointerup', up);
   }, [dragging]);
@@ -38,13 +40,23 @@ export default function CompareSlider({
   return (
     <div
       ref={containerRef}
+      tabIndex={0}
+      role="slider"
+      aria-valuenow={Math.round(pos)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-label="Compare slider"
       className={cn(
-        'relative select-none overflow-hidden rounded-xl border border-zinc-700/60',
+        'relative select-none overflow-hidden rounded-xl border border-zinc-700/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40',
         dragging ? 'cursor-grabbing' : 'cursor-ew-resize',
         className,
       )}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowLeft') setPos((p) => Math.max(0, p - 2));
+        else if (e.key === 'ArrowRight') setPos((p) => Math.min(100, p + 2));
+      }}
     >
       <img
         src={processedSrc}
