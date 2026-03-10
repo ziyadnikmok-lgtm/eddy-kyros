@@ -2,10 +2,12 @@
   "name": "ai-content-studio",
   "version": "8.1.0",
   "description": "Local AI Content Generation Studio - Backend",
+  "main": "electron/main.js",
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "build:client": "cd client && npm run build",
+    "build:exe": "npm run build:client && npx electron-builder --win portable",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
@@ -35,6 +37,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.3",
+    "electron": "^40.8.0",
+    "electron-builder": "^26.8.1",
     "eslint": "^9.39.3",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.0.1",

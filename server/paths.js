@@ -1,12 +1,13 @@
 const path = require('node:path');
 
 const projectRoot = path.join(__dirname, '..');
+const userDataRoot = process.env.ELECTRON_USER_DATA || null;
 
-const DATA_DIR = path.join(__dirname, 'data');
-const UPLOADS_DIR = path.join(projectRoot, 'uploads', 'generated');
-const CHARACTERS_DIR = path.join(projectRoot, 'characters');
-const TEMP_DIR = path.join(projectRoot, 'temp');
-const BATCH_STORE = path.join(projectRoot, 'data', 'batch-jobs.json');
+const DATA_DIR = userDataRoot ? path.join(userDataRoot, 'data') : path.join(__dirname, 'data');
+const UPLOADS_DIR = userDataRoot ? path.join(userDataRoot, 'uploads', 'generated') : path.join(projectRoot, 'uploads', 'generated');
+const CHARACTERS_DIR = userDataRoot ? path.join(userDataRoot, 'characters') : path.join(projectRoot, 'characters');
+const TEMP_DIR = userDataRoot ? path.join(userDataRoot, 'temp') : path.join(projectRoot, 'temp');
+const BATCH_STORE = userDataRoot ? path.join(userDataRoot, 'data', 'batch-jobs.json') : path.join(projectRoot, 'data', 'batch-jobs.json');
 const SERVER_DIR = __dirname;
 const CLIENT_DIST = path.join(projectRoot, 'client', 'dist');
 
