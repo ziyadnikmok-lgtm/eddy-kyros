@@ -1,4 +1,5 @@
-import { lazy, Suspense, useState, useEffect } from 'react';
+import { lazy, Suspense, useState, useEffect, useCallback } from 'react';
+const LoginPage = lazy(() => import('./pages/LoginPage'));
 import { useApp } from './context/AppContext';
 import { Toasts, Spinner } from './components/UI';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
@@ -37,6 +38,7 @@ const PromptBuilderPage = lazy(() => import('./pages/PromptBuilderPage'));
 const ApiKeysPage = lazy(() => import('./pages/ApiKeysPage'));
 const VideoPage = lazy(() => import('./pages/VideoPage'));
 const VideoGalleryPage = lazy(() => import('./pages/VideoGalleryPage'));
+const ReformatPage = lazy(() => import('./pages/ReformatPage'));
 
 const NAV_ICONS = {
   generate: IconBadgeSparkle,
@@ -180,7 +182,7 @@ function StatusDot({ active, label, sublabel, offLabel, onClick }) {
   );
 }
 
-export default function App() {
+function MainApp() {
   const { activeKey, setActiveKey, page, navigateTo } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [apifyConnected, setApifyConnected] = useState(false);
@@ -267,7 +269,7 @@ export default function App() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6 ambient-glow">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 lg:p-6 ambient-glow">
           <div className="relative mx-auto max-w-6xl">
             <PageErrorBoundary pageKey={page}>
               <Suspense fallback={<PageFallback />}>
@@ -282,4 +284,34 @@ export default function App() {
     </div>
     </TooltipPrimitive.Provider>
   );
+}
+
+export default function App() {
+  const [authChecked, setAuthChecked] = useState(false);
+  const [authenticated, setAuthenticated] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then(r => r.json())
+      .then(d => { setAuthenticated(!!d.authenticated); setAuthChecked(true); })
+      .catch(() => { setAuthenticated(false); setAuthChecked(true); });
+  }, []);
+
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
+        <Spinner />
+      </div>
+    );
+  }
+
+  if (!authenticated) {
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-[#0a0a0f]" />}>
+        <LoginPage onLogin={() => setAuthenticated(true)} />
+      </Suspense>
+    );
+  }
+
+  return <MainApp />;
 }

@@ -42,6 +42,7 @@ const generateRouter = require('./routes/generate');
 const charactersRouter = require('./routes/characters');
 const batchRouter = require('./routes/batch');
 const tweakRouter = require('./routes/tweak');
+const reformatRouter = require('./routes/reformat');
 const imagesRouter = require('./routes/images');
 const nichesRouter = require('./routes/niches');
 const brandVoiceRouter = require('./routes/brandVoice');
@@ -63,6 +64,9 @@ const styleLibraryRouter = require('./routes/styleLibrary');
 const profileAnalyzerRouter = require('./routes/profileAnalyzer');
 const captionTemplatesRouter = require('./routes/captionTemplates');
 const videoRouter = require('./routes/video');
+const authRouter = require('./routes/auth');
+const cookieParser = require('cookie-parser');
+const { authMiddleware } = require('./auth');
 const imageStore = require('./services/imageStore');
 const batchGenerator = require('./services/batchGenerator');
 const log = require('./utils/logger');
@@ -94,7 +98,10 @@ app.use(
 );
 
 app.use(express.json({ limit: cfg.JSON_BODY_LIMIT }));
+app.use(cookieParser());
 app.use(compressionMiddleware(cfg.COMPRESSION_MIN_BYTES));
+app.use('/api/auth', authRouter);
+app.use(authMiddleware);
 
 app.use((req, res, next) => {
   if (req.path === '/api/health') return next();
@@ -135,6 +142,7 @@ app.use('/api/keys', generateLimiter, keysRouter);
 app.use('/api/characters', generateLimiter, charactersRouter);
 app.use('/api/batch', batchLimiter, batchRouter);
 app.use('/api/tweak', generateLimiter, tweakRouter);
+app.use('/api/reformat', generateLimiter, reformatRouter);
 app.use('/api/images', imagesRouter);
 app.use('/api/niches', nichesRouter);
 app.use('/api/brand-voice', brandVoiceRouter);
@@ -160,8 +168,10 @@ app.use('/api/video', generateLimiter, videoRouter);
 
 const { CLIENT_DIST } = require('./paths');
 if (fs.existsSync(CLIENT_DIST)) {
-  app.use(express.static(CLIENT_DIST));
+  app.use(express.static(CLIENT_DIST, { maxAge: '7d', etag: true }));
   app.get('*splat', (_req, res) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.set('Pragma', 'no-cache');
     res.sendFile(path.join(CLIENT_DIST, 'index.html'));
   });
 }

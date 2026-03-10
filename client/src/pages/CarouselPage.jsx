@@ -147,7 +147,7 @@ export default function CarouselPage() {
     const loadGallery = async () => {
       setLoadingGallery(true);
       try {
-        const res = await galleryApi.list();
+        const res = await galleryApi.list({ limit: 30 });
         if (!cancelled) setGalleryImages(res.images || res || []);
       } catch {
         if (!cancelled) setGalleryImages([]);
@@ -347,7 +347,7 @@ export default function CarouselPage() {
   const { elapsedSec: pollElapsedSec, stepIndex: pollStepIndex } = useStepTimer(pollLoading, POLL_THRESHOLDS);
 
   return (
-    <div className="space-y-6 animate-in">
+    <div className="space-y-6 animate-in overflow-x-hidden">
       <div className="flex rounded-lg bg-zinc-800/60 p-0.5 w-fit">
         {CAROUSEL_MODES.map(m => (
           <button key={m.key} onClick={() => setCarouselMode(m.key)}
@@ -445,8 +445,8 @@ export default function CarouselPage() {
             {loadingGallery ? (
               <div className="py-8 text-center text-sm text-zinc-500">Loading gallery images...</div>
             ) : (
-              <div className="grid [grid-template-columns:repeat(auto-fill,minmax(120px,1fr))] gap-3 max-h-[300px] overflow-y-auto pr-1">
-                <label className="group relative flex aspect-square cursor-pointer items-center justify-center rounded-xl border border-dashed border-zinc-700/80 bg-zinc-900/70 text-zinc-400 transition hover:border-blue-500/70 hover:bg-zinc-800/80 hover:text-zinc-200">
+              <div className="grid grid-cols-2 sm:grid-cols-3 auto-rows-[160px] gap-2 max-h-[55vh] overflow-y-auto pr-1">
+                <label className="group relative flex w-full h-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-zinc-700/80 bg-zinc-900/70 text-zinc-400 transition hover:border-blue-500/70 hover:bg-zinc-800/80 hover:text-zinc-200">
                   <input
                     type="file"
                     accept="image/png,image/jpeg,image/webp"
@@ -460,13 +460,13 @@ export default function CarouselPage() {
                 </label>
                 {selectableImages.map((img) => {
                   const isSelected = selectedImageId === img.id;
-                  const src = img.src || `/api/gallery/${img.id}/image`;
+                  const src = img.src || `/api/gallery/${img.id}/thumb`;
                   return (
                     <button
                       key={img.id}
                       type="button"
                       onClick={() => setSelectedImageId(img.id)}
-                      className={`group relative aspect-square overflow-hidden rounded-xl border bg-zinc-900 transition duration-200 hover:scale-[1.02] hover:shadow-[0_0_24px_rgba(59,130,246,0.2)] ${isSelected ? 'border-2 border-blue-500 shadow-[0_0_18px_rgba(59,130,246,0.35)]' : 'border-zinc-800'}`}
+                      className={`group relative w-full h-full overflow-hidden rounded-xl border bg-zinc-950 transition duration-200 hover:scale-[1.02] hover:shadow-[0_0_24px_rgba(59,130,246,0.2)] ${isSelected ? 'border-2 border-blue-500 shadow-[0_0_18px_rgba(59,130,246,0.35)]' : 'border-zinc-800'}`}
                     >
                       <img src={src} alt="" className="h-full w-full object-cover" loading="lazy" />
                     </button>
@@ -480,7 +480,7 @@ export default function CarouselPage() {
                 <img
                   src={selectedImageSrc}
                   alt="Selected base"
-                  className="w-full aspect-video object-cover"
+                  className="w-full aspect-[4/5] sm:aspect-video object-cover"
                   loading="lazy"
                   style={{ cursor: 'pointer' }}
                   onClick={() => openLightbox([selectedImageSrc], 0)}

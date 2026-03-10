@@ -122,7 +122,7 @@ export default function StorytellerPage() {
     setSelectedImages((prev) => {
       if (prev.length >= 10) return prev;
       if (prev.some((item) => item.id && item.id === image.id)) return prev;
-      return [...prev, { id: image.id, preview: `/api/gallery/${image.id}/image` }];
+      return [...prev, { id: image.id, preview: `/api/gallery/${image.id}/thumb` }];
     });
   };
 
@@ -249,9 +249,9 @@ export default function StorytellerPage() {
                     type="button"
                     onClick={() => addGalleryImage(img)}
                     disabled={selectedImages.length >= 10}
-                    className="aspect-square overflow-hidden rounded-lg border border-zinc-700/60 bg-zinc-900 hover:border-zinc-500 transition disabled:opacity-50"
+                    className="aspect-[4/5] overflow-hidden rounded-lg border border-zinc-700/60 bg-zinc-900 hover:border-zinc-500 transition disabled:opacity-50"
                   >
-                    <img src={`/api/gallery/${img.id}/image`} alt="" className="h-full w-full object-cover" loading="lazy" />
+                    <img src={`/api/gallery/${img.id}/thumb`} alt="" className="h-full w-full object-contain bg-zinc-950" loading="lazy" />
                   </button>
                 ))}
               </div>
@@ -260,9 +260,9 @@ export default function StorytellerPage() {
             {selectedImages.length > 0 && (
               <div className="grid grid-cols-5 gap-2">
                 {selectedImages.map((image, index) => (
-                  <div key={`${image.id || 'file'}-${index}`} className="relative aspect-square overflow-hidden rounded-lg border border-zinc-700/80">
+                  <div key={`${image.id || 'file'}-${index}`} className="relative aspect-[4/5] overflow-hidden rounded-lg border border-zinc-700/80">
                     <img
-                      src={image.id ? `/api/gallery/${image.id}/image` : image.preview}
+                      src={image.id ? `/api/gallery/${image.id}/thumb` : image.preview}
                       alt=""
                       className="h-full w-full object-cover"
                     />

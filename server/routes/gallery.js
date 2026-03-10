@@ -246,3 +246,20 @@ router.post('/:id/open-folder', (req, res, next) => {
 });
 
 module.exports = router;
+
+// Thumbnail endpoint — serves a small preview for mobile gallery pickers
+router.get('/:id/thumb', async (req, res, next) => {
+  try {
+    const { filePath } = galleryManager.getFilePath(req.params.id);
+    const sharp = require('sharp');
+    const buf = await sharp(filePath)
+      .resize({ width: 300, withoutEnlargement: true })
+      .jpeg({ quality: 60 })
+      .toBuffer();
+    res.set('Content-Type', 'image/jpeg');
+    res.set('Cache-Control', 'private, max-age=86400');
+    res.send(buf);
+  } catch (err) {
+    next(err);
+  }
+});

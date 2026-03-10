@@ -1,15 +1,258 @@
 import { useState, useEffect, useReducer, useRef } from 'react';
-import { batch as batchApi, characters as charApi, gallery as galleryApi, templates as templatesApi } from '../services/api';
+import { batch as batchApi, characters as charApi, gallery as galleryApi, templates as templatesApi, reformat as reformatApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
 import { useBatchProgress } from '../hooks/useBatchProgress';
-import { Card, Btn, Textarea, Input, Slider, Toggle, Spinner, ImageCard, ProgressBar, Badge, Section, Hint, ConfirmDialog } from '../components/UI';
+import { Card, Btn, Textarea, Input, Slider, Toggle, Spinner, ImageCard, ProgressBar, Badge, Section, Hint, ConfirmDialog, StepProgress } from '../components/UI';
+import { useStepTimer } from '../hooks/useStepTimer';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 import {
   RESOLUTION_TIERS, ASPECT_RATIOS_COMPACT as ASPECT_RATIOS,
   CAMERA_PROFILES, POSE_MODES, EXPRESSION_MODES, SCENE_MODES,
   IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL,
 } from '../config/photoModes';
+
+function ReformatModePanel() {
+  const [images, setImages] = useState([]);
+  const [loadingGallery, setLoadingGallery] = useState(true);
+  const [selectedId, setSelectedId] = useState(null);
+  const [uploadedImg, setUploadedImg] = useState(null); // { src, base64, mimeType }
+  const [targetRatio, setTargetRatio] = useState('9:16');
+  const [running, setRunning] = useState(false);
+  const [done, setDone] = useState(false);
+  const [err, setErr] = useState('');
+  const [resultImg, setResultImg] = useState(null);
+
+  const REFORMAT_STEPS = ['Reading source image', 'Sending to Gemini for outpainting', 'Processing reformatted image'];
+  const thresholds = useRef([2, 6]).current;
+  const { elapsedSec, stepIndex } = useStepTimer(running, thresholds);
+
+  useEffect(() => {
+    galleryApi.list({ limit: 50 })
+      .then(r => setImages(r.images || r || []))
+      .catch(() => setImages([]))
+      .finally(() => setLoadingGallery(false));
+  }, []);
+
+  function handleUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result;
+      const base64 = dataUrl.split(',')[1];
+      setUploadedImg({ src: dataUrl, base64, mimeType: file.type || 'image/png' });
+      setSelectedId(null);
+      setDone(false); setResultImg(null); setErr('');
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  }
+
+  function selectGallery(id) {
+    setSelectedId(id);
+    setUploadedImg(null);
+    setDone(false); setResultImg(null); setErr('');
+  }
+
+  const hasSource = selectedId || uploadedImg;
+
+  async function handleConvert() {
+    if (!hasSource) return;
+    setRunning(true); setErr(''); setDone(false); setResultImg(null);
+    try {
+      const body = { targetRatio };
+      if (uploadedImg) {
+        body.imageBase64 = uploadedImg.base64;
+        body.imageMimeType = uploadedImg.mimeType;
+      } else {
+        body.imageId = selectedId;
+      }
+      const data = await reformatApi.convert(body);
+      setResultImg(data.image);
+      setDone(true);
+    } catch (e) {
+      setErr(e?.message || 'Failed');
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Source image */}
+      <div>
+        <span className="text-xs font-medium text-zinc-400 block mb-2">Select Source Image</span>
+        {loadingGallery ? (
+          <div className="flex justify-center py-4"><Spinner /></div>
+        ) : (
+          <div className="grid grid-cols-2 auto-rows-[100px] gap-2 max-h-[45vh] overflow-y-auto rounded-xl border border-zinc-800 bg-[#111] p-2">
+            {/* Upload button */}
+            <label className="w-full h-full flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-700 bg-zinc-900/70 text-zinc-400 cursor-pointer hover:border-blue-500/70 hover:text-zinc-200 transition">
+              <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleUpload} />
+              <span className="text-xl leading-none">+</span>
+              <span className="text-[10px] mt-1">Upload</span>
+            </label>
+            {/* Uploaded image preview */}
+            {uploadedImg && (
+              <button
+                onClick={() => { setSelectedId(null); setUploadedImg(uploadedImg); }}
+                className="w-full h-full overflow-hidden rounded-lg border-2 border-blue-500 ring-1 ring-blue-500/40"
+              >
+                <img src={uploadedImg.src} alt="uploaded" className="w-full h-full object-cover" />
+              </button>
+            )}
+            {/* Gallery images */}
+            {images.map(img => (
+              <button
+                key={img.id}
+                onClick={() => selectGallery(img.id)}
+                className={`w-full h-full overflow-hidden rounded-lg border transition duration-150 ${selectedId === img.id && !uploadedImg ? 'border-blue-500 ring-1 ring-blue-500/40' : 'border-zinc-800 hover:border-zinc-600'}`}
+              >
+                <img src={`/api/gallery/${img.id}/thumb`} alt="" className="w-full h-full object-cover" loading="lazy" />
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Target ratio */}
+      <div>
+        <span className="text-xs font-medium text-zinc-400 block mb-2">Convert To</span>
+        <div className="flex flex-wrap gap-1.5">
+          {REFORMAT_RATIOS.map(({ value, label, desc }) => (
+            <button
+              key={value}
+              onClick={() => { setTargetRatio(value); setDone(false); setResultImg(null); }}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition cursor-pointer ${targetRatio === value ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200'}`}
+            >
+              {label} <span className="opacity-60">{desc}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <Btn onClick={handleConvert} disabled={!hasSource || running} className="w-full">
+        {running ? `Converting… ${elapsedSec}s` : `Convert to ${targetRatio}`}
+      </Btn>
+
+      {running && (
+        <StepProgress steps={REFORMAT_STEPS} currentIndex={stepIndex} elapsedSec={elapsedSec} className="w-full" />
+      )}
+
+      {err && <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2 text-xs text-red-400">{err}</div>}
+      {done && <div className="text-xs text-green-400">✓ Saved to gallery</div>}
+
+      {resultImg && (
+        <div className="rounded-xl overflow-hidden border border-zinc-700/40">
+          <img
+            src={`data:${resultImg.mimeType || 'image/png'};base64,${resultImg.base64Data}`}
+            alt="reformatted"
+            className="w-full object-contain max-h-[60vh]"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+const REFORMAT_RATIOS = [
+  { value: '9:16', label: '9:16', desc: 'Story/Reel' },
+  { value: '4:5', label: '4:5', desc: 'Feed Post' },
+  { value: '1:1', label: '1:1', desc: 'Square' },
+  { value: '16:9', label: '16:9', desc: 'Landscape' },
+  { value: '3:4', label: '3:4', desc: 'Portrait' },
+];
+
+function BatchResultsWithReformat({ results, imageUrls, onLightbox }) {
+  const [selectedIdx, setSelectedIdx] = useState(null);
+  const [targetRatio, setTargetRatio] = useState('9:16');
+  const [running, setRunning] = useState(false);
+  const [done, setDone] = useState(false);
+  const [err, setErr] = useState('');
+  const [resultImg, setResultImg] = useState(null);
+
+  const selected = selectedIdx !== null ? results[selectedIdx] : null;
+
+  async function handleReformat() {
+    if (!selected?.imageId) return;
+    setRunning(true); setErr(''); setDone(false); setResultImg(null);
+    try {
+      const data = await reformatApi.convert({ imageId: selected.imageId, targetRatio });
+      setResultImg(data.image);
+      setDone(true);
+    } catch (e) {
+      setErr(e?.message || 'Failed');
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Results grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+        {results.map((r, i) => (
+          <div
+            key={r.index}
+            onClick={() => { setSelectedIdx(i === selectedIdx ? null : i); setDone(false); setResultImg(null); setErr(''); }}
+            className={`cursor-pointer rounded-xl transition-all duration-150 ${selectedIdx === i ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-zinc-900' : 'hover:opacity-90'}`}
+          >
+            <ImageCard
+              base64={r.image?.base64Data}
+              mimeType={r.image?.mimeType}
+              meta={{ seed: r.seed, identityConfidence: r.image?.validation?.identity_match_score }}
+              className="animate-in"
+              onSelect={(e) => { e?.stopPropagation?.(); onLightbox(imageUrls, i); }}
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* Reformat panel — shows when an image is selected */}
+      {selected && (
+        <div className="rounded-xl border border-zinc-800/60 bg-zinc-900/60 p-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-zinc-300">Reformat Image {selected.index + 1}</span>
+            <button onClick={() => { setSelectedIdx(null); setDone(false); setResultImg(null); }} className="text-zinc-600 hover:text-zinc-400 text-xs">✕</button>
+          </div>
+
+          {/* Ratio picker */}
+          <div className="flex flex-wrap gap-1.5">
+            {REFORMAT_RATIOS.map(({ value, label, desc }) => (
+              <button
+                key={value}
+                onClick={() => { setTargetRatio(value); setDone(false); setResultImg(null); }}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition cursor-pointer ${targetRatio === value ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200'}`}
+              >
+                {label} <span className="opacity-60">{desc}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Btn onClick={handleReformat} disabled={running || !selected.imageId} className="!py-1.5 !px-4 !text-xs">
+              {running ? 'Converting…' : `Convert to ${targetRatio}`}
+            </Btn>
+            {done && <span className="text-xs text-green-400">✓ Saved to gallery</span>}
+            {err && <span className="text-xs text-red-400">{err}</span>}
+          </div>
+
+          {/* Result preview */}
+          {resultImg && (
+            <div className="rounded-xl overflow-hidden border border-zinc-700/40">
+              <img
+                src={`data:${resultImg.mimeType || 'image/png'};base64,${resultImg.base64Data}`}
+                alt="reformatted"
+                className="w-full object-contain max-h-[50vh]"
+              />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const INITIAL_STATE = {
   mode: 'variation',
@@ -205,7 +448,7 @@ export default function BatchPage() {
       if (mode !== 'edit') return;
       update({ loadingEditGallery: true });
       try {
-        const res = await galleryApi.list();
+        const res = await galleryApi.list({ limit: 30 });
         if (!cancelled) update({ editGalleryImages: res.images || res || [] });
       } catch {
         if (!cancelled) update({ editGalleryImages: [] });
@@ -379,50 +622,52 @@ export default function BatchPage() {
     <div className="space-y-6 animate-in">
       <Card className="space-y-5">
         <div>
-          <span className="text-sm text-zinc-400 font-medium mb-2 flex items-center gap-1.5">Mode <Hint text="Variation: same prompt, multiple outputs. Multi-Prompt: different prompt per image. Override: same scene, different references. Edit: modify an existing image." /></span>
+          <span className="text-sm text-zinc-400 font-medium mb-2 flex items-center gap-1.5">Mode <Hint text="Variation: same prompt, multiple outputs. Multi-Prompt: different prompt per image. Override: same scene, different references. Edit: modify an existing image. Reformat: convert image to a different aspect ratio." /></span>
           <div className="flex flex-wrap gap-2">
-            {[['variation', 'Variation'], ['multi', 'Multi-Prompt'], ['override', 'Override Iter.'], ['edit', 'Edit Image'], ['content-mix', 'Content Mix']].map(([m, label]) => (
+            {[['variation', 'Variation'], ['multi', 'Multi-Prompt'], ['override', 'Override'], ['edit', 'Edit Image'], ['content-mix', 'Content Mix'], ['reformat', 'Reformat']].map(([m, label]) => (
               <button key={m} onClick={() => update({ mode: m })}
-                className={`rounded-lg px-4 py-2 text-sm font-medium transition cursor-pointer ${mode === m ? 'bg-blue-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}`}>
+                className={`rounded-lg px-3 py-2 text-sm font-medium transition cursor-pointer ${mode === m ? 'bg-blue-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}`}>
                 {label}
               </button>
             ))}
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <span className="text-xs text-zinc-400 font-medium block mb-2">Resolution</span>
-            <div className="flex flex-wrap gap-2">
-              {RESOLUTION_TIERS.map((tier) => (
-                <button
-                  key={tier}
-                  onClick={() => update({ resolutionTier: tier })}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition cursor-pointer ${resolutionTier === tier ? 'bg-blue-500 text-white' : 'bg-zinc-700 text-zinc-200 hover:bg-zinc-600'}`}
-                >
-                  {tier}
-                </button>
-              ))}
+        {mode !== 'reformat' && (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <span className="text-xs text-zinc-400 font-medium block mb-2">Resolution</span>
+              <div className="flex flex-wrap gap-2">
+                {RESOLUTION_TIERS.map((tier) => (
+                  <button
+                    key={tier}
+                    onClick={() => update({ resolutionTier: tier })}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-medium transition cursor-pointer ${resolutionTier === tier ? 'bg-blue-500 text-white' : 'bg-zinc-700 text-zinc-200 hover:bg-zinc-600'}`}
+                  >
+                    {tier}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <span className="text-xs text-zinc-400 font-medium block mb-2">Aspect Ratio</span>
+              <div className="flex flex-wrap gap-1.5">
+                {ASPECT_RATIOS.map((ar) => (
+                  <button
+                    key={ar}
+                    onClick={() => update({ aspectRatio: ar })}
+                    className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition cursor-pointer ${aspectRatio === ar ? 'bg-blue-600 text-white' : 'bg-zinc-700/60 text-zinc-400 hover:bg-zinc-600 hover:text-zinc-200'}`}
+                  >
+                    {ar}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
+        )}
+        {mode !== 'reformat' && (
           <div>
-            <span className="text-xs text-zinc-400 font-medium block mb-2">Aspect Ratio</span>
-            <div className="flex flex-wrap gap-1.5">
-              {ASPECT_RATIOS.map((ar) => (
-                <button
-                  key={ar}
-                  onClick={() => update({ aspectRatio: ar })}
-                  className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition cursor-pointer ${aspectRatio === ar ? 'bg-blue-600 text-white' : 'bg-zinc-700/60 text-zinc-400 hover:bg-zinc-600 hover:text-zinc-200'}`}
-                >
-                  {ar}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div>
-          <span className="text-xs text-zinc-400 font-medium block mb-1.5">Image Model</span>
+            <span className="text-xs text-zinc-400 font-medium block mb-1.5">Image Model</span>
           <select
             value={imageModel}
             onChange={(e) => update({ imageModel: e.target.value })}
@@ -433,8 +678,9 @@ export default function BatchPage() {
             ))}
           </select>
         </div>
-
-        <Section title="Camera, Pose & Scene" hint="Control how images are shot — camera angle, body pose, facial expression, and environment.">
+        )}
+        {mode !== 'reformat' && (
+          <Section title="Camera, Pose & Scene" hint="Control how images are shot — camera angle, body pose, facial expression, and environment.">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <span className="text-xs text-zinc-400 font-medium mb-1.5 flex items-center gap-1.5">Scene Memory <Hint text="Saved lighting & environment settings applied for consistent scenes across generations." /></span>
@@ -501,6 +747,7 @@ export default function BatchPage() {
             </div>
           </div>
         </Section>
+        )}
 
         {(mode === 'variation' || mode === 'override') && (
           <div>
@@ -584,8 +831,8 @@ export default function BatchPage() {
               {loadingEditGallery ? (
                 <div className="py-8 text-center text-sm text-zinc-500">Loading gallery images...</div>
               ) : (
-                <div className="grid [grid-template-columns:repeat(auto-fill,minmax(120px,1fr))] gap-3 max-h-[300px] overflow-y-auto pr-1 rounded-xl border border-zinc-800 bg-[#111] p-3">
-                  <label className="group relative flex aspect-square cursor-pointer items-center justify-center rounded-xl border border-dashed border-zinc-700/80 bg-zinc-900/70 text-zinc-400 transition hover:border-blue-500/70 hover:bg-zinc-800/80 hover:text-zinc-200">
+                <div className="grid grid-cols-2 sm:grid-cols-3 auto-rows-[160px] gap-2 max-h-[55vh] overflow-y-auto pr-1 rounded-xl border border-zinc-800 bg-[#111] p-3">
+                  <label className="group relative flex w-full h-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-zinc-700/80 bg-zinc-900/70 text-zinc-400 transition hover:border-blue-500/70 hover:bg-zinc-800/80 hover:text-zinc-200">
                     <input
                       type="file"
                       accept="image/png,image/jpeg,image/webp"
@@ -599,13 +846,13 @@ export default function BatchPage() {
                   </label>
                   {[...editUploadImages, ...editGalleryImages].map((img) => {
                     const isSelected = selectedImageId === img.id;
-                    const src = img.src || `/api/gallery/${img.id}/image`;
+                    const src = img.src || `/api/gallery/${img.id}/thumb`;
                     return (
                       <button
                         key={img.id}
                         type="button"
                         onClick={() => update({ selectedImageId: img.id })}
-                        className={`group relative aspect-square overflow-hidden rounded-xl border bg-zinc-900 transition duration-200 hover:scale-[1.02] hover:shadow-[0_0_24px_rgba(59,130,246,0.2)] ${isSelected ? 'border-2 border-blue-500 shadow-[0_0_18px_rgba(59,130,246,0.35)]' : 'border-zinc-800'}`}
+                        className={`group relative w-full h-full overflow-hidden rounded-xl border bg-zinc-950 transition duration-200 hover:scale-[1.02] hover:shadow-[0_0_24px_rgba(59,130,246,0.2)] ${isSelected ? 'border-2 border-blue-500 shadow-[0_0_18px_rgba(59,130,246,0.35)]' : 'border-zinc-800'}`}
                       >
                         <img src={src} alt="" className="h-full w-full object-cover" loading="lazy" />
                       </button>
@@ -672,6 +919,10 @@ export default function BatchPage() {
             <Textarea label="Modification Prompt" placeholder="What to change: make it nighttime, add rain..." value={editPrompt} onChange={(e) => update({ editPrompt: e.target.value })} />
             <Input label="Variations" type="number" min={1} max={10} value={count} onChange={(e) => update({ count: Math.min(10, Math.max(1, +e.target.value)) })} />
           </>
+        )}
+
+        {mode === 'reformat' && (
+          <ReformatModePanel />
         )}
 
         {mode === 'content-mix' && (
@@ -761,12 +1012,14 @@ export default function BatchPage() {
           </div>
         </Section>
 
-        <div className="flex gap-3">
-          <Btn onClick={startBatch} disabled={loading || isRunning} className="flex-1">
-            {loading ? <Spinner size={16} /> : null} {isRunning ? `Running... ${elapsedSec}s` : 'Start Batch'}
-          </Btn>
-          {isRunning && <Btn variant="danger" onClick={() => setShowCancelConfirm(true)} disabled={loading}>Cancel</Btn>}
-        </div>
+        {mode !== 'reformat' && (
+          <div className="flex gap-3">
+            <Btn onClick={startBatch} disabled={loading || isRunning} className="flex-1">
+              {loading ? <Spinner size={16} /> : null} {isRunning ? `Running... ${elapsedSec}s` : 'Start Batch'}
+            </Btn>
+            {isRunning && <Btn variant="danger" onClick={() => setShowCancelConfirm(true)} disabled={loading}>Cancel</Btn>}
+          </div>
+        )}
       </Card>
 
       {job && (
@@ -782,13 +1035,11 @@ export default function BatchPage() {
           <ProgressBar value={completed} max={job.total} />
 
           {successfulResults.length > 0 && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-              {successfulResults.map((r, i) => (
-                <ImageCard key={r.index} base64={r.image?.base64Data} mimeType={r.image?.mimeType}
-                  meta={{ seed: r.seed, identityConfidence: r.image?.validation?.identity_match_score }} className="animate-in"
-                  onSelect={() => openLightbox(jobImageUrls, i)} />
-              ))}
-            </div>
+            <BatchResultsWithReformat
+              results={successfulResults}
+              imageUrls={jobImageUrls}
+              onLightbox={openLightbox}
+            />
           )}
 
           {job.results?.some((r) => r && !r.success && r.error !== 'Job cancelled') && (

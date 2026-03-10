@@ -10,7 +10,7 @@ const LONG_RUNNING_PATHS = [
   '/carousel/execute', '/carousel/follow-up',
   '/scene/recreate', '/story/generate',
   '/auto/plan', '/auto/execute',
-  '/video/generate',
+  '/video/generate', '/reformat',
 ];
 
 const EXTRA_LONG_PATHS = ['/profile-clone'];
@@ -356,4 +356,8 @@ export const profileAnalyzer = {
     return new EventSource(`${BASE}/profile-analyzer/analyze?${qs}`);
   },
   save: (body) => request('/profile-analyzer/save', { method: 'POST', body }),
+};
+
+export const reformat = {
+  convert: (body) => request('/reformat', { method: 'POST', body }),
 };
