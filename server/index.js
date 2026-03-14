@@ -65,6 +65,8 @@ const styleLibraryRouter = require('./routes/styleLibrary');
 const profileAnalyzerRouter = require('./routes/profileAnalyzer');
 const captionTemplatesRouter = require('./routes/captionTemplates');
 const videoRouter = require('./routes/video');
+const nsfwGenerateRouter = require('./routes/nsfwGenerate');
+const loraPresetsRouter = require('./routes/loraPresets');
 const authRouter = require('./routes/auth');
 const cookieParser = require('cookie-parser');
 const { authMiddleware } = require('./auth');
@@ -169,6 +171,8 @@ app.use('/api/style-library', styleLibraryRouter);
 app.use('/api/profile-analyzer', profileAnalyzerRouter);
 app.use('/api/caption-templates', captionTemplatesRouter);
 app.use('/api/video', generateLimiter, videoRouter);
+app.use('/api/nsfw-generate', generateLimiter, nsfwGenerateRouter);
+app.use('/api/lora-presets', loraPresetsRouter);
 
 const { CLIENT_DIST } = require('./paths');
 if (fs.existsSync(CLIENT_DIST)) {

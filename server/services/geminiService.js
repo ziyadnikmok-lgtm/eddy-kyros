@@ -1,4 +1,4 @@
-const { GoogleGenAI, Modality, ThinkingLevel } = require('@google/genai');
+const { GoogleGenAI, Modality, ThinkingLevel, HarmCategory, HarmBlockThreshold } = require('@google/genai');
 const crypto = require('node:crypto');
 const sharp = require('sharp');
 const { AppError } = require('../middleware/errorHandler');
@@ -10,6 +10,14 @@ const IMAGE_MODEL_ALTERNATES = ['gemini-3.1-flash-image-preview'];
 const ALLOWED_IMAGE_MODELS = [IMAGE_MODEL, ...IMAGE_MODEL_ALTERNATES];
 const MINIMAL_THINKING_IMAGE_MODELS = new Set(['gemini-3.1-flash-image-preview']);
 const TEXT_MODEL = 'gemini-3-flash-preview';
+
+const SAFETY_SETTINGS = [
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.OFF },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.OFF },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.OFF },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.OFF },
+  { category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: HarmBlockThreshold.OFF },
+];
 
 const GENERATE_TIMEOUT_MS = cfg.GEMINI_GENERATE_TIMEOUT_MS;
 const TEXT_TIMEOUT_MS = cfg.GEMINI_TEXT_TIMEOUT_MS;
@@ -80,6 +88,8 @@ class GeminiService {
     const selectedImageModel = this.resolveImageModel(options.model);
     const config = {
       responseModalities: [Modality.TEXT, Modality.IMAGE],
+      safetySettings: SAFETY_SETTINGS,
+      personGeneration: 'ALLOW_ALL',
       imageConfig: {
         aspectRatio: options.aspectRatio || "1:1",
         imageSize: options.imageSize || "2K",
@@ -330,7 +340,7 @@ class GeminiService {
             genAI.models.generateContent({
               model: TEXT_MODEL,
               contents: [{ role: 'user', parts: [{ text: prompt.trim() }] }],
-              config: { responseModalities: [Modality.TEXT] },
+              config: { responseModalities: [Modality.TEXT], safetySettings: SAFETY_SETTINGS },
             }),
             TEXT_TIMEOUT_MS,
             'Gemini text generation'
@@ -385,7 +395,6 @@ class GeminiService {
   "pose": "Full body position — posture, limb placement, hand positions, weight distribution. Directive tone. Example: 'Recline on sofa, right hand holding glass, left arm behind body, head tilted back, legs extended.'",
   "expression": "Gaze, mouth, brow, emotion. Directive tone. Example: 'Eyes closed, soft smile, chin tilted up, serene.'",
   "outfit": "Each garment: type, fabric, color, fit, neckline, length. Be accurate — do NOT make clothing more conservative than shown.",
-  "hair": "Color, length, texture, styling, how it falls.",
   "format": "Always describe as iPhone photo. Note the vibe: casual selfie, candid, handheld snapshot, etc. Mention any visible grain, warm/cool tones, or filters. Do NOT say professional, studio, high-ISO, or DSLR."
 }`;
 

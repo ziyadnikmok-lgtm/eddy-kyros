@@ -7,7 +7,7 @@ const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 const SCENE_FIELDS = [
   'environment', 'lighting', 'camera', 'composition',
-  'mood', 'pose', 'expression', 'outfit', 'hair', 'format',
+  'mood', 'pose', 'expression', 'outfit', 'format',
 ];
 
 class SceneAnalyzer {
@@ -58,7 +58,6 @@ class SceneAnalyzer {
       `  - Composition: ${sceneData.composition || 'as described'}`,
       `  - Mood: ${sceneData.mood || 'as described'}`,
       sceneData.outfit ? `  - Outfit (EXACT): ${sceneData.outfit}` : null,
-      sceneData.hair ? `  - Hair: ${sceneData.hair}` : null,
       sceneData.pose ? `  - POSE LOCK: ${sceneData.pose}. MUST match this exact body position — do NOT default to standing/sitting.` : null,
       sceneData.expression ? `  - EXPRESSION: ${sceneData.expression}` : null,
       'Place the character naturally. Do not alter identity.',
@@ -103,7 +102,6 @@ class SceneAnalyzer {
     if (sceneData.pose) parts.push(`Pose: ${sceneData.pose}.`);
     if (sceneData.expression) parts.push(`Expression: ${sceneData.expression}.`);
     if (sceneData.outfit) parts.push(`Outfit: ${sceneData.outfit}.`);
-    if (sceneData.hair) parts.push(`Hair: ${sceneData.hair}.`);
     if (sceneData.format) parts.push(`Format: ${sceneData.format}.`);
 
     return parts.join(' ') || 'A detailed scene.';

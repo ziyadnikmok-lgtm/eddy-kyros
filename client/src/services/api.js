@@ -11,6 +11,7 @@ const LONG_RUNNING_PATHS = [
   '/scene/recreate', '/story/generate',
   '/auto/plan', '/auto/execute',
   '/video/generate', '/reformat',
+  '/nsfw-generate',
 ];
 
 const EXTRA_LONG_PATHS = ['/profile-clone'];
@@ -165,6 +166,18 @@ export const characters = {
 
 export const generate = {
   image: (body) => request('/generate', { method: 'POST', body }),
+};
+
+export const nsfwGenerate = {
+  image: (body) => request('/nsfw-generate', { method: 'POST', body }),
+  vary: (body) => request('/nsfw-generate/vary', { method: 'POST', body }),
+};
+
+export const loraPresets = {
+  list: () => request('/lora-presets'),
+  create: (body) => request('/lora-presets', { method: 'POST', body }),
+  update: (id, body) => request(`/lora-presets/${id}`, { method: 'PATCH', body }),
+  remove: (id) => request(`/lora-presets/${id}`, { method: 'DELETE' }),
 };
 
 export const batch = {

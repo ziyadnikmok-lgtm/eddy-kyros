@@ -12,6 +12,23 @@ const BASE_URL = 'https://api.wavespeed.ai/api/v3';
 const REQUEST_TIMEOUT_MS = 30_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
 const DOWNLOAD_TIMEOUT_MS = 120_000;
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 3_000;
+
+/** Retry a fetch call on connection errors (timeout, ECONNREFUSED, etc.) */
+async function _fetchWithRetry(url, options, retries = MAX_RETRIES) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fetch(url, options);
+    } catch (err) {
+      const isLast = attempt === retries;
+      if (isLast) throw err;
+      const cause = err?.cause?.code || err?.cause?.message || err.message || '';
+      log.warn('wavespeed_retry', { attempt: attempt + 1, cause: String(cause).slice(0, 200) });
+      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)));
+    }
+  }
+}
 
 const MODEL_ENDPOINTS = {
   'kling-v2.5-turbo-std': '/kwaivgi/kling-v2.5-turbo-std/image-to-video',
@@ -126,6 +143,249 @@ async function getTaskStatus(taskId) {
   };
 }
 
+// ── Image generation (z-image/turbo-lora) ─────────────────────
+const IMAGE_MODEL_ID = 'wavespeed-ai/z-image/turbo-lora';
+const IMAGE_POLL_INTERVAL_MS = 800;
+const IMAGE_MAX_POLL_MS = 60_000;
+
+const IMAGE_SIZE_MAP = {
+  '1:1':  '1024*1024',
+  '4:5':  '896*1120',
+  '5:4':  '1120*896',
+  '16:9': '1344*768',
+  '9:16': '768*1344',
+  '4:3':  '1152*864',
+  '3:4':  '864*1152',
+  '3:2':  '1216*832',
+  '2:3':  '832*1216',
+};
+
+/**
+ * Generate an image with WaveSpeed z-image/turbo-lora.
+ * @param {string} prompt
+ * @param {object} options
+ * @param {string} [options.aspectRatio] e.g. '4:5'
+ * @param {Array<{path:string, scale:number}>} [options.loras] up to 3
+ * @param {number} [options.seed] -1 = random
+ * @returns {{ image: { base64Data: string, mimeType: string }, modelUsed: string }}
+ */
+async function generateImage(prompt, options = {}) {
+  const key = getApiKey();
+  if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+    throw new AppError('A text prompt is required', 400, 'VALIDATION_ERROR');
+  }
+
+  const size = IMAGE_SIZE_MAP[options.aspectRatio] || IMAGE_SIZE_MAP['1:1'];
+  const body = {
+    prompt: prompt.trim(),
+    size,
+    seed: typeof options.seed === 'number' ? options.seed : -1,
+    output_format: 'png',
+    enable_sync_mode: true,
+    enable_base64_output: true,
+  };
+
+  if (Array.isArray(options.loras) && options.loras.length > 0) {
+    body.loras = options.loras.slice(0, 3).map((l) => ({
+      path: l.path,
+      scale: typeof l.scale === 'number' ? l.scale : 1.0,
+    }));
+  }
+
+  log.info('wavespeed_image_request', { model: IMAGE_MODEL_ID, size, loraCount: body.loras?.length || 0 });
+
+  let resp;
+  try {
+    resp = await _fetchWithRetry(`${BASE_URL}/${IMAGE_MODEL_ID}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(IMAGE_MAX_POLL_MS + 10_000),
+    });
+  } catch (fetchErr) {
+    const cause = fetchErr?.cause?.message || fetchErr?.cause?.code || fetchErr?.cause || 'unknown';
+    log.error('wavespeed_fetch_failed', { message: fetchErr.message, cause: String(cause).slice(0, 500) });
+    throw new AppError(`WaveSpeed connection failed: ${String(cause).slice(0, 200)}`, 502, 'WAVESPEED_ERROR');
+  }
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    if (resp.status === 401) throw new AppError('WaveSpeed auth failed', 401, 'INVALID_API_KEY');
+    if (resp.status === 429) throw new AppError('WaveSpeed rate limited', 429, 'RATE_LIMITED');
+    throw new AppError(`WaveSpeed image error (${resp.status}): ${text.slice(0, 300)}`, 502, 'WAVESPEED_ERROR');
+  }
+
+  const json = await resp.json();
+  const data = json?.data || json;
+
+  // Sync mode — completed immediately
+  if (data?.status === 'completed') {
+    return await _extractImageResult(data);
+  }
+
+  // Fall back to polling
+  const taskId = data?.id;
+  if (!taskId) throw new AppError('WaveSpeed returned no task ID', 502, 'WAVESPEED_ERROR');
+  return await _pollImageResult(key, taskId);
+}
+
+async function _pollImageResult(key, taskId, modelId) {
+  const deadline = Date.now() + IMAGE_MAX_POLL_MS;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, IMAGE_POLL_INTERVAL_MS));
+    const res = await getTaskStatus(taskId);
+    if (res.status === 'completed') {
+      return await _extractImageResult(res, modelId);
+    }
+    if (res.status === 'failed') {
+      throw new AppError(`WaveSpeed image failed: ${res.error || 'unknown'}`, 502, 'WAVESPEED_FAILED');
+    }
+  }
+  throw new AppError('WaveSpeed image generation timed out', 504, 'WAVESPEED_TIMEOUT');
+}
+
+async function _extractImageResult(data, modelId) {
+  const usedModel = modelId || IMAGE_MODEL_ID;
+  const outputs = data.outputs || data.output || [];
+  log.info('wavespeed_image_extract', { outputCount: outputs.length, firstType: typeof outputs[0], firstPrefix: typeof outputs[0] === 'string' ? outputs[0].substring(0, 60) : 'N/A' });
+  if (!outputs.length) throw new AppError('WaveSpeed returned no image', 502, 'WAVESPEED_EMPTY');
+
+  const out = outputs[0];
+  // data URI with base64
+  const match = typeof out === 'string' && out.match(/^data:([^;]+);base64,(.+)$/);
+  if (match) {
+    return { image: { base64Data: match[2], mimeType: match[1] }, modelUsed: usedModel };
+  }
+  // raw base64 (no prefix)
+  if (typeof out === 'string' && !out.startsWith('http')) {
+    return { image: { base64Data: out, mimeType: 'image/png' }, modelUsed: usedModel };
+  }
+  // URL — download and convert
+  return await _downloadImageAsBase64(out, usedModel);
+}
+
+async function _downloadImageAsBase64(url, modelId) {
+  const sharp = require('sharp');
+  const resp = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  if (!resp.ok) throw new AppError(`Failed to download WaveSpeed image: ${resp.status}`, 502, 'WAVESPEED_DOWNLOAD');
+  const buf = Buffer.from(await resp.arrayBuffer());
+  const pngBuf = await sharp(buf).png({ compressionLevel: 6 }).toBuffer();
+  return {
+    image: { base64Data: pngBuf.toString('base64'), mimeType: 'image/png' },
+    modelUsed: modelId || IMAGE_MODEL_ID,
+  };
+}
+
+// ── Img2Img generation (z-image-turbo/image-to-image-lora) ────
+const IMG2IMG_MODEL_ID = 'wavespeed-ai/z-image-turbo/image-to-image-lora';
+
+/**
+ * Generate a variation using img2img with LoRA.
+ * @param {string} imageBase64 - Source image base64 (no data: prefix)
+ * @param {string} mimeType - Source image mime type
+ * @param {string} prompt - Text guidance for the variation
+ * @param {object} options
+ * @param {string} [options.aspectRatio] e.g. '4:5'
+ * @param {number} [options.strength] 0.0-1.0 (default 0.6)
+ * @param {Array<{path:string, scale:number}>} [options.loras] up to 3
+ * @returns {{ image: { base64Data: string, mimeType: string }, modelUsed: string }}
+ */
+async function generateImg2Img(imageBase64, mimeType, prompt, options = {}) {
+  const key = getApiKey();
+  if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+    throw new AppError('A text prompt is required', 400, 'VALIDATION_ERROR');
+  }
+  if (!imageBase64) {
+    throw new AppError('A source image is required', 400, 'VALIDATION_ERROR');
+  }
+
+  // Compress source image then upload to get a URL (inline base64 too large for JSON body)
+  const sharp = require('sharp');
+  let raw = imageBase64;
+  const dataUriMatch = raw.match(/^data:[^;]+;base64,(.+)$/);
+  if (dataUriMatch) raw = dataUriMatch[1];
+
+  const srcBuf = Buffer.from(raw, 'base64');
+  const jpegBuf = await sharp(srcBuf).jpeg({ quality: 95 }).toBuffer();
+
+  log.info('wavespeed_img2img_start', {
+    originalKB: Math.round(srcBuf.length / 1024),
+    compressedKB: Math.round(jpegBuf.length / 1024),
+  });
+
+  // Write compressed JPEG to temp file and upload
+  const tempPath = path.join(os.tmpdir(), `ws-img2img-${crypto.randomUUID()}.jpg`);
+  let imageUrl;
+  try {
+    fs.writeFileSync(tempPath, jpegBuf);
+    imageUrl = await uploadFile(tempPath);
+  } finally {
+    try { fs.unlinkSync(tempPath); } catch {}
+  }
+
+  log.info('wavespeed_img2img_uploaded', { imageUrl: imageUrl.slice(0, 80) });
+
+  const size = IMAGE_SIZE_MAP[options.aspectRatio] || IMAGE_SIZE_MAP['1:1'];
+  const body = {
+    image: imageUrl,
+    prompt: prompt.trim(),
+    size,
+    strength: typeof options.strength === 'number' ? options.strength : 0.6,
+    seed: typeof options.seed === 'number' ? options.seed : -1,
+    output_format: 'png',
+    enable_sync_mode: true,
+    enable_base64_output: true,
+  };
+
+  if (Array.isArray(options.loras) && options.loras.length > 0) {
+    body.loras = options.loras.slice(0, 3).map((l) => ({
+      path: l.path,
+      scale: typeof l.scale === 'number' ? l.scale : 1.0,
+    }));
+  }
+
+  log.info('wavespeed_img2img_request', { model: IMG2IMG_MODEL_ID, size, strength: body.strength, loraCount: body.loras?.length || 0 });
+
+  let resp;
+  try {
+    resp = await _fetchWithRetry(`${BASE_URL}/${IMG2IMG_MODEL_ID}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(IMAGE_MAX_POLL_MS + 30_000),
+    });
+  } catch (fetchErr) {
+    const cause = fetchErr?.cause?.message || fetchErr?.cause?.code || fetchErr?.cause || 'unknown';
+    log.error('wavespeed_img2img_fetch_failed', { message: fetchErr.message, cause: String(cause).slice(0, 500) });
+    throw new AppError(`WaveSpeed img2img connection failed: ${String(cause).slice(0, 200)}`, 502, 'WAVESPEED_ERROR');
+  }
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    log.error('wavespeed_img2img_error', { status: resp.status, body: text.slice(0, 500) });
+    if (resp.status === 401) throw new AppError('WaveSpeed auth failed', 401, 'INVALID_API_KEY');
+    if (resp.status === 429) throw new AppError('WaveSpeed rate limited', 429, 'RATE_LIMITED');
+    throw new AppError(`WaveSpeed img2img error (${resp.status}): ${text.slice(0, 300)}`, 502, 'WAVESPEED_ERROR');
+  }
+
+  const json = await resp.json();
+  const data = json?.data || json;
+
+  if (data?.status === 'completed') {
+    return await _extractImageResult(data, IMG2IMG_MODEL_ID);
+  }
+
+  const taskId = data?.id;
+  if (!taskId) throw new AppError('WaveSpeed returned no task ID', 502, 'WAVESPEED_ERROR');
+  return await _pollImageResult(key, taskId, IMG2IMG_MODEL_ID);
+}
+
 async function downloadVideo(videoUrl, destDir) {
   fs.mkdirSync(destDir, { recursive: true });
   const filename = `video-${crypto.randomUUID()}.mp4`;
@@ -148,5 +408,9 @@ module.exports = {
   createVideoTask,
   getTaskStatus,
   downloadVideo,
+  generateImage,
+  generateImg2Img,
   MODEL_ENDPOINTS,
+  IMAGE_MODEL_ID,
+  IMG2IMG_MODEL_ID,
 };

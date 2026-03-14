@@ -86,7 +86,7 @@ function ReformatModePanel() {
         {loadingGallery ? (
           <div className="flex justify-center py-4"><Spinner /></div>
         ) : (
-          <div className="grid grid-cols-2 auto-rows-[140px] sm:auto-rows-[100px] gap-2 max-h-[45vh] overflow-y-auto rounded-xl border border-zinc-800 bg-[#111] p-2">
+          <div className="grid grid-cols-3 sm:grid-cols-4 auto-rows-[120px] gap-2 max-h-[50vh] overflow-y-auto rounded-xl border border-zinc-800 bg-[#111] p-2">
             {/* Upload button */}
             <label className="w-full h-full flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-700 bg-zinc-900/70 text-zinc-400 cursor-pointer hover:border-blue-500/70 hover:text-zinc-200 transition">
               <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleUpload} />
@@ -115,6 +115,17 @@ function ReformatModePanel() {
           </div>
         )}
       </div>
+
+      {/* Selected source preview */}
+      {hasSource && (
+        <div className="rounded-xl overflow-hidden border border-zinc-700/40 bg-black/30">
+          <img
+            src={uploadedImg ? uploadedImg.src : `/api/gallery/${selectedId}/thumb`}
+            alt="selected source"
+            className="w-full max-h-[35vh] object-contain"
+          />
+        </div>
+      )}
 
       {/* Target ratio */}
       <div>
@@ -863,6 +874,15 @@ export default function BatchPage() {
                       </button>
                     );
                   })}
+                </div>
+              )}
+              {selectedImageId && (
+                <div className="mt-2 rounded-xl overflow-hidden border border-zinc-700/40 bg-black/30">
+                  <img
+                    src={editUploadImages.find(i => i.id === selectedImageId)?.src || `/api/gallery/${selectedImageId}/thumb`}
+                    alt="selected source"
+                    className="w-full max-h-[35vh] object-contain"
+                  />
                 </div>
               )}
             </div>

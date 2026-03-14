@@ -39,9 +39,11 @@ const ApiKeysPage = lazy(() => import('./pages/ApiKeysPage'));
 const VideoPage = lazy(() => import('./pages/VideoPage'));
 const VideoGalleryPage = lazy(() => import('./pages/VideoGalleryPage'));
 const ReformatPage = lazy(() => import('./pages/ReformatPage'));
+const NsfwGeneratePage = lazy(() => import('./pages/NsfwGeneratePage'));
 
 const NAV_ICONS = {
   generate: IconBadgeSparkle,
+  nsfwGenerate: IconBadgeSparkle,
   batch: IconAppStack,
   auto: IconBolt,
   carousel: IconLayers,
@@ -64,6 +66,7 @@ const NAV_SECTIONS = [
     label: 'Create',
     items: [
       { id: 'generate', label: 'Generate' },
+      { id: 'nsfwGenerate', label: 'NSFW Generate' },
       { id: 'batch', label: 'Batch' },
       { id: 'video', label: 'Video' },
       { id: 'auto', label: 'Auto Generator' },
@@ -115,6 +118,7 @@ function SidebarHeader() {
 
 const PAGE_DESCRIPTIONS = {
   generate: 'Create a single image with full control',
+  nsfwGenerate: 'WaveSpeed Turbo LoRA — uncensored image generation',
   batch: 'Generate multiple images in parallel',
   video: 'Generate videos from images using AI',
   auto: 'AI-planned multi-day content schedules',
@@ -134,6 +138,7 @@ const PAGE_DESCRIPTIONS = {
 
 const PAGES = {
   generate: GeneratePage,
+  nsfwGenerate: NsfwGeneratePage,
   batch: BatchPage,
   carousel: CarouselPage,
   scene: SceneRecreatePage,
