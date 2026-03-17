@@ -340,7 +340,12 @@ class GeminiService {
             genAI.models.generateContent({
               model: TEXT_MODEL,
               contents: [{ role: 'user', parts: [{ text: prompt.trim() }] }],
-              config: { responseModalities: [Modality.TEXT], safetySettings: SAFETY_SETTINGS },
+              config: {
+                responseModalities: [Modality.TEXT],
+                safetySettings: SAFETY_SETTINGS,
+                ...(options.temperature != null && { temperature: options.temperature }),
+                ...(options.responseMimeType && { responseMimeType: options.responseMimeType }),
+              },
             }),
             TEXT_TIMEOUT_MS,
             'Gemini text generation'
