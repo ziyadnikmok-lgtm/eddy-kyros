@@ -222,7 +222,8 @@ router.get('/:id/download-spoofed', async (req, res, next) => {
     const result = await iosSpoofService.spoofImage(filePath);
     cleanup = result.cleanup;
     res.set('Content-Type', 'image/jpeg');
-    res.set('Content-Disposition', `attachment; filename="${result.filename}"`);
+    const safeName = result.filename.replace(/[^\w.\-]/g, '_');
+    res.set('Content-Disposition', `attachment; filename="${safeName}"`);
     res.sendFile(result.filePath, () => { if (cleanup) cleanup(); });
   } catch (err) {
     if (cleanup) cleanup();
