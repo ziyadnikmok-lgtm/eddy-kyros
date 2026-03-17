@@ -174,7 +174,7 @@ class GalleryManager {
     this._store = this._store.filter((entry) => {
       if (!idSet.has(entry.id)) return true;
       const fp = path.join(UPLOADS_DIR, entry.filename);
-      if (fs.existsSync(fp)) fs.unlinkSync(fp);
+      if (path.resolve(fp).startsWith(path.resolve(UPLOADS_DIR)) && fs.existsSync(fp)) fs.unlinkSync(fp);
       this._validFiles.delete(entry.filename);
       removed.push(entry.id);
       return false;
@@ -189,6 +189,7 @@ class GalleryManager {
       const entry = this._store.find((e) => e.id === id);
       if (!entry) continue;
       const fp = path.join(UPLOADS_DIR, entry.filename);
+      if (!path.resolve(fp).startsWith(path.resolve(UPLOADS_DIR))) continue;
       if (fs.existsSync(fp)) {
         results.push({ filePath: fp, filename: entry.filename, mimeType: entry.mimeType });
       }
