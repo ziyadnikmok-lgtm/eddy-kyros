@@ -89,7 +89,9 @@ class VideoHistoryStore {
         const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
         if (Array.isArray(parsed)) return parsed;
       }
-    } catch {}
+    } catch (err) {
+      console.warn('[videoHistory] Failed to load data:', err.message);
+    }
     return [];
   }
 

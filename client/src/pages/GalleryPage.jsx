@@ -148,7 +148,9 @@ export default function GalleryPage() {
       result = result.filter((i) => tagFilter.some(t => Array.isArray(i.tags) && i.tags.includes(t)));
     }
 
-    if (sortBy === 'oldest') {
+    if (sortBy === 'newest') {
+      result = [...result].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    } else if (sortBy === 'oldest') {
       result = [...result].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
     } else if (sortBy === 'largest') {
       result = [...result].sort((a, b) => (b.fileSize || 0) - (a.fileSize || 0));
@@ -464,9 +466,9 @@ export default function GalleryPage() {
       )}
 
       {loadingList ? (
-        <div className="columns-2 sm:columns-2 lg:columns-3 xl:columns-4 gap-3 sm:gap-6 space-y-3 sm:space-y-6">
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
           {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="break-inside-avoid mb-6 rounded-2xl overflow-hidden bg-zinc-900">
+            <div key={i} className="rounded-2xl overflow-hidden bg-zinc-900">
               <Skeleton className="w-full aspect-[4/5]" />
               <div className="px-3 py-2.5 space-y-2">
                 <Skeleton className="h-4 w-3/4" />
@@ -480,13 +482,13 @@ export default function GalleryPage() {
       ) : filteredImages.length === 0 ? (
         <Empty icon={<IconMagnifier uniqueId="empty-gallery-search" size={40} aria-hidden />} title="No images match" subtitle="Try adjusting your search or filters" />
       ) : (
-        <div className="columns-2 sm:columns-2 lg:columns-3 xl:columns-4 gap-3 sm:gap-6 space-y-3 sm:space-y-6">
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
           {visibleImages.map((img, index) => {
             const isSelected = selectedIds.has(img.id);
             return (
               <div
                 key={img.id}
-                className={`break-inside-avoid mb-6 rounded-2xl overflow-hidden bg-zinc-900 shadow-lg hover:shadow-xl transition-all duration-300 group stagger-item ${
+                className={`rounded-2xl overflow-hidden bg-zinc-900 shadow-lg hover:shadow-xl transition-all duration-300 group stagger-item ${
                   isSelected ? 'ring-2 ring-blue-500' : ''
                 }`}
                 style={{ '--stagger-index': Math.min(index, 11), contentVisibility: 'auto', containIntrinsicSize: 'auto 400px' }}

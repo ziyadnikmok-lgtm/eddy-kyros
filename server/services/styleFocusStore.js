@@ -78,7 +78,9 @@ class StyleFocusStore {
         const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
         if (Array.isArray(parsed)) return parsed;
       }
-    } catch {}
+    } catch (err) {
+      console.warn('[styleFocus] Failed to load data:', err.message);
+    }
     return [];
   }
 

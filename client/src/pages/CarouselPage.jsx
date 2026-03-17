@@ -100,25 +100,12 @@ export default function CarouselPage() {
   const [pollJobIds, setPollJobIds] = useState(_cache.pollJobIds);
   const [completedPollSlides, setCompletedPollSlides] = useState(_cache.completedPollSlides);
 
-  useEffect(() => { _cache.executeJobIds = executeJobIds; }, [executeJobIds]);
-  useEffect(() => { _cache.executeJobs = executeJobs; }, [executeJobs]);
-  useEffect(() => { _cache.completedSlides = completedSlides; }, [completedSlides]);
-  useEffect(() => { _cache.pollJobIds = pollJobIds; }, [pollJobIds]);
-  useEffect(() => { _cache.pollJobs = pollJobs; }, [pollJobs]);
-  useEffect(() => { _cache.completedPollSlides = completedPollSlides; }, [completedPollSlides]);
-  useEffect(() => { _cache.pollResults = pollResults; }, [pollResults]);
-  useEffect(() => { _cache.selectedImageId = selectedImageId; }, [selectedImageId]);
-  useEffect(() => { _cache.uploadedImages = uploadedImages; }, [uploadedImages]);
-  useEffect(() => { _cache.characterId = characterId; }, [characterId]);
-  useEffect(() => { _cache.aspectRatio = aspectRatio; }, [aspectRatio]);
-  useEffect(() => { _cache.resolutionTier = resolutionTier; }, [resolutionTier]);
-  useEffect(() => { _cache.imageModel = imageModel; }, [imageModel]);
-  useEffect(() => { _cache.followUpDirection = followUpDirection; }, [followUpDirection]);
-  useEffect(() => { _cache.followUpMode = followUpMode; }, [followUpMode]);
-  useEffect(() => { _cache.followUpCount = followUpCount; }, [followUpCount]);
-  useEffect(() => { _cache.carouselMode = carouselMode; }, [carouselMode]);
-  useEffect(() => { _cache.pollTopic = pollTopic; }, [pollTopic]);
-  useEffect(() => { _cache.pollCount = pollCount; }, [pollCount]);
+  useEffect(() => { Object.assign(_cache, {
+    executeJobIds, executeJobs, completedSlides, pollJobIds, pollJobs,
+    completedPollSlides, pollResults, selectedImageId, uploadedImages,
+    characterId, aspectRatio, resolutionTier, imageModel, followUpDirection,
+    followUpMode, followUpCount, carouselMode, pollTopic, pollCount,
+  }); });
 
   useEffect(() => {
     const params = consumePageParams();
@@ -217,10 +204,15 @@ export default function CarouselPage() {
       const additions = [];
       for (const job of executeJobs) {
         for (const r of (job.results || [])) {
-          if (!r?.success || !r?.image?.base64Data) continue;
+          if (!r?.success) continue;
           const key = `${job.jobId}-${r.index}`;
           if (existing.has(key)) continue;
-          additions.push({ _key: key, index: r.index, image: { ...r.image } });
+          const galleryId = r.galleryId || r.imageId;
+          if (r.image?.base64Data) {
+            additions.push({ _key: key, index: r.index, image: { ...r.image } });
+          } else if (galleryId) {
+            additions.push({ _key: key, index: r.index, galleryId });
+          }
         }
       }
       return additions.length > 0 ? [...prev, ...additions] : prev;
@@ -233,10 +225,15 @@ export default function CarouselPage() {
       const additions = [];
       for (const job of pollJobs) {
         for (const r of (job.results || [])) {
-          if (!r?.success || !r?.image?.base64Data) continue;
+          if (!r?.success) continue;
           const key = `${job.jobId}-${r.index}`;
           if (existing.has(key)) continue;
-          additions.push({ _key: key, index: r.index, image: { ...r.image } });
+          const galleryId = r.galleryId || r.imageId;
+          if (r.image?.base64Data) {
+            additions.push({ _key: key, index: r.index, image: { ...r.image } });
+          } else if (galleryId) {
+            additions.push({ _key: key, index: r.index, galleryId });
+          }
         }
       }
       return additions.length > 0 ? [...prev, ...additions] : prev;
@@ -594,19 +591,26 @@ export default function CarouselPage() {
                 <h3 className="text-sm font-semibold text-zinc-400">Generated Slides ({completedSlides.length})</h3>
               )}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {completedSlides.map((v, i) => (
-                  <ImageCard
-                    key={v._key}
-                    base64={v.image.base64Data}
-                    mimeType={v.image.mimeType}
-                    meta={{ identityConfidence: v.image.validation?.identity_match_score }}
-                    className="animate-in"
-                    onSelect={() => openLightbox(
-                      completedSlides.map((img) => `data:${img.image.mimeType || 'image/png'};base64,${img.image.base64Data}`),
-                      i
-                    )}
-                  />
-                ))}
+                {completedSlides.map((v, i) => {
+                  const imgSrc = v.image?.base64Data
+                    ? `data:${v.image.mimeType || 'image/png'};base64,${v.image.base64Data}`
+                    : v.galleryId ? `/api/gallery/${v.galleryId}/image` : null;
+                  return (
+                    <ImageCard
+                      key={v._key}
+                      src={imgSrc}
+                      meta={{ identityConfidence: v.image?.validation?.identity_match_score }}
+                      className="animate-in"
+                      onSelect={() => openLightbox(
+                        completedSlides.map((img) => img.image?.base64Data
+                          ? `data:${img.image.mimeType || 'image/png'};base64,${img.image.base64Data}`
+                          : `/api/gallery/${img.galleryId}/image`
+                        ),
+                        i
+                      )}
+                    />
+                  );
+                })}
               </div>
             </div>
           )}
@@ -677,7 +681,7 @@ export default function CarouselPage() {
             <Card className="space-y-2">
               <h3 className="text-sm font-semibold text-zinc-300">Poll Questions</h3>
               {pollResults.polls.map((poll, i) => (
-                <div key={i} className="rounded-lg border border-zinc-700/40 bg-zinc-800/40 p-2.5 space-y-1.5">
+                <div key={poll.question || i} className="rounded-lg border border-zinc-700/40 bg-zinc-800/40 p-2.5 space-y-1.5">
                   <div className="flex items-start justify-between gap-2">
                     <p className="text-xs text-zinc-200 font-medium">{poll.question}</p>
                     <CopyBtn text={poll.question} />
@@ -727,7 +731,7 @@ export default function CarouselPage() {
                 const imgA = completedPollSlides[pi * 2];
                 const imgB = completedPollSlides[pi * 2 + 1];
                 return (
-                  <Card key={pi} className="space-y-3 animate-in">
+                  <Card key={poll.question || pi} className="space-y-3 animate-in">
                     <div className="text-center">
                       <p className="text-sm font-semibold text-zinc-200">{poll.question}</p>
                     </div>
@@ -738,11 +742,10 @@ export default function CarouselPage() {
                         </div>
                         {imgA ? (
                           <ImageCard
-                            base64={imgA.image.base64Data}
-                            mimeType={imgA.image.mimeType}
+                            src={imgA.image?.base64Data ? `data:${imgA.image.mimeType || 'image/png'};base64,${imgA.image.base64Data}` : `/api/gallery/${imgA.galleryId}/image`}
                             className="animate-in"
                             onSelect={() => openLightbox(
-                              completedPollSlides.map(img => `data:${img.image.mimeType || 'image/png'};base64,${img.image.base64Data}`),
+                              completedPollSlides.map(img => img.image?.base64Data ? `data:${img.image.mimeType || 'image/png'};base64,${img.image.base64Data}` : `/api/gallery/${img.galleryId}/image`),
                               pi * 2
                             )}
                           />
@@ -758,11 +761,10 @@ export default function CarouselPage() {
                         </div>
                         {imgB ? (
                           <ImageCard
-                            base64={imgB.image.base64Data}
-                            mimeType={imgB.image.mimeType}
+                            src={imgB.image?.base64Data ? `data:${imgB.image.mimeType || 'image/png'};base64,${imgB.image.base64Data}` : `/api/gallery/${imgB.galleryId}/image`}
                             className="animate-in"
                             onSelect={() => openLightbox(
-                              completedPollSlides.map(img => `data:${img.image.mimeType || 'image/png'};base64,${img.image.base64Data}`),
+                              completedPollSlides.map(img => img.image?.base64Data ? `data:${img.image.mimeType || 'image/png'};base64,${img.image.base64Data}` : `/api/gallery/${img.galleryId}/image`),
                               pi * 2 + 1
                             )}
                           />

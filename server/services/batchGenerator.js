@@ -161,6 +161,7 @@ class BatchGenerator extends EventEmitter {
     const imageSize = generationOptions.imageSize || '2K';
     const imageModel = generationOptions.imageModel || null;
     const gallerySource = generationOptions.gallerySource || 'batch';
+    const anchorFirst = !!generationOptions.anchorFirst;
 
     let tasks;
     switch (mode) {
@@ -222,6 +223,7 @@ class BatchGenerator extends EventEmitter {
       _cancelled: false,
       _completedAt: null,
       _sharedBaseImage: sharedBaseImage,
+      _anchorFirst: anchorFirst,
       _config: this._sanitizeConfigForHistory(mode, config),
       aspectRatio,
       imageSize,
@@ -336,6 +338,7 @@ class BatchGenerator extends EventEmitter {
         characterId: characterId || null,
         activeReferenceIds: Array.isArray(activeReferenceIds) ? activeReferenceIds : null,
         styleAtomIds: Array.isArray(styleAtomIds) ? styleAtomIds : null,
+        specificReferences: [],
         userPrompt: p.trim(),
       });
     }
@@ -413,7 +416,7 @@ class BatchGenerator extends EventEmitter {
     }
 
     const original = imageStore.get(imageId);
-    if (!original.image) {
+    if (!original || !original.image) {
       throw new AppError('Cannot edit an image with no image data', 400, 'NO_IMAGE_DATA');
     }
 
@@ -565,275 +568,66 @@ class BatchGenerator extends EventEmitter {
       }
     }
 
+    // Anchor-first mode: generate the first image alone, then use it as a costume reference for the rest
+    let anchorImageData = null;
+    if (job._anchorFirst && tasks.length >= 2) {
+      const anchorTask = tasks[0];
+      const remainingTasks = tasks.slice(1);
+
+      // Execute anchor task synchronously first
+      await globalQueue.enqueue(async () => {
+        await this._executeSingleTask(job, anchorTask, apiKey, characterCache);
+      });
+
+      // Grab the anchor result image from the image store
+      const anchorResult = job.results[anchorTask.index];
+      if (anchorResult && anchorResult.success && anchorResult.imageId) {
+        try {
+          const stored = imageStore.get(anchorResult.imageId);
+          if (stored && stored.image && stored.image.base64Data) {
+            anchorImageData = {
+              base64Data: stored.image.base64Data,
+              mimeType: stored.image.mimeType || 'image/png',
+            };
+          }
+        } catch { /* ignore */ }
+      }
+
+      // Inject anchor image as costume reference into remaining tasks
+      if (anchorImageData) {
+        for (const task of remainingTasks) {
+          if (!task.specificReferences) task.specificReferences = [];
+          task.specificReferences.push({
+            ...anchorImageData,
+            referenceType: 'costume',
+            note: 'COSTUME ANCHOR — match this EXACT outfit, wig, accessories, stockings/fishnets, and all costume details. Only change the pose and angle',
+          });
+        }
+      } else {
+        const log = require('../utils/logger');
+        log.warn('anchor_first_no_image', { jobId: job.jobId, anchorSuccess: anchorResult?.success, anchorImageId: anchorResult?.imageId });
+      }
+
+      // Now execute remaining tasks in parallel
+      const remainingPromises = remainingTasks.map((task) =>
+        globalQueue.enqueue(async () => {
+          await this._executeSingleTask(job, task, apiKey, characterCache);
+        })
+      );
+      await Promise.allSettled(remainingPromises);
+
+      if (!job._cancelled) {
+        job.status = job.failed === job.total ? 'failed' : 'completed';
+      }
+      job._completedAt = Date.now();
+      _persistJobs();
+      this.emit('done', { jobId: job.jobId, status: job.status, completed: job.completed, failed: job.failed, total: job.total });
+      return;
+    }
+
     const promises = tasks.map((task) =>
       globalQueue.enqueue(async () => {
-        if (job._cancelled) {
-          job.results[task.index] = {
-            index: task.index,
-            success: false,
-            image: null,
-            error: 'Job cancelled',
-          };
-          return;
-        }
-
-        try {
-          let character = null;
-          let referenceImages = [];
-          if (task.characterId) {
-            character = characterCache.get(task.characterId) || await this.getCharacterById(task.characterId);
-            if (!task.disableCharacterReferenceImages) {
-              const profileImages = this._resolveProfileImage(task.characterId);
-              if (profileImages) referenceImages.push(...profileImages);
-
-              const requestedRefIds = Array.isArray(task.activeReferenceIds)
-                ? task.activeReferenceIds.filter((id) => typeof id === 'string' && id.trim().length > 0)
-                : null;
-
-              if (requestedRefIds && requestedRefIds.length > 0) {
-                for (const refId of requestedRefIds) {
-                  if (refId === '__profile__') continue;
-                  const resolved = this._resolveReferenceImage(task.characterId, { id: refId });
-                  if (resolved) referenceImages.push(resolved);
-                }
-              } else {
-                const refs = Array.isArray(character.references) ? character.references.filter((r) => r.isActive) : [];
-                for (const ref of refs) {
-                  const resolved = this._resolveReferenceImage(task.characterId, ref);
-                  if (resolved) referenceImages.push(resolved);
-                }
-              }
-            }
-          }
-
-          let taskPrompt = task.prompt;
-          if (task.seed !== undefined) {
-            taskPrompt += `\n[Seed: ${task.seed}]`;
-          }
-
-          const identityLockSection = character
-            ? [
-              '[IDENTITY LOCK]',
-              'This character is identity-locked.',
-              'The following identity description is NON-NEGOTIABLE.',
-              '',
-              'Do NOT:',
-              '- Normalize anatomy',
-              '- Average toward realism',
-              '- Alter proportions',
-              '- Change face structure',
-              '- Change ethnicity',
-              '- Reduce exaggerated features',
-              '- Modify skeletal ratios',
-              '- Remove defining marks',
-              '',
-              character.masterPrompt || '',
-              '',
-              'If identity changes, output is invalid.',
-              '',
-              'STRICT SOLO RULES:',
-              '- Single female subject only.',
-              '- No male interaction.',
-              '- No couples.',
-              '- No romantic physical contact.',
-            ].join('\n')
-            : [
-              '[IDENTITY LOCK]',
-              'No explicit identity lock provided.',
-              '',
-              'STRICT SOLO RULES:',
-              '- Single female subject only.',
-              '- No male interaction.',
-              '- No couples.',
-              '- No romantic physical contact.',
-            ].join('\n');
-
-          const sceneDnaSection = task.sceneMemory
-            ? [
-              'SCENE DNA',
-              `architecture: ${task.sceneMemory.architecture}`,
-              `lightingProfile: ${task.sceneMemory.lightingProfile}`,
-              `colorPalette: ${task.sceneMemory.colorPalette}`,
-              `recurringElements: ${task.sceneMemory.recurringElements}`,
-            ].join('\n')
-            : 'SCENE DNA\nNot specified.';
-
-          const outfitLockSection = task.outfit
-            ? [
-              'OUTFIT LOCK',
-              'This outfit lock is strict and non-negotiable across this generation.',
-              `top: ${task.outfit.top}`,
-              `bottom: ${task.outfit.bottom}`,
-              `accessories: ${task.outfit.accessories}`,
-              `footwear: ${task.outfit.footwear}`,
-              'FOOTWEAR CONTINUITY RULE: Keep the exact same footwear model, style, color, and silhouette. Do not swap shoes.',
-            ].join('\n')
-            : 'OUTFIT LOCK\nNot specified.';
-
-          const cameraProfileSection = task.cameraProfile
-            ? [
-              'CAMERA PROFILE',
-              `lens: ${task.cameraProfile.lens}`,
-              `depth: ${task.cameraProfile.depth}`,
-              `lighting: ${task.cameraProfile.lighting}`,
-              `realism: ${task.cameraProfile.realism}`,
-            ].join('\n')
-            : 'CAMERA PROFILE\nNot specified.';
-
-          const poseSection = [
-            'POSE',
-            task.pose || 'Not specified.',
-          ].join('\n');
-
-          const expressionSection = [
-            'EXPRESSION',
-            task.expression || 'Not specified.',
-          ].join('\n');
-          const styleLibrarySection = task.styleLibraryBlock
-            ? `[STYLE LIBRARY]\n${task.styleLibraryBlock}\n[END STYLE LIBRARY]`
-            : null;
-          const sceneModeSection = [
-            'SCENE MODE',
-            task.sceneModeText || 'Not specified.',
-          ].join('\n');
-
-          const userSceneContextSection = [
-            'USER SCENE CONTEXT',
-            taskPrompt,
-          ].join('\n');
-
-          const baseImagePrioritySection = task.baseImage
-            ? [
-              'BASE IMAGE PRIORITY',
-              'The first image input is the selected base image and is mandatory as the visual source.',
-              'Preserve its scene, wardrobe, styling, and camera feel unless explicitly changed.',
-              'Any other references are secondary identity support only.',
-            ].join('\n')
-            : null;
-
-          const specificReferencesSection = Array.isArray(task.specificReferences) && task.specificReferences.length > 0
-            ? [
-              'SPECIFIC IMAGE REFERENCES',
-              ...task.specificReferences.map((ref, idx) => {
-                const typeLabel = ref.referenceType || 'item';
-                const noteLabel = ref.note ? ` Note: ${ref.note}.` : '';
-                return `- Reference ${idx + 1} type "${typeLabel}": extract and apply this ${typeLabel} detail while preserving character identity and the base image scene intent.${noteLabel}`;
-              }),
-              'When multiple specific references are provided, combine them coherently without changing identity.',
-            ].join('\n')
-            : null;
-
-          const finalPrompt = [
-            identityLockSection,
-            sceneDnaSection,
-            outfitLockSection,
-            cameraProfileSection,
-            poseSection,
-            expressionSection,
-            styleLibrarySection,
-            sceneModeSection,
-            baseImagePrioritySection,
-            specificReferencesSection,
-            userSceneContextSection,
-            REALISM_DIRECTIVE,
-          ].filter(Boolean).join('\n\n');
-
-          const referenceParts = [];
-          const resolvedBaseImage = task.baseImage
-            ? (job._sharedBaseImage || task.baseImage)
-            : null;
-          if (resolvedBaseImage && resolvedBaseImage.base64Data && resolvedBaseImage.mimeType) {
-            referenceParts.push({
-              inlineData: {
-                mimeType: resolvedBaseImage.mimeType,
-                data: resolvedBaseImage.base64Data,
-              },
-            });
-          }
-          for (const ref of task.specificReferences || []) {
-            if (ref && ref.base64Data && ref.mimeType) {
-              referenceParts.push({
-                inlineData: {
-                  mimeType: ref.mimeType,
-                  data: ref.base64Data,
-                },
-              });
-            }
-          }
-          for (const img of referenceImages) {
-            const part = this._toInlineReferencePart(task.characterId, img);
-            if (part) referenceParts.push(part);
-          }
-
-          const parts = [
-            ...referenceParts,
-            { text: finalPrompt },
-          ];
-          const result = await geminiService.generateImage(apiKey, finalPrompt, {
-            aspectRatio: job.aspectRatio,
-            imageSize: job.imageSize,
-            model: job.imageModel || undefined,
-            parts,
-          });
-
-          if (job._cancelled) {
-            job.results[task.index] = {
-              index: task.index,
-              success: false,
-              image: null,
-              error: 'Job cancelled',
-            };
-            return;
-          }
-
-          const stored = imageStore.store({
-            basePrompt: task.prompt,
-            characterId: task.characterId,
-            activeReferenceIds: task.activeReferenceIds,
-            sceneDescription: task.userPrompt,
-            modelUsed: result.modelUsed || job.imageModel || null,
-            seed: task.seed || null,
-            parentImageId: null,
-            variationIndex: null,
-            image: { mimeType: result.image.mimeType, base64Data: result.image.base64Data },
-            source: job.gallerySource || 'batch',
-          });
-
-          const galleryEntry = galleryManager.save({
-            base64Data: result.image.base64Data,
-            mimeType: result.image.mimeType,
-            prompt: (task.userPrompt || task.prompt || '').slice(0, 500),
-            source: job.gallerySource || 'batch',
-            characterId: task.characterId,
-            aspectRatio: job.aspectRatio,
-            seed: task.seed || null,
-            tags: task.tags || [],
-          });
-
-          job.results[task.index] = {
-            index: task.index,
-            success: true,
-            imageId: stored.imageId,
-            galleryId: galleryEntry?.id || null,
-            // Don't store base64 in job results — images are in gallery + imageStore
-            hasImage: true,
-            text: result.text || null,
-            aspectRatio: job.aspectRatio,
-            imageSize: job.imageSize,
-            error: null,
-          };
-          job.completed++;
-          this.emit('task', { jobId: job.jobId, index: task.index, success: true, completed: job.completed, failed: job.failed, total: job.total });
-        } catch (err) {
-          job.results[task.index] = {
-            index: task.index,
-            success: false,
-            image: null,
-            error: err.message || 'Generation failed',
-          };
-          job.failed++;
-          this.emit('task', { jobId: job.jobId, index: task.index, success: false, completed: job.completed, failed: job.failed, total: job.total });
-        }
+        await this._executeSingleTask(job, task, apiKey, characterCache);
       })
     );
 
@@ -845,6 +639,324 @@ class BatchGenerator extends EventEmitter {
     job._completedAt = Date.now();
     _persistJobs();
     this.emit('done', { jobId: job.jobId, status: job.status, completed: job.completed, failed: job.failed, total: job.total });
+  }
+
+  async _executeSingleTask(job, task, apiKey, characterCache) {
+    if (job._cancelled) {
+      job.results[task.index] = {
+        index: task.index,
+        success: false,
+        image: null,
+        error: 'Job cancelled',
+      };
+      return;
+    }
+
+    try {
+      let character = null;
+      let referenceImages = [];
+      if (task.characterId) {
+        character = characterCache.get(task.characterId) || await this.getCharacterById(task.characterId);
+        if (!task.disableCharacterReferenceImages) {
+          const profileImages = this._resolveProfileImage(task.characterId);
+          if (profileImages) {
+            referenceImages.push(...profileImages);
+          } else {
+            const log = require('../utils/logger');
+            log.warn('no_profile_images', { characterId: task.characterId });
+          }
+
+          const requestedRefIds = Array.isArray(task.activeReferenceIds)
+            ? task.activeReferenceIds.filter((id) => typeof id === 'string' && id.trim().length > 0)
+            : null;
+
+          if (requestedRefIds && requestedRefIds.length > 0) {
+            for (const refId of requestedRefIds) {
+              if (refId === '__profile__') continue;
+              const resolved = this._resolveReferenceImage(task.characterId, { id: refId });
+              if (resolved) referenceImages.push(resolved);
+            }
+          } else {
+            const refs = Array.isArray(character.references) ? character.references.filter((r) => r.isActive) : [];
+            for (const ref of refs) {
+              const resolved = this._resolveReferenceImage(task.characterId, ref);
+              if (resolved) referenceImages.push(resolved);
+            }
+          }
+        }
+      }
+
+      let taskPrompt = task.prompt;
+      if (task.seed !== undefined) {
+        taskPrompt += `\n[Seed: ${task.seed}]`;
+      }
+
+      // Collect active reference override prompts for identity reinforcement
+      const activeRefOverrides = [];
+      if (character && Array.isArray(character.references)) {
+        const activeRefs = character.references.filter((r) => r.isActive && r.overridePrompt);
+        for (const ref of activeRefs) {
+          activeRefOverrides.push(`[${ref.category || 'Reference'}]: ${ref.overridePrompt}`);
+        }
+      }
+
+      // Detect if the prompt contains cosplay/costume instructions
+      const promptText = task.prompt || '';
+      const isCostumePrompt = /COSTUME LOCK|OUTFIT LOCK|WIG LOCK|cosplay|cosplay wig/i.test(promptText);
+
+      const identityLockSection = character
+        ? [
+          '[IDENTITY LOCK — HIGHEST PRIORITY]',
+          'This character is identity-locked.',
+          'The provided reference image(s) show the EXACT person who MUST appear in the output.',
+          'Match this person\'s face, bone structure, ethnicity, skin tone, body proportions, and distinguishing features EXACTLY.',
+          'The following identity description is NON-NEGOTIABLE.',
+          '',
+          ...(isCostumePrompt ? [
+            'COSPLAY/COSTUME CLARIFICATION:',
+            '- The person in the reference image is WEARING A COSTUME — they are NOT the fictional character.',
+            '- Generate the REFERENCE PERSON dressed in the described costume/outfit.',
+            '- The FACE, BODY, and SKIN must be the reference person — only the CLOTHES and WIG change.',
+            '- Do NOT generate the fictional character\'s face or body. The costume is just clothing on the REAL person.',
+            '- If the costume description mentions a character name, that is the OUTFIT to wear, NOT the person to generate.',
+            '',
+          ] : []),
+          'Do NOT:',
+          '- Generate a different person',
+          '- Normalize anatomy',
+          '- Alter proportions',
+          '- Change face structure',
+          '- Change ethnicity or skin tone',
+          '',
+          character.masterPrompt || '',
+          ...(activeRefOverrides.length > 0 ? ['', 'CHARACTER REFERENCE NOTES:', ...activeRefOverrides] : []),
+          '',
+          'The output MUST depict the SAME person shown in the reference image(s). If the face does not match, the output is invalid.',
+          '',
+          'STRICT SOLO RULES:',
+          '- Single female subject only.',
+          '- No male interaction.',
+          '- No couples.',
+          '- No romantic physical contact.',
+        ].join('\n')
+        : [
+          '[IDENTITY LOCK]',
+          'No explicit identity lock provided.',
+          '',
+          'STRICT SOLO RULES:',
+          '- Single female subject only.',
+          '- No male interaction.',
+          '- No couples.',
+          '- No romantic physical contact.',
+        ].join('\n');
+
+      const sceneDnaSection = task.sceneMemory
+        ? [
+          'SCENE DNA (BACKGROUND LOCK)',
+          'The background/setting below is LOCKED. All images in this batch MUST use this exact background.',
+          'Do NOT invent, change, or add background elements not described here.',
+          `architecture: ${task.sceneMemory.architecture}`,
+          `lightingProfile: ${task.sceneMemory.lightingProfile}`,
+          `colorPalette: ${task.sceneMemory.colorPalette}`,
+          `recurringElements: ${task.sceneMemory.recurringElements}`,
+        ].join('\n')
+        : 'SCENE DNA\nNot specified.';
+
+      const outfitLockSection = task.outfit
+        ? [
+          'OUTFIT LOCK',
+          'This outfit lock is strict and non-negotiable across this generation.',
+          `top: ${task.outfit.top}`,
+          `bottom: ${task.outfit.bottom}`,
+          `accessories: ${task.outfit.accessories}`,
+          `footwear: ${task.outfit.footwear}`,
+          // Only enforce strict footwear continuity when a specific shoe was locked
+          ...(task.outfit.footwear && !/appropriate for|matching|character-accurate/i.test(task.outfit.footwear)
+            ? ['FOOTWEAR CONTINUITY RULE: Keep the exact same footwear model, style, color, and silhouette. Do not swap shoes.']
+            : []),
+        ].join('\n')
+        : 'OUTFIT LOCK\nNot specified.';
+
+      const cameraProfileSection = task.cameraProfile
+        ? [
+          'CAMERA PROFILE',
+          `lens: ${task.cameraProfile.lens}`,
+          `depth: ${task.cameraProfile.depth}`,
+          `lighting: ${task.cameraProfile.lighting}`,
+          `realism: ${task.cameraProfile.realism}`,
+        ].join('\n')
+        : 'CAMERA PROFILE\nNot specified.';
+
+      const poseSection = [
+        'POSE',
+        task.pose || 'Not specified.',
+      ].join('\n');
+
+      const expressionSection = [
+        'EXPRESSION',
+        task.expression || 'Not specified.',
+      ].join('\n');
+      const styleLibrarySection = task.styleLibraryBlock
+        ? `[STYLE LIBRARY]\n${task.styleLibraryBlock}\n[END STYLE LIBRARY]`
+        : null;
+      const sceneModeSection = [
+        'SCENE MODE',
+        task.sceneModeText || 'Not specified.',
+      ].join('\n');
+
+      const userSceneContextSection = [
+        'USER SCENE CONTEXT',
+        taskPrompt,
+      ].join('\n');
+
+      const baseImagePrioritySection = task.baseImage
+        ? [
+          'BASE IMAGE PRIORITY',
+          'The first image input is the selected base image and is mandatory as the visual source.',
+          'Preserve its scene, wardrobe, styling, and camera feel unless explicitly changed.',
+          'Any other references are secondary identity support only.',
+        ].join('\n')
+        : null;
+
+      const specificReferencesSection = Array.isArray(task.specificReferences) && task.specificReferences.length > 0
+        ? [
+          'SPECIFIC IMAGE REFERENCES',
+          ...task.specificReferences.map((ref, idx) => {
+            const typeLabel = ref.referenceType || 'item';
+            const noteLabel = ref.note ? ` Note: ${ref.note}.` : '';
+            return `- Reference ${idx + 1} type "${typeLabel}": extract and apply this ${typeLabel} detail while preserving character identity and the base image scene intent.${noteLabel}`;
+          }),
+          'When multiple specific references are provided, combine them coherently without changing identity.',
+        ].join('\n')
+        : null;
+
+      const finalPrompt = [
+        identityLockSection,
+        sceneDnaSection,
+        outfitLockSection,
+        cameraProfileSection,
+        poseSection,
+        expressionSection,
+        styleLibrarySection,
+        sceneModeSection,
+        baseImagePrioritySection,
+        specificReferencesSection,
+        userSceneContextSection,
+        REALISM_DIRECTIVE,
+      ].filter(Boolean).join('\n\n');
+
+      const referenceParts = [];
+      const resolvedBaseImage = task.baseImage
+        ? (job._sharedBaseImage || task.baseImage)
+        : null;
+      if (resolvedBaseImage && resolvedBaseImage.base64Data && resolvedBaseImage.mimeType) {
+        referenceParts.push({
+          inlineData: {
+            mimeType: resolvedBaseImage.mimeType,
+            data: resolvedBaseImage.base64Data,
+          },
+        });
+      }
+      for (const ref of task.specificReferences || []) {
+        if (ref && ref.base64Data && ref.mimeType) {
+          referenceParts.push({
+            inlineData: {
+              mimeType: ref.mimeType,
+              data: ref.base64Data,
+            },
+          });
+        }
+      }
+      for (const img of referenceImages) {
+        const part = this._toInlineReferencePart(task.characterId, img);
+        if (part) referenceParts.push(part);
+      }
+
+      if (task.characterId) {
+        const log = require('../utils/logger');
+        log.info('task_reference_images', {
+          characterId: task.characterId,
+          profileImagesLoaded: referenceImages.length,
+          inlinePartsBuilt: referenceParts.length,
+          hasCharacter: !!character,
+          hasMasterPrompt: !!(character && character.masterPrompt),
+        });
+      }
+
+      const parts = [
+        ...referenceParts,
+        { text: finalPrompt },
+      ];
+      const result = await geminiService.generateImage(apiKey, finalPrompt, {
+        aspectRatio: job.aspectRatio,
+        imageSize: job.imageSize,
+        model: job.imageModel || undefined,
+        parts,
+      });
+
+      if (job._cancelled) {
+        job.results[task.index] = {
+          index: task.index,
+          success: false,
+          image: null,
+          error: 'Job cancelled',
+        };
+        return;
+      }
+
+      if (!result.image || !result.image.base64Data) {
+        job.results[task.index] = { index: task.index, success: false, image: null, error: 'No image data in response' };
+        job.failed++;
+        return;
+      }
+
+      const stored = imageStore.store({
+        basePrompt: task.prompt,
+        characterId: task.characterId,
+        activeReferenceIds: task.activeReferenceIds,
+        sceneDescription: task.userPrompt,
+        modelUsed: result.modelUsed || job.imageModel || null,
+        seed: task.seed || null,
+        parentImageId: null,
+        variationIndex: null,
+        image: { mimeType: result.image.mimeType, base64Data: result.image.base64Data },
+        source: job.gallerySource || 'batch',
+      });
+
+      const galleryEntry = galleryManager.save({
+        base64Data: result.image.base64Data,
+        mimeType: result.image.mimeType,
+        prompt: (task.userPrompt || task.prompt || '').slice(0, 500),
+        source: job.gallerySource || 'batch',
+        characterId: task.characterId,
+        aspectRatio: job.aspectRatio,
+        seed: task.seed || null,
+        tags: task.tags || [],
+      });
+
+      job.results[task.index] = {
+        index: task.index,
+        success: true,
+        imageId: stored.imageId,
+        galleryId: galleryEntry?.id || null,
+        hasImage: true,
+        text: result.text || null,
+        aspectRatio: job.aspectRatio,
+        imageSize: job.imageSize,
+        error: null,
+      };
+      job.completed++;
+      this.emit('task', { jobId: job.jobId, index: task.index, success: true, completed: job.completed, failed: job.failed, total: job.total });
+    } catch (err) {
+      job.results[task.index] = {
+        index: task.index,
+        success: false,
+        image: null,
+        error: err.message || 'Generation failed',
+      };
+      job.failed++;
+      this.emit('task', { jobId: job.jobId, index: task.index, success: false, completed: job.completed, failed: job.failed, total: job.total });
+    }
   }
 
   _validateMode(mode) {

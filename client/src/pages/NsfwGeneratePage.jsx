@@ -6,7 +6,7 @@ import { Card, Btn, Textarea, Spinner } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 import { ASPECT_RATIOS } from '../config/photoModes';
 
-const _cache = { result: null, history: [], selectedPresetId: '', extraLoras: [], prompt: '', aspectRatio: '4:5' };
+const _cache = { result: null, history: [], selectedPresetId: '', presetStrength: 1.0, extraLoras: [], prompt: '', aspectRatio: '4:5' };
 
 export default function NsfwGeneratePage() {
   const { notify } = useApp();
@@ -22,6 +22,7 @@ export default function NsfwGeneratePage() {
   // Presets
   const [presets, setPresets] = useState([]);
   const [selectedPresetId, setSelectedPresetId] = useState(_cache.selectedPresetId);
+  const [presetStrength, setPresetStrength] = useState(_cache.presetStrength);
   const [extraLoras, setExtraLoras] = useState(_cache.extraLoras);
   const [showSavePreset, setShowSavePreset] = useState(false);
   const [newPresetName, setNewPresetName] = useState('');
@@ -68,7 +69,7 @@ export default function NsfwGeneratePage() {
 
   const buildLoras = () => {
     const all = [];
-    if (selectedPreset) all.push({ path: selectedPreset.path, scale: selectedPreset.scale });
+    if (selectedPreset) all.push({ path: selectedPreset.path, scale: presetStrength });
     for (const l of extraLoras) {
       if (l.path.trim()) all.push({ path: l.path.trim(), scale: l.scale });
     }
@@ -168,7 +169,7 @@ export default function NsfwGeneratePage() {
             </div>
             <select
               value={selectedPresetId}
-              onChange={(e) => { setSelectedPresetId(e.target.value); sync('selectedPresetId', e.target.value); }}
+              onChange={(e) => { setSelectedPresetId(e.target.value); sync('selectedPresetId', e.target.value); setPresetStrength(1.0); sync('presetStrength', 1.0); }}
               className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-purple-500/70 focus:ring-1 focus:ring-purple-500/20 cursor-pointer"
             >
               <option value="">No character LoRA</option>
@@ -177,12 +178,21 @@ export default function NsfwGeneratePage() {
               ))}
             </select>
             {selectedPreset && (
-              <div className="flex items-center justify-between bg-purple-900/20 rounded-lg px-3 py-2 border border-purple-800/30">
-                <div className="min-w-0 flex-1">
-                  <span className="text-xs text-purple-300 font-medium block truncate">{selectedPreset.name}</span>
-                  <span className="text-[10px] text-zinc-500 block truncate">{selectedPreset.path}</span>
+              <div className="bg-purple-900/20 rounded-lg px-3 py-2 border border-purple-800/30 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="min-w-0 flex-1">
+                    <span className="text-xs text-purple-300 font-medium block truncate">{selectedPreset.name}</span>
+                    <span className="text-[10px] text-zinc-500 block truncate">{selectedPreset.path}</span>
+                  </div>
+                  <button type="button" onClick={() => handleDeletePreset(selectedPreset.id)} className="text-zinc-500 hover:text-red-400 text-xs ml-2 shrink-0 cursor-pointer" title="Delete preset">&times;</button>
                 </div>
-                <button type="button" onClick={() => handleDeletePreset(selectedPreset.id)} className="text-zinc-500 hover:text-red-400 text-xs ml-2 shrink-0 cursor-pointer" title="Delete preset">&times;</button>
+                <div>
+                  <div className="flex items-center justify-between mb-0.5">
+                    <span className="text-[10px] text-zinc-400">Strength</span>
+                    <span className="text-[10px] text-zinc-500 font-mono">{presetStrength.toFixed(1)}</span>
+                  </div>
+                  <input type="range" min={0.1} max={2.0} step={0.1} value={presetStrength} onChange={(e) => { const v = parseFloat(e.target.value); setPresetStrength(v); sync('presetStrength', v); }} className="w-full accent-purple-500" />
+                </div>
               </div>
             )}
             {showSavePreset && (

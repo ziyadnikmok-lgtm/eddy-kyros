@@ -204,7 +204,10 @@ router.get('/:id/image', (req, res, next) => {
         res.set('Cache-Control', 'private, max-age=3600');
         return res.send(buf);
       }
-    } catch {}
+    } catch (fallbackErr) {
+      const log = require('../utils/logger');
+      log.warn('gallery_image_fallback_failed', { id: req.params.id, error: fallbackErr.message });
+    }
     next(err);
   }
 });

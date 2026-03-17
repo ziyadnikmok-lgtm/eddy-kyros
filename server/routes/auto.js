@@ -19,7 +19,7 @@ const MAX_DURATION_DAYS = 30;
 const DIVERSITY_SIMILARITY_THRESHOLD = 0.78;
 const DIVERSITY_LOOKBACK = 12;
 
-function startMultiBatches(entries, generationOptions, characterContext = {}, styleAtomIds = []) {
+function startMultiBatches(entries, generationOptions, characterContext = {}, styleAtomIds = [], { anchorFirst = false } = {}) {
   const jobIds = [];
   const grouped = new Map();
 
@@ -54,7 +54,7 @@ function startMultiBatches(entries, generationOptions, characterContext = {}, st
           ? styleAtomIds
           : undefined,
       };
-      const job = batchGenerator.startBatch('multi', config, generationOptions);
+      const job = batchGenerator.startBatch('multi', config, { ...generationOptions, anchorFirst });
       jobIds.push(job.jobId);
     }
   }
@@ -189,24 +189,21 @@ function buildAutoSceneMemory(weeklyPlan) {
   const aestheticKeywords = Array.isArray(weeklyPlan && weeklyPlan.aesthetic_keywords)
     ? weeklyPlan.aesthetic_keywords.map((item) => asText(item)).filter(Boolean)
     : [];
-  const sampledLocation = asText(externalProfileMemory.sampleLocation());
-  const recurringElements = [
-    aestheticKeywords.length ? aestheticKeywords.join(', ') : '',
-    sampledLocation,
-    detectedLocation,
-  ].filter(Boolean).join(' | ');
 
   return sceneMemoryService.createScene({
     name: `Auto Scene: ${detectedLocation}`.slice(0, 120),
-    architecture: sampledLocation || detectedLocation,
+    architecture: detectedLocation,
     lightingProfile: asText(firstDay && firstDay.lighting_style) || 'cinematic mixed lighting',
     colorPalette: aestheticKeywords.length ? aestheticKeywords.join(', ') : 'neutral luxe palette',
-    recurringElements: recurringElements || detectedLocation,
+    recurringElements: aestheticKeywords.length ? aestheticKeywords.join(', ') : detectedLocation,
     timeOfDayBias: asText(firstDay && firstDay.time_of_day) || 'mixed golden and blue hour',
   });
 }
 
-function deriveDefaultFootwearLock(weeklyPlan) {
+function deriveDefaultFootwearLock(weeklyPlan, personaMode) {
+  // Cosplay mode: let the outfit dictate footwear per character, no forced lock
+  if (personaMode === 'cosplay' || personaMode === 'goth') return '';
+
   const source = [
     asText(weeklyPlan && weeklyPlan.location_core),
     asText(weeklyPlan && weeklyPlan.aesthetic_keywords && weeklyPlan.aesthetic_keywords.join(' ')),
@@ -227,16 +224,17 @@ function deriveDefaultFootwearLock(weeklyPlan) {
   if (/\b(luxury|editorial|fashion|evening|gala|runway)\b/.test(source)) {
     return 'sleek black stiletto heels';
   }
-  return 'clean white low-top sneakers';
+  // No hardcoded default — let the model decide based on context
+  return '';
 }
 
-function resolveFootwearLock(weeklyPlan, requestedFootwearLock) {
+function resolveFootwearLock(weeklyPlan, requestedFootwearLock, personaMode) {
   const fromRequest = asText(requestedFootwearLock);
   if (fromRequest) return fromRequest;
-  return deriveDefaultFootwearLock(weeklyPlan);
+  return deriveDefaultFootwearLock(weeklyPlan, personaMode);
 }
 
-function buildOutfitMemory(dayPlan, sampled, dayNumber, footwearLock) {
+function buildOutfitMemory(dayPlan, sampled, dayNumber, footwearLock, personaMode) {
   const sampledOutfit = asText(externalProfileMemory.sampleOutfit());
   const sourceOutfit = asText(sampled && sampled.carouselImages && sampled.carouselImages[0] && sampled.carouselImages[0].outfit)
     || asText(dayPlan && dayPlan.theme)
@@ -245,13 +243,46 @@ function buildOutfitMemory(dayPlan, sampled, dayNumber, footwearLock) {
     || 'curated fashion look';
 
   const vibe = asText(dayPlan && dayPlan.vibe) || 'premium editorial';
+  const resolvedFootwear = asText(footwearLock);
+
+  // Cosplay mode: outfit comes from the day theme (character cosplay), no generic defaults
+  if (personaMode === 'cosplay') {
+    const cosplayTheme = asText(dayPlan && dayPlan.theme) || sourceOutfit;
+    const costumeDesc = asText(dayPlan && dayPlan.costume_description);
+    const wigDesc = asText(dayPlan && dayPlan.wig_description);
+    const exactCostume = costumeDesc || `Cosplay outfit for ${cosplayTheme}`;
+    const exactWig = wigDesc || `Character-accurate cosplay wig for ${cosplayTheme}`;
+    return outfitMemoryService.createOutfit({
+      name: `Cosplay Day ${dayNumber}`,
+      top: `COSTUME LOCK — wear this EXACT outfit in ALL shots: ${exactCostume}. WIG LOCK: ${exactWig} — cosplay wig placed over natural hair (SAME person, different hair only), this wig is NON-NEGOTIABLE`,
+      bottom: `MANDATORY: thigh-high stockings OR fishnets OR knee-high socks. Plus matching cosplay bottom as part of: ${exactCostume}`,
+      accessories: `Choker, character-themed hair clips, and props for ${cosplayTheme}. WIG: ${exactWig}`,
+      footwear: resolvedFootwear || `Character-matching footwear for ${cosplayTheme}`,
+    });
+  }
+
+  // Goth mode: outfit locked per day with dark aesthetic accessories
+  if (personaMode === 'goth') {
+    const gothTheme = asText(dayPlan && dayPlan.theme) || sourceOutfit;
+    const costumeDesc = asText(dayPlan && dayPlan.costume_description);
+    const hairDesc = asText(dayPlan && dayPlan.wig_description);
+    const exactOutfit = costumeDesc || `Goth outfit for ${gothTheme}`;
+    const exactHair = hairDesc || 'dark hair, styled';
+    return outfitMemoryService.createOutfit({
+      name: `Goth Day ${dayNumber}`,
+      top: `OUTFIT LOCK — wear this EXACT outfit: ${exactOutfit}. HAIR: ${exactHair}. BODY: keep EXACT proportions from reference — do NOT exaggerate any features`,
+      bottom: `Fishnets or dark tights matching: ${exactOutfit}`,
+      accessories: `Cross necklace or choker, chains, dark nails. For ${gothTheme}`,
+      footwear: resolvedFootwear || 'platform boots or combat boots',
+    });
+  }
 
   return outfitMemoryService.createOutfit({
     name: `Auto Outfit Day ${dayNumber}`,
     top: sourceOutfit,
     bottom: `Coordinated bottom aligned with ${sampledOutfit || sourceOutfit}`,
     accessories: `Accessories styled for ${vibe}`,
-    footwear: asText(footwearLock) || 'clean white low-top sneakers',
+    footwear: resolvedFootwear || `Footwear appropriate for ${vibe} setting`,
   });
 }
 
@@ -319,10 +350,11 @@ function buildAutoPlanData({
   similarityCooldown = 'on',
   footwearLock = '',
   styleAtomIds = [],
+  personaMode = '',
 }) {
   const sceneMemory = buildAutoSceneMemory(weeklyPlan);
   const sceneMemoryId = sceneMemory ? sceneMemory.id : null;
-  const runFootwearLock = resolveFootwearLock(weeklyPlan, footwearLock);
+  const runFootwearLock = resolveFootwearLock(weeklyPlan, footwearLock, personaMode);
   const mergedAtomIds = resolveStyleAtomIds(weeklyPlan, styleAtomIds);
   const imageEntries = [];
   const cooldownEnabled = similarityCooldown !== 'off';
@@ -338,7 +370,7 @@ function buildAutoPlanData({
     });
 
     const dayNumber = Number.isInteger(dayPlan && dayPlan.day) ? dayPlan.day : index + 1;
-    const outfitMemory = buildOutfitMemory(dayPlan, sampled, dayNumber, runFootwearLock);
+    const outfitMemory = buildOutfitMemory(dayPlan, sampled, dayNumber, runFootwearLock, personaMode);
     const outfitId = outfitMemory.id;
 
     const sharedLocation = sampled.carouselImages[0]
@@ -358,6 +390,7 @@ function buildAutoPlanData({
           dayPlan,
           pose: assignedPose,
           location: item.location,
+          personaMode,
         });
         if (!cooldownEnabled) return prompt;
         return applySimilarityCooldown(prompt, cooldownState, dayNumber + poseCursor);
@@ -370,6 +403,7 @@ function buildAutoPlanData({
           dayPlan,
           pose: dayPoses[poseCursor] || sampled.lifestyleInsert.description,
           location: sharedLocation,
+          personaMode,
         });
         return cooldownEnabled
           ? applySimilarityCooldown(base, cooldownState, dayNumber + poseCursor + 17)
@@ -386,6 +420,7 @@ function buildAutoPlanData({
           dayPlan,
           pose: assignedPose,
           location: sharedLocation,
+          personaMode,
         });
         if (!cooldownEnabled) return prompt;
         return applySimilarityCooldown(prompt, cooldownState, dayNumber + poseCursor + 31);
@@ -418,6 +453,7 @@ function buildAutoPlanData({
           dayPlan,
           pose: storyPose,
           location: sharedLocation,
+          personaMode,
         })}\nStory style: lighter candid vertical moment`;
         const prompt = cooldownEnabled
           ? applySimilarityCooldown(basePrompt, cooldownState, dayNumber + s + 53)
@@ -604,19 +640,23 @@ router.post('/plans/:id/execute-day', (req, res, next) => {
     const postEntries = entries.filter((e) => e.type === 'carousel' || e.type === 'lifestyle');
     const verticalEntries = entries.filter((e) => e.type === 'reel' || e.type === 'story');
     const styleAtomIds = plan.config?.styleAtomIds || [];
+    const planImageModel = plan.config?.imageModel || undefined;
+    const usesAnchor = plan.personaMode === 'cosplay' || plan.personaMode === 'goth';
 
     const jobIds = [
       ...startMultiBatches(
         postEntries,
-        { imageSize: '2K', aspectRatio: '4:5' },
+        { imageSize: '2K', aspectRatio: '4:5', imageModel: planImageModel },
         { characterId, activeReferenceIds },
         styleAtomIds,
+        { anchorFirst: usesAnchor },
       ),
       ...startMultiBatches(
         verticalEntries,
-        { imageSize: '2K', aspectRatio: '9:16' },
+        { imageSize: '2K', aspectRatio: '9:16', imageModel: planImageModel },
         { characterId, activeReferenceIds },
         styleAtomIds,
+        { anchorFirst: usesAnchor },
       ),
     ];
 
@@ -633,124 +673,134 @@ router.post('/plans/:id/execute-day', (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+async function validateAndPlan(body) {
+  const {
+    theme,
+    duration,
+    characterId,
+    personaMode,
+    customPersona,
+    spicinessLevel,
+    includeReels = true,
+    includeStories = false,
+    carouselCount = 3,
+    reelCount = 1,
+    storyCount = 1,
+    activeReferenceIds,
+    similarityCooldown = 'on',
+    footwearLock = '',
+    styleAtomIds,
+    cosplayOptions,
+    imageModel,
+  } = body || {};
+
+  if (!theme || typeof theme !== 'string' || theme.trim().length === 0) {
+    throw new AppError('"theme" is required', 400, 'VALIDATION_ERROR');
+  }
+  if (!Number.isInteger(duration) || duration <= 0 || duration > MAX_DURATION_DAYS) {
+    throw new AppError(`"duration" must be a positive integer (max ${MAX_DURATION_DAYS})`, 400, 'VALIDATION_ERROR');
+  }
+  if (!characterId || typeof characterId !== 'string') {
+    throw new AppError('"characterId" is required', 400, 'VALIDATION_ERROR');
+  }
+  if (typeof includeReels !== 'boolean') {
+    throw new AppError('"includeReels" must be a boolean', 400, 'VALIDATION_ERROR');
+  }
+  if (typeof includeStories !== 'boolean') {
+    throw new AppError('"includeStories" must be a boolean', 400, 'VALIDATION_ERROR');
+  }
+  if (!Number.isInteger(carouselCount) || carouselCount < 1 || carouselCount > 10) {
+    throw new AppError('"carouselCount" must be an integer between 1 and 10', 400, 'VALIDATION_ERROR');
+  }
+  if (!Number.isInteger(reelCount) || reelCount < 1 || reelCount > 10) {
+    throw new AppError('"reelCount" must be an integer between 1 and 10', 400, 'VALIDATION_ERROR');
+  }
+  if (!Number.isInteger(storyCount) || storyCount < 1 || storyCount > 10) {
+    throw new AppError('"storyCount" must be an integer between 1 and 10', 400, 'VALIDATION_ERROR');
+  }
+  if (similarityCooldown !== 'on' && similarityCooldown !== 'off') {
+    throw new AppError('"similarityCooldown" must be "on" or "off"', 400, 'VALIDATION_ERROR');
+  }
+  if (cosplayOptions != null && (typeof cosplayOptions !== 'object' || Array.isArray(cosplayOptions))) {
+    throw new AppError('"cosplayOptions" must be an object if provided', 400, 'VALIDATION_ERROR');
+  }
+
+  const resolvedImageModel = typeof imageModel === 'string' && imageModel.trim() ? imageModel.trim() : undefined;
+  const characterConfig = referenceManager.getCharacter(characterId);
+  const resolvedActiveReferenceIds = resolveActiveReferenceIds(activeReferenceIds, characterConfig);
+  const weeklyPlan = await generateWeeklyPlan({ theme: theme.trim(), duration, personaMode, customPersona, spicinessLevel, cosplayOptions });
+
+  if (!weeklyPlan || !Array.isArray(weeklyPlan.days)) {
+    throw new AppError('Planner returned invalid structure: missing "days" array', 502, 'PARSE_ERROR');
+  }
+
+  const planned = buildAutoPlanData({
+    weeklyPlan,
+    characterConfig,
+    carouselCount,
+    includeReels,
+    reelCount,
+    includeStories,
+    storyCount,
+    similarityCooldown,
+    footwearLock,
+    styleAtomIds: Array.isArray(styleAtomIds) ? styleAtomIds : [],
+    personaMode,
+  });
+
+  return { planned, characterId, personaMode, resolvedActiveReferenceIds, resolvedImageModel };
+}
+
+function executePlannedEntries(planned, { characterId, personaMode, resolvedActiveReferenceIds, resolvedImageModel }) {
+  const lockedEntries = planned.imageEntries
+    .map((entry) => {
+      if (entry.type === 'carousel' || entry.type === 'lifestyle') {
+        return { ...entry, resolutionTier: '2K', aspectRatio: '4:5' };
+      }
+      return { ...entry, resolutionTier: '2K', aspectRatio: '9:16' };
+    })
+    .filter((entry) => typeof entry.prompt === 'string' && entry.prompt.trim().length > 0);
+
+  const postEntries = lockedEntries.filter((entry) => entry.type === 'carousel' || entry.type === 'lifestyle');
+  const verticalEntries = lockedEntries.filter((entry) => entry.type === 'reel' || entry.type === 'story');
+  const usesAnchor = personaMode === 'cosplay' || personaMode === 'goth';
+
+  const jobIds = [
+    ...startMultiBatches(
+      postEntries,
+      { imageSize: '2K', aspectRatio: '4:5', imageModel: resolvedImageModel },
+      { characterId, activeReferenceIds: resolvedActiveReferenceIds },
+      planned.styleAtomIds,
+      { anchorFirst: usesAnchor },
+    ),
+    ...startMultiBatches(
+      verticalEntries,
+      { imageSize: '2K', aspectRatio: '9:16', imageModel: resolvedImageModel },
+      { characterId, activeReferenceIds: resolvedActiveReferenceIds },
+      planned.styleAtomIds,
+      { anchorFirst: usesAnchor },
+    ),
+  ];
+
+  return {
+    totalImages: lockedEntries.length,
+    jobIds,
+    sceneMemoryId: planned.sceneMemoryId,
+    footwearLock: planned.footwearLock,
+    styleAtomIds: planned.styleAtomIds,
+    formatLock: { carousel: '2K 4:5', reel: '2K 9:16', story: '2K 9:16' },
+  };
+}
+
 router.post('/plan', async (req, res, next) => {
   try {
-    const {
-      theme,
-      duration,
-      characterId,
-      personaMode,
-      customPersona,
-      spicinessLevel,
-      includeReels = true,
-      includeStories = false,
-      carouselCount = 3,
-      reelCount = 1,
-      storyCount = 1,
-      execute = false,
-      activeReferenceIds,
-      similarityCooldown = 'on',
-      footwearLock = '',
-      styleAtomIds,
-    } = req.body || {};
+    const result = await validateAndPlan(req.body);
+    const { planned } = result;
+    const execute = !!(req.body && req.body.execute);
 
-    if (!theme || typeof theme !== 'string' || theme.trim().length === 0) {
-      throw new AppError('"theme" is required', 400, 'VALIDATION_ERROR');
-    }
-
-    if (!Number.isInteger(duration) || duration <= 0 || duration > MAX_DURATION_DAYS) {
-      throw new AppError(`"duration" must be a positive integer (max ${MAX_DURATION_DAYS})`, 400, 'VALIDATION_ERROR');
-    }
-
-    if (!characterId || typeof characterId !== 'string') {
-      throw new AppError('"characterId" is required', 400, 'VALIDATION_ERROR');
-    }
-
-    if (typeof includeReels !== 'boolean') {
-      throw new AppError('"includeReels" must be a boolean', 400, 'VALIDATION_ERROR');
-    }
-    if (typeof includeStories !== 'boolean') {
-      throw new AppError('"includeStories" must be a boolean', 400, 'VALIDATION_ERROR');
-    }
-    if (!Number.isInteger(carouselCount) || carouselCount < 1 || carouselCount > 10) {
-      throw new AppError('"carouselCount" must be an integer between 1 and 10', 400, 'VALIDATION_ERROR');
-    }
-    if (!Number.isInteger(reelCount) || reelCount < 1 || reelCount > 10) {
-      throw new AppError('"reelCount" must be an integer between 1 and 10', 400, 'VALIDATION_ERROR');
-    }
-    if (!Number.isInteger(storyCount) || storyCount < 1 || storyCount > 10) {
-      throw new AppError('"storyCount" must be an integer between 1 and 10', 400, 'VALIDATION_ERROR');
-    }
-    if (similarityCooldown !== 'on' && similarityCooldown !== 'off') {
-      throw new AppError('"similarityCooldown" must be "on" or "off"', 400, 'VALIDATION_ERROR');
-    }
-
-    const characterConfig = referenceManager.getCharacter(characterId);
-    const resolvedActiveReferenceIds = resolveActiveReferenceIds(activeReferenceIds, characterConfig);
-    const weeklyPlan = await generateWeeklyPlan({ theme: theme.trim(), duration, personaMode, customPersona, spicinessLevel });
-
-    if (!weeklyPlan || !Array.isArray(weeklyPlan.days)) {
-      throw new AppError('Planner returned invalid structure: missing "days" array', 502, 'PARSE_ERROR');
-    }
-
-    const planned = buildAutoPlanData({
-      weeklyPlan,
-      characterConfig,
-      carouselCount,
-      includeReels,
-      reelCount,
-      includeStories,
-      storyCount,
-      similarityCooldown,
-      footwearLock,
-      styleAtomIds: Array.isArray(styleAtomIds) ? styleAtomIds : [],
-    });
-
-    if (execute === true) {
-      const lockedEntries = planned.imageEntries
-        .map((entry) => {
-          if (entry.type === 'carousel' || entry.type === 'lifestyle') {
-            return { ...entry, resolutionTier: '2K', aspectRatio: '4:5' };
-          }
-          return { ...entry, resolutionTier: '2K', aspectRatio: '9:16' };
-        })
-        .filter((entry) => typeof entry.prompt === 'string' && entry.prompt.trim().length > 0);
-
-      const postEntries = lockedEntries
-        .filter((entry) => entry.type === 'carousel' || entry.type === 'lifestyle');
-      const verticalEntries = lockedEntries
-        .filter((entry) => entry.type === 'reel' || entry.type === 'story');
-
-      const jobIds = [
-        ...startMultiBatches(
-          postEntries,
-          { imageSize: '2K', aspectRatio: '4:5' },
-          { characterId, activeReferenceIds: resolvedActiveReferenceIds },
-          planned.styleAtomIds
-        ),
-        ...startMultiBatches(
-          verticalEntries,
-          { imageSize: '2K', aspectRatio: '9:16' },
-          { characterId, activeReferenceIds: resolvedActiveReferenceIds },
-          planned.styleAtomIds
-        ),
-      ];
-
-      return res.status(202).json({
-        success: true,
-        data: {
-          totalImages: lockedEntries.length,
-          jobIds,
-          sceneMemoryId: planned.sceneMemoryId,
-          footwearLock: planned.footwearLock,
-          styleAtomIds: planned.styleAtomIds,
-          formatLock: {
-            carousel: '2K 4:5',
-            reel: '2K 9:16',
-            story: '2K 9:16',
-          },
-        },
-      });
+    if (execute) {
+      const data = executePlannedEntries(planned, result);
+      return res.status(202).json({ success: true, data });
     }
 
     res.json({ success: true, data: planned.days });
@@ -761,124 +811,40 @@ router.post('/plan', async (req, res, next) => {
 
 router.post('/execute', async (req, res, next) => {
   try {
-    const {
-      theme,
-      duration,
-      characterId,
-      personaMode,
-      customPersona,
-      spicinessLevel,
-      includeReels = true,
-      includeStories = false,
-      carouselCount = 3,
-      reelCount = 1,
-      storyCount = 1,
-      activeReferenceIds,
-      similarityCooldown = 'on',
-      footwearLock = '',
-      styleAtomIds,
-    } = req.body || {};
+    const result = await validateAndPlan(req.body);
+    const { planned } = result;
 
-    if (!theme || typeof theme !== 'string' || theme.trim().length === 0) {
-      throw new AppError('"theme" is required', 400, 'VALIDATION_ERROR');
-    }
-
-    if (!Number.isInteger(duration) || duration <= 0 || duration > MAX_DURATION_DAYS) {
-      throw new AppError(`"duration" must be a positive integer (max ${MAX_DURATION_DAYS})`, 400, 'VALIDATION_ERROR');
-    }
-
-    if (!characterId || typeof characterId !== 'string') {
-      throw new AppError('"characterId" is required', 400, 'VALIDATION_ERROR');
-    }
-
-    if (typeof includeReels !== 'boolean') {
-      throw new AppError('"includeReels" must be a boolean', 400, 'VALIDATION_ERROR');
-    }
-    if (typeof includeStories !== 'boolean') {
-      throw new AppError('"includeStories" must be a boolean', 400, 'VALIDATION_ERROR');
-    }
-    if (!Number.isInteger(carouselCount) || carouselCount < 1 || carouselCount > 10) {
-      throw new AppError('"carouselCount" must be an integer between 1 and 10', 400, 'VALIDATION_ERROR');
-    }
-    if (!Number.isInteger(reelCount) || reelCount < 1 || reelCount > 10) {
-      throw new AppError('"reelCount" must be an integer between 1 and 10', 400, 'VALIDATION_ERROR');
-    }
-    if (!Number.isInteger(storyCount) || storyCount < 1 || storyCount > 10) {
-      throw new AppError('"storyCount" must be an integer between 1 and 10', 400, 'VALIDATION_ERROR');
-    }
-    if (similarityCooldown !== 'on' && similarityCooldown !== 'off') {
-      throw new AppError('"similarityCooldown" must be "on" or "off"', 400, 'VALIDATION_ERROR');
-    }
-    const characterConfig = referenceManager.getCharacter(characterId);
-    const resolvedActiveReferenceIds = resolveActiveReferenceIds(activeReferenceIds, characterConfig);
-    const weeklyPlan = await generateWeeklyPlan({ theme: theme.trim(), duration, personaMode, customPersona, spicinessLevel });
-
-    if (!weeklyPlan || !Array.isArray(weeklyPlan.days)) {
-      throw new AppError('Planner returned invalid structure: missing "days" array', 502, 'PARSE_ERROR');
-    }
-
-    const planned = buildAutoPlanData({
-      weeklyPlan,
-      characterConfig,
-      carouselCount,
-      includeReels,
-      reelCount,
-      includeStories,
-      storyCount,
-      similarityCooldown,
-      footwearLock,
-      styleAtomIds: Array.isArray(styleAtomIds) ? styleAtomIds : [],
-    });
-    const imageEntries = planned.imageEntries;
-
-    if (imageEntries.length === 0) {
+    if (planned.imageEntries.length === 0) {
       throw new AppError('No prompts produced for execution', 400, 'VALIDATION_ERROR');
     }
 
-    const lockedEntries = imageEntries
-      .map((entry) => {
-        if (entry.type === 'carousel' || entry.type === 'lifestyle') {
-          return { ...entry, resolutionTier: '2K', aspectRatio: '4:5' };
-        }
-        return { ...entry, resolutionTier: '2K', aspectRatio: '9:16' };
-      })
-      .filter((entry) => typeof entry.prompt === 'string' && entry.prompt.trim().length > 0);
-
-    const postEntries = lockedEntries
-      .filter((entry) => entry.type === 'carousel' || entry.type === 'lifestyle');
-    const verticalEntries = lockedEntries
-      .filter((entry) => entry.type === 'reel' || entry.type === 'story');
-
-    const jobIds = [
-      ...startMultiBatches(
-        postEntries,
-        { imageSize: '2K', aspectRatio: '4:5' },
-        { characterId, activeReferenceIds: resolvedActiveReferenceIds },
-        planned.styleAtomIds
-      ),
-      ...startMultiBatches(
-        verticalEntries,
-        { imageSize: '2K', aspectRatio: '9:16' },
-        { characterId, activeReferenceIds: resolvedActiveReferenceIds },
-        planned.styleAtomIds
-      ),
-    ];
-
-    res.status(202).json({
-      success: true,
-      data: {
-        totalImages: lockedEntries.length,
-        jobIds,
-        sceneMemoryId: planned.sceneMemoryId,
-        footwearLock: planned.footwearLock,
-        styleAtomIds: planned.styleAtomIds,
-        formatLock: {
-          carousel: '2K 4:5',
-          reel: '2K 9:16',
-          story: '2K 9:16',
-        },
+    // Save plan so results persist across server restarts
+    const { theme, personaMode: pm, duration, startDate, imageModel, styleAtomIds: sIds, characterId: cId,
+      includeReels, includeStories, carouselCount, reelCount, storyCount } = req.body;
+    const savedPlan = autoPlanStore.save({
+      name: (theme || '').trim().slice(0, 80),
+      theme: (theme || '').trim(),
+      personaMode: pm,
+      characterId: cId,
+      duration,
+      startDate,
+      days: planned.days,
+      config: {
+        activeReferenceIds: result.resolvedActiveReferenceIds || [],
+        styleAtomIds: Array.isArray(sIds) ? sIds : [],
+        includeReels, includeStories, carouselCount, reelCount, storyCount,
+        imageModel,
       },
     });
+
+    const data = executePlannedEntries(planned, result);
+
+    // Mark each day as executed with all jobIds
+    for (const day of planned.days) {
+      autoPlanStore.markDayExecuted(savedPlan.id, day.day, data.jobIds);
+    }
+
+    res.status(202).json({ success: true, data: { ...data, planId: savedPlan.id, plan: savedPlan } });
   } catch (err) {
     next(err);
   }

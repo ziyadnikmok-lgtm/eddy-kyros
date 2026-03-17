@@ -229,7 +229,9 @@ class GalleryManager {
         const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
         if (Array.isArray(parsed)) return parsed;
       }
-    } catch {}
+    } catch (err) {
+      console.warn('[gallery] Failed to load gallery data:', err.message);
+    }
     return [];
   }
 

@@ -4,6 +4,7 @@ import { useApp } from '../context/AppContext';
 import { useStepTimer } from '../hooks/useStepTimer';
 import { cn } from '../lib/utils';
 import { Card, Btn, Input, Toggle, Slider, Spinner, Empty, Badge, ImageCard, StepProgress, Section, Hint } from '../components/UI';
+import { IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
 
 const StyleAtomPicker = lazy(() => import('../components/StyleAtomPicker'));
 
@@ -33,89 +34,6 @@ const STATUS_STYLES = {
 };
 
 
-function DayCell({ day, startDate, executed, executingDay, onExecute, expanded, onToggle }) {
-  const { weekday, date } = formatDayDate(startDate, day.day - 1);
-  const postCount = (day.carouselPrompts || []).length;
-  const hasLifestyle = !!(day.lifestylePrompt);
-  const reelCount = (day.reelPrompts || []).length;
-  const storyCount = (day.storyPrompts || []).length;
-  const total = postCount + (hasLifestyle ? 1 : 0) + reelCount + storyCount;
-  const isExecuting = executingDay === day.day;
-
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className={cn(
-        'glass border rounded-xl p-3 text-left transition-all cursor-pointer w-full',
-        executed ? 'border-green-500/40 bg-green-500/5' : 'border-zinc-700/60',
-        expanded && 'ring-1 ring-blue-500/30 border-blue-500/40',
-        'hover:border-zinc-600',
-      )}
-    >
-      <div className="flex items-center justify-between mb-2">
-        <div>
-          <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{weekday}</p>
-          <p className="text-sm font-medium text-zinc-200">{date}</p>
-        </div>
-        <div className="flex items-center gap-1.5">
-          {executed && <span className="w-2 h-2 rounded-full bg-green-400" title="Executed" />}
-          <Badge color={executed ? 'green' : 'zinc'}>Day {day.day}</Badge>
-        </div>
-      </div>
-
-      <div className="space-y-0.5 mb-2">
-        {postCount > 0 && (
-          <div className="flex items-center gap-1.5 text-xs text-zinc-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
-            {postCount} {postCount === 1 ? 'Post' : 'Posts'}
-          </div>
-        )}
-        {hasLifestyle && (
-          <div className="flex items-center gap-1.5 text-xs text-zinc-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
-            1 Lifestyle
-          </div>
-        )}
-        {reelCount > 0 && (
-          <div className="flex items-center gap-1.5 text-xs text-zinc-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-purple-400 shrink-0" />
-            {reelCount} {reelCount === 1 ? 'Reel' : 'Reels'}
-          </div>
-        )}
-        {storyCount > 0 && (
-          <div className="flex items-center gap-1.5 text-xs text-zinc-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
-            {storyCount} {storyCount === 1 ? 'Story' : 'Stories'}
-          </div>
-        )}
-        {total === 0 && <p className="text-[10px] text-zinc-600">No content</p>}
-      </div>
-
-      <div className="flex items-center justify-between pt-1.5 border-t border-zinc-800/60">
-        <span className="text-[10px] text-zinc-500">{total} image{total !== 1 ? 's' : ''}</span>
-        {!executed && (
-          <span
-            role="button"
-            tabIndex={0}
-            onClick={(e) => { e.stopPropagation(); onExecute(day.day); }}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onExecute(day.day); } }}
-            className={cn(
-              'text-[10px] font-medium px-2 py-0.5 rounded-md transition',
-              isExecuting
-                ? 'bg-blue-500/20 text-blue-300'
-                : 'bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 hover:text-blue-300',
-            )}
-          >
-            {isExecuting ? 'Starting...' : 'Execute'}
-          </span>
-        )}
-        {executed && <span className="text-[10px] text-green-400 font-medium">Done</span>}
-      </div>
-    </button>
-  );
-}
-
 
 function DayDetail({ day }) {
   return (
@@ -131,7 +49,7 @@ function DayDetail({ day }) {
           </h3>
           <ul className="mt-2 space-y-2">
             {day.carouselPrompts.map((prompt, idx) => (
-              <li key={idx} className="text-xs text-zinc-300 bg-zinc-800/50 rounded-lg p-2.5 whitespace-pre-wrap leading-relaxed">{prompt}</li>
+              <li key={`c${day.day}-${idx}`} className="text-xs text-zinc-300 bg-zinc-800/50 rounded-lg p-2.5 whitespace-pre-wrap leading-relaxed">{prompt}</li>
             ))}
           </ul>
         </div>
@@ -153,7 +71,7 @@ function DayDetail({ day }) {
           </h3>
           <ul className="mt-2 space-y-2">
             {day.reelPrompts.map((prompt, idx) => (
-              <li key={idx} className="text-xs text-zinc-300 bg-zinc-800/50 rounded-lg p-2.5 whitespace-pre-wrap leading-relaxed">{prompt}</li>
+              <li key={`r${day.day}-${idx}`} className="text-xs text-zinc-300 bg-zinc-800/50 rounded-lg p-2.5 whitespace-pre-wrap leading-relaxed">{prompt}</li>
             ))}
           </ul>
         </div>
@@ -166,7 +84,7 @@ function DayDetail({ day }) {
           </h3>
           <ul className="mt-2 space-y-2">
             {day.storyPrompts.map((prompt, idx) => (
-              <li key={idx} className="text-xs text-zinc-300 bg-zinc-800/50 rounded-lg p-2.5 whitespace-pre-wrap leading-relaxed">{prompt}</li>
+              <li key={`s${day.day}-${idx}`} className="text-xs text-zinc-300 bg-zinc-800/50 rounded-lg p-2.5 whitespace-pre-wrap leading-relaxed">{prompt}</li>
             ))}
           </ul>
         </div>
@@ -174,6 +92,76 @@ function DayDetail({ day }) {
     </Card>
   );
 }
+
+const COSPLAY_THEMES = [
+  { value: '', label: 'Custom (type your own)' },
+  // Anime
+  { value: 'popular shonen heroines', label: 'Shonen Heroines' },
+  { value: 'classic 90s anime girls', label: 'Classic 90s Anime' },
+  { value: 'isekai waifus', label: 'Isekai Waifus' },
+  { value: 'anime villain girls', label: 'Villain Girls' },
+  { value: 'magical girl cosplay sailor moon madoka', label: 'Magical Girls' },
+  { value: 'demon slayer kimetsu no yaiba female characters', label: 'Demon Slayer' },
+  { value: 'one piece female characters', label: 'One Piece Girls' },
+  { value: 'jujutsu kaisen female characters', label: 'Jujutsu Kaisen' },
+  { value: 'evangelion female characters', label: 'Evangelion' },
+  // Gaming
+  { value: 'valorant female agents jett sage reyna viper', label: 'Valorant Agents' },
+  { value: 'league of legends female champions ahri jinx katarina', label: 'League of Legends' },
+  { value: 'genshin impact female characters gacha game', label: 'Genshin Impact' },
+  { value: 'honkai star rail female characters', label: 'Honkai Star Rail' },
+  { value: 'blue archive female students gacha', label: 'Blue Archive' },
+  { value: 'nier automata 2b a2 female characters', label: 'NieR: Automata' },
+  { value: 'final fantasy female characters tifa aerith lightning', label: 'Final Fantasy' },
+  { value: 'overwatch female heroes dva mercy widowmaker kiriko', label: 'Overwatch' },
+  { value: 'street fighter female fighters chun-li juri cammy', label: 'Street Fighter' },
+  { value: 'resident evil female characters ada wong jill valentine', label: 'Resident Evil' },
+  { value: 'wuthering waves female characters gacha', label: 'Wuthering Waves' },
+  { value: 'zenless zone zero female characters', label: 'Zenless Zone Zero' },
+  // Styles
+  { value: 'gacha game characters genshin honkai blue archive', label: 'Gacha Games (Mix)' },
+  { value: 'bunny suit cosplay versions', label: 'Bunny Suit Versions' },
+  { value: 'maid cafe cosplay outfits', label: 'Maid Cafe' },
+  { value: 'summer swimsuit anime cosplay', label: 'Swimsuit Versions' },
+];
+
+const COSPLAY_LOCATIONS = [
+  { value: '', label: 'Auto (mixed)' },
+  { value: 'bedroom', label: 'Bedroom' },
+  { value: 'hotel_room', label: 'Hotel Room' },
+  { value: 'convention_hallway', label: 'Convention Hallway' },
+  { value: 'outdoor_park', label: 'Outdoor / Park' },
+  { value: 'living_room', label: 'Living Room' },
+  { value: 'studio_backdrop', label: 'Simple Backdrop' },
+];
+
+const GOTH_THEMES = [
+  { value: '', label: 'Custom (type your own)' },
+  { value: 'classic goth girl dark romantic aesthetic', label: 'Classic Goth' },
+  { value: 'e-girl egirl alt girl aesthetic dark makeup', label: 'E-Girl / Alt Girl' },
+  { value: 'punk goth studded leather chains band tees', label: 'Punk Goth' },
+  { value: 'romantic goth velvet lace corset victorian dark', label: 'Romantic Goth' },
+  { value: 'streetwear goth techwear dark urban all black', label: 'Streetwear Goth' },
+  { value: 'goth x anime cosplay dark anime characters cat ears', label: 'Goth x Anime' },
+  { value: 'witchy goth occult dark academia tarot crystals', label: 'Witchy / Occult' },
+  { value: 'cyber goth neon accents platform boots industrial', label: 'Cyber Goth' },
+  { value: 'soft goth pastel goth pink black cute dark', label: 'Pastel Goth' },
+  { value: 'club goth nightlife dark party rave latex vinyl', label: 'Club / Nightlife' },
+  { value: 'grunge goth 90s flannel torn fishnets messy hair', label: 'Grunge Goth' },
+  { value: 'goth girlfriend cozy dark aesthetic candid boyfriend pov', label: 'Goth GF Aesthetic' },
+];
+
+const GOTH_LOCATIONS = [
+  { value: '', label: 'Auto (mixed)' },
+  { value: 'urban_night', label: 'Urban Night / Streets' },
+  { value: 'bar_club', label: 'Bar / Club' },
+  { value: 'bedroom_dark', label: 'Dark Bedroom' },
+  { value: 'car_night', label: 'Car at Night' },
+  { value: 'rooftop_city', label: 'Rooftop / City View' },
+  { value: 'alley_graffiti', label: 'Alley / Graffiti Wall' },
+  { value: 'park_night', label: 'Park at Night' },
+  { value: 'mirror_selfie', label: 'Bedroom Mirror' },
+];
 
 const _cache = {
   theme: '',
@@ -198,6 +186,18 @@ const _cache = {
   similarityCooldown: 'on',
   footwearLock: '',
   autoExecute: false,
+  imageModel: DEFAULT_IMAGE_MODEL,
+  // Cosplay options
+  cosplayLewdness: 30,
+  cosplayStyle: 'accurate',
+  cosplayLocation: '',
+  cosplaySignaturePoses: true,
+  cosplayPropShots: false,
+  cosplayBeforeAfter: false,
+  cosplayGroupTheme: false,
+  cosplayTiktokReveal: false,
+  cosplayConventionMode: false,
+  cosplayThemePreset: '',
 };
 
 
@@ -218,6 +218,17 @@ export default function AutoGeneratorPage() {
   const [similarityCooldown, setSimilarityCooldown] = useState(_cache.similarityCooldown);
   const [footwearLock, setFootwearLock] = useState(_cache.footwearLock);
   const [autoExecute, setAutoExecute] = useState(_cache.autoExecute);
+  const [imageModel, setImageModel] = useState(_cache.imageModel);
+  const [cosplayLewdness, setCosplayLewdness] = useState(_cache.cosplayLewdness);
+  const [cosplayStyle, setCosplayStyle] = useState(_cache.cosplayStyle);
+  const [cosplayLocation, setCosplayLocation] = useState(_cache.cosplayLocation);
+  const [cosplaySignaturePoses, setCosplaySignaturePoses] = useState(_cache.cosplaySignaturePoses);
+  const [cosplayPropShots, setCosplayPropShots] = useState(_cache.cosplayPropShots);
+  const [cosplayBeforeAfter, setCosplayBeforeAfter] = useState(_cache.cosplayBeforeAfter);
+  const [cosplayGroupTheme, setCosplayGroupTheme] = useState(_cache.cosplayGroupTheme);
+  const [cosplayTiktokReveal, setCosplayTiktokReveal] = useState(_cache.cosplayTiktokReveal);
+  const [cosplayConventionMode, setCosplayConventionMode] = useState(_cache.cosplayConventionMode);
+  const [cosplayThemePreset, setCosplayThemePreset] = useState(_cache.cosplayThemePreset);
   const [loading, setLoading] = useState(false);
 
   const [result, setResult] = useState(_cache.result);
@@ -237,30 +248,17 @@ export default function AutoGeneratorPage() {
     if (!characterId && characters.length > 0) {
       setCharacterId(characters[0].id);
     }
-  }, [characters, characterId]);
+  }, [characters]);
 
-  useEffect(() => { _cache.theme = theme; }, [theme]);
-  useEffect(() => { _cache.personaMode = personaMode; }, [personaMode]);
-  useEffect(() => { _cache.customPersona = customPersona; }, [customPersona]);
-  useEffect(() => { _cache.spicinessLevel = spicinessLevel; }, [spicinessLevel]);
-  useEffect(() => { _cache.duration = duration; }, [duration]);
-  useEffect(() => { _cache.characterId = characterId; }, [characterId]);
-  useEffect(() => { _cache.includeReels = includeReels; }, [includeReels]);
-  useEffect(() => { _cache.includeStories = includeStories; }, [includeStories]);
-  useEffect(() => { _cache.carouselCount = carouselCount; }, [carouselCount]);
-  useEffect(() => { _cache.reelCount = reelCount; }, [reelCount]);
-  useEffect(() => { _cache.storyCount = storyCount; }, [storyCount]);
-  useEffect(() => { _cache.result = result; }, [result]);
-  useEffect(() => { _cache.executeJobs = executeJobs; }, [executeJobs]);
-  useEffect(() => { _cache.styleAtomIds = styleAtomIds; }, [styleAtomIds]);
-  useEffect(() => { _cache.styleAtomDetails = styleAtomDetails; }, [styleAtomDetails]);
-  useEffect(() => { _cache.activePlan = activePlan; }, [activePlan]);
-  useEffect(() => { _cache.savedPlans = savedPlans; }, [savedPlans]);
-  useEffect(() => { _cache.startDate = startDate; }, [startDate]);
-  useEffect(() => { _cache.expandedDay = expandedDay; }, [expandedDay]);
-  useEffect(() => { _cache.similarityCooldown = similarityCooldown; }, [similarityCooldown]);
-  useEffect(() => { _cache.footwearLock = footwearLock; }, [footwearLock]);
-  useEffect(() => { _cache.autoExecute = autoExecute; }, [autoExecute]);
+  useEffect(() => { Object.assign(_cache, {
+    theme, personaMode, customPersona, spicinessLevel, duration, characterId,
+    includeReels, includeStories, carouselCount, reelCount, storyCount,
+    result, executeJobs, styleAtomIds, styleAtomDetails, activePlan, savedPlans,
+    startDate, expandedDay, similarityCooldown, footwearLock, autoExecute, imageModel,
+    cosplayLewdness, cosplayStyle, cosplayLocation, cosplaySignaturePoses,
+    cosplayPropShots, cosplayBeforeAfter, cosplayGroupTheme, cosplayTiktokReveal,
+    cosplayConventionMode, cosplayThemePreset,
+  }); });
 
   useEffect(() => {
     plansApi.list().then(setSavedPlans).catch(() => {});
@@ -275,10 +273,20 @@ export default function AutoGeneratorPage() {
     let cancelled = false;
     const jobIds = result.data.jobIds;
 
+    let lostCount = 0;
     const fetchJobs = async () => {
       try {
         const jobs = await Promise.all(jobIds.map((jobId) => batchApi.get(jobId).catch(() => null)));
-        if (!cancelled) setExecuteJobs(jobs.filter(Boolean));
+        if (cancelled) return;
+        const valid = jobs.filter(Boolean);
+        setExecuteJobs(valid);
+        // Stop polling if all jobs completed or if jobs can't be found (server restart)
+        if (valid.length > 0 && valid.every((j) => j.status !== 'running')) {
+          clearInterval(interval);
+        } else if (valid.length === 0) {
+          lostCount++;
+          if (lostCount >= 3) clearInterval(interval);
+        }
       } catch { }
     };
 
@@ -336,6 +344,8 @@ export default function AutoGeneratorPage() {
     abortRef.current = controller;
 
     setLoading(true);
+    setResult(null);
+    setExecuteJobs([]);
     setActivePlan(null);
     setExpandedDay(null);
 
@@ -359,6 +369,20 @@ export default function AutoGeneratorPage() {
           similarityCooldown,
           footwearLock: footwearLock.trim() || undefined,
           styleAtomIds: styleAtomIds.length > 0 ? styleAtomIds : undefined,
+          imageModel,
+          ...((personaMode === 'cosplay' || personaMode === 'goth') && {
+            cosplayOptions: {
+              lewdness: cosplayLewdness,
+              style: cosplayStyle,
+              location: cosplayLocation || undefined,
+              signaturePoses: cosplaySignaturePoses,
+              propShots: cosplayPropShots,
+              beforeAfter: cosplayBeforeAfter,
+              groupTheme: cosplayGroupTheme,
+              tiktokReveal: cosplayTiktokReveal,
+              conventionMode: cosplayConventionMode,
+            },
+          }),
         }),
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(300_000)]),
       });
@@ -372,6 +396,11 @@ export default function AutoGeneratorPage() {
       if (autoExecute) {
         if (!Array.isArray(data.jobIds)) throw new Error('Invalid execute response format');
         setResult({ mode: 'execute', data });
+        // If server returned a saved plan, set it so day-level images show
+        if (data.plan) {
+          setActivePlan(data.plan);
+          setSavedPlans((prev) => [{ id: data.plan.id, name: data.plan.name, theme: data.plan.theme, personaMode: data.plan.personaMode, duration: data.plan.duration, startDate: data.plan.startDate, status: data.plan.status, totalDays: data.plan.days?.length || 0, executedDayCount: data.plan.executedDays?.length || 0, createdAt: data.plan.createdAt }, ...prev]);
+        }
         notify('Generation started', 'success');
       } else {
         if (!Array.isArray(data)) throw new Error('Invalid plan response format');
@@ -392,6 +421,7 @@ export default function AutoGeneratorPage() {
               carouselCount: carouselCountInt,
               reelCount: reelCountInt,
               storyCount: storyCountInt,
+              imageModel,
             },
           });
           setActivePlan(saved);
@@ -418,6 +448,7 @@ export default function AutoGeneratorPage() {
       setActivePlan(plan);
       setStartDate(plan.startDate || todayStr());
       setExpandedDay(null);
+      setDayResults({});
       setResult({ mode: 'plan', data: plan.days });
       notify(`Loaded: ${plan.name}`, 'success');
     } catch (err) {
@@ -494,6 +525,80 @@ export default function AutoGeneratorPage() {
     [activePlan],
   );
 
+  // Map jobId → dayNumber for grouping results by day
+  const jobToDayMap = useMemo(() => {
+    const map = {};
+    for (const ed of (activePlan?.executedDays || [])) {
+      for (const jid of (ed.jobIds || [])) {
+        map[jid] = ed.day;
+      }
+    }
+    return map;
+  }, [activePlan]);
+
+  // Track per-day results from executed jobs
+  const [dayResults, setDayResults] = useState({});
+  const dayPollRef = useRef(null);
+
+  useEffect(() => {
+    const executedDays = activePlan?.executedDays || [];
+    const allJobIds = executedDays.flatMap((ed) => ed.jobIds || []);
+    if (allJobIds.length === 0) { setDayResults({}); return undefined; }
+
+    // Build local day map in case the memoized one hasn't updated yet
+    const localDayMap = {};
+    for (const ed of executedDays) {
+      for (const jid of (ed.jobIds || [])) {
+        localDayMap[jid] = ed.day;
+      }
+    }
+
+    let cancelled = false;
+    let failCount = 0;
+    const poll = async () => {
+      try {
+        const jobs = await Promise.all(allJobIds.map((jid) => batchApi.get(jid).catch(() => null)));
+        if (cancelled) return;
+        const valid = jobs.filter(Boolean);
+        if (valid.length === 0) {
+          failCount++;
+          if (failCount >= 3 && dayPollRef.current) {
+            clearInterval(dayPollRef.current);
+            dayPollRef.current = null;
+          }
+          return;
+        }
+        failCount = 0;
+        const grouped = {};
+        for (const job of valid) {
+          const dayNum = localDayMap[job.jobId] || jobToDayMap[job.jobId];
+          if (!dayNum) continue;
+          if (!grouped[dayNum]) grouped[dayNum] = { images: [], running: false, completed: 0, total: 0 };
+          grouped[dayNum].total += job.total || 0;
+          grouped[dayNum].completed += (job.completed || 0) + (job.failed || 0);
+          if (job.status === 'running') grouped[dayNum].running = true;
+          const imgs = (job.results || []).filter((r) => r?.success && r?.galleryId);
+          grouped[dayNum].images.push(...imgs);
+        }
+        if (cancelled) return;
+        setDayResults(grouped);
+
+        // Stop polling if all done
+        const anyRunning = Object.values(grouped).some((g) => g.running);
+        if (!anyRunning && dayPollRef.current) {
+          clearInterval(dayPollRef.current);
+          dayPollRef.current = null;
+        }
+      } catch (err) {
+        console.warn('dayResults poll error:', err);
+      }
+    };
+
+    poll();
+    dayPollRef.current = setInterval(poll, 2500);
+    return () => { cancelled = true; clearInterval(dayPollRef.current); dayPollRef.current = null; };
+  }, [activePlan?.executedDays, jobToDayMap]);
+
   return (
     <div className="space-y-6 animate-in">
       {savedPlans.length > 0 && (
@@ -554,6 +659,19 @@ export default function AutoGeneratorPage() {
             />
 
             <label className="flex flex-col gap-1.5 text-sm">
+              <span className="text-zinc-400 font-medium">Image Model</span>
+              <select
+                value={imageModel}
+                onChange={(e) => setImageModel(e.target.value)}
+                className="rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
+              >
+                {IMAGE_MODEL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="flex flex-col gap-1.5 text-sm">
               <span className="text-zinc-400 font-medium flex items-center gap-1.5">Persona Mode <Hint text="Sets the overall style and vibe direction. Each persona generates different types of content and aesthetics." /></span>
               <select
                 value={personaMode}
@@ -565,6 +683,8 @@ export default function AutoGeneratorPage() {
                 <option value="fitness">Fitness</option>
                 <option value="girl_next_door">Girl Next Door</option>
                 <option value="high_fashion">High Fashion</option>
+                <option value="cosplay">Cosplay (Anime)</option>
+                <option value="goth">Goth / Alt Girl</option>
               </select>
             </label>
 
@@ -602,6 +722,118 @@ export default function AutoGeneratorPage() {
               />
               <span className="text-[10px] text-zinc-600 mt-0.5 block">0 = subtle, 100 = maximum suggestiveness</span>
             </div>
+          )}
+
+          {(personaMode === 'cosplay' || personaMode === 'goth') && (
+            <Section title={personaMode === 'goth' ? 'Goth Options' : 'Cosplay Options'} defaultOpen>
+              <div className="space-y-4">
+                {/* Theme preset dropdown */}
+                <label className="flex flex-col gap-1.5 text-sm">
+                  <span className="text-zinc-400 font-medium">{personaMode === 'goth' ? 'Goth Theme' : 'Cosplay Theme'}</span>
+                  <select
+                    value={cosplayThemePreset}
+                    onChange={(e) => {
+                      setCosplayThemePreset(e.target.value);
+                      if (e.target.value) setTheme(e.target.value);
+                    }}
+                    className="rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-pink-500/70 focus:ring-1 focus:ring-pink-500/20 cursor-pointer"
+                  >
+                    {(personaMode === 'goth' ? GOTH_THEMES : COSPLAY_THEMES).map((t) => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                {/* Style + Location row */}
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="flex flex-col gap-1.5 text-sm">
+                    <span className="text-zinc-400 font-medium">Style</span>
+                    <select
+                      value={cosplayStyle}
+                      onChange={(e) => setCosplayStyle(e.target.value)}
+                      className="rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-pink-500/70 focus:ring-1 focus:ring-pink-500/20 cursor-pointer"
+                    >
+                      {personaMode === 'goth' ? (
+                        <>
+                          <option value="accurate">Classic Goth</option>
+                          <option value="sexy">Sexy / Provocative</option>
+                          <option value="casual">Casual Dark Streetwear</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="accurate">Accurate Cosplay</option>
+                          <option value="sexy">Sexy Reinterpretation</option>
+                          <option value="casual">Casual Closet Cosplay</option>
+                        </>
+                      )}
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-sm">
+                    <span className="text-zinc-400 font-medium">Location</span>
+                    <select
+                      value={cosplayLocation}
+                      onChange={(e) => setCosplayLocation(e.target.value)}
+                      className="rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-pink-500/70 focus:ring-1 focus:ring-pink-500/20 cursor-pointer"
+                    >
+                      {(personaMode === 'goth' ? GOTH_LOCATIONS : COSPLAY_LOCATIONS).map((l) => (
+                        <option key={l.value} value={l.value}>{l.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                {/* Lewdness slider */}
+                <div>
+                  <Slider
+                    label="Lewdness"
+                    value={cosplayLewdness}
+                    onChange={(value) => setCosplayLewdness(Math.round(value / 5) * 5)}
+                    min={0}
+                    max={100}
+                    step={5}
+                    className="rounded-lg border border-zinc-700/80 bg-zinc-800/60 px-3 py-3"
+                  />
+                  <div className="flex justify-between text-[10px] text-zinc-600 mt-0.5">
+                    {personaMode === 'goth' ? (
+                      <>
+                        <span>Covered / modest</span>
+                        <span>Revealing</span>
+                        <span>Lingerie goth</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Accurate costume</span>
+                        <span>Bikini version</span>
+                        <span>Bunny suit</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Toggles grid */}
+                <div className="grid grid-cols-2 gap-2">
+                  {personaMode === 'goth' ? (
+                    <>
+                      <Toggle checked={cosplaySignaturePoses} onChange={setCosplaySignaturePoses} label="Flash Photography" />
+                      <Toggle checked={cosplayPropShots} onChange={setCosplayPropShots} label="Accessory Close-ups" />
+                      <Toggle checked={cosplayBeforeAfter} onChange={setCosplayBeforeAfter} label="Getting Ready (Makeup)" />
+                      <Toggle checked={cosplayGroupTheme} onChange={setCosplayGroupTheme} label="Friend Group Shots" />
+                      <Toggle checked={cosplayTiktokReveal} onChange={setCosplayTiktokReveal} label="Day → Night Transition" />
+                      <Toggle checked={cosplayConventionMode} onChange={setCosplayConventionMode} label="Multi Outfit per Day" />
+                    </>
+                  ) : (
+                    <>
+                      <Toggle checked={cosplaySignaturePoses} onChange={setCosplaySignaturePoses} label="Signature Poses" />
+                      <Toggle checked={cosplayPropShots} onChange={setCosplayPropShots} label="Prop Focus Shots" />
+                      <Toggle checked={cosplayBeforeAfter} onChange={setCosplayBeforeAfter} label="Before/After (Getting Ready)" />
+                      <Toggle checked={cosplayGroupTheme} onChange={setCosplayGroupTheme} label="Group Theme (Same Anime)" />
+                      <Toggle checked={cosplayTiktokReveal} onChange={setCosplayTiktokReveal} label="TikTok Reveal (Civilian → Cosplay)" />
+                      <Toggle checked={cosplayConventionMode} onChange={setCosplayConventionMode} label="Convention Mode (Multi per Day)" />
+                    </>
+                  )}
+                </div>
+              </div>
+            </Section>
           )}
 
           <Section title="Content Schedule" defaultOpen>
@@ -736,53 +968,57 @@ export default function AutoGeneratorPage() {
         </Card>
       )}
 
-      {!loading && result?.mode === 'execute' && (
-        <Card className="space-y-4">
-          <h2 className="text-sm font-medium text-zinc-300">Execution Started</h2>
-          <p className="text-sm text-zinc-200">Target images: {result.data.totalImages ?? 0}</p>
-          {result.data.footwearLock && <p className="text-xs text-zinc-400">Footwear lock: {result.data.footwearLock}</p>}
-          {Array.isArray(result.data.styleAtomIds) && result.data.styleAtomIds.length > 0 && (
-            <p className="text-xs text-zinc-400">Style atoms: {result.data.styleAtomIds.length} active</p>
-          )}
-          {isExecuteRunning && <p className="text-xs text-zinc-500 font-mono">{executeElapsedSec}s elapsed</p>}
-          <div>
-            <p className="text-sm font-medium text-zinc-300 mb-2">Job IDs</p>
-            <div className="flex flex-wrap gap-2">
-              {(result.data.jobIds || []).map((jobId) => (
-                <Badge key={jobId} color="blue">{jobId}</Badge>
-              ))}
+      {!loading && result?.mode === 'execute' && (() => {
+        const totalCompleted = executeJobs.reduce((sum, j) => sum + (j?.completed || 0), 0);
+        const totalFailed = executeJobs.reduce((sum, j) => sum + (j?.failed || 0), 0);
+        const totalTarget = result.data.totalImages ?? executeJobs.reduce((sum, j) => sum + (j?.total || 0), 0);
+        const pct = totalTarget > 0 ? Math.round(((totalCompleted + totalFailed) / totalTarget) * 100) : 0;
+        const completedImages = executeJobs
+          .flatMap((job) => (job?.results || []))
+          .filter((item) => item && item.success && item.galleryId);
+        const allDone = executeJobs.length > 0 && executeJobs.every((j) => j?.status !== 'running');
+        const jobsLoaded = executeJobs.length > 0;
+        const jobsLost = !jobsLoaded && result.data.jobIds.length > 0;
+        return (
+          <Card className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-medium text-zinc-300">
+                {allDone ? 'Generation Complete' : jobsLost ? 'Jobs lost (server restarted?)' : jobsLoaded ? 'Generating...' : 'Starting jobs...'}
+              </h2>
+              <span className="text-xs text-zinc-400">
+                {totalCompleted}/{totalTarget} images
+                {totalFailed > 0 && <span className="text-red-400 ml-1">({totalFailed} failed)</span>}
+              </span>
             </div>
-          </div>
-          {executeJobs.length > 0 && (
-            <div className="space-y-3">
-              <p className="text-sm font-medium text-zinc-300">Live Results</p>
-              <div className="space-y-2">
-                {executeJobs.map((job) => (
-                  <div key={job.jobId} className="rounded-lg border border-zinc-700/60 bg-zinc-900/50 px-3 py-2">
-                    <div className="flex items-center justify-between text-xs text-zinc-400">
-                      <span className="font-mono">{job.jobId}</span>
-                      <span>{job.status} - {job.completed + job.failed}/{job.total}</span>
-                    </div>
+            <div className="w-full h-2 rounded-full bg-zinc-800 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${allDone ? 'bg-green-500' : 'bg-blue-500'}`}
+                style={{ width: `${Math.max(pct, isExecuteRunning ? 2 : 0)}%` }}
+              />
+            </div>
+            {isExecuteRunning && (
+              <p className="text-xs text-zinc-500 font-mono">
+                {executeElapsedSec}s elapsed
+                {totalCompleted === 0 && executeElapsedSec > 5 && ' — generating anchor images first...'}
+              </p>
+            )}
+            {completedImages.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {completedImages.map((item, idx) => (
+                  <div key={item.galleryId || idx} className="rounded-xl overflow-hidden bg-zinc-900 border border-zinc-700/40">
+                    <img
+                      src={`/api/gallery/${item.galleryId}/image`}
+                      alt={`Generated ${idx + 1}`}
+                      className="w-full h-auto object-cover"
+                      loading="lazy"
+                    />
                   </div>
                 ))}
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                {executeJobs
-                  .flatMap((job) => (job.results || []))
-                  .filter((item) => item && item.success && item.image && item.image.base64Data)
-                  .map((item, idx) => (
-                    <ImageCard
-                      key={`${idx}-${item.index}`}
-                      base64={item.image.base64Data}
-                      mimeType={item.image.mimeType}
-                      meta={{ seed: item.seed, identityConfidence: item.image?.validation?.identity_match_score }}
-                    />
-                  ))}
-              </div>
-            </div>
-          )}
-        </Card>
-      )}
+            )}
+          </Card>
+        );
+      })()}
 
       {!loading && activePlan && activePlan.days?.length > 0 && result?.mode === 'plan' && (
         <div className="space-y-4">
@@ -852,25 +1088,116 @@ export default function AutoGeneratorPage() {
             )}
           </Card>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
-            {activePlan.days.map((day) => (
-              <DayCell
-                key={day.day}
-                day={day}
-                startDate={activePlan.startDate || startDate}
-                executed={executedDaySet.has(day.day)}
-                executingDay={executingDay}
-                onExecute={handleExecuteDay}
-                expanded={expandedDay === day.day}
-                onToggle={() => setExpandedDay((prev) => prev === day.day ? null : day.day)}
-              />
-            ))}
-          </div>
+          {/* Day-by-day results view */}
+          <div className="space-y-4">
+            {activePlan.days.map((day) => {
+              const executed = executedDaySet.has(day.day);
+              const isExecuting = executingDay === day.day;
+              const dayRes = dayResults[day.day];
+              const { weekday, date } = formatDayDate(activePlan.startDate || startDate, day.day - 1);
+              const postCount = (day.carouselPrompts || []).length;
+              const reelCount = (day.reelPrompts || []).length;
+              const storyCount = (day.storyPrompts || []).length;
+              const hasLifestyle = !!day.lifestylePrompt;
+              const total = postCount + (hasLifestyle ? 1 : 0) + reelCount + storyCount;
+              const expanded = expandedDay === day.day;
 
-          {expandedDay && (() => {
-            const day = activePlan.days.find((d) => d.day === expandedDay);
-            return day ? <DayDetail day={day} /> : null;
-          })()}
+              // Extract theme label from first carousel prompt or day plan
+              const dayTheme = day.carouselPrompts?.[0]?.match(/Theme context:\s*(.+)/)?.[1]
+                || day.carouselPrompts?.[0]?.split('\n')[0]?.replace(/^Scene:\s*/, '')
+                || `Day ${day.day}`;
+
+              return (
+                <Card key={day.day} className="space-y-3">
+                  {/* Day header */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2">
+                        <Badge color={executed ? 'green' : 'zinc'}>Day {day.day}</Badge>
+                        <span className="text-xs text-zinc-500">{weekday} {date}</span>
+                      </div>
+                      <span className="text-sm font-medium text-zinc-200 truncate max-w-[400px]">{dayTheme}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-zinc-500">{total} images</span>
+                      {!executed && (
+                        <Btn
+                          variant="secondary"
+                          className="text-xs px-3 py-1"
+                          onClick={() => handleExecuteDay(day.day)}
+                          disabled={!!executingDay}
+                        >
+                          {isExecuting ? <><Spinner size={12} /> Starting...</> : 'Execute'}
+                        </Btn>
+                      )}
+                      {executed && !dayRes?.running && <span className="text-[10px] text-green-400 font-medium">Done</span>}
+                      {dayRes?.running && <span className="text-[10px] text-blue-400 font-medium">{dayRes.completed}/{dayRes.total} generating...</span>}
+                      <button
+                        type="button"
+                        onClick={() => setExpandedDay((prev) => prev === day.day ? null : day.day)}
+                        className="text-xs text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                      >
+                        {expanded ? 'Hide prompts' : 'Show prompts'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Content type badges */}
+                  <div className="flex gap-2 flex-wrap">
+                    {postCount > 0 && (
+                      <span className="flex items-center gap-1 text-[10px] text-zinc-400 bg-zinc-800/50 px-2 py-0.5 rounded-full">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400" /> {postCount} Posts
+                      </span>
+                    )}
+                    {hasLifestyle && (
+                      <span className="flex items-center gap-1 text-[10px] text-zinc-400 bg-zinc-800/50 px-2 py-0.5 rounded-full">
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-400" /> 1 Lifestyle
+                      </span>
+                    )}
+                    {reelCount > 0 && (
+                      <span className="flex items-center gap-1 text-[10px] text-zinc-400 bg-zinc-800/50 px-2 py-0.5 rounded-full">
+                        <span className="w-1.5 h-1.5 rounded-full bg-purple-400" /> {reelCount} Reels
+                      </span>
+                    )}
+                    {storyCount > 0 && (
+                      <span className="flex items-center gap-1 text-[10px] text-zinc-400 bg-zinc-800/50 px-2 py-0.5 rounded-full">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> {storyCount} Stories
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Generated images for this day */}
+                  {dayRes?.images?.length > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                      {dayRes.images.map((item, idx) => (
+                        <div key={item.galleryId || `d${day.day}-${idx}`} className="rounded-xl overflow-hidden bg-zinc-900 border border-zinc-700/40">
+                          <img
+                            src={`/api/gallery/${item.galleryId}/image`}
+                            alt={`Day ${day.day} - ${idx + 1}`}
+                            className="w-full h-auto object-cover"
+                            loading="lazy"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Progress bar for running day */}
+                  {dayRes?.running && dayRes.total > 0 && (
+                    <div className="h-1 rounded-full bg-zinc-800/80 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-blue-500 transition-all duration-500"
+                        style={{ width: `${(dayRes.completed / dayRes.total) * 100}%` }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Expanded prompts */}
+                  {expanded && <DayDetail day={day} />}
+                </Card>
+              );
+            })}
+          </div>
         </div>
       )}
 

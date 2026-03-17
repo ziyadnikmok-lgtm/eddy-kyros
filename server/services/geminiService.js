@@ -373,6 +373,66 @@ class GeminiService {
     }
   }
 
+  /**
+   * Generate text with Google Search grounding enabled.
+   * Useful for getting up-to-date information from the web.
+   */
+  async generateTextWithSearch(apiKey, prompt, options = {}) {
+    if (!apiKey || typeof apiKey !== 'string') {
+      throw new AppError('API key is required for generation', 500, 'CONFIG_ERROR');
+    }
+    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+      throw new AppError('A text prompt is required', 400, 'VALIDATION_ERROR');
+    }
+
+    try {
+      const genAI = getClient(apiKey);
+      let lastErr = null;
+      for (let attempt = 1; attempt <= TRANSIENT_RETRY_COUNT + 1; attempt += 1) {
+        try {
+          const response = await withTimeout(
+            genAI.models.generateContent({
+              model: TEXT_MODEL,
+              contents: [{ role: 'user', parts: [{ text: prompt.trim() }] }],
+              config: {
+                responseModalities: [Modality.TEXT],
+                safetySettings: SAFETY_SETTINGS,
+                tools: [{ googleSearch: {} }],
+                ...(options.temperature != null && { temperature: options.temperature }),
+                ...(options.responseMimeType && { responseMimeType: options.responseMimeType }),
+              },
+            }),
+            TEXT_TIMEOUT_MS,
+            'Gemini text generation with search'
+          );
+
+          const parts = response.candidates?.[0]?.content?.parts;
+          if (!parts || parts.length === 0) {
+            throw new AppError('No content returned from Gemini', 502, 'GENERATION_EMPTY');
+          }
+
+          const text = parts.filter((p) => p.text).map((p) => p.text).join('');
+          if (!text || text.trim().length === 0) {
+            throw new AppError('Gemini returned empty text response', 502, 'GENERATION_EMPTY');
+          }
+          return text.trim();
+        } catch (innerErr) {
+          if (innerErr instanceof AppError) throw innerErr;
+          if (isTransientError(innerErr) && attempt <= TRANSIENT_RETRY_COUNT) {
+            lastErr = innerErr;
+            await this._sleep(TRANSIENT_RETRY_BASE_MS * attempt);
+            continue;
+          }
+          throw innerErr;
+        }
+      }
+      if (lastErr) this._handleApiError(lastErr);
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      this._handleApiError(err);
+    }
+  }
+
   async analyzeImage(apiKey, imageBase64, mimeType) {
     if (!apiKey || typeof apiKey !== 'string') {
       throw new AppError('API key is required', 500, 'CONFIG_ERROR');

@@ -117,7 +117,9 @@ class TemplateManager {
         const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
         if (Array.isArray(parsed)) return parsed;
       }
-    } catch {}
+    } catch (err) {
+      console.warn('[templateManager] Failed to load data:', err.message);
+    }
     return [];
   }
 

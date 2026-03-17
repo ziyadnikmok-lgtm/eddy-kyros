@@ -159,7 +159,10 @@ router.get('/stats', (req, res, next) => {
 
 router.get('/', (req, res, next) => {
   try {
-    const jobList = batchGenerator.listJobs(req.query.status || undefined);
+    const validStatuses = ['running', 'completed', 'failed', 'cancelled'];
+    const status = req.query.status;
+    const filtered = status && validStatuses.includes(status) ? status : undefined;
+    const jobList = batchGenerator.listJobs(filtered);
     const lite = jobList.map(({ results, ...rest }) => rest);
     res.json({ success: true, data: lite });
   } catch (err) {
