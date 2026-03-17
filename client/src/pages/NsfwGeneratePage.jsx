@@ -292,7 +292,7 @@ export default function NsfwGeneratePage() {
                 src={`data:${result.image.mimeType};base64,${result.image.base64Data}`}
                 alt="Generated"
                 className="max-h-[60vh] w-auto mx-auto rounded-xl cursor-pointer border border-zinc-800/60"
-                onClick={() => openLightbox(`data:${result.image.mimeType};base64,${result.image.base64Data}`)}
+                onClick={() => openLightbox([`data:${result.image.mimeType};base64,${result.image.base64Data}`])}
               />
               <div className="flex items-center gap-2 justify-center">
                 <button type="button" onClick={() => downloadImg(result.image, 'wavespeed_base')} className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-700/60 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-600 transition cursor-pointer">
@@ -315,7 +315,7 @@ export default function NsfwGeneratePage() {
                         src={`data:${v.image.mimeType};base64,${v.image.base64Data}`}
                         alt={`Variation ${i + 1}`}
                         className="w-full rounded-lg border border-zinc-800/60 cursor-pointer hover:border-purple-500/40 transition"
-                        onClick={() => openLightbox(`data:${v.image.mimeType};base64,${v.image.base64Data}`)}
+                        onClick={() => openLightbox([`data:${v.image.mimeType};base64,${v.image.base64Data}`])}
                       />
                       <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition">
                         <button type="button" onClick={() => downloadImg(v.image, `wavespeed_var${i + 1}`)} className="rounded-md bg-black/70 px-2 py-1 text-[10px] text-white backdrop-blur-sm cursor-pointer">Save</button>
@@ -345,7 +345,7 @@ export default function NsfwGeneratePage() {
                   className="w-16 h-16 rounded-lg object-cover border border-zinc-700/60 cursor-pointer hover:border-zinc-500 transition"
                   onClick={() => {
                     const src = h.base64 ? `data:${h.mimeType};base64,${h.base64}` : `/api/gallery/${h.galleryId}/download`;
-                    openLightbox(src);
+                    openLightbox([src]);
                   }}
                 />
               ))}
