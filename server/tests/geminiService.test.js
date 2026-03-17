@@ -35,9 +35,9 @@ describe('GeminiService', () => {
       await expect(geminiService.generateImage('key', '')).rejects.toThrow(/prompt/i);
     });
 
-    it('throws on prompt exceeding 10k length limit', async () => {
-      const longPrompt = 'x'.repeat(11000);
-      await expect(geminiService.generateImage('key', longPrompt)).rejects.toThrow(/10,000/);
+    it('throws on prompt exceeding 15k length limit', async () => {
+      const longPrompt = 'x'.repeat(16000);
+      await expect(geminiService.generateImage('key', longPrompt)).rejects.toThrow(/15,000/);
     });
   });
 
