@@ -75,7 +75,7 @@ export default function CarouselPage() {
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [resolutionTier, setResolutionTier] = useState(_cache.resolutionTier);
   const [imageModel, setImageModel] = useState(_cache.imageModel);
-  const [kineticMotionBlur, setKineticMotionBlur] = useState('off');
+  const [kineticMotionBlur, setKineticMotionBlur] = useState(_cache.kineticMotionBlur || 'off');
 
   const [characterId, setCharacterId] = useState(_cache.characterId);
   const [characterDetail, setCharacterDetail] = useState(null);
@@ -104,7 +104,7 @@ export default function CarouselPage() {
     executeJobIds, executeJobs, completedSlides, pollJobIds, pollJobs,
     completedPollSlides, pollResults, selectedImageId, uploadedImages,
     characterId, aspectRatio, resolutionTier, imageModel, followUpDirection,
-    followUpMode, followUpCount, carouselMode, pollTopic, pollCount,
+    followUpMode, followUpCount, carouselMode, pollTopic, pollCount, kineticMotionBlur,
   }); });
 
   useEffect(() => {
@@ -298,6 +298,7 @@ export default function CarouselPage() {
         aspectRatio,
         resolutionTier,
         imageModel,
+        kineticMotionBlur: kineticMotionBlur !== 'off' ? kineticMotionBlur : undefined,
       });
       const returnedJobIds = Array.isArray(data?.jobIds) ? data.jobIds : (data?.jobId ? [data.jobId] : []);
       if (returnedJobIds.length > 0) {
