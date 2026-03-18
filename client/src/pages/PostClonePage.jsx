@@ -723,6 +723,7 @@ export default function PostClonePage() {
                       alt=""
                       className="w-14 h-[70px] object-cover rounded-md bg-zinc-800 flex-shrink-0 cursor-pointer"
                       onClick={() => openLightbox((entry.galleryIds || []).map((id) => historyApi.imageUrl(id)), (entry.galleryIds || []).indexOf(gid))}
+                      onError={(e) => { e.target.style.display = 'none'; }}
                     />
                   ))}
                   {(entry.galleryIds || []).length > 4 && (
