@@ -67,6 +67,7 @@ const captionTemplatesRouter = require('./routes/captionTemplates');
 const videoRouter = require('./routes/video');
 const nsfwGenerateRouter = require('./routes/nsfwGenerate');
 const loraPresetsRouter = require('./routes/loraPresets');
+const backgroundsRouter = require('./routes/backgrounds');
 const authRouter = require('./routes/auth');
 const cookieParser = require('cookie-parser');
 const { authMiddleware } = require('./auth');
@@ -173,6 +174,7 @@ app.use('/api/caption-templates', captionTemplatesRouter);
 app.use('/api/video', generateLimiter, videoRouter);
 app.use('/api/nsfw-generate', generateLimiter, nsfwGenerateRouter);
 app.use('/api/lora-presets', loraPresetsRouter);
+app.use('/api/backgrounds', backgroundsRouter);
 
 const { CLIENT_DIST } = require('./paths');
 if (fs.existsSync(CLIENT_DIST)) {

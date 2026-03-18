@@ -375,3 +375,10 @@ export const profileAnalyzer = {
 export const reformat = {
   convert: (body) => request('/reformat', { method: 'POST', body }),
 };
+
+export const backgrounds = {
+  list: () => request('/backgrounds'),
+  upload: (body) => request('/backgrounds', { method: 'POST', body }),
+  remove: (id) => request(`/backgrounds/${id}`, { method: 'DELETE' }),
+  imageUrl: (id) => `${BASE}/backgrounds/${id}/image`,
+};

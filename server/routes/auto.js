@@ -12,6 +12,7 @@ const externalProfileMemory = require('../services/auto/externalProfileMemory');
 const sceneMemoryService = require('../services/sceneMemoryService');
 const outfitMemoryService = require('../services/outfitMemoryService');
 const poseEngine = require('../services/poseEngine');
+const backgroundStore = require('../services/backgroundStore');
 
 const router = express.Router();
 const MAX_BATCH_PROMPTS = 20;
@@ -19,7 +20,7 @@ const MAX_DURATION_DAYS = 30;
 const DIVERSITY_SIMILARITY_THRESHOLD = 0.78;
 const DIVERSITY_LOOKBACK = 12;
 
-function startMultiBatches(entries, generationOptions, characterContext = {}, styleAtomIds = [], { anchorFirst = false } = {}) {
+function startMultiBatches(entries, generationOptions, characterContext = {}, styleAtomIds = [], { anchorFirst = false, specificReferences = [] } = {}) {
   const jobIds = [];
   const grouped = new Map();
 
@@ -52,6 +53,9 @@ function startMultiBatches(entries, generationOptions, characterContext = {}, st
           : [],
         styleAtomIds: Array.isArray(styleAtomIds) && styleAtomIds.length > 0
           ? styleAtomIds
+          : undefined,
+        specificReferences: Array.isArray(specificReferences) && specificReferences.length > 0
+          ? specificReferences
           : undefined,
       };
       const job = batchGenerator.startBatch('multi', config, { ...generationOptions, anchorFirst });
@@ -286,7 +290,8 @@ function buildOutfitMemory(dayPlan, sampled, dayNumber, footwearLock, personaMod
   });
 }
 
-function cameraProfileForType(type) {
+function cameraProfileForType(type, backgroundLocked = false) {
+  if (backgroundLocked) return 'led_room_ambient';
   if (type === 'reel' || type === 'story') return 'friend_phone_flash';
   return 'iphone_selfie';
 }
@@ -351,8 +356,10 @@ function buildAutoPlanData({
   footwearLock = '',
   styleAtomIds = [],
   personaMode = '',
+  backgroundLocked = false,
 }) {
-  const sceneMemory = buildAutoSceneMemory(weeklyPlan);
+  // Skip scene memory when background is locked — the ref image IS the scene
+  const sceneMemory = backgroundLocked ? null : buildAutoSceneMemory(weeklyPlan);
   const sceneMemoryId = sceneMemory ? sceneMemory.id : null;
   const runFootwearLock = resolveFootwearLock(weeklyPlan, footwearLock, personaMode);
   const mergedAtomIds = resolveStyleAtomIds(weeklyPlan, styleAtomIds);
@@ -391,6 +398,7 @@ function buildAutoPlanData({
           pose: assignedPose,
           location: item.location,
           personaMode,
+          backgroundLocked,
         });
         if (!cooldownEnabled) return prompt;
         return applySimilarityCooldown(prompt, cooldownState, dayNumber + poseCursor);
@@ -404,6 +412,7 @@ function buildAutoPlanData({
           pose: dayPoses[poseCursor] || sampled.lifestyleInsert.description,
           location: sharedLocation,
           personaMode,
+          backgroundLocked,
         });
         return cooldownEnabled
           ? applySimilarityCooldown(base, cooldownState, dayNumber + poseCursor + 17)
@@ -421,6 +430,7 @@ function buildAutoPlanData({
           pose: assignedPose,
           location: sharedLocation,
           personaMode,
+          backgroundLocked,
         });
         if (!cooldownEnabled) return prompt;
         return applySimilarityCooldown(prompt, cooldownState, dayNumber + poseCursor + 31);
@@ -454,6 +464,7 @@ function buildAutoPlanData({
           pose: storyPose,
           location: sharedLocation,
           personaMode,
+          backgroundLocked,
         })}\nStory style: lighter candid vertical moment`;
         const prompt = cooldownEnabled
           ? applySimilarityCooldown(basePrompt, cooldownState, dayNumber + s + 53)
@@ -470,7 +481,7 @@ function buildAutoPlanData({
       prompt,
       sceneMemoryId,
       outfitId,
-      cameraProfileId: cameraProfileForType('carousel'),
+      cameraProfileId: cameraProfileForType('carousel', backgroundLocked),
     })));
     if (lifestylePrompt && lifestylePrompt.trim().length > 0) {
       imageEntries.push({
@@ -478,7 +489,7 @@ function buildAutoPlanData({
         prompt: lifestylePrompt,
         sceneMemoryId,
         outfitId,
-        cameraProfileId: cameraProfileForType('carousel'),
+        cameraProfileId: cameraProfileForType('carousel', backgroundLocked),
       });
     }
     imageEntries.push(...reelPrompts.map((prompt) => ({
@@ -505,7 +516,7 @@ function buildAutoPlanData({
       sceneMemoryId,
       outfitId,
       cameraProfiles: {
-        carousel: cameraProfileForType('carousel'),
+        carousel: cameraProfileForType('carousel', backgroundLocked),
         reel: cameraProfileForType('reel'),
       },
       footwearLock: runFootwearLock,
@@ -547,7 +558,7 @@ router.delete('/plans/:id', (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/plans/:id/execute-day', (req, res, next) => {
+router.post('/plans/:id/execute-day', async (req, res, next) => {
   try {
     const plan = autoPlanStore.get(req.params.id);
     const { dayNumber } = req.body || {};
@@ -643,20 +654,35 @@ router.post('/plans/:id/execute-day', (req, res, next) => {
     const planImageModel = plan.config?.imageModel || undefined;
     const usesAnchor = plan.personaMode === 'cosplay' || plan.personaMode === 'goth';
 
+    // Resolve background reference if stored in plan config
+    let bgRefs = [];
+    const savedBgRefId = plan.config?.backgroundRefId;
+    if (savedBgRefId && typeof savedBgRefId === 'string') {
+      const bgData = backgroundStore.getImageData(savedBgRefId);
+      if (bgData) {
+        bgRefs = [{
+          base64Data: bgData.base64Data,
+          mimeType: bgData.mimeType,
+          referenceType: 'background',
+          note: 'Show her in this exact LED themed room, perfectly blended. The room lighting reflects on her body and skin for raw candid realism. Do NOT add random objects not in this room.',
+        }];
+      }
+    }
+
     const jobIds = [
       ...startMultiBatches(
         postEntries,
         { imageSize: '2K', aspectRatio: '4:5', imageModel: planImageModel },
         { characterId, activeReferenceIds },
         styleAtomIds,
-        { anchorFirst: usesAnchor },
+        { anchorFirst: usesAnchor, specificReferences: bgRefs },
       ),
       ...startMultiBatches(
         verticalEntries,
         { imageSize: '2K', aspectRatio: '9:16', imageModel: planImageModel },
         { characterId, activeReferenceIds },
         styleAtomIds,
-        { anchorFirst: usesAnchor },
+        { anchorFirst: usesAnchor, specificReferences: bgRefs },
       ),
     ];
 
@@ -734,6 +760,21 @@ async function validateAndPlan(body) {
     throw new AppError('Planner returned invalid structure: missing "days" array', 502, 'PARSE_ERROR');
   }
 
+  // Resolve background reference image if provided
+  const bgRefId = cosplayOptions?.backgroundRefId;
+  let backgroundRefs = [];
+  if (bgRefId && typeof bgRefId === 'string') {
+    const bgData = await backgroundStore.getImageData(bgRefId);
+    if (bgData) {
+      backgroundRefs = [{
+        base64Data: bgData.base64Data,
+        mimeType: bgData.mimeType,
+        referenceType: 'background',
+        note: `BACKGROUND LOCK: Use this EXACT background/setting for ALL shots. Match the room, lighting, colors, and atmosphere exactly. Do NOT add objects, furniture, or elements not visible in this background reference. Only the character should be placed in this scene`,
+      }];
+    }
+  }
+
   const planned = buildAutoPlanData({
     weeklyPlan,
     characterConfig,
@@ -746,12 +787,13 @@ async function validateAndPlan(body) {
     footwearLock,
     styleAtomIds: Array.isArray(styleAtomIds) ? styleAtomIds : [],
     personaMode,
+    backgroundLocked: backgroundRefs.length > 0,
   });
 
-  return { planned, characterId, personaMode, resolvedActiveReferenceIds, resolvedImageModel };
+  return { planned, characterId, personaMode, resolvedActiveReferenceIds, resolvedImageModel, backgroundRefs };
 }
 
-function executePlannedEntries(planned, { characterId, personaMode, resolvedActiveReferenceIds, resolvedImageModel }) {
+function executePlannedEntries(planned, { characterId, personaMode, resolvedActiveReferenceIds, resolvedImageModel, backgroundRefs = [] }) {
   const lockedEntries = planned.imageEntries
     .map((entry) => {
       if (entry.type === 'carousel' || entry.type === 'lifestyle') {
@@ -771,14 +813,14 @@ function executePlannedEntries(planned, { characterId, personaMode, resolvedActi
       { imageSize: '2K', aspectRatio: '4:5', imageModel: resolvedImageModel },
       { characterId, activeReferenceIds: resolvedActiveReferenceIds },
       planned.styleAtomIds,
-      { anchorFirst: usesAnchor },
+      { anchorFirst: usesAnchor, specificReferences: backgroundRefs },
     ),
     ...startMultiBatches(
       verticalEntries,
       { imageSize: '2K', aspectRatio: '9:16', imageModel: resolvedImageModel },
       { characterId, activeReferenceIds: resolvedActiveReferenceIds },
       planned.styleAtomIds,
-      { anchorFirst: usesAnchor },
+      { anchorFirst: usesAnchor, specificReferences: backgroundRefs },
     ),
   ];
 
@@ -834,6 +876,7 @@ router.post('/execute', async (req, res, next) => {
         styleAtomIds: Array.isArray(sIds) ? sIds : [],
         includeReels, includeStories, carouselCount, reelCount, storyCount,
         imageModel,
+        backgroundRefId: req.body?.cosplayOptions?.backgroundRefId || undefined,
       },
     });
 
@@ -848,6 +891,18 @@ router.post('/execute', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// Temporary endpoint for prompt analysis
+router.post('/analyze-prompt', async (req, res, next) => {
+  try {
+    const apiKey = require('../services/apiKeyManager').getActiveKey();
+    const geminiService = require('../services/geminiService');
+    const { prompt } = req.body || {};
+    if (!prompt) throw new AppError('prompt is required', 400, 'VALIDATION_ERROR');
+    const result = await geminiService.generateText(apiKey, prompt, { temperature: 0.7 });
+    res.json({ success: true, data: result });
+  } catch (err) { next(err); }
 });
 
 module.exports = router;

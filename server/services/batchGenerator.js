@@ -315,7 +315,7 @@ class BatchGenerator extends EventEmitter {
   }
 
   _buildMultiTasks(config) {
-    const { prompts, temperature, seed, characterId, activeReferenceIds, styleAtomIds } = config || {};
+    const { prompts, temperature, seed, characterId, activeReferenceIds, styleAtomIds, specificReferences: sharedRefs } = config || {};
 
     if (!Array.isArray(prompts) || prompts.length === 0) {
       throw new AppError('"prompts" array is required for multi mode', 400, 'VALIDATION_ERROR');
@@ -338,7 +338,7 @@ class BatchGenerator extends EventEmitter {
         characterId: characterId || null,
         activeReferenceIds: Array.isArray(activeReferenceIds) ? activeReferenceIds : null,
         styleAtomIds: Array.isArray(styleAtomIds) ? styleAtomIds : null,
-        specificReferences: [],
+        specificReferences: Array.isArray(sharedRefs) ? [...sharedRefs] : [],
         userPrompt: p.trim(),
       });
     }
@@ -702,133 +702,82 @@ class BatchGenerator extends EventEmitter {
 
       // Detect if the prompt contains cosplay/costume instructions
       const promptText = task.prompt || '';
-      const isCostumePrompt = /COSTUME LOCK|OUTFIT LOCK|WIG LOCK|cosplay|cosplay wig/i.test(promptText);
+      const isCostumePrompt = /cosplay|wig:|outfit:/i.test(promptText);
+      const hasBackgroundRef = Array.isArray(task.specificReferences) && task.specificReferences.some((r) => r.referenceType === 'background');
 
+      // --- IDENTITY ---
       const identityLockSection = character
         ? [
-          '[IDENTITY LOCK — HIGHEST PRIORITY]',
-          'This character is identity-locked.',
-          'The provided reference image(s) show the EXACT person who MUST appear in the output.',
-          'Match this person\'s face, bone structure, ethnicity, skin tone, body proportions, and distinguishing features EXACTLY.',
-          'The following identity description is NON-NEGOTIABLE.',
-          '',
+          '[IDENTITY]',
+          'Candid photo of the woman in the character reference image(s).',
+          'Maintain her exact face, bone structure, skin tone, and body proportions.',
           ...(isCostumePrompt ? [
-            'COSPLAY/COSTUME CLARIFICATION:',
-            '- The person in the reference image is WEARING A COSTUME — they are NOT the fictional character.',
-            '- Generate the REFERENCE PERSON dressed in the described costume/outfit.',
-            '- The FACE, BODY, and SKIN must be the reference person — only the CLOTHES and WIG change.',
-            '- Do NOT generate the fictional character\'s face or body. The costume is just clothing on the REAL person.',
-            '- If the costume description mentions a character name, that is the OUTFIT to wear, NOT the person to generate.',
-            '',
+            'She is wearing a costume — generate HER face/body in the described outfit. The outfit name refers to CLOTHES only, not a different person.',
           ] : []),
-          'Do NOT:',
-          '- Generate a different person',
-          '- Normalize anatomy',
-          '- Alter proportions',
-          '- Change face structure',
-          '- Change ethnicity or skin tone',
-          '',
           character.masterPrompt || '',
-          ...(activeRefOverrides.length > 0 ? ['', 'CHARACTER REFERENCE NOTES:', ...activeRefOverrides] : []),
-          '',
-          'The output MUST depict the SAME person shown in the reference image(s). If the face does not match, the output is invalid.',
-          '',
-          'STRICT SOLO RULES:',
-          '- Single female subject only.',
-          '- No male interaction.',
-          '- No couples.',
-          '- No romantic physical contact.',
-        ].join('\n')
-        : [
-          '[IDENTITY LOCK]',
-          'No explicit identity lock provided.',
-          '',
-          'STRICT SOLO RULES:',
-          '- Single female subject only.',
-          '- No male interaction.',
-          '- No couples.',
-          '- No romantic physical contact.',
-        ].join('\n');
+          ...(activeRefOverrides.length > 0 ? activeRefOverrides : []),
+          ...(hasBackgroundRef ? ['The background/room reference image contains NO person — use it only for the environment.'] : []),
+          'Solo subject only.',
+        ].filter(Boolean).join('\n')
+        : 'Solo subject only.';
 
+      // --- SCENE --- (only when scene memory exists, skip empty)
       const sceneDnaSection = task.sceneMemory
         ? [
-          'SCENE DNA (BACKGROUND LOCK)',
-          'The background/setting below is LOCKED. All images in this batch MUST use this exact background.',
-          'Do NOT invent, change, or add background elements not described here.',
-          `architecture: ${task.sceneMemory.architecture}`,
-          `lightingProfile: ${task.sceneMemory.lightingProfile}`,
-          `colorPalette: ${task.sceneMemory.colorPalette}`,
-          `recurringElements: ${task.sceneMemory.recurringElements}`,
+          `[SCENE] ${task.sceneMemory.architecture}`,
+          `Lighting: ${task.sceneMemory.lightingProfile}`,
+          `Palette: ${task.sceneMemory.colorPalette}`,
         ].join('\n')
-        : 'SCENE DNA\nNot specified.';
+        : null;
 
+      // --- OUTFIT --- (only when outfit exists, skip empty)
       const outfitLockSection = task.outfit
         ? [
-          'OUTFIT LOCK',
-          'This outfit lock is strict and non-negotiable across this generation.',
-          `top: ${task.outfit.top}`,
-          `bottom: ${task.outfit.bottom}`,
-          `accessories: ${task.outfit.accessories}`,
-          `footwear: ${task.outfit.footwear}`,
-          // Only enforce strict footwear continuity when a specific shoe was locked
-          ...(task.outfit.footwear && !/appropriate for|matching|character-accurate/i.test(task.outfit.footwear)
-            ? ['FOOTWEAR CONTINUITY RULE: Keep the exact same footwear model, style, color, and silhouette. Do not swap shoes.']
-            : []),
+          `[OUTFIT] ${task.outfit.top}`,
+          `Bottom: ${task.outfit.bottom}`,
+          `Accessories: ${task.outfit.accessories}`,
+          `Footwear: ${task.outfit.footwear}`,
         ].join('\n')
-        : 'OUTFIT LOCK\nNot specified.';
+        : null;
 
+      // --- CAMERA --- (only when profile exists, skip empty)
       const cameraProfileSection = task.cameraProfile
-        ? [
-          'CAMERA PROFILE',
-          `lens: ${task.cameraProfile.lens}`,
-          `depth: ${task.cameraProfile.depth}`,
-          `lighting: ${task.cameraProfile.lighting}`,
-          `realism: ${task.cameraProfile.realism}`,
-        ].join('\n')
-        : 'CAMERA PROFILE\nNot specified.';
+        ? `[CAMERA] ${task.cameraProfile.lens}. ${task.cameraProfile.realism}`
+        : null;
 
-      const poseSection = [
-        'POSE',
-        task.pose || 'Not specified.',
-      ].join('\n');
+      // --- POSE + EXPRESSION --- (compact, skip if empty)
+      const poseSection = task.pose ? `Pose: ${task.pose}` : null;
+      const expressionSection = task.expression ? `Expression: ${task.expression}` : null;
 
-      const expressionSection = [
-        'EXPRESSION',
-        task.expression || 'Not specified.',
-      ].join('\n');
+      // --- STYLE LIBRARY --- (only when present)
       const styleLibrarySection = task.styleLibraryBlock
-        ? `[STYLE LIBRARY]\n${task.styleLibraryBlock}\n[END STYLE LIBRARY]`
+        ? `[STYLE]\n${task.styleLibraryBlock}`
         : null;
-      const sceneModeSection = [
-        'SCENE MODE',
-        task.sceneModeText || 'Not specified.',
-      ].join('\n');
 
-      const userSceneContextSection = [
-        'USER SCENE CONTEXT',
-        taskPrompt,
-      ].join('\n');
+      // --- SCENE MODE --- (only when present)
+      const sceneModeSection = task.sceneModeText ? `Scene mode: ${task.sceneModeText}` : null;
 
+      // --- BASE IMAGE --- (only for edit mode)
       const baseImagePrioritySection = task.baseImage
-        ? [
-          'BASE IMAGE PRIORITY',
-          'The first image input is the selected base image and is mandatory as the visual source.',
-          'Preserve its scene, wardrobe, styling, and camera feel unless explicitly changed.',
-          'Any other references are secondary identity support only.',
-        ].join('\n')
+        ? 'Base image provided — preserve its scene and styling unless explicitly changed.'
         : null;
 
+      // --- SPECIFIC REFERENCES --- (background, costume anchors, etc.)
       const specificReferencesSection = Array.isArray(task.specificReferences) && task.specificReferences.length > 0
-        ? [
-          'SPECIFIC IMAGE REFERENCES',
-          ...task.specificReferences.map((ref, idx) => {
+        ? task.specificReferences.map((ref) => {
             const typeLabel = ref.referenceType || 'item';
-            const noteLabel = ref.note ? ` Note: ${ref.note}.` : '';
-            return `- Reference ${idx + 1} type "${typeLabel}": extract and apply this ${typeLabel} detail while preserving character identity and the base image scene intent.${noteLabel}`;
-          }),
-          'When multiple specific references are provided, combine them coherently without changing identity.',
-        ].join('\n')
+            if (typeLabel === 'background') {
+              return 'Show her in the LED themed room from the background reference. She\'s perfectly blended — the room\'s lighting reflects on her body and skin for raw candid realism.';
+            }
+            if (typeLabel === 'costume') {
+              return ref.note || 'Match the costume from the reference image exactly.';
+            }
+            return ref.note || `Apply the ${typeLabel} detail from the reference image.`;
+          }).join('\n')
         : null;
+
+      // --- USER PROMPT ---
+      const userSceneContextSection = taskPrompt;
 
       const finalPrompt = [
         identityLockSection,
@@ -857,7 +806,13 @@ class BatchGenerator extends EventEmitter {
           },
         });
       }
-      for (const ref of task.specificReferences || []) {
+      // Character identity images FIRST — highest priority for face/body matching
+      for (const img of referenceImages) {
+        const part = this._toInlineReferencePart(task.characterId, img);
+        if (part) referenceParts.push(part);
+      }
+      // Non-background specific references (costume anchors, etc.)
+      for (const ref of (task.specificReferences || []).filter((r) => r.referenceType !== 'background')) {
         if (ref && ref.base64Data && ref.mimeType) {
           referenceParts.push({
             inlineData: {
@@ -867,9 +822,19 @@ class BatchGenerator extends EventEmitter {
           });
         }
       }
-      for (const img of referenceImages) {
-        const part = this._toInlineReferencePart(task.characterId, img);
-        if (part) referenceParts.push(part);
+      // Background references LAST with explicit label to prevent identity contamination
+      for (const ref of (task.specificReferences || []).filter((r) => r.referenceType === 'background')) {
+        if (ref && ref.base64Data && ref.mimeType) {
+          referenceParts.push(
+            { text: '[BACKGROUND REFERENCE — LED themed room. Place her in this exact room. The LED lighting reflects on her body and skin. This image is the ROOM only, not a person.]' },
+            {
+              inlineData: {
+                mimeType: ref.mimeType,
+                data: ref.base64Data,
+              },
+            },
+          );
+        }
       }
 
       if (task.characterId) {

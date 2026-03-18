@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, useMemo } from 'react';
-import { batch as batchApi, autoPlans as plansApi, styleLibrary as styleApi } from '../services/api';
+import { batch as batchApi, autoPlans as plansApi, styleLibrary as styleApi, backgrounds as bgApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useStepTimer } from '../hooks/useStepTimer';
 import { cn } from '../lib/utils';
@@ -198,6 +198,7 @@ const _cache = {
   cosplayTiktokReveal: false,
   cosplayConventionMode: false,
   cosplayThemePreset: '',
+  backgroundRefId: '',
 };
 
 
@@ -229,6 +230,9 @@ export default function AutoGeneratorPage() {
   const [cosplayTiktokReveal, setCosplayTiktokReveal] = useState(_cache.cosplayTiktokReveal);
   const [cosplayConventionMode, setCosplayConventionMode] = useState(_cache.cosplayConventionMode);
   const [cosplayThemePreset, setCosplayThemePreset] = useState(_cache.cosplayThemePreset);
+  const [backgroundRefId, setBackgroundRefId] = useState(_cache.backgroundRefId);
+  const [backgroundList, setBackgroundList] = useState([]);
+  const [bgUploading, setBgUploading] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const [result, setResult] = useState(_cache.result);
@@ -257,11 +261,12 @@ export default function AutoGeneratorPage() {
     startDate, expandedDay, similarityCooldown, footwearLock, autoExecute, imageModel,
     cosplayLewdness, cosplayStyle, cosplayLocation, cosplaySignaturePoses,
     cosplayPropShots, cosplayBeforeAfter, cosplayGroupTheme, cosplayTiktokReveal,
-    cosplayConventionMode, cosplayThemePreset,
+    cosplayConventionMode, cosplayThemePreset, backgroundRefId,
   }); });
 
   useEffect(() => {
     plansApi.list().then(setSavedPlans).catch(() => {});
+    bgApi.list().then(setBackgroundList).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -326,6 +331,40 @@ export default function AutoGeneratorPage() {
   useEffect(() => () => { abortRef.current?.abort(); }, []);
   useEffect(() => { return () => { mountedRef.current = false; }; }, []);
 
+  const bgFileRef = useRef(null);
+  const handleBgUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBgUploading(true);
+    try {
+      const reader = new FileReader();
+      const base64 = await new Promise((resolve, reject) => {
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const entry = await bgApi.upload({ name: file.name.replace(/\.[^.]+$/, ''), mimeType: file.type, base64Data: base64 });
+      setBackgroundList((prev) => [...prev, entry]);
+      setBackgroundRefId(entry.id);
+      notify('Background uploaded', 'success');
+    } catch (err) {
+      notify(err.message || 'Upload failed', 'error');
+    } finally {
+      setBgUploading(false);
+      if (bgFileRef.current) bgFileRef.current.value = '';
+    }
+  };
+  const handleBgDelete = async (id) => {
+    try {
+      await bgApi.remove(id);
+      setBackgroundList((prev) => prev.filter((b) => b.id !== id));
+      if (backgroundRefId === id) setBackgroundRefId('');
+      notify('Background removed', 'success');
+    } catch (err) {
+      notify(err.message || 'Delete failed', 'error');
+    }
+  };
+
   const handleGenerate = async () => {
     if (!characterId) { notify('Character is required', 'error'); return; }
     if (!theme.trim()) { notify('Theme is required', 'error'); return; }
@@ -381,6 +420,7 @@ export default function AutoGeneratorPage() {
               groupTheme: cosplayGroupTheme,
               tiktokReveal: cosplayTiktokReveal,
               conventionMode: cosplayConventionMode,
+              backgroundRefId: backgroundRefId || undefined,
             },
           }),
         }),
@@ -422,6 +462,7 @@ export default function AutoGeneratorPage() {
               reelCount: reelCountInt,
               storyCount: storyCountInt,
               imageModel,
+              backgroundRefId: backgroundRefId || undefined,
             },
           });
           setActivePlan(saved);
@@ -745,7 +786,7 @@ export default function AutoGeneratorPage() {
                 </label>
 
                 {/* Style + Location row */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className={cn('grid gap-3', backgroundRefId ? 'grid-cols-1' : 'grid-cols-2')}>
                   <label className="flex flex-col gap-1.5 text-sm">
                     <span className="text-zinc-400 font-medium">Style</span>
                     <select
@@ -768,18 +809,20 @@ export default function AutoGeneratorPage() {
                       )}
                     </select>
                   </label>
-                  <label className="flex flex-col gap-1.5 text-sm">
-                    <span className="text-zinc-400 font-medium">Location</span>
-                    <select
-                      value={cosplayLocation}
-                      onChange={(e) => setCosplayLocation(e.target.value)}
-                      className="rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-pink-500/70 focus:ring-1 focus:ring-pink-500/20 cursor-pointer"
-                    >
-                      {(personaMode === 'goth' ? GOTH_LOCATIONS : COSPLAY_LOCATIONS).map((l) => (
-                        <option key={l.value} value={l.value}>{l.label}</option>
-                      ))}
-                    </select>
-                  </label>
+                  {!backgroundRefId && (
+                    <label className="flex flex-col gap-1.5 text-sm">
+                      <span className="text-zinc-400 font-medium">Location</span>
+                      <select
+                        value={cosplayLocation}
+                        onChange={(e) => setCosplayLocation(e.target.value)}
+                        className="rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-pink-500/70 focus:ring-1 focus:ring-pink-500/20 cursor-pointer"
+                      >
+                        {(personaMode === 'goth' ? GOTH_LOCATIONS : COSPLAY_LOCATIONS).map((l) => (
+                          <option key={l.value} value={l.value}>{l.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                 </div>
 
                 {/* Lewdness slider */}
@@ -831,6 +874,52 @@ export default function AutoGeneratorPage() {
                       <Toggle checked={cosplayConventionMode} onChange={setCosplayConventionMode} label="Convention Mode (Multi per Day)" />
                     </>
                   )}
+                </div>
+
+                {/* Background Reference */}
+                <div className="space-y-2">
+                  <span className="text-zinc-400 font-medium text-sm flex items-center gap-1.5">
+                    Background Lock <Hint text="Upload a background photo to lock the scene. All generated images will use this background as reference — only the character changes." />
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {backgroundList.map((bg) => (
+                      <div
+                        key={bg.id}
+                        onClick={() => setBackgroundRefId(backgroundRefId === bg.id ? '' : bg.id)}
+                        className={cn(
+                          'relative w-20 h-20 rounded-lg overflow-hidden cursor-pointer border-2 transition-all group',
+                          backgroundRefId === bg.id
+                            ? 'border-pink-500 ring-2 ring-pink-500/30 scale-105'
+                            : 'border-zinc-700/60 hover:border-zinc-500',
+                        )}
+                      >
+                        <img
+                          src={bgApi.imageUrl(bg.id)}
+                          alt={bg.name}
+                          className="w-full h-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); handleBgDelete(bg.id); }}
+                          className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 text-zinc-400 hover:text-red-400 text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer"
+                        >
+                          &times;
+                        </button>
+                        <div className="absolute bottom-0 inset-x-0 bg-black/60 text-[9px] text-zinc-300 px-1 py-0.5 truncate">
+                          {bg.name}
+                        </div>
+                      </div>
+                    ))}
+                    <label className={cn(
+                      'w-20 h-20 rounded-lg border-2 border-dashed border-zinc-700/60 flex flex-col items-center justify-center cursor-pointer hover:border-zinc-500 transition text-zinc-500 hover:text-zinc-400',
+                      bgUploading && 'opacity-50 pointer-events-none',
+                    )}>
+                      <input ref={bgFileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleBgUpload} />
+                      {bgUploading ? <Spinner size={16} /> : <span className="text-xl leading-none">+</span>}
+                      <span className="text-[9px] mt-0.5">Add BG</span>
+                    </label>
+                  </div>
+                  {backgroundRefId && <p className="text-[10px] text-pink-400/70">Background locked — all shots use this scene</p>}
                 </div>
               </div>
             </Section>

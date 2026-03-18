@@ -18,6 +18,7 @@ server/data/analyzedProfiles.json
 server/data/sceneMemory.json
 server/data/outfits.json
 server/data/brandVoice.json
+server/data/backgrounds/
 server/data/ig-debug/
 uploads/generated/
 uploads/Maria/
@@ -47,3 +48,4 @@ desktop.ini
 *.log
 npm-debug.log*
 .pnpm-store
+.gstack/

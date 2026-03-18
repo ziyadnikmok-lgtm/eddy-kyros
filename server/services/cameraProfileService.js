@@ -78,6 +78,13 @@ const CAMERA_PROFILES = [
     lighting: 'frontal ring-light illumination with circular catchlights',
     realism: 'ring light selfie with visible circular catchlights, natural skin texture, slight phone compression — real beauty selfie, not retouched',
   },
+  {
+    id: 'led_room_ambient',
+    lens: '26mm handheld smartphone lens, casual framing',
+    depth: 'deep depth keeping subject and room visible',
+    lighting: 'ambient RGB LED room lighting with colored reflections on skin and fabric',
+    realism: 'candid iPhone photo in LED-lit room, high ISO grain in shadows, colored light reflecting naturally on skin, slight warmth from LEDs — real phone photo, not studio',
+  },
 ];
 
 class CameraProfileService {
