@@ -75,7 +75,7 @@ const imageStore = require('./services/imageStore');
 const batchGenerator = require('./services/batchGenerator');
 const log = require('./utils/logger');
 const cfg = require('./config');
-const { generateLimiter, batchLimiter, cloneLimiter } = require('./middleware/rateLimiter');
+const { readLimiter, generateLimiter, batchLimiter, cloneLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
 
@@ -145,8 +145,8 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-app.use('/api/keys', generateLimiter, keysRouter);
-app.use('/api/characters', generateLimiter, charactersRouter);
+app.use('/api/keys', readLimiter, keysRouter);
+app.use('/api/characters', readLimiter, charactersRouter);
 app.use('/api/batch', batchLimiter, batchRouter);
 app.use('/api/tweak', generateLimiter, tweakRouter);
 app.use('/api/reformat', generateLimiter, reformatRouter);

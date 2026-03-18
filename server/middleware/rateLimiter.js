@@ -1,5 +1,13 @@
 const rateLimit = require('express-rate-limit');
 
+const readLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: { code: 'RATE_LIMIT', message: 'Too many requests — try again shortly' } },
+});
+
 const generateLimiter = rateLimit({
   windowMs: 60_000,
   max: 60,
@@ -24,4 +32,4 @@ const cloneLimiter = rateLimit({
   message: { success: false, error: { code: 'RATE_LIMIT', message: 'Too many clone requests — try again shortly' } },
 });
 
-module.exports = { generateLimiter, batchLimiter, cloneLimiter };
+module.exports = { readLimiter, generateLimiter, batchLimiter, cloneLimiter };
