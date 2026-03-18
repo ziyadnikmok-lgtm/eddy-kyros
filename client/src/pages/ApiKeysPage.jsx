@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { keys as keysApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
-import { Card, Btn, Input, Badge, Spinner, Empty, ConfirmDialog } from '../components/UI';
+import { Card, Btn, Input, Badge, Spinner, Empty, ConfirmDialog, SpendBar } from '../components/UI';
 import { IconKey } from 'nucleo-glass';
 
 export default function ApiKeysPage() {
@@ -23,6 +23,7 @@ export default function ApiKeysPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [health, setHealth] = useState(null);
   const [confirmAction, setConfirmAction] = useState(null);
+  const [spend, setSpend] = useState(null);
   const { loading, run } = useAsync();
   const { loading: loadingList, run: runList } = useAsync();
   const { loading: loadingHealth, run: runHealth } = useAsync();
@@ -40,9 +41,10 @@ export default function ApiKeysPage() {
   });
 
   const load = () => runList(async () => {
-    const [data, apify, ws, igSession, igLogin] = await Promise.all([
-      keysApi.list(), keysApi.getApify(), keysApi.getWavespeed(), keysApi.getInstagramSession(), keysApi.getInstagramLogin(),
+    const [data, apify, ws, igSession, igLogin, spendData] = await Promise.all([
+      keysApi.list(), keysApi.getApify(), keysApi.getWavespeed(), keysApi.getInstagramSession(), keysApi.getInstagramLogin(), keysApi.getSpend().catch(() => null),
     ]);
+    if (spendData) setSpend(spendData);
     setKeyList(data);
     setApifyInfo(apify || { hasApifyKey: false, maskedKey: '', updatedAt: null });
     setWavespeedInfo(ws || { hasWavespeedKey: false, maskedKey: '', updatedAt: null });
@@ -231,6 +233,125 @@ export default function ApiKeysPage() {
         )}
       </Card>
 
+      {spend && (
+        <Card className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">API Spending</h3>
+            <Btn variant="secondary" className="!py-1 !px-2.5 !text-[11px]" onClick={() => {
+              if (window.confirm('Reset spend counter to $0? This does not affect your actual Google billing.')) {
+                keysApi.resetSpend().then((data) => { setSpend(data); notify('Spend counter reset', 'success'); }).catch(() => notify('Reset failed', 'error'));
+              }
+            }}>Reset</Btn>
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-zinc-400">Total Spend</span>
+              <span className={`font-mono font-semibold ${spend.totalSpendUsd >= spend.spendBudgetUsd ? 'text-red-400' : spend.totalSpendUsd >= spend.spendBudgetUsd * 0.8 ? 'text-amber-400' : 'text-green-400'}`}>
+                ${spend.totalSpendUsd.toFixed(4)}
+              </span>
+            </div>
+            <SpendBar spent={spend.totalSpendUsd} budget={spend.spendBudgetUsd} />
+            <div className="flex items-center justify-between text-xs text-zinc-500">
+              <span>${spend.totalSpendUsd.toFixed(2)} / ${spend.spendBudgetUsd.toFixed(0)}</span>
+              <span>${spend.remainingUsd.toFixed(2)} remaining</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <div className="rounded-lg border border-zinc-700/60 bg-zinc-900/30 p-2 text-center">
+                <div className="text-lg font-mono font-semibold text-zinc-200">{spend.imageCallCount}</div>
+                <div className="text-[10px] text-zinc-500 uppercase">Images Generated</div>
+                <div className="text-[10px] text-zinc-600">~$0.13-0.15 each (2K)</div>
+              </div>
+              <div className="rounded-lg border border-zinc-700/60 bg-zinc-900/30 p-2 text-center">
+                <div className="text-lg font-mono font-semibold text-zinc-200">{spend.textCallCount}</div>
+                <div className="text-[10px] text-zinc-500 uppercase">Text API Calls</div>
+                <div className="text-[10px] text-zinc-600">analysis, planning, captions</div>
+              </div>
+            </div>
+          </div>
+          {spend.totalSpendUsd >= spend.spendBudgetUsd && (
+            <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-2.5 text-xs text-red-400">
+              Budget limit reached. All API calls are blocked until the counter is reset.
+            </div>
+          )}
+
+          {/* Daily Spend Chart */}
+          {Array.isArray(spend.spendLog) && spend.spendLog.length > 0 && (() => {
+            const log = spend.spendLog.slice(-30);
+            const maxVal = Math.max(...log.map(d => (d.textSpend || 0) + (d.imageSpend || 0)), 0.01);
+            const avg = log.reduce((s, d) => s + ((d.textSpend || 0) + (d.imageSpend || 0)), 0) / log.length;
+            const barW = Math.max(8, Math.floor(480 / log.length) - 2);
+            const chartH = 120;
+            const svgW = log.length * (barW + 2);
+            return (
+              <div className="space-y-1.5 pt-2 border-t border-zinc-700/40">
+                <h4 className="text-xs font-medium text-zinc-400">Daily Spend (last {log.length} days)</h4>
+                <div className="overflow-x-auto">
+                  <svg width={svgW} height={chartH + 20} className="block">
+                    {log.map((day, i) => {
+                      const val = (day.textSpend || 0) + (day.imageSpend || 0);
+                      const h = (val / maxVal) * chartH;
+                      const x = i * (barW + 2);
+                      const fill = val > avg ? '#ef4444' : '#22c55e';
+                      return (
+                        <g key={day.date || i}>
+                          <title>{day.date}: ${val.toFixed(4)}</title>
+                          <rect x={x} y={chartH - h} width={barW} height={Math.max(h, 1)} rx={2} fill={fill} opacity={0.8} />
+                          {i % Math.max(1, Math.floor(log.length / 6)) === 0 && (
+                            <text x={x + barW / 2} y={chartH + 14} textAnchor="middle" className="fill-zinc-600" style={{ fontSize: 8 }}>
+                              {(day.date || '').slice(5)}
+                            </text>
+                          )}
+                        </g>
+                      );
+                    })}
+                    <line x1={0} y1={chartH - (avg / maxVal) * chartH} x2={svgW} y2={chartH - (avg / maxVal) * chartH} stroke="#fbbf24" strokeWidth={1} strokeDasharray="4 2" opacity={0.5} />
+                  </svg>
+                </div>
+                <div className="text-[10px] text-zinc-600">
+                  <span className="inline-block w-2 h-2 rounded-sm bg-green-500 mr-1" />Below avg
+                  <span className="inline-block w-2 h-2 rounded-sm bg-red-500 ml-3 mr-1" />Above avg
+                  <span className="text-amber-500 ml-3">---</span> avg: ${avg.toFixed(4)}/day
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Cost-per-Character Breakdown */}
+          {spend.characterSpend && Object.keys(spend.characterSpend).length > 0 && (() => {
+            const entries = Object.entries(spend.characterSpend)
+              .map(([name, data]) => ({ name, ...data }))
+              .sort((a, b) => (b.totalSpend || 0) - (a.totalSpend || 0));
+            return (
+              <div className="space-y-1.5 pt-2 border-t border-zinc-700/40">
+                <h4 className="text-xs font-medium text-zinc-400">Spend by Character</h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[11px]">
+                    <thead>
+                      <tr className="text-zinc-500 border-b border-zinc-700/40">
+                        <th className="text-left py-1 font-medium">Character</th>
+                        <th className="text-right py-1 font-medium">Images</th>
+                        <th className="text-right py-1 font-medium">Text</th>
+                        <th className="text-right py-1 font-medium">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {entries.map(e => (
+                        <tr key={e.name} className="border-b border-zinc-800/40">
+                          <td className="py-1 text-zinc-300 font-medium">{e.name}</td>
+                          <td className="py-1 text-right text-zinc-400 font-mono">{e.imageCalls || 0}</td>
+                          <td className="py-1 text-right text-zinc-400 font-mono">{e.textCalls || 0}</td>
+                          <td className="py-1 text-right text-zinc-200 font-mono">${((e.imageSpend || 0) + (e.textSpend || 0)).toFixed(4)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
+        </Card>
+      )}
+
       <Card className="space-y-4">
         <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">Add New Key</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -393,23 +514,34 @@ export default function ApiKeysPage() {
         ) : (
           <div className="space-y-2">
             {keyList.map((k) => (
-              <div key={k.id} className={`flex items-center gap-3 rounded-lg border px-4 py-3 transition ${k.isActive ? 'border-blue-500/50 bg-blue-500/5' : 'border-zinc-700/50 bg-zinc-800/40'}`}>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm text-zinc-200">{k.name}</span>
-                    {k.isActive && <Badge color="green">Active</Badge>}
+              <div key={k.id} className={`rounded-lg border px-4 py-3 transition ${k.isActive ? 'border-blue-500/50 bg-blue-500/5' : 'border-zinc-700/50 bg-zinc-800/40'}`}>
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm text-zinc-200">{k.name}</span>
+                      {k.isActive && <Badge color="green">Active</Badge>}
+                    </div>
+                    <div className="text-xs font-mono text-zinc-500 mt-0.5">{k.maskedKey}</div>
                   </div>
-                  <div className="text-xs font-mono text-zinc-500 mt-0.5">{k.maskedKey}</div>
-                </div>
-                <div className="flex gap-2">
-                  {!k.isActive && (
-                    <Btn variant="secondary" className="!py-1.5 !px-3 !text-xs" onClick={() => handleActivate(k.id)} disabled={loading}>
-                      Activate
+                  <div className="flex gap-2">
+                    {!k.isActive && (
+                      <Btn variant="secondary" className="!py-1.5 !px-3 !text-xs" onClick={() => handleActivate(k.id)} disabled={loading}>
+                        Activate
+                      </Btn>
+                    )}
+                    <Btn variant="danger" className="!py-1.5 !px-3 !text-xs" onClick={() => setConfirmAction({ title: `Delete "${k.name}"?`, message: 'This will permanently remove this API key.', onConfirm: () => handleDelete(k.id) })} disabled={loading}>
+                      Delete
                     </Btn>
-                  )}
-                  <Btn variant="danger" className="!py-1.5 !px-3 !text-xs" onClick={() => setConfirmAction({ title: `Delete "${k.name}"?`, message: 'This will permanently remove this API key.', onConfirm: () => handleDelete(k.id) })} disabled={loading}>
-                    Delete
-                  </Btn>
+                  </div>
+                </div>
+                <div className="mt-2 pt-2 border-t border-zinc-700/40">
+                  <div className="flex items-center gap-3 text-[11px]">
+                    <span className={`font-mono font-semibold ${(k.totalSpendUsd || 0) >= (k.spendBudgetUsd || 300) ? 'text-red-400' : 'text-zinc-300'}`}>
+                      ${(k.totalSpendUsd || 0).toFixed(2)} / ${(k.spendBudgetUsd || 300).toFixed(0)}
+                    </span>
+                    <SpendBar spent={k.totalSpendUsd || 0} budget={k.spendBudgetUsd || 300} className="flex-1" />
+                    <span className="text-zinc-500">{k.imageCallCount || 0} imgs / {k.textCallCount || 0} text</span>
+                  </div>
                 </div>
               </div>
             ))}

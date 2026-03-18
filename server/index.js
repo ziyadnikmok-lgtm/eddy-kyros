@@ -79,6 +79,15 @@ const { readLimiter, generateLimiter, batchLimiter, cloneLimiter } = require('./
 
 const app = express();
 
+// Backfill spend tracking from existing gallery on first run
+try {
+  const galleryManager = require('./services/galleryManager');
+  const apiKeyManager = require('./services/apiKeyManager');
+  const allImages = galleryManager.list();
+  const totalImages = Array.isArray(allImages?.images) ? allImages.images.length : Array.isArray(allImages) ? allImages.length : 0;
+  apiKeyManager.backfillFromGallery(totalImages);
+} catch (err) { console.error('[backfill] Spend backfill failed:', err.message); }
+
 app.set('trust proxy', 1);
 
 const PORT = cfg.PORT;

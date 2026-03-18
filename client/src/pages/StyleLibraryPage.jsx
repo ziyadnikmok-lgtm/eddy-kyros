@@ -249,7 +249,7 @@ export default function StyleLibraryPage() {
               ))}
             </div>
           ) : atoms.length === 0 ? (
-            <Empty icon={'\uD83C\uDFA8'} title="No atoms yet" subtitle="Add atoms manually, import JSON, or run the Profile Analyzer" />
+            <Empty icon="atom" title="No atoms yet" subtitle="Add atoms manually, import JSON, or run the Profile Analyzer" />
           ) : (
             <>
               <div className={`grid gap-2.5 ${hasSelection ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'}`}>

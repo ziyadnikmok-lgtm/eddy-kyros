@@ -120,6 +120,8 @@ export const keys = {
   setWavespeed: (apiKey) => request('/keys/wavespeed', { method: 'PUT', body: { apiKey } }),
   clearWavespeed: () => request('/keys/wavespeed', { method: 'DELETE' }),
   healthCheck: () => request('/keys/health-check'),
+  getSpend: () => request('/keys/spend'),
+  resetSpend: () => request('/keys/spend/reset', { method: 'POST' }),
 };
 
 export const video = {
@@ -166,6 +168,7 @@ export const characters = {
 
 export const generate = {
   image: (body) => request('/generate', { method: 'POST', body }),
+  enhancePrompt: (body) => request('/generate/enhance-prompt', { method: 'POST', body }),
 };
 
 export const nsfwGenerate = {
@@ -189,6 +192,7 @@ export const batch = {
   remove: (jobId) => request(`/batch/${jobId}`, { method: 'DELETE' }),
   stats: () => request('/batch/stats'),
   progress: (jobId) => new EventSource(`${BASE}/batch/${jobId}/progress`),
+  scorePicks: (jobId) => request(`/batch/${jobId}/score-picks`, { method: 'POST' }),
 };
 
 export const tweak = {
@@ -234,6 +238,7 @@ export const gallery = {
   updateTags: (id, tags) => request(`/gallery/${id}/tags`, { method: 'PATCH', body: { tags } }),
   addTag: (id, tag) => request(`/gallery/${id}/tags`, { method: 'POST', body: { tag } }),
   removeTag: (id, tag) => request(`/gallery/${id}/tags/${encodeURIComponent(tag)}`, { method: 'DELETE' }),
+  saveEdit: (id, params) => request(`/gallery/${id}/edit`, { method: 'POST', body: { ...params, save: true } }),
 };
 
 export const scene = {

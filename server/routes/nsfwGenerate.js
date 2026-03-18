@@ -2,7 +2,9 @@ const express = require('express');
 const wavespeedService = require('../services/wavespeedService');
 const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
+const apiKeyManager = require('../services/apiKeyManager');
 const { AppError } = require('../middleware/errorHandler');
+const log = require('../utils/logger');
 
 const router = express.Router();
 
@@ -50,6 +52,8 @@ router.post('/', async (req, res, next) => {
       seed: null,
       tags: ['nsfw', 'wavespeed'],
     });
+
+    try { apiKeyManager.addExternalSpend(0.01, 'nsfw-image'); } catch (e) { log.warn('nsfw_spend_track_failed', { error: e.message }); }
 
     res.json({
       success: true,
@@ -117,6 +121,8 @@ router.post('/vary', async (req, res, next) => {
       seed: null,
       tags: ['nsfw', 'wavespeed', 'variation'],
     });
+
+    try { apiKeyManager.addExternalSpend(0.01, 'nsfw-image'); } catch (e) { log.warn('nsfw_spend_track_failed', { error: e.message }); }
 
     res.json({
       success: true,

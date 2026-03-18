@@ -490,4 +490,18 @@ router.delete('/:id', (req, res, next) => {
   }
 });
 
+// --- Spend tracking ---
+
+router.get('/spend', (_req, res, next) => {
+  try {
+    res.json({ success: true, data: apiKeyManager.getSpendInfo() });
+  } catch (err) { next(err); }
+});
+
+router.post('/spend/reset', (_req, res, next) => {
+  try {
+    res.json({ success: true, data: apiKeyManager.resetSpend() });
+  } catch (err) { next(err); }
+});
+
 module.exports = router;

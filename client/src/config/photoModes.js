@@ -69,11 +69,11 @@ export const EXPRESSION_MODES = [
 ];
 
 export const VIDEO_MODELS = [
-  { id: 'kling-v2.5-turbo-std', label: 'Kling v2.5 Std', desc: 'Fast standard quality', durations: [5, 10] },
-  { id: 'kling-v2.5-turbo-pro', label: 'Kling v2.5 Pro', desc: 'Higher quality, end-frame support', durations: [5, 10] },
-  { id: 'grok-imagine-video', label: 'Grok Video', desc: 'X.AI model, 720p/480p', durations: [6, 10] },
-  { id: 'kling-v2.6-motion', label: 'Kling v2.6 Motion', desc: 'Transfer motion from reference video', durations: [5] },
-  { id: 'kling-v2.6-motion-pro', label: 'Kling v2.6 Pro Motion', desc: 'Pro quality motion transfer', durations: [5] },
+  { id: 'kling-v2.5-turbo-std', label: 'Kling v2.5 Std', desc: 'Fast standard quality', durations: [5, 10], prices: { 5: 0.21, 10: 0.42 } },
+  { id: 'kling-v2.5-turbo-pro', label: 'Kling v2.5 Pro', desc: 'Higher quality, end-frame support', durations: [5, 10], prices: { 5: 0.35, 10: 0.70 } },
+  { id: 'grok-imagine-video', label: 'Grok Video', desc: 'X.AI model, 720p/480p', durations: [6, 10], prices: { 6: 0.33, 10: 0.55 } },
+  { id: 'kling-v2.6-motion', label: 'Kling v2.6 Motion', desc: 'Transfer motion from reference video', durations: [5], prices: { 5: 0.35 } },
+  { id: 'kling-v2.6-motion-pro', label: 'Kling v2.6 Pro Motion', desc: 'Pro quality motion transfer', durations: [5], prices: { 5: 0.56 } },
 ];
 
 export const SCENE_MODES = [

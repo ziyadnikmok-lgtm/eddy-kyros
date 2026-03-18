@@ -32,6 +32,7 @@ const SORT_OPTIONS = [
   { value: 'oldest', label: 'Oldest' },
   { value: 'largest', label: 'Largest' },
   { value: 'smallest', label: 'Smallest' },
+  { value: 'quality', label: 'Quality Score' },
 ];
 
 const CATEGORY_TAGS = ['lifestyle', 'personality', 'teasing', 'engagement'];
@@ -129,8 +130,10 @@ export default function GalleryPage() {
 
   const [tagFilter, setTagFilter] = useState([]);
   const [allTags, setAllTags] = useState([]);
+  const [groupBySession, setGroupBySession] = useState(false);
   const [editingTagsId, setEditingTagsId] = useState(null);
   const [newTagInput, setNewTagInput] = useState('');
+  const [applyingLastId, setApplyingLastId] = useState(null);
 
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const sentinelRef = useRef(null);
@@ -180,9 +183,22 @@ export default function GalleryPage() {
       result = [...result].sort((a, b) => (b.fileSize || 0) - (a.fileSize || 0));
     } else if (sortBy === 'smallest') {
       result = [...result].sort((a, b) => (a.fileSize || 0) - (b.fileSize || 0));
+    } else if (sortBy === 'quality') {
+      result = [...result].sort((a, b) => (b.qualityScore || 0) - (a.qualityScore || 0));
     }
     return result;
   }, [images, searchQuery, sourceFilter, ratioFilter, characterFilter, personaFilter, favoritesOnly, tagFilter, sortBy]);
+
+  const sessionGroups = useMemo(() => {
+    if (!groupBySession) return null;
+    const groups = new Map();
+    for (const img of filteredImages) {
+      const key = img.sessionId || `solo-${img.id}`;
+      if (!groups.has(key)) groups.set(key, { sessionId: img.sessionId, images: [], source: img.source, createdAt: img.createdAt });
+      groups.get(key).images.push(img);
+    }
+    return [...groups.values()].filter((g) => g.images.length > 0);
+  }, [filteredImages, groupBySession]);
 
   const visibleImages = useMemo(() => filteredImages.slice(0, visibleCount), [filteredImages, visibleCount]);
   const galleryImageUrls = useMemo(() => filteredImages.map((i) => galleryApi.imageUrl(i.id)), [filteredImages]);
@@ -264,6 +280,22 @@ export default function GalleryPage() {
     });
     notify(`Opened ${label} with settings from this image`, 'info');
   }
+
+  const handleApplyLastEdit = useCallback(async (id) => {
+    try {
+      const raw = localStorage.getItem('imageEditor_lastEdit');
+      if (!raw) { notify('No previous edit found', 'error'); return; }
+      const storedValues = JSON.parse(raw);
+      setApplyingLastId(id);
+      await galleryApi.saveEdit(id, storedValues);
+      notify('Last edit applied and saved', 'success');
+      load();
+    } catch (err) {
+      notify(err.message || 'Failed to apply last edit', 'error');
+    } finally {
+      setApplyingLastId(null);
+    }
+  }, [notify]);
 
   const toggleSelection = useCallback((id) => {
     setSelectedIds((prev) => {
@@ -474,6 +506,14 @@ export default function GalleryPage() {
                   {availablePersonas.map((p) => <option key={p} value={p}>{PERSONA_LABELS[p] || p}</option>)}
                 </select>
               )}
+              <button
+                onClick={() => setGroupBySession(!groupBySession)}
+                className={`h-8 rounded-lg border px-2 text-xs transition cursor-pointer ${
+                  groupBySession ? 'border-blue-500/50 bg-blue-500/15 text-blue-300' : 'border-zinc-700/80 bg-zinc-900/60 text-zinc-400 hover:text-zinc-300'
+                }`}
+              >
+                Group sessions
+              </button>
               <div className="flex items-center gap-1.5">
                 <span className="text-xs text-zinc-500">Sort:</span>
                 <div className="flex gap-1">
@@ -530,6 +570,57 @@ export default function GalleryPage() {
         <Empty icon={<IconImage uniqueId="empty-gallery" size={40} aria-hidden />} title="Gallery is empty" subtitle="Generated images will appear here" />
       ) : filteredImages.length === 0 ? (
         <Empty icon={<IconMagnifier uniqueId="empty-gallery-search" size={40} aria-hidden />} title="No images match" subtitle="Try adjusting your search or filters" />
+      ) : groupBySession && sessionGroups ? (
+        <div className="space-y-4">
+          {sessionGroups.map((group) => (
+            <div key={group.sessionId || group.images[0]?.id} className="rounded-xl border border-zinc-700/50 bg-zinc-900/30 overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-700/40 bg-zinc-800/30">
+                <div className="flex items-center gap-2">
+                  <Badge color={group.sessionId ? 'blue' : 'zinc'}>{group.images.length} images</Badge>
+                  {group.source && <span className="text-xs text-zinc-400">{group.source}</span>}
+                  <span className="text-[10px] text-zinc-500">{new Date(group.createdAt).toLocaleString()}</span>
+                </div>
+                {group.sessionId && group.images.length > 1 && (
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={() => {
+                        const ids = group.images.map((i) => i.id);
+                        galleryApi.bulkDownload(ids).catch(() => notify('Download failed', 'error'));
+                      }}
+                      className="text-[10px] text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                    >
+                      Download all
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!window.confirm(`Delete all ${group.images.length} images in this session?`)) return;
+                        galleryApi.bulkRemove(group.images.map((i) => i.id)).then(() => { load(); notify(`Deleted ${group.images.length} images`, 'success'); }).catch(() => notify('Delete failed', 'error'));
+                      }}
+                      className="text-[10px] text-red-500/70 hover:text-red-400 cursor-pointer"
+                    >
+                      Delete session
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-1 p-2">
+                {group.images.map((img) => (
+                  <div key={img.id} className="relative rounded-lg overflow-hidden cursor-pointer group" onClick={() => {
+                    const idx = filteredImages.findIndex((i) => i.id === img.id);
+                    openLightbox(galleryImageUrls, idx >= 0 ? idx : 0);
+                  }}>
+                    <img
+                      src={isMobile ? `/api/gallery/${img.id}/thumb` : galleryApi.imageUrl(img.id)}
+                      alt=""
+                      className="w-full aspect-square object-cover group-hover:scale-105 transition-transform"
+                      loading="lazy"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
           {visibleImages.map((img, index) => {
@@ -566,6 +657,17 @@ export default function GalleryPage() {
                     {img.isFavorite ? '★' : '☆'}
                   </button>
 
+                  {img.qualityScore != null && (
+                    <div className={`absolute top-2 left-2 rounded-md px-1.5 py-0.5 text-[10px] font-bold backdrop-blur-sm border ${
+                      img.qualityScore >= 85 ? 'bg-green-500/20 text-green-300 border-green-400/30'
+                      : img.qualityScore >= 70 ? 'bg-blue-500/20 text-blue-300 border-blue-400/30'
+                      : img.qualityScore >= 50 ? 'bg-yellow-500/20 text-yellow-300 border-yellow-400/30'
+                      : 'bg-red-500/20 text-red-300 border-red-400/30'
+                    }`} title={img.qualityReasons?.join(', ') || 'Quality score'}>
+                      {img.qualityScore >= 85 ? '\u2605 ' : ''}{img.qualityScore}
+                    </div>
+                  )}
+
                   {bulkMode && (
                     <button
                       onClick={(e) => { e.stopPropagation(); toggleSelection(img.id); }}
@@ -589,6 +691,16 @@ export default function GalleryPage() {
                             className="flex-1 rounded-md bg-blue-600/90 px-2 py-1.5 text-xs text-white hover:bg-blue-500 transition cursor-pointer text-center">
                             Recreate
                           </button>
+                          <button onClick={() => navigateTo('imageEditor', { editId: img.id })} aria-label="Edit image"
+                            className="flex-1 rounded-md bg-purple-600/90 px-2 py-1.5 text-xs text-white hover:bg-purple-500 transition cursor-pointer text-center">
+                            Edit
+                          </button>
+                          {localStorage.getItem('imageEditor_lastEdit') && (
+                            <button onClick={() => handleApplyLastEdit(img.id)} aria-label="Apply last edit" disabled={applyingLastId === img.id}
+                              className="flex-1 rounded-md bg-amber-600/90 px-2 py-1.5 text-xs text-white hover:bg-amber-500 transition cursor-pointer text-center disabled:opacity-50">
+                              {applyingLastId === img.id ? '...' : 'Last'}
+                            </button>
+                          )}
                           <button onClick={() => handleDownload(img.id, img.filename)} aria-label="Download image"
                             className="flex-1 rounded-md bg-zinc-800/90 px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 transition cursor-pointer text-center">
                             Download
@@ -603,6 +715,13 @@ export default function GalleryPage() {
                       <div className="md:hidden absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent pt-6 pb-1.5 px-1.5">
                         <div className="flex gap-1">
                           <button onClick={() => handleRecreate(img)} className="flex-1 rounded-md bg-blue-600/90 py-1.5 text-[10px] text-white active:bg-blue-500 text-center">Recreate</button>
+                          <button onClick={() => navigateTo('imageEditor', { editId: img.id })} className="flex-1 rounded-md bg-purple-600/90 py-1.5 text-[10px] text-white active:bg-purple-500 text-center">Edit</button>
+                          {localStorage.getItem('imageEditor_lastEdit') && (
+                            <button onClick={() => handleApplyLastEdit(img.id)} disabled={applyingLastId === img.id}
+                              className="flex-1 rounded-md bg-amber-600/90 py-1.5 text-[10px] text-white active:bg-amber-500 text-center disabled:opacity-50">
+                              {applyingLastId === img.id ? '...' : 'Last'}
+                            </button>
+                          )}
                           <button onClick={() => handleDownload(img.id, img.filename)} className="flex-1 rounded-md bg-zinc-800/90 py-1.5 text-[10px] text-zinc-200 active:bg-zinc-700 text-center">DL</button>
                           <button onClick={() => setDeleteConfirmId(img.id)} className="rounded-md bg-red-600/80 px-2 py-1.5 text-[10px] text-white active:bg-red-500">✕</button>
                         </div>

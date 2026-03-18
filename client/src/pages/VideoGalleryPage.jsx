@@ -212,7 +212,7 @@ export default function VideoGalleryPage() {
       {loading ? (
         <div className="flex items-center justify-center py-20"><Spinner size={32} /></div>
       ) : filtered.length === 0 ? (
-        <Empty icon="Video" title={videos.length === 0 ? 'No videos yet' : 'No videos match'} subtitle={videos.length === 0 ? 'Generate videos and they will appear here' : 'Try adjusting your filters'} />
+        <Empty icon="video" title={videos.length === 0 ? 'No videos yet' : 'No videos match'} subtitle={videos.length === 0 ? 'Generate videos and they will appear here' : 'Try adjusting your filters'} />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {filtered.map((v) => (

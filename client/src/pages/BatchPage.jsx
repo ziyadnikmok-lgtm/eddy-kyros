@@ -320,6 +320,47 @@ const _cache = {
   statusFilter: '',
 };
 
+function ScorePicksBtn({ jobId, onScored }) {
+  const [scoring, setScoring] = useState(false);
+  const [scoreResult, setScoreResult] = useState(null);
+
+  const handleScore = async () => {
+    if (scoring) return;
+    setScoring(true);
+    try {
+      const result = await batchApi.scorePicks(jobId);
+      setScoreResult(result);
+      onScored?.();
+    } catch (err) {
+      setScoreResult({ error: err.message });
+    } finally {
+      setScoring(false);
+    }
+  };
+
+  if (scoreResult && !scoreResult.error) {
+    const topScore = Math.max(...scoreResult.scores.filter(s => s.score != null).map(s => s.score), 0);
+    return (
+      <div className="flex items-center gap-2 text-xs text-green-400">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+        Scored {scoreResult.scored}/{scoreResult.total} images · Top: {topScore}
+      </div>
+    );
+  }
+
+  return (
+    <Btn variant="secondary" onClick={handleScore} disabled={scoring} className="!py-1.5 !px-3 !text-xs">
+      {scoring ? <><Spinner size={12} /> Scoring picks...</> : (
+        <>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+          Score Picks (AI)
+        </>
+      )}
+      {scoreResult?.error && <span className="text-red-400 ml-1">{scoreResult.error}</span>}
+    </Btn>
+  );
+}
+
 export default function BatchPage() {
   const { notify, characters: chars, sceneMemories, outfits, consumePageParams } = useApp();
   const { loading, run } = useAsync();
@@ -1040,7 +1081,7 @@ export default function BatchPage() {
         {mode !== 'reformat' && (
           <div className="flex gap-3">
             <Btn onClick={startBatch} disabled={loading || isRunning} className="flex-1">
-              {loading ? <Spinner size={16} /> : null} {isRunning ? `Running... ${elapsedSec}s` : 'Start Batch'}
+              {loading ? <Spinner size={16} /> : null} {isRunning ? `Running... ${elapsedSec}s` : `Start Batch · ~$${(count * 0.10).toFixed(2)}`}
             </Btn>
             {isRunning && <Btn variant="danger" onClick={() => setShowCancelConfirm(true)} disabled={loading}>Cancel</Btn>}
           </div>
@@ -1058,6 +1099,10 @@ export default function BatchPage() {
             <span className="text-xs text-zinc-500 font-mono">{completed} / {job.total}</span>
           </div>
           <ProgressBar value={completed} max={job.total} />
+
+          {(job.status === 'completed' || job.status === 'partial') && successfulResults.length > 0 && (
+            <ScorePicksBtn jobId={job.jobId} onScored={() => notify('Quality scores applied — check Gallery > Sort by Quality', 'success')} />
+          )}
 
           {successfulResults.length > 0 && (
             <BatchResultsWithReformat

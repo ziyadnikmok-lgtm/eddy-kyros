@@ -542,7 +542,7 @@ export default function CarouselPage() {
               />
             </div>
             <Btn onClick={handleFollowUpCarousel} disabled={followUpLoading || !selectedImageId} className="w-full">
-              {followUpLoading ? <><Spinner size={14} /> Starting...</> : (followUpMode === 'ai' ? 'AI Follow-up from Selected Image' : 'Follow-up from Selected Image')}
+              {followUpLoading ? <><Spinner size={14} /> Starting...</> : `${followUpMode === 'ai' ? 'AI Follow-up' : 'Follow-up'} · ~$${(followUpCount * 0.10).toFixed(2)}`}
             </Btn>
             {followUpLoading && (
               <div className="text-[11px] text-zinc-500">{followUpElapsedSec}s elapsed</div>
@@ -584,7 +584,7 @@ export default function CarouselPage() {
 
           {completedSlides.length === 0 && !isAnyJobRunning ? (
             <Card className="flex items-center justify-center py-20">
-              <Empty icon="Carousel" title="No generated slides yet" subtitle="Use Execute or Follow-up to start jobs" />
+              <Empty icon="carousel" title="No generated slides yet" subtitle="Use Execute or Follow-up to start jobs" />
             </Card>
           ) : (
             <div className="space-y-4">
@@ -674,7 +674,7 @@ export default function CarouselPage() {
               </select>
             </label>
             <Btn onClick={handleGeneratePolls} disabled={pollLoading || !pollTopic.trim()} className="w-full">
-              {pollLoading ? <><Spinner size={14} /> Generating Polls...</> : 'Generate Poll Carousel'}
+              {pollLoading ? <><Spinner size={14} /> Generating Polls...</> : `Generate Poll Carousel · ~$${(pollCount * 2 * 0.10).toFixed(2)}`}
             </Btn>
           </Card>
 
@@ -782,7 +782,7 @@ export default function CarouselPage() {
             </div>
           ) : !pollLoading && (
             <Card className="flex items-center justify-center py-20">
-              <Empty icon="Carousel" title="No polls generated yet" subtitle="Enter a topic and generate your first poll carousel" />
+              <Empty icon="poll" title="No polls generated yet" subtitle="Enter a topic and generate your first poll carousel" />
             </Card>
           )}
         </div>

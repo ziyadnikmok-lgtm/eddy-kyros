@@ -8,16 +8,18 @@ const DEFAULT_DISABLED = new Set(['format']);
 const ASPECT_RATIOS = ['4:5', '9:16', '1:1', '16:9', '4:3', '3:4'];
 const RESOLUTION_TIERS = ['1K', '2K', '4K'];
 
+const _i = (d) => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{d}</svg>;
+
 const SLOT_META = {
-  scene: { icon: '\uD83C\uDFDE', color: 'blue', hint: 'Environment, setting, surfaces, spatial depth' },
-  lighting: { icon: '\u2600', color: 'yellow', hint: 'Light source, quality, color temperature, shadows' },
-  camera: { icon: '\uD83D\uDCF7', color: 'zinc', hint: 'Shot type, focal length, angle, depth of field' },
-  pose: { icon: '\uD83E\uDDD1', color: 'blue', hint: 'Body positioning, weight, limb placement' },
-  expression: { icon: '\uD83D\uDE0A', color: 'green', hint: 'Facial mood, gaze direction, emotional energy' },
-  outfit: { icon: '\uD83D\uDC57', color: 'yellow', hint: 'Garments, fit, fabric, color, texture' },
-  accessories: { icon: '\uD83D\uDC8D', color: 'red', hint: 'Jewelry, bags, hats, sunglasses' },
-  vibe: { icon: '\u2728', color: 'green', hint: 'Overall mood, aesthetic era, energy level' },
-  format: { icon: '\uD83C\uDFA8', color: 'purple', hint: 'Photography type, post-processing, visual treatment' },
+  scene: { icon: _i(<><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></>), color: 'blue', hint: 'Environment, setting, surfaces, spatial depth' },
+  lighting: { icon: _i(<><circle cx="12" cy="12" r="5" /><line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" /><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" /><line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" /><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" /></>), color: 'yellow', hint: 'Light source, quality, color temperature, shadows' },
+  camera: { icon: _i(<><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></>), color: 'zinc', hint: 'Shot type, focal length, angle, depth of field' },
+  pose: { icon: _i(<><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></>), color: 'blue', hint: 'Body positioning, weight, limb placement' },
+  expression: { icon: _i(<><circle cx="12" cy="12" r="10" /><path d="M8 14s1.5 2 4 2 4-2 4-2" /><line x1="9" y1="9" x2="9.01" y2="9" /><line x1="15" y1="9" x2="15.01" y2="9" /></>), color: 'green', hint: 'Facial mood, gaze direction, emotional energy' },
+  outfit: { icon: _i(<><path d="M20.38 3.46L16 2 12 5.5 8 2l-4.38 1.46a2 2 0 0 0-1.34 1.71l-.76 8.55a2 2 0 0 0 .9 1.86L12 22l9.58-6.42a2 2 0 0 0 .9-1.86l-.76-8.55a2 2 0 0 0-1.34-1.71z" /></>), color: 'yellow', hint: 'Garments, fit, fabric, color, texture' },
+  accessories: { icon: _i(<><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" /></>), color: 'red', hint: 'Jewelry, bags, hats, sunglasses' },
+  vibe: { icon: _i(<><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" /></>), color: 'green', hint: 'Overall mood, aesthetic era, energy level' },
+  format: { icon: _i(<><polygon points="12 2 2 7 12 12 22 7 12 2" /><polyline points="2 17 12 22 22 17" /><polyline points="2 12 12 17 22 12" /></>), color: 'purple', hint: 'Photography type, post-processing, visual treatment' },
 };
 
 const CATEGORY_COLORS = {
@@ -204,7 +206,7 @@ export default function PromptBuilderPage() {
             >
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm">{meta.icon}</span>
+                  <span className="text-zinc-400">{meta.icon}</span>
                   <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">{cat}</span>
                   <span className="text-[9px] text-zinc-600 font-mono">#{idx + 1}</span>
                 </div>

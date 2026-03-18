@@ -349,19 +349,22 @@ export default function VideoPage() {
           {/* Model Selection */}
           <Card className="space-y-3">
             <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">Model</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <select
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              className="w-full rounded-lg border border-zinc-700/60 bg-zinc-900/50 px-3 py-2.5 text-sm text-zinc-100 outline-none transition-all duration-200 cursor-pointer inset-depth hover:border-zinc-600 focus:border-blue-500/70 focus:ring-2 focus:ring-blue-500/20"
+            >
               {VIDEO_MODELS.map((m) => (
-                <button key={m.id} onClick={() => setModel(m.id)}
-                  className={`rounded-lg px-3 py-2.5 text-left border transition-all cursor-pointer ${
-                    model === m.id
-                      ? 'border-blue-500/50 bg-blue-600/12 text-blue-400'
-                      : 'border-zinc-700/40 bg-zinc-800/40 text-zinc-400 hover:border-zinc-600/60 hover:text-zinc-300'
-                  }`}>
-                  <div className="text-xs font-semibold truncate">{m.label}</div>
-                  <div className="text-[10px] text-zinc-500 mt-0.5 truncate">{m.desc}</div>
-                </button>
+                <option key={m.id} value={m.id}>{m.label} — {m.desc}</option>
               ))}
-            </div>
+            </select>
+            {modelInfo.prices && (
+              <div className="flex items-center gap-3 text-[11px] text-zinc-500">
+                {Object.entries(modelInfo.prices).map(([dur, price]) => (
+                  <span key={dur}>{dur}s → <span className="text-zinc-300 font-medium font-mono tabular-nums">${price.toFixed(2)}</span></span>
+                ))}
+              </div>
+            )}
           </Card>
 
           {/* Prompt */}
@@ -540,7 +543,7 @@ export default function VideoPage() {
 
           {/* Generate Button */}
           <Btn onClick={handleGenerate} disabled={loading} className="w-full">
-            {loading ? 'Generating...' : 'Generate Video'}
+            {loading ? 'Generating...' : `Generate Video${modelInfo.prices?.[duration] ? ` · $${modelInfo.prices[duration].toFixed(2)}` : ''}`}
           </Btn>
         </div>
 
@@ -583,7 +586,7 @@ export default function VideoPage() {
           {/* No result yet */}
           {!loading && !result && (
             <Card className="flex items-center justify-center py-12">
-              <Empty icon="Video" title="No video yet" subtitle="Configure settings and click Generate" />
+              <Empty icon="video" title="No video yet" subtitle="Configure settings and click Generate" />
             </Card>
           )}
 

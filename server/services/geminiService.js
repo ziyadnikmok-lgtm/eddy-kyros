@@ -64,7 +64,39 @@ function getClient(apiKey) {
 }
 
 class GeminiService {
+  _checkBudget() {
+    // Lazy require to avoid circular dependency with apiKeyManager
+    const apiKeyManager = require('./apiKeyManager');
+    apiKeyManager.checkBudget();
+  }
+
+  _trackTextSpend(response, characterId) {
+    try {
+      const usage = response?.usageMetadata;
+      if (usage) {
+        const apiKeyManager = require('./apiKeyManager');
+        apiKeyManager.addTextSpend(usage.promptTokenCount || 0, usage.candidatesTokenCount || 0, characterId || undefined);
+      }
+    } catch (err) { console.error('[spend] Text spend tracking failed:', err.message); }
+  }
+
+  _trackImageSpend(model, resolution, refImageCount, response, characterId) {
+    try {
+      const apiKeyManager = require('./apiKeyManager');
+      const usage = response?.usageMetadata;
+      apiKeyManager.addImageSpend(
+        model || IMAGE_MODEL,
+        resolution || '2K',
+        refImageCount || 0,
+        usage?.promptTokenCount || 0,
+        usage?.candidatesTokenCount || 0,
+        characterId || undefined,
+      );
+    } catch (err) { console.error('[spend] Image spend tracking failed:', err.message); }
+  }
+
   async generateImage(apiKey, prompt, options = {}) {
+  this._checkBudget();
   if (!apiKey || typeof apiKey !== 'string') {
     throw new AppError('API key is required for generation', 500, 'CONFIG_ERROR');
   }
@@ -125,6 +157,8 @@ class GeminiService {
             parsed.imageResult.base64Data = pngBuf.toString('base64');
             parsed.imageResult.mimeType = 'image/png';
           }
+          const refCount = contentParts.filter((p) => p.inlineData).length;
+          this._trackImageSpend(selectedImageModel, options.imageSize || '2K', refCount, response, options.characterId);
           return { image: parsed.imageResult, text: parsed.textResult || null, modelUsed: selectedImageModel };
         }
 
@@ -320,7 +354,65 @@ class GeminiService {
     return requested;
   }
 
+  /**
+   * Shared text-generation core with retry, timeout, and spend tracking.
+   * @param {string} apiKey
+   * @param {Array} contentParts - Gemini content parts array
+   * @param {object} extraConfig - Extra config merged into the Gemini call
+   * @param {string} label - Timeout label for error messages
+   * @param {string} [characterId] - Optional character ID for spend tracking
+   * @returns {Promise<string>} trimmed text response
+   */
+  async _generateTextInner(apiKey, contentParts, extraConfig = {}, label = 'Gemini text generation', characterId) {
+    try {
+      const genAI = getClient(apiKey);
+      let lastErr = null;
+      for (let attempt = 1; attempt <= TRANSIENT_RETRY_COUNT + 1; attempt += 1) {
+        try {
+          const response = await withTimeout(
+            genAI.models.generateContent({
+              model: TEXT_MODEL,
+              contents: [{ role: 'user', parts: contentParts }],
+              config: {
+                responseModalities: [Modality.TEXT],
+                safetySettings: SAFETY_SETTINGS,
+                ...extraConfig,
+              },
+            }),
+            TEXT_TIMEOUT_MS,
+            label
+          );
+
+          const parts = response.candidates?.[0]?.content?.parts;
+          if (!parts || parts.length === 0) {
+            throw new AppError('No content returned from Gemini', 502, 'GENERATION_EMPTY');
+          }
+
+          const text = parts.filter((p) => p.text).map((p) => p.text).join('');
+          if (!text || text.trim().length === 0) {
+            throw new AppError('Gemini returned empty text response', 502, 'GENERATION_EMPTY');
+          }
+          this._trackTextSpend(response, characterId);
+          return text.trim();
+        } catch (innerErr) {
+          if (innerErr instanceof AppError) throw innerErr;
+          if (isTransientError(innerErr) && attempt <= TRANSIENT_RETRY_COUNT) {
+            lastErr = innerErr;
+            await this._sleep(TRANSIENT_RETRY_BASE_MS * attempt);
+            continue;
+          }
+          throw innerErr;
+        }
+      }
+      if (lastErr) this._handleApiError(lastErr);
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      this._handleApiError(err);
+    }
+  }
+
   async generateText(apiKey, prompt, options = {}) {
+    this._checkBudget();
     if (!apiKey || typeof apiKey !== 'string') {
       throw new AppError('API key is required for generation', 500, 'CONFIG_ERROR');
     }
@@ -331,58 +423,23 @@ class GeminiService {
       throw new AppError('Prompt must be 15,000 characters or fewer', 400, 'VALIDATION_ERROR');
     }
 
-    try {
-      const genAI = getClient(apiKey);
-      let lastErr = null;
-      for (let attempt = 1; attempt <= TRANSIENT_RETRY_COUNT + 1; attempt += 1) {
-        try {
-          const response = await withTimeout(
-            genAI.models.generateContent({
-              model: TEXT_MODEL,
-              contents: [{ role: 'user', parts: [{ text: prompt.trim() }] }],
-              config: {
-                responseModalities: [Modality.TEXT],
-                safetySettings: SAFETY_SETTINGS,
-                ...(options.temperature != null && { temperature: options.temperature }),
-                ...(options.responseMimeType && { responseMimeType: options.responseMimeType }),
-              },
-            }),
-            TEXT_TIMEOUT_MS,
-            'Gemini text generation'
-          );
-
-          const parts = response.candidates?.[0]?.content?.parts;
-          if (!parts || parts.length === 0) {
-            throw new AppError('No content returned from Gemini', 502, 'GENERATION_EMPTY');
-          }
-
-          const text = parts.filter((p) => p.text).map((p) => p.text).join('');
-          if (!text || text.trim().length === 0) {
-            throw new AppError('Gemini returned empty text response', 502, 'GENERATION_EMPTY');
-          }
-          return text.trim();
-        } catch (innerErr) {
-          if (innerErr instanceof AppError) throw innerErr;
-          if (isTransientError(innerErr) && attempt <= TRANSIENT_RETRY_COUNT) {
-            lastErr = innerErr;
-            await this._sleep(TRANSIENT_RETRY_BASE_MS * attempt);
-            continue;
-          }
-          throw innerErr;
-        }
-      }
-      if (lastErr) this._handleApiError(lastErr);
-    } catch (err) {
-      if (err instanceof AppError) throw err;
-      this._handleApiError(err);
-    }
+    return this._generateTextInner(
+      apiKey,
+      [{ text: prompt.trim() }],
+      {
+        ...(options.temperature != null && { temperature: options.temperature }),
+        ...(options.responseMimeType && { responseMimeType: options.responseMimeType }),
+      },
+      'Gemini text generation',
+      options.characterId
+    );
   }
 
   /**
    * Generate text with Google Search grounding enabled.
-   * Useful for getting up-to-date information from the web.
    */
   async generateTextWithSearch(apiKey, prompt, options = {}) {
+    this._checkBudget();
     if (!apiKey || typeof apiKey !== 'string') {
       throw new AppError('API key is required for generation', 500, 'CONFIG_ERROR');
     }
@@ -390,55 +447,21 @@ class GeminiService {
       throw new AppError('A text prompt is required', 400, 'VALIDATION_ERROR');
     }
 
-    try {
-      const genAI = getClient(apiKey);
-      let lastErr = null;
-      for (let attempt = 1; attempt <= TRANSIENT_RETRY_COUNT + 1; attempt += 1) {
-        try {
-          const response = await withTimeout(
-            genAI.models.generateContent({
-              model: TEXT_MODEL,
-              contents: [{ role: 'user', parts: [{ text: prompt.trim() }] }],
-              config: {
-                responseModalities: [Modality.TEXT],
-                safetySettings: SAFETY_SETTINGS,
-                tools: [{ googleSearch: {} }],
-                ...(options.temperature != null && { temperature: options.temperature }),
-                ...(options.responseMimeType && { responseMimeType: options.responseMimeType }),
-              },
-            }),
-            TEXT_TIMEOUT_MS,
-            'Gemini text generation with search'
-          );
-
-          const parts = response.candidates?.[0]?.content?.parts;
-          if (!parts || parts.length === 0) {
-            throw new AppError('No content returned from Gemini', 502, 'GENERATION_EMPTY');
-          }
-
-          const text = parts.filter((p) => p.text).map((p) => p.text).join('');
-          if (!text || text.trim().length === 0) {
-            throw new AppError('Gemini returned empty text response', 502, 'GENERATION_EMPTY');
-          }
-          return text.trim();
-        } catch (innerErr) {
-          if (innerErr instanceof AppError) throw innerErr;
-          if (isTransientError(innerErr) && attempt <= TRANSIENT_RETRY_COUNT) {
-            lastErr = innerErr;
-            await this._sleep(TRANSIENT_RETRY_BASE_MS * attempt);
-            continue;
-          }
-          throw innerErr;
-        }
-      }
-      if (lastErr) this._handleApiError(lastErr);
-    } catch (err) {
-      if (err instanceof AppError) throw err;
-      this._handleApiError(err);
-    }
+    return this._generateTextInner(
+      apiKey,
+      [{ text: prompt.trim() }],
+      {
+        tools: [{ googleSearch: {} }],
+        ...(options.temperature != null && { temperature: options.temperature }),
+        ...(options.responseMimeType && { responseMimeType: options.responseMimeType }),
+      },
+      'Gemini text generation with search',
+      options.characterId
+    );
   }
 
   async analyzeImage(apiKey, imageBase64, mimeType) {
+    this._checkBudget();
     if (!apiKey || typeof apiKey !== 'string') {
       throw new AppError('API key is required', 500, 'CONFIG_ERROR');
     }
@@ -485,6 +508,7 @@ class GeminiService {
       }
 
       const text = parts.filter((p) => p.text).map((p) => p.text).join('');
+      this._trackTextSpend(response);
       let cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
 
       let parsed;
@@ -507,6 +531,7 @@ class GeminiService {
   }
 
   async analyzeImageWithPrompt(apiKey, imageBase64, mimeType, prompt) {
+    this._checkBudget();
     if (!apiKey || typeof apiKey !== 'string') {
       throw new AppError('API key is required', 500, 'CONFIG_ERROR');
     }
@@ -543,6 +568,7 @@ class GeminiService {
       if (!text) {
         throw new AppError('Gemini returned empty analysis text', 502, 'GENERATION_EMPTY');
       }
+      this._trackTextSpend(response);
       return text;
     } catch (err) {
       if (err instanceof AppError) throw err;
@@ -551,6 +577,7 @@ class GeminiService {
   }
 
   async analyzeImagesWithPrompt(apiKey, images, prompt) {
+    this._checkBudget();
     if (!apiKey || typeof apiKey !== 'string') {
       throw new AppError('API key is required', 500, 'CONFIG_ERROR');
     }
@@ -589,10 +616,115 @@ class GeminiService {
       if (!text) {
         throw new AppError('Gemini returned empty analysis text', 502, 'GENERATION_EMPTY');
       }
+      this._trackTextSpend(response);
       return text;
     } catch (err) {
       if (err instanceof AppError) throw err;
       this._handleApiError(err);
+    }
+  }
+
+  /**
+   * Enhance a user prompt with technical photography details.
+   * Returns the enhanced prompt string. Falls back to original on any error.
+   */
+  async enhancePrompt(apiKey, rawPrompt, context = {}) {
+    this._checkBudget();
+    if (!apiKey || typeof apiKey !== 'string') {
+      throw new AppError('API key is required', 500, 'CONFIG_ERROR');
+    }
+    if (!rawPrompt || typeof rawPrompt !== 'string' || rawPrompt.trim().length < 5) {
+      return rawPrompt; // too short to enhance — return as-is
+    }
+
+    const systemPrompt = `You are a professional photography prompt engineer. Enhance the user's image generation prompt by adding technical photography details that will make the result more photorealistic and visually compelling.
+
+ADD these details where missing (only if not already specified):
+- Camera/lens specifics (e.g. "shot on 35mm f/1.4", "85mm portrait lens")
+- Lighting details (e.g. "golden hour side-lighting", "soft diffused window light")
+- Skin/texture realism cues (e.g. "natural skin texture with subtle pores", "fine fabric weave visible")
+- Composition notes (e.g. "rule of thirds framing", "shallow depth of field")
+- Color/mood details (e.g. "warm amber tones", "desaturated cool palette")
+
+RULES:
+- Keep the original intent and subject exactly as described
+- Do NOT change clothing, pose, expression, scene, or character details
+- Do NOT add moral judgments or change the creative direction
+- Do NOT wrap in quotes or add explanations — return ONLY the enhanced prompt text
+- Keep it concise — add 1-3 sentences of technical detail, not a paragraph
+- If the prompt already has strong technical detail, return it mostly unchanged
+
+${context.characterName ? `Character: ${context.characterName}` : ''}
+${context.hasReferences ? 'Reference images will be provided alongside this prompt.' : ''}
+
+User prompt:
+${rawPrompt.trim()}`;
+
+    return this._generateTextInner(
+      apiKey,
+      [{ text: systemPrompt }],
+      { temperature: 0.3 },
+      'Gemini prompt enhancement',
+      context.characterId
+    );
+  }
+
+  /**
+   * Score an image for quality (composition, identity consistency, aesthetic appeal).
+   * Returns { score: 0-100, reasons: string[] } or null on failure.
+   */
+  async scoreImageQuality(apiKey, imageBase64, mimeType, context = {}) {
+    this._checkBudget();
+    if (!apiKey || typeof apiKey !== 'string') {
+      throw new AppError('API key is required', 500, 'CONFIG_ERROR');
+    }
+    if (!imageBase64 || !mimeType) {
+      return null;
+    }
+
+    const prompt = `Rate this AI-generated image on a scale of 0-100 for overall quality. Evaluate these criteria:
+
+1. COMPOSITION (framing, balance, focal point, rule of thirds)
+2. REALISM (does it look like a real photograph? natural lighting, skin texture, no artifacts)
+3. AESTHETIC APPEAL (is it visually compelling? good color palette, mood, style)
+4. TECHNICAL QUALITY (sharpness, no distortion, correct proportions, natural hands/face)
+${context.characterName ? `5. IDENTITY CONSISTENCY (does it look like the character "${context.characterName}"?)` : ''}
+
+Return ONLY valid JSON, no markdown fences:
+{"score": <number 0-100>, "reasons": ["<strength or weakness 1>", "<strength or weakness 2>", "<strength or weakness 3>"]}`;
+
+    try {
+      const text = await this._generateTextInner(
+        apiKey,
+        [
+          { inlineData: { mimeType, data: imageBase64 } },
+          { text: prompt },
+        ],
+        { temperature: 0.2, responseMimeType: 'application/json' },
+        'Gemini image quality scoring',
+        context.characterId
+      );
+
+      let cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+      let parsed;
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch {
+        const match = cleaned.match(/\{[\s\S]*\}/);
+        if (match) parsed = JSON.parse(match[0]);
+        else return null;
+      }
+
+      const score = Number(parsed.score);
+      if (!Number.isFinite(score)) return null;
+
+      return {
+        score: Math.min(100, Math.max(0, Math.round(score))),
+        reasons: Array.isArray(parsed.reasons) ? parsed.reasons.slice(0, 5).map(String) : [],
+      };
+    } catch (err) {
+      console.warn('[gemini] Quality scoring failed:', err.message);
+      return null;
     }
   }
 

@@ -15,7 +15,7 @@ class GalleryManager {
     this._validFilesAt = 0;
   }
 
-  save({ base64Data, mimeType, prompt, source, characterId, aspectRatio, seed, tags, personaMode }) {
+  save({ base64Data, mimeType, prompt, source, characterId, aspectRatio, seed, tags, personaMode, sessionId }) {
     if (!base64Data || !mimeType) {
       throw new AppError('Image data required for gallery', 400, 'VALIDATION_ERROR');
     }
@@ -40,6 +40,7 @@ class GalleryManager {
       seed: seed || null,
       tags: Array.isArray(tags) ? tags.filter(t => typeof t === 'string').map(t => t.trim().toLowerCase()).slice(0, 20) : [],
       personaMode: personaMode || null,
+      sessionId: sessionId || null,
       fileSize: buffer.length,
       isFavorite: false,
       createdAt: new Date().toISOString(),
@@ -156,6 +157,21 @@ class GalleryManager {
     return this._toSafe(entry);
   }
 
+  updateMetadata(id, patch) {
+    const entry = this._store.find((e) => e.id === id);
+    if (!entry) throw new AppError('Gallery image not found', 404, 'NOT_FOUND');
+    if (!patch || typeof patch !== 'object') return this._toSafe(entry);
+
+    const ALLOWED_KEYS = ['qualityScore', 'qualityReasons', 'parentId', 'sessionId', 'personaMode'];
+    for (const key of Object.keys(patch)) {
+      if (ALLOWED_KEYS.includes(key)) {
+        entry[key] = patch[key];
+      }
+    }
+    this._persist();
+    return this._toSafe(entry);
+  }
+
   getAllTags() {
     const tagSet = new Set();
     for (const entry of this._store) {
@@ -203,7 +219,7 @@ class GalleryManager {
   }
 
   _toSafe(entry) {
-    return {
+    const safe = {
       id: entry.id,
       filename: entry.filename,
       mimeType: entry.mimeType,
@@ -217,6 +233,12 @@ class GalleryManager {
       isFavorite: entry.isFavorite || false,
       createdAt: entry.createdAt,
     };
+    if (entry.qualityScore != null) safe.qualityScore = entry.qualityScore;
+    if (entry.qualityReasons) safe.qualityReasons = entry.qualityReasons;
+    if (entry.parentId) safe.parentId = entry.parentId;
+    if (entry.sessionId) safe.sessionId = entry.sessionId;
+    if (entry.personaMode) safe.personaMode = entry.personaMode;
+    return safe;
   }
 
   _ensureDirs() {

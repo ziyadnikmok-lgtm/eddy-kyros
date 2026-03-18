@@ -258,4 +258,120 @@ router.get('/:id/thumb', async (req, res, next) => {
   }
 });
 
+// --- Image Editor: server-side processing (worker thread) ---
+//
+// Worker lifecycle (pool size = 1):
+//   1. New edit request arrives
+//   2. If a worker is already running, terminate it (cancel in-flight job)
+//   3. Spawn a fresh worker with the new job's workerData
+//   4. Start a 30-second timeout timer
+//   5. On success: resolve promise, clear timeout, set _activeWorker = null
+//   6. On timeout: terminate worker, reject with timeout error
+//   7. On error/non-zero exit: reject promise, clear timeout
+//
+
+const { Worker } = require('node:worker_threads');
+const path = require('node:path');
+const WORKER_PATH = path.join(__dirname, '..', 'workers', 'imageEditWorker.js');
+const WORKER_TIMEOUT_MS = 30_000;
+
+let _activeWorker = null;
+
+function runEditWorker(workerData) {
+  // Cancel any in-flight worker before starting a new one
+  if (_activeWorker) {
+    try { _activeWorker.terminate(); } catch {}
+    _activeWorker = null;
+  }
+
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(WORKER_PATH, { workerData });
+    _activeWorker = worker;
+    let settled = false;
+
+    const timeoutTimer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        _activeWorker = null;
+        try { worker.terminate(); } catch {}
+        reject(new Error('Image edit worker timed out after 30s'));
+      }
+    }, WORKER_TIMEOUT_MS);
+
+    function settle(fn) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutTimer);
+      if (_activeWorker === worker) _activeWorker = null;
+      fn();
+    }
+
+    worker.on('message', (msg) => {
+      settle(() => {
+        if (msg?.error) reject(new Error(msg.error));
+        else resolve(msg);
+      });
+    });
+    worker.on('error', (err) => settle(() => reject(err)));
+    worker.on('exit', (code) => {
+      settle(() => {
+        if (code !== 0) reject(new Error(`Worker exited with code ${code}`));
+      });
+    });
+  });
+}
+
+/** Clamp a number to [min, max] */
+function clamp(value, min, max) {
+  const n = Number(value) || 0;
+  return Math.min(Math.max(n, min), max);
+}
+
+router.post('/:id/edit', express.json({ limit: '1mb' }), async (req, res, next) => {
+  try {
+    const { filePath } = galleryManager.getFilePath(req.params.id);
+    const body = req.body || {};
+    const rgbSplitColor = body.rgbSplitColor || 'rc';
+    const save = !!body.save;
+
+    // Clamp all numeric inputs to their valid ranges
+    const brightness       = clamp(body.brightness, -100, 100);
+    const contrast         = clamp(body.contrast, -100, 100);
+    const saturation       = clamp(body.saturation, -100, 100);
+    const warmth           = clamp(body.warmth, -100, 100);
+    const sharpness        = clamp(body.sharpness, 0, 100);
+    const grain            = clamp(body.grain, 0, 100);
+    const vignette         = clamp(body.vignette, 0, 100);
+    const fade             = clamp(body.fade, 0, 100);
+    const hueShift         = clamp(body.hueShift, -180, 180);
+    const rgbSplitDistance = clamp(body.rgbSplitDistance, 0, 20);
+    const rgbSplitDirection = clamp(body.rgbSplitDirection, 0, 360);
+
+    const outputBuf = await runEditWorker({
+      filePath, brightness, contrast, saturation, warmth, sharpness, grain,
+      vignette, fade, hueShift, rgbSplitDistance, rgbSplitDirection, rgbSplitColor,
+    });
+
+    if (save) {
+      const entry = galleryManager.save({
+        base64Data: outputBuf.toString('base64'),
+        mimeType: 'image/png',
+        prompt: `Edited: brightness=${brightness} contrast=${contrast} saturation=${saturation} warmth=${warmth} grain=${grain} vignette=${vignette} fade=${fade}${rgbSplitDistance > 0 ? ` rgbSplit=${rgbSplitDistance}/${rgbSplitDirection}°/${rgbSplitColor}` : ''}`,
+        source: 'edit',
+        characterId: null,
+        aspectRatio: null,
+        seed: null,
+        tags: ['edited'],
+      });
+      return res.json({ success: true, data: { saved: true, galleryId: entry.id } });
+    }
+
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'no-cache');
+    res.send(outputBuf);
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

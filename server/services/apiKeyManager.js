@@ -19,6 +19,34 @@ class ApiKeyManager {
     this._ensureDataDir();
     this._store = this._loadStore();
     this._derivedKeyCache = new Map();
+    this._migrateGlobalSpend();
+  }
+
+  /** Migrate old global spend data to the active key entry (one-time) */
+  _migrateGlobalSpend() {
+    if (typeof this._store.totalSpendUsd === 'number' && this._store.totalSpendUsd > 0) {
+      const entry = this._getActiveEntry();
+      if (entry && !(entry.totalSpendUsd > 0)) {
+        entry.totalSpendUsd = this._store.totalSpendUsd;
+        entry.textCallCount = this._store.textCallCount || 0;
+        entry.imageCallCount = this._store.imageCallCount || 0;
+        entry.spendBudgetUsd = this._store.spendBudgetUsd || 300;
+      }
+      delete this._store.totalSpendUsd;
+      delete this._store.spendBudgetUsd;
+      delete this._store.textCallCount;
+      delete this._store.imageCallCount;
+      this._saveStore();
+    }
+    // Ensure all keys have spend fields
+    for (const k of this._store.keys) {
+      if (typeof k.totalSpendUsd !== 'number') k.totalSpendUsd = 0;
+      if (typeof k.spendBudgetUsd !== 'number') k.spendBudgetUsd = 300;
+      if (typeof k.textCallCount !== 'number') k.textCallCount = 0;
+      if (typeof k.imageCallCount !== 'number') k.imageCallCount = 0;
+      if (!Array.isArray(k.spendLog)) k.spendLog = [];
+      if (!k.characterSpend || typeof k.characterSpend !== 'object') k.characterSpend = {};
+    }
   }
 
   addKey(name, apiKey) {
@@ -36,6 +64,12 @@ class ApiKeyManager {
       maskedKey: this._maskKey(apiKey.trim()),
       encryptedKey: this._encrypt(apiKey.trim()),
       createdAt: new Date().toISOString(),
+      totalSpendUsd: 0,
+      spendBudgetUsd: 300,
+      textCallCount: 0,
+      imageCallCount: 0,
+      spendLog: [],
+      characterSpend: {},
     };
 
     this._store.keys.push(entry);
@@ -85,6 +119,10 @@ class ApiKeyManager {
       maskedKey: k.maskedKey,
       createdAt: k.createdAt,
       isActive: k.id === this._store.activeKeyId,
+      totalSpendUsd: k.totalSpendUsd || 0,
+      spendBudgetUsd: k.spendBudgetUsd || 300,
+      textCallCount: k.textCallCount || 0,
+      imageCallCount: k.imageCallCount || 0,
     }));
   }
 
@@ -418,6 +456,213 @@ class ApiKeyManager {
       igLogin2faSecretMasked: '',
       igLoginUpdatedAt: null,
     };
+  }
+
+  // --- Spend tracking (per-key) ---
+
+  _getActiveEntry() {
+    if (!this._store.activeKeyId) return null;
+    return this._store.keys.find((k) => k.id === this._store.activeKeyId) || null;
+  }
+
+  checkBudget() {
+    const entry = this._getActiveEntry();
+    if (!entry) return; // no key, will fail at getActiveKey() anyway
+    const budget = entry.spendBudgetUsd || 300;
+    const spent = entry.totalSpendUsd || 0;
+    if (spent >= budget) {
+      throw new AppError(
+        `API budget limit reached ($${spent.toFixed(2)} / $${budget.toFixed(2)}). Add more budget or use a different key.`,
+        402,
+        'BUDGET_EXCEEDED'
+      );
+    }
+  }
+
+  /**
+   * Track text generation spend.
+   * gemini-3-flash-preview: $0.50/1M input, $3.00/1M output
+   */
+  addTextSpend(promptTokens, outputTokens, characterId) {
+    const entry = this._getActiveEntry();
+    if (!entry) return 0;
+    const inputCost = (promptTokens / 1_000_000) * 0.50;
+    const outputCost = (outputTokens / 1_000_000) * 3.00;
+    const total = inputCost + outputCost;
+    entry.totalSpendUsd = (entry.totalSpendUsd || 0) + total;
+    entry.textCallCount = (entry.textCallCount || 0) + 1;
+    this._appendSpendLog(entry, total, 0, 1, 0);
+    this._trackCharacterSpend(entry, characterId, total, 0, 1, 0);
+    this._saveStore();
+    return total;
+  }
+
+  /**
+   * Track image generation spend.
+   * @param {string} model - 'gemini-3-pro-image-preview' or 'gemini-3.1-flash-image-preview'
+   * @param {string} resolution - '0.5K', '1K', '2K', '4K'
+   * @param {number} refImageCount - number of reference/input images sent
+   * @param {number} promptTokens - input prompt token count (from usageMetadata)
+   * @param {number} outputTokens - output token count (text portion)
+   */
+  addImageSpend(model, resolution = '2K', refImageCount = 0, promptTokens = 0, outputTokens = 0, characterId) {
+    let imageCost = 0;
+    let inputTokenCostPer1M = 0;
+    let outputTextCostPer1M = 0;
+    let inputImageCost = 0;
+
+    if (model === 'gemini-3-pro-image-preview') {
+      // Pro model pricing
+      inputTokenCostPer1M = 2.00;
+      outputTextCostPer1M = 12.00;
+      inputImageCost = 0.0011; // per input image
+      if (resolution === '4K') imageCost = 0.24;
+      else imageCost = 0.134; // 1K and 2K same price
+    } else {
+      // Flash model (gemini-3.1-flash-image-preview)
+      inputTokenCostPer1M = 0.50;
+      outputTextCostPer1M = 3.00;
+      inputImageCost = 0; // not listed separately for flash
+      if (resolution === '4K') imageCost = 0.151;
+      else if (resolution === '2K') imageCost = 0.101;
+      else if (resolution === '1K') imageCost = 0.067;
+      else imageCost = 0.045; // 0.5K
+    }
+
+    const tokenInputCost = (promptTokens / 1_000_000) * inputTokenCostPer1M;
+    const tokenOutputCost = (outputTokens / 1_000_000) * outputTextCostPer1M;
+    const refCost = refImageCount * inputImageCost;
+    const total = imageCost + tokenInputCost + tokenOutputCost + refCost;
+
+    const entry = this._getActiveEntry();
+    if (!entry) return 0;
+    entry.totalSpendUsd = (entry.totalSpendUsd || 0) + total;
+    entry.imageCallCount = (entry.imageCallCount || 0) + 1;
+    this._appendSpendLog(entry, 0, total, 0, 1);
+    this._trackCharacterSpend(entry, characterId, 0, total, 0, 1);
+    this._saveStore();
+    return total;
+  }
+
+  /** Append to daily spend log, aggregating by date. Prune entries older than 90 days. */
+  _appendSpendLog(entry, textSpend, imageSpend, textCalls, imageCalls) {
+    if (!Array.isArray(entry.spendLog)) entry.spendLog = [];
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    let dayEntry = entry.spendLog.find((e) => e.date === today);
+    if (dayEntry) {
+      dayEntry.textSpend = (dayEntry.textSpend || 0) + textSpend;
+      dayEntry.imageSpend = (dayEntry.imageSpend || 0) + imageSpend;
+      dayEntry.textCalls = (dayEntry.textCalls || 0) + textCalls;
+      dayEntry.imageCalls = (dayEntry.imageCalls || 0) + imageCalls;
+    } else {
+      entry.spendLog.push({ date: today, textSpend, imageSpend, textCalls, imageCalls });
+    }
+    // Prune entries older than 90 days
+    const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    entry.spendLog = entry.spendLog.filter((e) => e.date >= cutoff);
+  }
+
+  /** Track per-character spend */
+  _trackCharacterSpend(entry, characterId, textSpend, imageSpend, textCalls, imageCalls) {
+    if (!characterId) return;
+    if (!entry.characterSpend || typeof entry.characterSpend !== 'object') entry.characterSpend = {};
+    if (!entry.characterSpend[characterId]) {
+      entry.characterSpend[characterId] = { imageSpend: 0, textSpend: 0, imageCalls: 0, textCalls: 0 };
+    }
+    const cs = entry.characterSpend[characterId];
+    cs.textSpend = (cs.textSpend || 0) + textSpend;
+    cs.imageSpend = (cs.imageSpend || 0) + imageSpend;
+    cs.textCalls = (cs.textCalls || 0) + textCalls;
+    cs.imageCalls = (cs.imageCalls || 0) + imageCalls;
+  }
+
+  /** Get the spend log for the active key */
+  getSpendLog() {
+    const entry = this._getActiveEntry();
+    if (!entry) return [];
+    return entry.spendLog || [];
+  }
+
+  getSpendInfo() {
+    const entry = this._getActiveEntry();
+    if (!entry) return { totalSpendUsd: 0, spendBudgetUsd: 300, textCallCount: 0, imageCallCount: 0, remainingUsd: 300, spendLog: [], characterSpend: {}, topCharacters: [] };
+    const spent = entry.totalSpendUsd || 0;
+    const budget = entry.spendBudgetUsd || 300;
+    const charSpend = entry.characterSpend || {};
+
+    // Build top characters sorted by total spend descending
+    const topCharacters = Object.entries(charSpend)
+      .map(([id, cs]) => ({
+        characterId: id,
+        totalSpend: (cs.textSpend || 0) + (cs.imageSpend || 0),
+        imageSpend: cs.imageSpend || 0,
+        textSpend: cs.textSpend || 0,
+        imageCalls: cs.imageCalls || 0,
+        textCalls: cs.textCalls || 0,
+      }))
+      .sort((a, b) => b.totalSpend - a.totalSpend);
+
+    return {
+      totalSpendUsd: spent,
+      spendBudgetUsd: budget,
+      textCallCount: entry.textCallCount || 0,
+      imageCallCount: entry.imageCallCount || 0,
+      remainingUsd: Math.max(0, budget - spent),
+      spendLog: entry.spendLog || [],
+      characterSpend: charSpend,
+      topCharacters,
+    };
+  }
+
+  resetSpend() {
+    const entry = this._getActiveEntry();
+    if (entry) {
+      entry.totalSpendUsd = 0;
+      entry.textCallCount = 0;
+      entry.imageCallCount = 0;
+      this._saveStore();
+    }
+    return this.getSpendInfo();
+  }
+
+  /**
+   * Track WaveSpeed video/NSFW spend.
+   * @param {number} costUsd - exact cost from VIDEO_MODELS prices or NSFW flat rate
+   * @param {string} [type] - 'video' or 'nsfw-image'
+   * @param {string} [characterId]
+   */
+  addExternalSpend(costUsd, type = 'video', characterId) {
+    const entry = this._getActiveEntry();
+    if (!entry || !costUsd || costUsd <= 0) return 0;
+    entry.totalSpendUsd = (entry.totalSpendUsd || 0) + costUsd;
+    entry.imageCallCount = (entry.imageCallCount || 0) + 1;
+    this._appendSpendLog(entry, 0, costUsd, 0, 1);
+    this._trackCharacterSpend(entry, characterId, 0, costUsd, 0, 1);
+    this._saveStore();
+    return costUsd;
+  }
+
+  /**
+   * Backfill spend from existing gallery images (one-time per key).
+   * Estimates cost assuming 2K resolution and gemini-3-pro-image-preview.
+   * Each image ≈ $0.134 (output) + ~$0.001 token overhead ≈ $0.135
+   * Each text call for analysis/planning estimated at ~$0.002 average.
+   */
+  backfillFromGallery(imageCount) {
+    const entry = this._getActiveEntry();
+    if (!entry) return;
+    if ((entry.imageCallCount || 0) > 0 || (entry.totalSpendUsd || 0) > 0) return; // already has data
+    if (!imageCount || imageCount <= 0) return;
+
+    const perImageCost = 0.135;
+    const textCallsEstimate = Math.round(imageCount * 0.5);
+    const perTextCost = 0.002;
+
+    entry.imageCallCount = imageCount;
+    entry.textCallCount = textCallsEstimate;
+    entry.totalSpendUsd = (imageCount * perImageCost) + (textCallsEstimate * perTextCost);
+    this._saveStore();
+    log.info('spend_backfill', { keyId: entry.id, imageCount, textCallsEstimate, totalSpendUsd: entry.totalSpendUsd });
   }
 
   _saveStore() {

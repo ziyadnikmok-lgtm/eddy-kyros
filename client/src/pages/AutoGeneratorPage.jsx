@@ -1053,7 +1053,7 @@ export default function AutoGeneratorPage() {
 
       {!loading && !result && !activePlan && (
         <Card className="flex items-center justify-center py-16">
-          <Empty icon="Auto" title="No plan yet" subtitle="Configure your content plan above and click Generate Plan" />
+          <Empty icon="plan" title="No plan yet" subtitle="Configure your content plan above and click Generate Plan" />
         </Card>
       )}
 

@@ -339,7 +339,7 @@ export default function StorytellerPage() {
         <div className="lg:col-span-2 space-y-4">
           {!result && !loading ? (
             <Card className="flex items-center justify-center py-20">
-              <Empty icon="Writer" title="No story yet" subtitle="Select images and a niche, then generate" />
+              <Empty icon="story" title="No story yet" subtitle="Select images and a niche, then generate" />
             </Card>
           ) : loading ? (
             <StepProgress steps={STORY_STEPS} currentIndex={storyStepIndex} elapsedSec={elapsedSec} className="min-h-[360px]" />

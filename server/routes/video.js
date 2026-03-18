@@ -7,10 +7,19 @@ const archiver = require('archiver');
 const wavespeed = require('../services/wavespeedService');
 const videoHistory = require('../services/videoHistoryStore');
 const galleryManager = require('../services/galleryManager');
+const apiKeyManager = require('../services/apiKeyManager');
 const { AppError } = require('../middleware/errorHandler');
 const { createMultipartParser } = require('../middleware/multipartParser');
 const { UPLOADS_DIR } = require('../paths');
 const log = require('../utils/logger');
+
+const VIDEO_PRICES = {
+  'kling-v2.5-turbo-std': { 5: 0.21, 10: 0.42 },
+  'kling-v2.5-turbo-pro': { 5: 0.35, 10: 0.70 },
+  'grok-imagine-video': { 6: 0.33, 10: 0.55 },
+  'kling-v2.6-motion': { 5: 0.35 },
+  'kling-v2.6-motion-pro': { 5: 0.56 },
+};
 
 const router = express.Router();
 const VIDEO_DIR = path.join(UPLOADS_DIR, 'videos');
@@ -135,6 +144,18 @@ router.get('/:taskId/status', async (req, res, next) => {
         } catch (dlErr) {
           log.warn('video_auto_download_failed', { taskId, error: dlErr.message });
           videoHistory.update(entry.id, { status: 'completed', videoUrl: result.outputs[0] });
+        }
+        // Track WaveSpeed spend on first completion (guard against double-count)
+        if (entry && !entry.spendTracked) {
+          try {
+            const prices = VIDEO_PRICES[entry.model];
+            const dur = entry.duration || Object.keys(prices || {})[0];
+            const cost = prices?.[dur];
+            if (cost) {
+              apiKeyManager.addExternalSpend(cost, 'video');
+              videoHistory.update(entry.id, { spendTracked: true });
+            }
+          } catch (e) { log.warn('video_spend_track_failed', { taskId, error: e.message }); }
         }
       } else if (entry?.filename) {
         result.localFilename = entry.filename;

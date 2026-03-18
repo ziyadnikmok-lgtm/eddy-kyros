@@ -248,4 +248,75 @@ router.delete('/:jobId', (req, res, next) => {
   }
 });
 
+// --- Quality Score Picks endpoint ---
+const geminiService = require('../services/geminiService');
+const apiKeyManager = require('../services/apiKeyManager');
+
+const SCORE_CONCURRENCY = 3;
+const SCORE_MAX_IMAGES = 10;
+
+router.post('/:jobId/score-picks', async (req, res, next) => {
+  try {
+    const job = batchGenerator.getJob(req.params.jobId);
+    if (!job) {
+      throw new AppError('Batch job not found', 404, 'NOT_FOUND');
+    }
+    if (job.status !== 'completed' && job.status !== 'partial') {
+      throw new AppError('Batch must be completed before scoring', 400, 'VALIDATION_ERROR');
+    }
+
+    // Collect successful gallery IDs from job results
+    const successResults = (job.results || [])
+      .filter((r) => r.success && r.galleryId)
+      .slice(0, SCORE_MAX_IMAGES);
+
+    if (successResults.length === 0) {
+      return res.json({ success: true, data: { scores: [], message: 'No images to score' } });
+    }
+
+    const apiKey = apiKeyManager.getActiveKey();
+    const scores = [];
+
+    // Score in parallel with concurrency cap
+    const chunks = [];
+    for (let i = 0; i < successResults.length; i += SCORE_CONCURRENCY) {
+      chunks.push(successResults.slice(i, i + SCORE_CONCURRENCY));
+    }
+
+    for (const chunk of chunks) {
+      const chunkResults = await Promise.all(
+        chunk.map(async (result) => {
+          try {
+            const { filePath, mimeType } = galleryManager.getFilePath(result.galleryId);
+            const fs = require('node:fs');
+            const imageBase64 = fs.readFileSync(filePath).toString('base64');
+
+            const scoreResult = await geminiService.scoreImageQuality(apiKey, imageBase64, mimeType, {
+              characterName: job.config?.characterName || null,
+              characterId: job.config?.characterId || null,
+            });
+
+            if (scoreResult) {
+              galleryManager.updateMetadata(result.galleryId, {
+                qualityScore: scoreResult.score,
+                qualityReasons: scoreResult.reasons,
+              });
+            }
+
+            return { galleryId: result.galleryId, ...scoreResult };
+          } catch (err) {
+            console.warn(`[score] Failed to score ${result.galleryId}:`, err.message);
+            return { galleryId: result.galleryId, score: null, reasons: [], error: err.message };
+          }
+        })
+      );
+      scores.push(...chunkResults);
+    }
+
+    res.json({ success: true, data: { scores, scored: scores.filter((s) => s.score != null).length, total: scores.length } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

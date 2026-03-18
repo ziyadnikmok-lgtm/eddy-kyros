@@ -900,6 +900,7 @@ class BatchGenerator extends EventEmitter {
         seed: task.seed || null,
         tags: task.tags || [],
         personaMode: job.personaMode || null,
+        sessionId: job.jobId,
       });
 
       job.results[task.index] = {

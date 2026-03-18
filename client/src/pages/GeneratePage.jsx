@@ -126,6 +126,8 @@ export default function GeneratePage() {
   }, [selectedFocusId]);
 
   const [activeMods, setActiveMods] = useState(_cache.activeMods);
+  const [enhanceEnabled, setEnhanceEnabled] = useState(false);
+  const [enhancedPreview, setEnhancedPreview] = useState(null); // { original, enhanced, changed }
 
   const [contentPresets, setContentPresets] = useState([]);
   const [contentTab, setContentTab] = useState(_cache.contentTab);
@@ -268,12 +270,30 @@ export default function GeneratePage() {
   const handleGenerate = () => {
     if (busyRef.current) return;
     busyRef.current = true;
+    setEnhancedPreview(null);
     run(async () => {
     if (!prompt.trim() && !selectedCharId) { notify('Enter a prompt or select a character', 'error'); return; }
     let finalPrompt = prompt.trim();
     if (activeMods.size > 0) {
       const modTexts = AUTHENTICITY_MODIFIERS.filter(m => activeMods.has(m.id)).map(m => m.text);
       finalPrompt = finalPrompt ? `${finalPrompt}\n${modTexts.join('. ')}` : modTexts.join('. ');
+    }
+    // Prompt enhancement step (opt-in)
+    if (enhanceEnabled && finalPrompt.length >= 5) {
+      try {
+        const enhanceResult = await genApi.enhancePrompt({
+          prompt: finalPrompt,
+          characterName: selectedChar?.name || null,
+          characterId: selectedCharId || null,
+          hasReferences: !!(selectedChar?.references?.some((r) => r.isActive)),
+        });
+        if (enhanceResult?.changed && enhanceResult.enhanced) {
+          setEnhancedPreview(enhanceResult);
+          finalPrompt = enhanceResult.enhanced;
+        }
+      } catch {
+        // Enhancement failed — continue with original prompt
+      }
     }
     const body = {
       prompt: finalPrompt,
@@ -908,9 +928,23 @@ export default function GeneratePage() {
                   </div>
                 ))}
               </div>
+              <div className="flex items-center justify-between mb-2">
+                <Toggle checked={enhanceEnabled} onChange={setEnhanceEnabled} label="Enhance Prompt" />
+                {enhanceEnabled && <span className="text-[10px] text-blue-400">AI adds technical photo details</span>}
+              </div>
               <Btn onClick={handleGenerate} disabled={loading || (!prompt.trim() && !selectedCharId)} className="w-full">
-                {loading ? <><Spinner size={16} /> Generating...</> : '\u2726 Generate Image'}
+                {loading ? <><Spinner size={16} /> Generating...</> : `✦ Generate Image · ~$${state.resolutionTier === '4K' ? '0.15' : state.resolutionTier === '1K' ? '0.07' : '0.10'}`}
               </Btn>
+              {enhancedPreview?.changed && (
+                <div className="mt-2 rounded-lg border border-blue-500/20 bg-blue-500/5 p-2.5 text-xs space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-blue-400 font-medium">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                    Prompt Enhanced
+                  </div>
+                  <p className="text-zinc-400 line-through">{enhancedPreview.original.slice(0, 120)}...</p>
+                  <p className="text-zinc-200">{enhancedPreview.enhanced.slice(0, 200)}...</p>
+                </div>
+              )}
             </div>
           </Card>
         </div>

@@ -602,7 +602,7 @@ export default function PostClonePage() {
 
           {!loading && !fetching && !isProfileSelecting && (!Array.isArray(result) || result.length === 0) && (
             <Card className="min-h-[360px] flex items-center justify-center">
-              <Empty icon="Cl" title="No clone results yet" subtitle={inputMode === 'profile' ? 'Fetch posts from a profile, select which ones to recreate.' : 'Run a post clone and results will appear here.'} />
+              <Empty icon="clone" title="No clone results yet" subtitle={inputMode === 'profile' ? 'Fetch posts from a profile, select which ones to recreate.' : 'Run a post clone and results will appear here.'} />
             </Card>
           )}
 

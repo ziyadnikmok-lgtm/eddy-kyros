@@ -274,4 +274,36 @@ router.post('/', async (req, res, next) => {
   }
 });
 
+// --- Prompt Enhancement endpoint ---
+router.post('/enhance-prompt', async (req, res, next) => {
+  try {
+    const { prompt, characterName, characterId, hasReferences } = req.body;
+    if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 5) {
+      return res.json({ success: true, data: { original: prompt || '', enhanced: prompt || '', changed: false } });
+    }
+
+    const apiKey = apiKeyManager.getActiveKey();
+    const enhanced = await geminiService.enhancePrompt(apiKey, prompt.trim(), {
+      characterName: characterName || null,
+      characterId: characterId || null,
+      hasReferences: !!hasReferences,
+    });
+
+    const changed = enhanced !== prompt.trim();
+    res.json({
+      success: true,
+      data: { original: prompt.trim(), enhanced, changed },
+    });
+  } catch (err) {
+    // On any error, return the original prompt unchanged
+    if (req.body?.prompt) {
+      return res.json({
+        success: true,
+        data: { original: req.body.prompt, enhanced: req.body.prompt, changed: false, error: err.message },
+      });
+    }
+    next(err);
+  }
+});
+
 module.exports = router;

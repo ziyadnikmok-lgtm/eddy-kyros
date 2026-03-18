@@ -40,6 +40,7 @@ const VideoPage = lazy(() => import('./pages/VideoPage'));
 const VideoGalleryPage = lazy(() => import('./pages/VideoGalleryPage'));
 const ReformatPage = lazy(() => import('./pages/ReformatPage'));
 const NsfwGeneratePage = lazy(() => import('./pages/NsfwGeneratePage'));
+const ImageEditorPage = lazy(() => import('./pages/ImageEditorPage'));
 
 const NAV_ICONS = {
   generate: IconBadgeSparkle,
@@ -57,6 +58,7 @@ const NAV_ICONS = {
   profileAnalyzer: IconMagnifier,
   storyteller: IconBookOpen,
   gallery: IconImage,
+  imageEditor: IconColorPalette,
   characters: IconUsers,
   keys: IconKey,
 };
@@ -94,6 +96,7 @@ const NAV_SECTIONS = [
     label: 'Manage',
     items: [
       { id: 'gallery', label: 'Gallery' },
+      { id: 'imageEditor', label: 'Image Editor' },
       { id: 'videoGallery', label: 'Video Gallery' },
       { id: 'characters', label: 'Characters' },
       { id: 'keys', label: 'API Keys' },
@@ -152,6 +155,7 @@ const PAGES = {
   videoGallery: VideoGalleryPage,
   auto: AutoGeneratorPage,
   gallery: GalleryPage,
+  imageEditor: ImageEditorPage,
   characters: CharactersPage,
   keys: ApiKeysPage,
 };

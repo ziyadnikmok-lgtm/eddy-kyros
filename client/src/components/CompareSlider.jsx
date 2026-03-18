@@ -6,7 +6,9 @@ export default function CompareSlider({
   processedSrc,
   originalLabel = 'ORIGINAL',
   processedLabel = 'PROCESSED',
+  processedStyle,
   className = '',
+  imgClassName = '',
 }) {
   const containerRef = useRef(null);
   const [pos, setPos] = useState(50);
@@ -62,7 +64,8 @@ export default function CompareSlider({
         src={processedSrc}
         alt={processedLabel}
         draggable={false}
-        className="block w-full h-auto"
+        className={cn('block', imgClassName || 'w-full h-auto')}
+        style={processedStyle}
       />
 
       <div
@@ -73,7 +76,7 @@ export default function CompareSlider({
           src={originalSrc}
           alt={originalLabel}
           draggable={false}
-          className="block w-full h-full object-cover"
+          className={cn('block', imgClassName || 'w-full h-auto')}
         />
       </div>
 
