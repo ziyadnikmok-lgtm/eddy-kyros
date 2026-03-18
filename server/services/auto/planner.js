@@ -119,36 +119,22 @@ async function _researchCosplayOutfits(apiKey, duration, theme) {
   const themeHint = theme ? `Focus specifically on: ${theme}.` : '';
 
   const searchPrompt = isGaming
-    ? `Search for the most popular and trending video game cosplay outfits right now in 2025-2026.
-Find ${duration + 3} different FEMALE video game character cosplays that are popular among female cosplay influencers.
-${themeHint}
-Only include female characters. Focus on well-known game characters with recognizable, detailed costumes.
-Prefer characters known for attractive/iconic outfit designs.
+    ? `Search for trending female video game cosplays currently viral on TikTok and Instagram.
+Find ${duration + 3} unique characters. ${themeHint}
+Focus on iconic, visually striking costumes with high cosplay impact.
 
-Return ONLY a JSON array of objects, no markdown fences:
-[
-  { "character": "character name", "anime": "game title", "outfit_description": "detailed costume description including colors, accessories, wig details, props, armor pieces" }
-]
+Return ONLY a JSON array, no markdown:
+[{ "character": "Name", "anime": "Game title", "outfit_description": "Specific fabrics, exact colors, armor/prop details, wig styling (color, length, texture)" }]
 
-Include a mix of:
-- Characters from the specified game(s) if a specific game is mentioned
-- Currently trending game cosplays (Valorant agents, League champions, Genshin/Honkai/ZZZ characters, NieR, Final Fantasy, Overwatch, Street Fighter, Resident Evil)
-- Characters with visually striking, recognizable costumes that translate well to cosplay`
-    : `Search for the most popular and trending anime cosplay outfits right now in 2025-2026.
-Find ${duration + 3} different FEMALE anime character cosplays that are popular among female cosplay influencers.
-${themeHint}
-Only include female characters. Focus on well-known anime characters with recognizable, detailed costumes.
-Prefer characters known for attractive/sexy outfit designs.
+Mix: trending game cosplays + characters with recognizable silhouettes that translate well to real costumes.`
+    : `Search for trending female anime cosplays currently viral on TikTok and Instagram.
+Find ${duration + 3} unique characters. ${themeHint}
+Focus on iconic, visually striking costumes popular among cosplay influencers.
 
-Return ONLY a JSON array of objects, no markdown fences:
-[
-  { "character": "character name", "anime": "anime/manga title", "outfit_description": "detailed costume description including colors, accessories, wig details, props" }
-]
+Return ONLY a JSON array, no markdown:
+[{ "character": "Name", "anime": "Anime/manga title", "outfit_description": "Specific fabrics, exact colors, prop details, wig styling (color, length, texture)" }]
 
-Include a mix of:
-- Classic popular characters (e.g. from Evangelion, Sailor Moon, Fate, Genshin Impact, Demon Slayer, Spy x Family, etc.)
-- Currently trending characters from recent anime seasons
-- Characters with visually striking, recognizable costumes`;
+Mix: classic popular characters + currently trending from recent seasons + visually striking designs.`;
 
   try {
     const rawText = await geminiService.generateTextWithSearch(apiKey, searchPrompt, {
@@ -192,20 +178,14 @@ Include a mix of:
  */
 async function _researchGothOutfits(apiKey, duration, gothTheme) {
   const themeHint = gothTheme ? `Focus on this specific goth subgenre: ${gothTheme}.` : 'Mix different goth subgenres (classic goth, punk, romantic, e-girl, streetwear).';
-  const searchPrompt = `Search for popular goth and alt girl outfit ideas trending on Instagram and TikTok in 2025-2026.
-Find ${duration + 3} different goth/alt outfit combinations that goth influencers are wearing.
+  const searchPrompt = `Search for trending goth and alt-girl aesthetics on Instagram and TikTok (e.g. cyber-sigilism, whimsigoth, corp-goth, opium style).
+Find ${duration + 3} distinct outfit combinations popular with alt fashion influencers.
 ${themeHint}
 
-Return ONLY a JSON array of objects, no markdown fences:
-[
-  { "style": "goth substyle name", "outfit_description": "detailed outfit description including top, bottom, accessories, shoes, colors, materials", "vibe": "short mood/energy description" }
-]
+Return ONLY a JSON array, no markdown:
+[{ "style": "Sub-style name", "outfit_description": "Specific garments, layering, textures (leather, lace, mesh), hardware (chains, buckles), shoes, colors", "vibe": "Mood/setting" }]
 
-Include outfits featuring:
-- Black clothing: corsets, crop tops, mesh tops, mini skirts, leather pants, platform boots
-- Accessories: cross necklaces, chokers, chain belts, studded bracelets, fishnet gloves
-- Mix of: streetwear goth, romantic goth, punk goth, e-girl, club goth, casual dark aesthetic
-- Real outfits that actual goth influencers would wear (not costume-y)`;
+Real outfits influencers actually wear — not costume-y.`;
 
   try {
     const rawText = await geminiService.generateTextWithSearch(apiKey, searchPrompt, {
@@ -514,30 +494,18 @@ ${featureLines.length > 0 ? '\nFEATURE INSTRUCTIONS:\n' + featureLines.join('\n'
 
   const prompt = `${BASE_SYSTEM_PROMPT}
 
-Persona Mode Instructions:
+[PERSONA]
 ${personaSection}
 
-Relational rules:
-- Single female subject only
-- No couples
-- No male interaction
-- No holding hands
-- Background extras allowed but no interaction
-- No explicit sexual acts
-- No graphic nudity
-- No sexual interaction with others
+[RULES]
+Solo female subject only. No couples, no male interaction, no explicit content.
 ${cosplayOutfitBlock}
 
 Theme: ${theme}
 Duration: ${duration} days
+Balance: vary poses, settings, and energy across days — no repetitive compositions.
 
-Return format:
-
-{
-  location_core: string,
-  aesthetic_keywords: string[],
-  days: DayPlan[]
-}`;
+Return JSON: { location_core: string, aesthetic_keywords: string[], days: DayPlan[] }`;
 
   const rawText = await geminiService.generateText(apiKey, prompt, {
     temperature: 0.3,

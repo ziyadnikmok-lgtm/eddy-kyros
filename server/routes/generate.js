@@ -191,23 +191,23 @@ router.post('/', async (req, res, next) => {
       }
       if (sceneMemory) {
         styleBlocks.push(
-          ['SCENE MEMORY LOCK', `architecture: ${sceneMemory.architecture}`, `lightingProfile: ${sceneMemory.lightingProfile}`, `colorPalette: ${sceneMemory.colorPalette}`, `recurringElements: ${sceneMemory.recurringElements}`].join('\n')
+          `[SCENE] ${sceneMemory.architecture}\nLighting: ${sceneMemory.lightingProfile}\nPalette: ${sceneMemory.colorPalette}`
         );
       }
       if (cameraProfile) {
         styleBlocks.push(
-          ['CAMERA PROFILE', `lens: ${cameraProfile.lens}`, `depth: ${cameraProfile.depth}`, `lighting: ${cameraProfile.lighting}`, `realism: ${cameraProfile.realism}`].join('\n')
+          `[CAMERA] ${cameraProfile.lens}. ${cameraProfile.realism}`
         );
       }
       if (poseFromMode) {
-        styleBlocks.push(['POSE MODE', poseFromMode].join('\n'));
+        styleBlocks.push(`Pose: ${poseFromMode}`);
       }
       if (expressionFromMode) {
-        styleBlocks.push(['EXPRESSION MODE', expressionFromMode].join('\n'));
+        styleBlocks.push(`Expression: ${expressionFromMode}`);
       }
       if (outfit) {
         styleBlocks.push(
-          ['OUTFIT LOCK', `top: ${outfit.top}`, `bottom: ${outfit.bottom}`, `accessories: ${outfit.accessories}`, `footwear: ${outfit.footwear}`].join('\n')
+          `[OUTFIT] ${outfit.top}\nBottom: ${outfit.bottom}\nAccessories: ${outfit.accessories}\nFootwear: ${outfit.footwear}`
         );
       }
       if (styleLibraryBlock) {

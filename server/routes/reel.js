@@ -1,5 +1,6 @@
 const express = require('express');
 const { AppError } = require('../middleware/errorHandler');
+const REALISM_DIRECTIVE = require('../utils/realismDirective');
 const referenceManager = require('../services/referenceManager');
 const sceneAnalyzer = require('../services/sceneAnalyzer');
 const apiKeyManager = require('../services/apiKeyManager');
@@ -25,7 +26,8 @@ async function analyzeAndRecreateFrame({ frame, characterId, activeReferenceIds,
     activeReferenceIds,
   });
 
-  const result = await geminiService.generateImage(apiKey, prompt, {
+  const finalPrompt = `${prompt}\n\n${REALISM_DIRECTIVE}`;
+  const result = await geminiService.generateImage(apiKey, finalPrompt, {
     aspectRatio: '9:16',
     imageSize: '2K',
     referenceImages,

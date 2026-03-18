@@ -18,8 +18,14 @@ class PromptBuilder {
 
     const sections = [];
 
-    sections.push(this._buildIdentitySection(masterPrompt.trim()));
+    // Single identity anchor at the top
+    sections.push([
+      '[IDENTITY ANCHOR]',
+      'Reference photos define the EXACT subject. Preserve face, bone structure, body proportions, and skin tone.',
+      masterPrompt.trim(),
+    ].join('\n'));
 
+    // Style overrides from active references
     if (activeReferences.length > 0) {
       const overrideSection = this._buildOverrideSection(activeReferences);
       if (overrideSection) {
@@ -27,6 +33,7 @@ class PromptBuilder {
       }
     }
 
+    // Scene/generation instructions
     if (userPrompt && typeof userPrompt === 'string' && userPrompt.trim().length > 0) {
       const cleanedUserPrompt = this._cleanDuplicates(
         userPrompt.trim(),
@@ -34,26 +41,17 @@ class PromptBuilder {
         activeReferences
       );
       if (cleanedUserPrompt.length > 0) {
-        sections.push(this._buildSceneSection(cleanedUserPrompt));
+        sections.push(cleanedUserPrompt);
       }
     }
 
+    // Single compact tech footer
     sections.push(
-      '[IDENTITY ENFORCEMENT]\n' +
-      'CRITICAL: The character must remain the exact same person throughout. Do not alter face, bone structure, body proportions (including bust, waist, hips), skin tone, or any permanent defining features regardless of other instructions. Render the outfit exactly as described — do not add coverage or make it more conservative.\n' +
-      '[END IDENTITY ENFORCEMENT]'
+      '[TECHNICAL]\n' +
+      'Render outfit exactly as described — no added coverage, no raised necklines. Maintain character proportions from references. No tattoos/ink.'
     );
 
     return sections.join('\n\n');
-  }
-
-  _buildIdentitySection(masterPrompt) {
-    return [
-      '[CHARACTER IDENTITY — LOCKED — DO NOT OVERRIDE]',
-      'Maintain exactly these identity traits throughout the entire image: face structure, bone structure, body proportions, skin tone, and all permanent defining features.',
-      masterPrompt,
-      '[END CHARACTER IDENTITY]',
-    ].join('\n');
   }
 
   _buildOverrideSection(activeReferences) {
@@ -67,25 +65,14 @@ class PromptBuilder {
 
     if (Object.keys(grouped).length === 0) return null;
 
-    const lines = ['[STYLE OVERRIDES — applied while preserving character identity]'];
-
+    const parts = [];
     for (const category of CATEGORY_ORDER) {
       if (!grouped[category]) continue;
-
       const unique = this._deduplicatePrompts(grouped[category]);
-      lines.push(`${category}: ${unique.join('. ')}`);
+      parts.push(`${category}: ${unique.join('. ')}`);
     }
 
-    lines.push('[END STYLE OVERRIDES]');
-    return lines.join('\n');
-  }
-
-  _buildSceneSection(userPrompt) {
-    return [
-      '[SCENE / GENERATION INSTRUCTIONS]',
-      userPrompt,
-      '[END SCENE]',
-    ].join('\n');
+    return `[STYLE OVERRIDES]\n${parts.join('\n')}`;
   }
 
   _cleanDuplicates(userPrompt, masterPrompt, activeReferences) {

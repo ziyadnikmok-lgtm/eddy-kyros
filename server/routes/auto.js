@@ -497,14 +497,14 @@ function buildAutoPlanData({
       prompt,
       sceneMemoryId,
       outfitId,
-      cameraProfileId: cameraProfileForType('reel'),
+      cameraProfileId: cameraProfileForType('reel', backgroundLocked),
     })));
     imageEntries.push(...storyPrompts.map((prompt) => ({
       type: 'story',
       prompt,
       sceneMemoryId,
       outfitId,
-      cameraProfileId: cameraProfileForType('reel'),
+      cameraProfileId: cameraProfileForType('reel', backgroundLocked),
     })));
 
     return {
@@ -517,7 +517,7 @@ function buildAutoPlanData({
       outfitId,
       cameraProfiles: {
         carousel: cameraProfileForType('carousel', backgroundLocked),
-        reel: cameraProfileForType('reel'),
+        reel: cameraProfileForType('reel', backgroundLocked),
       },
       footwearLock: runFootwearLock,
     };
@@ -891,18 +891,6 @@ router.post('/execute', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-});
-
-// Temporary endpoint for prompt analysis
-router.post('/analyze-prompt', async (req, res, next) => {
-  try {
-    const apiKey = require('../services/apiKeyManager').getActiveKey();
-    const geminiService = require('../services/geminiService');
-    const { prompt } = req.body || {};
-    if (!prompt) throw new AppError('prompt is required', 400, 'VALIDATION_ERROR');
-    const result = await geminiService.generateText(apiKey, prompt, { temperature: 0.7 });
-    res.json({ success: true, data: result });
-  } catch (err) { next(err); }
 });
 
 module.exports = router;

@@ -8,6 +8,7 @@ const tweakBuilder = require('../services/tweakBuilder');
 const referenceManager = require('../services/referenceManager');
 const promptBuilder = require('../services/promptBuilder');
 const { resolveDimensions } = require('../services/dimensionResolver');
+const REALISM_DIRECTIVE = require('../utils/realismDirective');
 const { buildCharacterReferenceImages } = require('./postClone');
 const { AppError } = require('../middleware/errorHandler');
 const { createMultipartParser } = require('../middleware/multipartParser');
@@ -120,7 +121,8 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
     }
 
     const apiKey = apiKeyManager.getActiveKey();
-    const result = await geminiService.generateImage(apiKey, tweakPrompt, {
+    const finalPrompt = `${tweakPrompt}\n\n${REALISM_DIRECTIVE}`;
+    const result = await geminiService.generateImage(apiKey, finalPrompt, {
       aspectRatio,
       imageSize: resolutionTier,
       referenceImages,

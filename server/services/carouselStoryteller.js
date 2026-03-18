@@ -199,37 +199,32 @@ class CarouselStoryteller {
   _buildPrompt({ niche, brandVoice, imageMetas, toneOverride, includeHashtags, hashtagCount, ctaType, viralMode, optimizeFor, slideCount }) {
     const sections = [];
 
-    sections.push(
-      'You are an expert social media carousel caption writer. You create scroll-stopping, engagement-optimized carousel captions for Instagram and similar platforms.'
-    );
-
     const tone = toneOverride || niche.tone;
+    sections.push([
+      `Act as a high-growth Instagram creator writing carousel captions.`,
+      '',
+      `[ANTI-AI VOICE — CRITICAL]`,
+      `Write like a real person, not an AI. NO corporate jargon. NO "Unlock your potential", "Dive into", "Elevate your", "In a world where", "Here\'s the thing", "Let\'s talk about". Use lowercase aesthetic or casual conversational tone. Short punchy sentences. Max 2 emojis per slide. Sound like a friend texting, not a marketing bot.`,
+    ].join('\n'));
+
     sections.push([
       `[NICHE: ${niche.name}]`,
       `Tone: ${tone}`,
-      `Writing style rules:`,
-      ...niche.styleRules.map((r) => `  - ${r}`),
-      `Emotional triggers to leverage: ${niche.emotionalTriggers.join(', ')}`,
-      `Hook strategy: ${niche.hookStrategy}`,
-      `CTA style: ${niche.ctaStyle}`,
+      ...niche.styleRules.map((r) => `- ${r}`),
+      `Triggers: ${niche.emotionalTriggers.join(', ')}`,
+      `Hook: ${niche.hookStrategy} | CTA: ${niche.ctaStyle}`,
     ].join('\n'));
 
     if (brandVoice.writingStyleDescription || brandVoice.vocabularyPreferences.length > 0 || brandVoice.forbiddenWords.length > 0) {
-      const bvLines = ['[BRAND VOICE — merge with niche style]'];
-      if (brandVoice.writingStyleDescription) {
-        bvLines.push(`Writing style: ${brandVoice.writingStyleDescription}`);
-      }
-      if (brandVoice.vocabularyPreferences.length > 0) {
-        bvLines.push(`Preferred vocabulary: ${brandVoice.vocabularyPreferences.join(', ')}`);
-      }
-      bvLines.push(`Emoji frequency: ${brandVoice.emojiFrequency}`);
-      if (brandVoice.forbiddenWords.length > 0) {
-        bvLines.push(`NEVER use these words: ${brandVoice.forbiddenWords.join(', ')}`);
-      }
+      const bvLines = ['[BRAND VOICE]'];
+      if (brandVoice.writingStyleDescription) bvLines.push(`Style: ${brandVoice.writingStyleDescription}`);
+      if (brandVoice.vocabularyPreferences.length > 0) bvLines.push(`Vocab: ${brandVoice.vocabularyPreferences.join(', ')}`);
+      bvLines.push(`Emojis: ${brandVoice.emojiFrequency}`);
+      if (brandVoice.forbiddenWords.length > 0) bvLines.push(`Banned words: ${brandVoice.forbiddenWords.join(', ')}`);
       sections.push(bvLines.join('\n'));
     }
 
-    const imageLines = ['[CAROUSEL IMAGES — write captions that match these visuals]'];
+    const imageLines = ['[SLIDES]'];
     for (let i = 0; i < imageMetas.length; i++) {
       const meta = imageMetas[i];
       const desc = meta.sceneDescription || meta.basePrompt || 'No description';
@@ -240,20 +235,16 @@ class CarouselStoryteller {
         .replace(/\s+/g, ' ')
         .trim()
         .slice(0, 300);
-      imageLines.push(`Slide ${i + 1}: ${cleanDesc}`);
+      imageLines.push(`${i + 1}: ${cleanDesc}`);
     }
     sections.push(imageLines.join('\n'));
 
     if (viralMode) {
       sections.push([
-        '[VIRAL MODE — ENABLED]',
-        'Apply these viral writing techniques:',
-        '  - Curiosity gap: Open a loop in the hook that only closes on the final slide',
-        '  - Psychological triggers: Use social proof, scarcity, or identity signaling',
-        '  - Rhythm: Alternate short and medium sentences. Never two long sentences in a row.',
-        '  - Pattern interrupts: Insert an unexpected word, question, or shift mid-carousel',
-        '  - Shareability: Write at least one slide that is screenshot-worthy on its own',
-        '  - Emotional arc: Start with tension, build through middle, resolve at end',
+        '[VIRAL MODE]',
+        'Curiosity gap in hook (close on final slide). Alternate short/medium sentences.',
+        'Pattern interrupt mid-carousel. At least one screenshot-worthy slide.',
+        'Emotional arc: tension → build → resolve.',
       ].join('\n'));
     }
 
@@ -261,76 +252,21 @@ class CarouselStoryteller {
       sections.push(OPTIMIZE_STRATEGIES[optimizeFor].prompt);
     }
 
-    sections.push([
-      '[IG INTELLIGENCE — also return these analysis fields]',
-      'After writing the carousel, analyze your own output and provide:',
-      '',
-      '1. engagementInsights — rate your own carousel honestly:',
-      '   - hookStrength (1-10): How likely to stop a scroller mid-feed',
-      '   - saveWorthiness (1-10): How likely someone bookmarks this for later',
-      '   - sharePotential (1-10): How likely someone sends this to a friend',
-      '   - commentLikelihood (1-10): How likely this sparks a comment/reply',
-      '   - exploreScore (1-100): Overall chance of reaching Explore page (considers save ratio, niche relevance, visual-text alignment, hook quality)',
-      `   - optimizedFor: "${optimizeFor || 'general'}"`,
-      '   - tips: 2-3 actionable tips to improve this specific carousel\'s performance',
-      '',
-      '2. lifecycleTips — posting strategy for each phase:',
-      '   - goldenHour (array of 2-3 strings): What to do in the first 30-60 minutes after posting',
-      '   - sustain (array of 2-3 strings): How to maintain momentum 1-24 hours after posting',
-      '   - archive (array of 2-3 strings): How to repurpose or leverage this content after 24+ hours',
-    ].join('\n'));
-
     const ctaDesc = this._ctaDescription(ctaType);
-    const formatLines = [
-      '[OUTPUT FORMAT — respond ONLY with this exact JSON structure, no markdown fences, no extra text]',
-      '{',
-      '  "hook": "The scroll-stopping opening line for slide 1",',
-      '  "slides": [',
-    ];
-    for (let i = 0; i < slideCount; i++) {
-      const comma = i < slideCount - 1 ? ',' : '';
-      if (i === 0) {
-        formatLines.push(`    { "slide": ${i + 1}, "caption": "Hook slide — the scroll-stopper" }${comma}`);
-      } else if (i === slideCount - 1) {
-        formatLines.push(`    { "slide": ${i + 1}, "caption": "Final slide — emotional payoff + CTA" }${comma}`);
-      } else {
-        formatLines.push(`    { "slide": ${i + 1}, "caption": "Build narrative / deliver value" }${comma}`);
-      }
-    }
-    formatLines.push('  ],');
-    formatLines.push(`  "finalCTA": "A compelling ${ctaDesc} call-to-action",`);
-    if (includeHashtags) {
-      formatLines.push(`  "hashtags": ["exactly ${hashtagCount} relevant hashtags without #"],`);
-    } else {
-      formatLines.push('  "hashtags": [],');
-    }
-    formatLines.push('  "engagementInsights": {');
-    formatLines.push('    "hookStrength": 8,');
-    formatLines.push('    "saveWorthiness": 7,');
-    formatLines.push('    "sharePotential": 6,');
-    formatLines.push('    "commentLikelihood": 5,');
-    formatLines.push('    "exploreScore": 72,');
-    formatLines.push(`    "optimizedFor": "${optimizeFor || 'general'}",`);
-    formatLines.push('    "tips": ["tip 1", "tip 2"]');
-    formatLines.push('  },');
-    formatLines.push('  "lifecycleTips": {');
-    formatLines.push('    "goldenHour": ["action 1", "action 2"],');
-    formatLines.push('    "sustain": ["action 1", "action 2"],');
-    formatLines.push('    "archive": ["action 1", "action 2"]');
-    formatLines.push('  }');
-    formatLines.push('}');
-
-    sections.push(formatLines.join('\n'));
+    sections.push([
+      '[OUTPUT — JSON only, no markdown]',
+      `{ "hook": "scroll-stopper", "slides": [{ "slide": 1, "caption": "..." }...${slideCount} slides],`,
+      `  "finalCTA": "${ctaDesc} CTA",`,
+      includeHashtags ? `  "hashtags": [${hashtagCount} tags without #],` : '  "hashtags": [],',
+      `  "engagementInsights": { "hookStrength": 1-10, "saveWorthiness": 1-10, "sharePotential": 1-10, "commentLikelihood": 1-10, "exploreScore": 1-100, "optimizedFor": "${optimizeFor || 'general'}", "tips": ["...", "..."] },`,
+      `  "lifecycleTips": { "goldenHour": ["..."], "sustain": ["..."], "archive": ["..."] }`,
+      '}',
+    ].join('\n'));
 
     sections.push([
       '[RULES]',
-      '- Each slide caption: 1–2 short sentences. Clear, readable, no fluff.',
-      '- Slide 1 = Hook (scroll-stopping opener)',
-      `- Slides 2–${Math.max(2, slideCount - 1)} = Build narrative, deliver value`,
-      '- Final slide = Emotional payoff + CTA',
-      '- Match the tone and style rules exactly',
-      '- Do NOT use any forbidden words from the brand voice',
-      '- Respond ONLY with valid JSON. No explanation, no markdown code fences, no preamble.',
+      `1-2 short sentences per slide. Slide 1 = hook. Slides 2-${Math.max(2, slideCount - 1)} = value. Final = payoff + CTA.`,
+      'JSON only. No preamble.',
     ].join('\n'));
 
     return sections.join('\n\n');

@@ -8,6 +8,7 @@ const galleryManager = require('../services/galleryManager');
 const { resolveDimensions } = require('../services/dimensionResolver');
 const { buildCharacterReferenceImages } = require('./postClone');
 const { AppError } = require('../middleware/errorHandler');
+const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 const router = express.Router();
 
@@ -67,7 +68,8 @@ router.post('/recreate', async (req, res, next) => {
     );
     const referenceImages = buildCharacterReferenceImages(characterId, activeRefs);
 
-    const result = await geminiService.generateImage(apiKey, recreationPrompt, {
+    const finalPrompt = `${recreationPrompt}\n\n${REALISM_DIRECTIVE}`;
+    const result = await geminiService.generateImage(apiKey, finalPrompt, {
       aspectRatio,
       imageSize: resolutionTier,
       referenceImages,

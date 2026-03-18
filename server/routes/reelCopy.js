@@ -21,6 +21,7 @@ const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
 const { checkPostAvailability } = require('../services/instagramAvailabilityService');
 const logger = require('../utils/logger');
+const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 const router = express.Router();
 const { TEMP_DIR } = require('../paths');
@@ -312,107 +313,60 @@ function buildCharacterReferenceImages(characterId, activeRefs) {
 
 function buildFirstFrameLockBlock(sceneData, poseStrength, envStrength, poseEnabled, envEnabled) {
   return [
-    '[REEL COPY LOCK - FIRST FRAME]',
-    'Recreate the source frame as precisely as possible with the selected character identity.',
-    'Non-negotiable lock points:',
-    `- Exact environment/setting: ${sceneData.environment || 'match source exactly'}`,
-    `- Exact lighting behavior and color temperature: ${sceneData.lighting || 'match source exactly'}`,
-    `- Exact camera angle and framing: ${sceneData.camera || sceneData.cameraAngle || 'match source exactly'}`,
-    `- Exact composition and background placement: ${sceneData.composition || 'match source exactly'}`,
-    sceneData.outfit ? `- OUTFIT LOCK (match exactly): ${sceneData.outfit}` : '- Wardrobe continuity lock: preserve garment structure, drape behavior, and silhouette exactly as in source.',
-    '- HAIR: Use the character\'s own hair from identity references. Do NOT copy hair color, length, or style from the source person.',
-    poseEnabled ? `- ${poseLockInstruction(poseStrength, 'first')}` : null,
-    envEnabled ? '- Environment/lighting lock: keep room structure, framing geometry, and lighting behavior closely aligned to source.' : null,
-    '- Strict character identity lock: preserve face and overall silhouette consistency from character references.',
-    '- Identity priority rule: selected character references always override source-subject identity traits.',
-    '- Do not copy the source person face or biometric identity; copy only pose/composition/scene/outfit.',
-    '- Tattoo exclusion: ignore tattoos/body ink from the source and do not render tattoos in output.',
-    '- Keep proportions and styling consistent with the selected character identity lock.',
-    '- Only include objects/devices the subject is visibly holding in the source frame. Do NOT add a phone, camera, or any handheld object unless it is clearly present in the source.',
-    '- Do not stylize, do not editorialize, do not swap location or lighting setup.',
+    '[REEL FRAME RECREATION]',
+    'Recreate this source frame with the character from reference photos.',
+    `Environment: ${sceneData.environment || 'match source'}`,
+    `Lighting: ${sceneData.lighting || 'match source'} (match color temp exactly)`,
+    `Camera: ${sceneData.camera || sceneData.cameraAngle || 'match source'} | ${sceneData.composition || 'match framing'}`,
+    sceneData.outfit ? `Outfit: ${sceneData.outfit}` : 'Outfit: match source garment exactly.',
+    'Hair: use character\'s own hair from references, not source person\'s hair.',
+    poseEnabled ? poseLockInstruction(poseStrength, 'first') : null,
+    'Identity from references only — copy pose/scene/outfit from source, not face. No tattoos. Only include objects visibly held in source.',
   ].filter(Boolean).join('\n');
 }
 
 function buildFollowUpLockBlock({ firstGeneratedScene, targetScene, poseStrength, envStrength, poseEnabled, envEnabled, withSourceRef = true, outfitTransition = false, targetOutfit = null, targetLighting = null }) {
-  let outfitLock;
-  if (outfitTransition && targetOutfit) {
-    outfitLock = `- OUTFIT TRANSITION (must wear a DIFFERENT outfit from first frame): ${targetOutfit}\n- This is an outfit-change transition — the character MUST be wearing the new outfit described above, NOT the first frame outfit.`;
-  } else {
-    outfitLock = firstGeneratedScene.outfit
-      ? `- OUTFIT LOCK (must match first frame exactly): ${firstGeneratedScene.outfit}`
-      : '- Keep same outfit material, garment structure, and drape behavior from frame 1 recreation.';
-  }
-  const hairLock = '- HAIR: Keep the character\'s own hair from identity references. Do NOT copy source person hair.';
+  const outfitLine = outfitTransition && targetOutfit
+    ? `Outfit CHANGE: ${targetOutfit} (different from first frame)`
+    : `Outfit: ${firstGeneratedScene.outfit || 'same as first frame'}`;
+
+  const lightingLine = outfitTransition && targetLighting
+    ? `Lighting CHANGE: ${targetLighting}`
+    : `Lighting: ${firstGeneratedScene.lighting || 'same as first frame'}`;
 
   if (withSourceRef) {
     return [
-      '[REEL COPY LOCK - FOLLOW-UP CONTINUITY]',
-      'Reference image rule:',
-      '- Reference 1 = source last frame (POSE/EXPRESSION TARGET — copy this pose exactly).',
-      outfitTransition
-        ? '- Reference 2 = recreated first frame (continuity anchor for environment ONLY — do NOT copy its outfit or lighting).'
-        : '- Reference 2 = recreated first frame (continuity anchor for environment/outfit/identity).',
-      '- Remaining references = character identity images.',
+      '[REEL FOLLOW-UP]',
+      'Ref 1 = source last frame (POSE TARGET). Ref 2 = recreated first frame (ENVIRONMENT ANCHOR). Remaining = character identity.',
       '',
-      'HIGHEST PRIORITY: Match the exact pose, body position, arm placement, hand gesture, head tilt, and expression from Reference 1 (source last frame).',
-      'Copy the pose from Reference 1 as precisely as possible. This is the single most important requirement.',
-      '- IDENTITY LOCK: Do NOT copy the face, skin tone, hair color, or body proportions from Reference 1. The character MUST look like the character reference images. Only copy pose and body position from Reference 1.',
-      '- Tattoo exclusion: ignore tattoos/body ink from source frames and do not generate tattoos in output.',
+      'PRIORITY: Copy the exact pose, body position, arms, hands, head tilt, and expression from Ref 1.',
+      'Identity from character references only — do not copy face/skin/hair from Ref 1.',
       '',
-      'Continuity lock from reference 2 (must remain consistent):',
-      `- Keep the same environment/room structure from reference 2.`,
-      `- Environment anchor: ${firstGeneratedScene.environment || 'same setting as reference 2'}`,
-      outfitTransition && targetLighting
-        ? `- LIGHTING CHANGE: The lighting MUST change from the first frame. Apply this lighting: ${targetLighting}. Do NOT use the first frame's lighting.`
-        : `- Lighting anchor: ${firstGeneratedScene.lighting || 'same lighting mood as reference 2'}`,
-      `- Camera anchor: ${firstGeneratedScene.camera || firstGeneratedScene.cameraAngle || 'similar camera angle/framing as reference 2'}`,
-      envEnabled ? `- ${environmentLockInstruction(envStrength)}` : null,
-      '- Minor background/detail differences are allowed; do not hard-copy every object position.',
-      outfitLock,
-      hairLock,
-      '- Keep selected character identity appearance consistent.',
-      '- Identity priority rule: selected character references ALWAYS override source-subject identity. Never copy face or identity from Reference 1.',
-      '',
-      'Pose target from Reference 1 (source last frame):',
-      `- Target camera/framing: ${targetScene.camera || targetScene.cameraAngle || 'match Reference 1 framing'}`,
-      `- Target composition: ${targetScene.composition || 'match Reference 1 composition'}`,
-      poseEnabled ? `- ${poseLockInstruction(poseStrength, 'followup')}` : null,
-      '- Must not keep first-frame pose; explicitly change body position, arm placement, and head angle to match Reference 1 (source last frame).',
-      '- Only include objects/devices the subject is visibly holding in Reference 1. Do NOT add a phone, camera, or any handheld object unless clearly present in the source last frame.',
-      outfitTransition ? '- Do not change room structure while applying the pose change.' : '- Do not change room, lighting rig, or color temperature while applying the pose change.',
+      `Environment: ${firstGeneratedScene.environment || 'same as Ref 2'}`,
+      lightingLine,
+      `Camera: ${targetScene.camera || targetScene.cameraAngle || 'match Ref 1 framing'} | ${targetScene.composition || 'match Ref 1'}`,
+      outfitLine,
+      'Hair: character\'s own from references.',
+      poseEnabled ? poseLockInstruction(poseStrength, 'followup') : null,
+      envEnabled ? environmentLockInstruction(envStrength) : null,
+      'No tattoos. Only include objects visibly held in source.',
     ].filter(Boolean).join('\n');
   }
 
   return [
-    '[REEL COPY LOCK - FOLLOW-UP CONTINUITY]',
-    'Reference image rule:',
+    '[REEL FOLLOW-UP]',
     outfitTransition
-      ? '- Reference 1 = recreated first frame (continuity anchor for environment/identity ONLY — do NOT copy its outfit).'
-      : '- Reference 1 = recreated first frame (continuity anchor for environment/outfit/identity).',
-    '- Remaining references = character identity images.',
+      ? 'Ref 1 = recreated first frame (ENVIRONMENT ANCHOR only — ignore its outfit). Remaining = character identity.'
+      : 'Ref 1 = recreated first frame (ENVIRONMENT/OUTFIT ANCHOR). Remaining = character identity.',
     '',
-    'Continuity lock from reference 1 (must remain consistent):',
-    `- Keep the same environment/room structure from reference 1.`,
-    `- Environment anchor: ${firstGeneratedScene.environment || 'same setting as reference 1'}`,
-    outfitTransition && targetLighting
-      ? `- LIGHTING TRANSITION: Do NOT copy the first frame lighting. Use this lighting instead: ${targetLighting}`
-      : `- Lighting anchor: ${firstGeneratedScene.lighting || 'same lighting mood as reference 1'}`,
-    `- Camera anchor: ${firstGeneratedScene.camera || firstGeneratedScene.cameraAngle || 'similar camera angle/framing as reference 1'}`,
-    envEnabled ? `- ${environmentLockInstruction(envStrength)}` : null,
-    '- Minor background/detail differences are allowed; do not hard-copy every object position.',
-    outfitLock,
-    hairLock,
-    '- Keep selected character identity appearance consistent.',
-    '- Identity priority rule: selected character references remain dominant over source-subject identity.',
-    '- Tattoo exclusion: ignore tattoos/body ink from source frames and do not generate tattoos in output.',
-    '',
-    'Pose target (from text description below — match as closely as possible):',
-    `- Target camera/framing: ${targetScene.camera || targetScene.cameraAngle || 'match target framing'}`,
-    `- Target composition: ${targetScene.composition || 'match target composition'}`,
-    poseEnabled ? `- ${poseLockInstruction(poseStrength, 'followup')}` : null,
-    '- Must not keep first-frame pose; explicitly change body position, arm placement, and head angle to match the pose description below.',
-    '- Only include objects/devices the subject is visibly holding in the target pose. Do NOT add a phone, camera, or any handheld object unless described in the pose target.',
-    outfitTransition ? '- Do not change room structure while applying the pose change. Lighting should match the source last frame.' : '- Do not change room, lighting rig, or color temperature while applying the pose change.',
+    `Environment: ${firstGeneratedScene.environment || 'same as Ref 1'}`,
+    lightingLine,
+    `Camera: ${targetScene.camera || targetScene.cameraAngle || 'match target'} | ${targetScene.composition || 'match target'}`,
+    outfitLine,
+    'Hair: character\'s own from references.',
+    poseEnabled ? poseLockInstruction(poseStrength, 'followup') : null,
+    envEnabled ? environmentLockInstruction(envStrength) : null,
+    'Change pose from first frame — match the target description below. No tattoos. Only include objects described in pose target.',
   ].filter(Boolean).join('\n');
 }
 
@@ -467,6 +421,8 @@ async function recreateFrame({
     }
     logger.info(`[reel-copy] Prompt trimmed from ${promptBase.length + lockLen} to ${prompt.length} chars`);
   }
+
+  prompt = `${prompt}\n\n${REALISM_DIRECTIVE}`;
 
   const generated = await geminiService.generateImage(apiKey, prompt, {
     aspectRatio: '9:16',

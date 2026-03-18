@@ -230,47 +230,35 @@ function buildCharacterReferenceImages(characterId, activeRefs) {
 
 function buildStructuredAnalysisPrompt(mode, cosplayMode = false) {
   const creativeLine = mode === 'creative'
-    ? `For the "scene" field, do not copy the original location literally. Create a unique reinterpretation that keeps the same vibe and lighting feel.`
-    : 'For the "scene" field, recreate the original scene as faithfully as possible.';
+    ? 'Scene: reinterpret location creatively while keeping the same vibe and lighting feel.'
+    : 'Scene: recreate the original setting faithfully.';
 
-  const jsonKeys = cosplayMode
-    ? 'lighting, camera, pose, expression, outfit, scene, accessories, details, format, wig, full_prompt'
-    : 'lighting, camera, pose, expression, outfit, scene, accessories, details, format, full_prompt';
+  const wigField = cosplayMode
+    ? '\n  "wig": "Exact wig: shade, length, cut, texture, styling, accessories.",'
+    : '';
+
+  const fullPromptNote = cosplayMode
+    ? 'Include wig description in the prompt. '
+    : '';
 
   return [
-    'Analyze this image and respond in JSON only with these keys:',
-    jsonKeys,
+    `Analyze this image. Return ONLY valid JSON. Directive tone (brief a photographer). No tattoos.`,
     '',
-    'IMPORTANT: Write each field as a DESCRIPTIVE NATURAL LANGUAGE sentence or short paragraph — NOT as comma-separated tags.',
-    'Describe like you are briefing a human photographer. Be specific about relationships, cause-and-effect, and visual interactions.',
-    'Each field should be at least 10 words. Use directive tone (NOT "she is" or "the woman").',
-    'TATTOO EXCLUSION RULE: Completely ignore tattoos/body ink in the image. Do not analyze, mention, or infer tattoos in any field.',
-    '',
-    'lighting: MOST CRITICAL FIELD — You MUST include ALL of the following in this exact order:',
-    '  1) BRIGHTNESS SCORE: Rate overall scene brightness 1-10 (1=near-black, 3=very dark/nighttime, 5=medium, 7=bright, 10=blown-out white). Be brutally honest — most nighttime/flash photos are 2-4.',
-    '  2) SHADOW COVERAGE: Estimate what percentage of the frame is in shadow (e.g. "70% of frame in deep shadow").',
-    '  3) KEY LIGHT: Describe the primary light source — type (flash, streetlight, lamp, sun, etc.), direction, intensity, color temperature (warm/cool/neutral + estimated Kelvin if possible).',
-    '  4) FILL LIGHT: Describe ambient/fill light level — is it nearly absent (dark scene) or present? How much do shadows get filled?',
-    '  5) SHADOW CHARACTER: Hard-edged or soft? How black are the deepest shadows (crushed black vs. visible detail)?',
-    '  6) MOOD SUMMARY: One sentence — e.g. "Dark gritty nighttime rooftop, direct flash on subject, city barely visible in background".',
-    '  Example for dark flash photo: "Brightness 3/10. 65% of frame in deep shadow. Direct camera-mounted flash as key light hitting subject face and torso, harsh and cool around 5500K. Virtually no fill light — ambient city glow provides faint rim on edges only. Hard-edged shadows with crushed blacks behind subject. Dark gritty nighttime fire escape, flash-lit subject against near-black urban backdrop."',
-    'camera: Describe shot type, lens perspective, estimated focal length, shooting angle, and depth of field. Example: "Medium portrait framing at eye level with an estimated 50mm focal length, shallow depth of field softly blurring the background"',
-    'pose: Describe full body positioning — weight distribution, limb placement, torso angle, hand placement and what they interact with. Directive tone. Example: "Standing with weight shifted to the right hip, left hand resting on a railing, torso turned slightly camera-left with relaxed shoulders"',
-    'expression: Describe facial mood, gaze direction and intensity, mouth position, emotional read. Example: "Calm direct gaze into the lens with softly parted lips and relaxed brow, conveying quiet confidence"',
-    'outfit: Describe all garments with EXACT fit, fabric, color, texture, coverage level, and body interaction. Be precise about how tight/loose the clothing fits, how much skin is showing, neckline depth, hemline position, and whether clothing is form-fitting or relaxed. Do NOT make clothing more conservative than it actually is — describe the actual coverage faithfully. Example: "Fitted beige ribbed tank top with racerback cut showing shoulders, snug fit highlighting figure, paired with light-wash high-waisted denim shorts with frayed hem sitting mid-thigh"',
-    'scene: Describe the environment — setting type, architecture, surfaces, textures, color palette, spatial depth, background and foreground',
-    'accessories: Describe all visible accessories with type, material, placement, and visual effect',
-    'details: Describe color grading, film stock look, grain, contrast style, saturation, visual filters',
-    'format: Describe the visual rendering style — photography type, post-processing aesthetic, visual treatment. IMPORTANT: Note the photo quality level — is it a casual phone photo, candid snapshot, amateur selfie, or professional studio shot? Include this in the description.',
-    ...(cosplayMode ? [
-      'wig: COSPLAY MODE — Describe the wig/hair styling in detail: color (exact shade), length, cut, texture (straight/wavy/curly), styling (bangs, pigtails, updos), and any hair accessories. This wig MUST be worn by the character in the output. Example: "Long straight pastel blue wig reaching mid-back with blunt-cut bangs across the forehead, silky texture with subtle shine"',
-    ] : []),
-    cosplayMode
-      ? 'full_prompt: Write an identity-agnostic image generation prompt following Nano-Banana formula: SCENE → LIGHTING → CAMERA → POSE → EXPRESSION → OUTFIT → ACCESSORIES → DETAILS → FORMAT. No identity descriptors (face, ethnicity, skin tone) EXCEPT include the wig description — the character must wear the exact wig described in the "wig" field. Directive tone. One flowing natural language paragraph. START with "BRIGHTNESS X/10." Include the EXACT outfit description. Explicitly state the wig color, length, and styling in the prompt so it is not lost. CRITICAL: If the original is a casual/candid phone photo, explicitly state "casual phone photo quality".'
-      : 'full_prompt: Write an optimal identity-agnostic image generation prompt following Nano-Banana formula: SCENE → LIGHTING → CAMERA → POSE → EXPRESSION → OUTFIT → ACCESSORIES → DETAILS → FORMAT. No identity descriptors (face, ethnicity, hair color, skin tone). Directive tone. One flowing natural language paragraph. START with "BRIGHTNESS X/10." where X is the score from your lighting analysis, then describe the scene. Weave the brightness score, shadow coverage percentage, and key/fill light details directly into the prompt text so the generator cannot ignore them. Example start: "BRIGHTNESS 3/10. Dark nighttime fire escape, 65% of frame in deep shadow, direct camera flash..." IMPORTANT: Include the EXACT outfit description with accurate coverage/fit — do NOT make clothing more modest or conservative than the original. CRITICAL: If the original is a casual/candid phone photo, explicitly state "casual phone photo quality" or "candid snapshot aesthetic" — do NOT describe it as a professional/studio shot.',
+    `{`,
+    `  "lighting": "Brightness X/10. Shadow coverage %. Key light (source, direction, temp). Fill level. Shadow character (hard/soft). Mood summary.",`,
+    `  "camera": "Shot type, focal length, angle, DOF.",`,
+    `  "pose": "Weight distribution, limb placement, torso angle, hand positions.",`,
+    `  "expression": "Mood, gaze direction, mouth/brow state.",`,
+    `  "outfit": "Exact garments: fit, fabric, color, coverage. Do NOT sanitize.",`,
+    `  "scene": "Environment, surfaces, depth, color palette.",`,
+    `  "accessories": "Type, material, placement.",`,
+    `  "details": "Color grading, grain, contrast, saturation.",`,
+    `  "format": "Photo type (casual phone / pro studio), post-processing style.",`,
+    `${wigField}`,
+    `  "full_prompt": "Single flowing paragraph: SCENE→LIGHTING→CAMERA→POSE→EXPRESSION→OUTFIT→DETAILS→FORMAT. Start with 'BRIGHTNESS X/10.' Identity-agnostic. ${fullPromptNote}Include exact outfit. State photo quality (casual/pro)."`,
+    `}`,
     '',
     creativeLine,
-    'Output strictly valid JSON object only.',
   ].join('\n');
 }
 
@@ -313,51 +301,51 @@ function buildDarknessEnforcement(structured) {
   if (!match) return null;
   const score = parseInt(match[1], 10);
   if (score > 4) return null;
-  return [
-    `[DARKNESS ENFORCEMENT — BRIGHTNESS ${score}/10]`,
-    `This is a LOW-LIGHT scene. The overall image must be DARK.`,
-    `Most of the frame must be in shadow or near-black. Only the subject hit by the light source should be lit.`,
-    `Do NOT add ambient light, fill light, blue-hour glow, or window light that was not described.`,
-    `Do NOT brighten shadows. Crushed blacks must stay crushed. Background must be dark/near-black.`,
-    `The ONLY light source is whatever the prompt describes (flash, streetlight, lamp, etc).`,
-    `Think: dark room, phone flash — NOT a well-lit studio.`,
-    `[END DARKNESS ENFORCEMENT]`,
-  ].join('\n');
+  return `[DARKNESS: ${score}/10] Low-light scene. Deep shadows, minimal illumination. Only the described light source visible. Dark stays dark.`;
 }
 
 function buildGenerationPrompt({ character, activeRefs, mode, cosplayMode = false, structured, isDelta }) {
-  const userPrompt = [
-    mode === 'creative'
-      ? 'Creative reinterpretation mode: keep vibe/lighting/story, allow scene creativity while preserving identity.'
-      : 'Exact recreate mode: keep composition, camera feel, and visual tone close to source.',
-    isDelta
-      ? 'This is a carousel follow-up delta prompt relative to slide 1 continuity anchor.'
-      : 'This is a base prompt for the first image/standalone post.',
-    'IMPORTANT VISUAL QUALITY DIRECTION: Match the casual, authentic quality of the original source photo. If the source looks like a casual phone photo or candid snapshot, the recreation should have that same relaxed, natural, slightly imperfect feel — NOT hyper-polished studio lighting or commercial retouching. Preserve the raw/real energy. Avoid making it look like a professional photoshoot unless the original clearly is one.',
-    'LIGHTING FIDELITY — MANDATORY: The prompt contains a BRIGHTNESS X/10 score and shadow coverage percentage. You MUST honor these numbers precisely. A score of 3/10 means the image must be DARK — mostly shadows with localized light only. Do NOT brighten, add fill light, soften shadows, or illuminate dark scenes. If the prompt says "65% deep shadow" then 65% of your output frame must be in deep shadow. A nighttime flash photo must stay dark with harsh flash — do NOT turn it into soft twilight or blue hour. Match the described color temperature exactly.',
-    cosplayMode
-      ? 'IDENTITY ANCHORING (COSPLAY MODE): The reference images show the EXACT person to depict. Match the face, body proportions, skin tone, and all physical features from references precisely. HOWEVER, IGNORE the hair in the reference images — the character is wearing a cosplay wig. Use the wig description from the prompt instead of the reference hair color/style.'
-      : 'IDENTITY ANCHORING: The reference images provided show the EXACT person to depict. The generated face, body proportions, skin tone, and all physical features MUST match these reference photos precisely. Do NOT substitute, blend, or drift from the person shown in the references.',
-    'BODY & OUTFIT FIDELITY: Maintain the character\'s exact body proportions as shown in reference images — do NOT reduce or minimize any body features. The outfit description must be rendered exactly as written — do NOT add extra fabric, raise necklines, lengthen hemlines, or make clothing more conservative than described. If the prompt says form-fitting, render it form-fitting.',
-    'TATTOO EXCLUSION: Never add tattoos/body ink/tattoo-like markings to the generated output, even if tattoos were visible in source media.',
-    REALISM_DIRECTIVE,
-    cosplayMode && structured.wig
-      ? `WIG LOCK — MANDATORY: The character MUST wear this exact wig: ${structured.wig}. This overrides the natural hair shown in reference images. Do NOT use the reference hair color or style — render the cosplay wig exactly as described.`
-      : null,
-    structured.pose && structured.pose !== 'same as slide 1'
-      ? `POSE LOCK — MANDATORY: ${structured.pose}. The character MUST be in this exact body position. Do NOT default to standing or sitting if the pose describes lying down, reclining, or any other non-upright position.`
-      : null,
-    structured.expression && structured.expression !== 'same as slide 1'
-      ? `EXPRESSION LOCK: ${structured.expression}`
-      : null,
-    buildDarknessEnforcement(structured),
-    structured.full_prompt || '',
-  ].filter(Boolean).join('\n');
+  const parts = [];
+
+  // Visual style direction
+  parts.push(mode === 'creative'
+    ? '[VISUAL STYLE: Creative reinterpretation — keep vibe/lighting, allow scene creativity.]'
+    : '[VISUAL STYLE: Authentic snapshot recreation. Match casual phone-photo quality, candid feel, raw energy.]');
+
+  if (isDelta) {
+    parts.push('Carousel follow-up — maintain continuity with slide 1.');
+  }
+
+  // Scene analysis result
+  if (structured.full_prompt) {
+    parts.push(structured.full_prompt);
+  }
+
+  // Pose + expression
+  if (structured.pose && structured.pose !== 'same as slide 1') {
+    parts.push(`Pose: ${structured.pose}`);
+  }
+  if (structured.expression && structured.expression !== 'same as slide 1') {
+    parts.push(`Expression: ${structured.expression}`);
+  }
+
+  // Cosplay wig override
+  if (cosplayMode && structured.wig) {
+    parts.push(`Wig: ${structured.wig} (overrides reference hair — cosplay wig on the same person).`);
+  }
+
+  // Lighting enforcement
+  parts.push('Match BRIGHTNESS score and shadow coverage from the analysis exactly. Dark scenes stay dark.');
+  const darkness = buildDarknessEnforcement(structured);
+  if (darkness) parts.push(darkness);
+
+  // Realism
+  parts.push(REALISM_DIRECTIVE);
 
   return promptBuilder.buildPrompt({
     masterPrompt: character.masterPrompt,
     activeReferences: activeRefs,
-    userPrompt,
+    userPrompt: parts.filter(Boolean).join('\n'),
   });
 }
 

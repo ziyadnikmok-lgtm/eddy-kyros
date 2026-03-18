@@ -49,28 +49,22 @@ class SceneAnalyzer {
       userPrompt: sceneParagraph,
     });
 
-    const preservationRules = [
+    const sceneSheet = [
       '',
-      '[SCENE PRESERVATION — LOCKED]',
-      'Recreate the exact scene with this character. Maintain:',
-      `  - Camera: ${sceneData.camera || 'as described'}`,
-      `  - Lighting: ${sceneData.lighting || 'as described'}`,
-      `  - Composition: ${sceneData.composition || 'as described'}`,
-      `  - Mood: ${sceneData.mood || 'as described'}`,
-      sceneData.outfit ? `  - Outfit (EXACT): ${sceneData.outfit}` : null,
-      sceneData.pose ? `  - POSE LOCK: ${sceneData.pose}. MUST match this exact body position — do NOT default to standing/sitting.` : null,
-      sceneData.expression ? `  - EXPRESSION: ${sceneData.expression}` : null,
-      'Place the character naturally. Do not alter identity.',
-      '[END SCENE PRESERVATION]',
+      '[SCENE DATA]',
+      `Camera: ${sceneData.camera || 'as described'}`,
+      `Lighting: ${sceneData.lighting || 'as described'}`,
+      `Composition: ${sceneData.composition || 'as described'} | Mood: ${sceneData.mood || 'as described'}`,
+      sceneData.outfit ? `Outfit: ${sceneData.outfit}` : null,
+      sceneData.pose ? `Pose: ${sceneData.pose}` : null,
+      sceneData.expression ? `Expression: ${sceneData.expression}` : null,
       '',
-      'Honor BRIGHTNESS score and shadow % exactly. Dark scenes stay dark.',
-      'OUTFIT FIDELITY: Render exactly as described — no added fabric, no raised necklines.',
-      '',
+      'Match BRIGHTNESS score and shadow coverage exactly. Dark stays dark.',
       this._buildDarknessEnforcement(sceneData),
       REALISM_DIRECTIVE,
     ].filter(Boolean).join('\n');
 
-    return basePrompt + preservationRules;
+    return basePrompt + sceneSheet;
   }
 
   _buildDarknessEnforcement(sceneData) {
@@ -79,16 +73,7 @@ class SceneAnalyzer {
     if (!match) return null;
     const score = parseInt(match[1], 10);
     if (score > 4) return null;
-    return [
-      `[DARKNESS ENFORCEMENT — BRIGHTNESS ${score}/10]`,
-      `This is a LOW-LIGHT scene. The overall image must be DARK.`,
-      `Most of the frame must be in shadow or near-black. Only the subject hit by the light source should be lit.`,
-      `Do NOT add ambient light, fill light, blue-hour glow, or window light that was not described.`,
-      `Do NOT brighten shadows. Crushed blacks must stay crushed. Background must be dark/near-black.`,
-      `The ONLY light source is whatever the prompt describes (flash, streetlight, lamp, etc).`,
-      `Think: dark room, phone flash — NOT a well-lit studio.`,
-      `[END DARKNESS ENFORCEMENT]`,
-    ].join('\n');
+    return `[DARKNESS: ${score}/10] Low-light scene. Deep shadows, minimal illumination. Only the described light source visible. Dark stays dark.`;
   }
 
   _sceneToDescription(sceneData) {
