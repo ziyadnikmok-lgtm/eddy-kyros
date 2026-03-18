@@ -15,7 +15,7 @@ class GalleryManager {
     this._validFilesAt = 0;
   }
 
-  save({ base64Data, mimeType, prompt, source, characterId, aspectRatio, seed, tags }) {
+  save({ base64Data, mimeType, prompt, source, characterId, aspectRatio, seed, tags, personaMode }) {
     if (!base64Data || !mimeType) {
       throw new AppError('Image data required for gallery', 400, 'VALIDATION_ERROR');
     }
@@ -39,6 +39,7 @@ class GalleryManager {
       aspectRatio: aspectRatio || null,
       seed: seed || null,
       tags: Array.isArray(tags) ? tags.filter(t => typeof t === 'string').map(t => t.trim().toLowerCase()).slice(0, 20) : [],
+      personaMode: personaMode || null,
       fileSize: buffer.length,
       isFavorite: false,
       createdAt: new Date().toISOString(),

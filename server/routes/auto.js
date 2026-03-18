@@ -672,14 +672,14 @@ router.post('/plans/:id/execute-day', async (req, res, next) => {
     const jobIds = [
       ...startMultiBatches(
         postEntries,
-        { imageSize: '2K', aspectRatio: '4:5', imageModel: planImageModel },
+        { imageSize: '2K', aspectRatio: '4:5', imageModel: planImageModel, personaMode: plan.personaMode || null },
         { characterId, activeReferenceIds },
         styleAtomIds,
         { anchorFirst: usesAnchor, specificReferences: bgRefs },
       ),
       ...startMultiBatches(
         verticalEntries,
-        { imageSize: '2K', aspectRatio: '9:16', imageModel: planImageModel },
+        { imageSize: '2K', aspectRatio: '9:16', imageModel: planImageModel, personaMode: plan.personaMode || null },
         { characterId, activeReferenceIds },
         styleAtomIds,
         { anchorFirst: usesAnchor, specificReferences: bgRefs },
@@ -810,14 +810,14 @@ function executePlannedEntries(planned, { characterId, personaMode, resolvedActi
   const jobIds = [
     ...startMultiBatches(
       postEntries,
-      { imageSize: '2K', aspectRatio: '4:5', imageModel: resolvedImageModel },
+      { imageSize: '2K', aspectRatio: '4:5', imageModel: resolvedImageModel, personaMode },
       { characterId, activeReferenceIds: resolvedActiveReferenceIds },
       planned.styleAtomIds,
       { anchorFirst: usesAnchor, specificReferences: backgroundRefs },
     ),
     ...startMultiBatches(
       verticalEntries,
-      { imageSize: '2K', aspectRatio: '9:16', imageModel: resolvedImageModel },
+      { imageSize: '2K', aspectRatio: '9:16', imageModel: resolvedImageModel, personaMode },
       { characterId, activeReferenceIds: resolvedActiveReferenceIds },
       planned.styleAtomIds,
       { anchorFirst: usesAnchor, specificReferences: backgroundRefs },

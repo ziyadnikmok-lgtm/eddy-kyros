@@ -162,6 +162,7 @@ class BatchGenerator extends EventEmitter {
     const imageModel = generationOptions.imageModel || null;
     const gallerySource = generationOptions.gallerySource || 'batch';
     const anchorFirst = !!generationOptions.anchorFirst;
+    const personaMode = generationOptions.personaMode || null;
 
     let tasks;
     switch (mode) {
@@ -229,6 +230,7 @@ class BatchGenerator extends EventEmitter {
       imageSize,
       imageModel,
       gallerySource,
+      personaMode,
       createdAt: new Date().toISOString(),
     };
     jobs.set(jobId, job);
@@ -897,6 +899,7 @@ class BatchGenerator extends EventEmitter {
         aspectRatio: job.aspectRatio,
         seed: task.seed || null,
         tags: task.tags || [],
+        personaMode: job.personaMode || null,
       });
 
       job.results[task.index] = {

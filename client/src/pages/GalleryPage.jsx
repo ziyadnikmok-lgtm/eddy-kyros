@@ -92,8 +92,18 @@ function useIsMobile(breakpoint = 768) {
   return mobile;
 }
 
+const PERSONA_LABELS = {
+  'luxury': 'Luxury',
+  'of': 'OF Creator',
+  'fitness': 'Fitness',
+  'girl_next_door': 'Girl Next Door',
+  'high_fashion': 'High Fashion',
+  'cosplay': 'Cosplay',
+  'goth': 'Goth / Alt',
+};
+
 export default function GalleryPage() {
-  const { notify, navigateTo } = useApp();
+  const { notify, navigateTo, characters } = useApp();
   const { run } = useAsync();
   const { openLightbox, LightboxComponent } = useImageLightbox();
   const isMobile = useIsMobile();
@@ -105,6 +115,8 @@ export default function GalleryPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
   const [ratioFilter, setRatioFilter] = useState('');
+  const [characterFilter, setCharacterFilter] = useState('');
+  const [personaFilter, setPersonaFilter] = useState('');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [sortBy, setSortBy] = useState('newest');
 
@@ -135,6 +147,16 @@ export default function GalleryPage() {
     return [...r].sort();
   }, [images]);
 
+  const availableCharacterIds = useMemo(() => {
+    const c = new Set(images.map((i) => i.characterId).filter(Boolean));
+    return [...c];
+  }, [images]);
+
+  const availablePersonas = useMemo(() => {
+    const p = new Set(images.map((i) => i.personaMode).filter(Boolean));
+    return [...p].sort();
+  }, [images]);
+
   const filteredImages = useMemo(() => {
     let result = images;
     if (searchQuery) {
@@ -143,6 +165,8 @@ export default function GalleryPage() {
     }
     if (sourceFilter) result = result.filter((i) => i.source === sourceFilter);
     if (ratioFilter) result = result.filter((i) => i.aspectRatio === ratioFilter);
+    if (characterFilter) result = result.filter((i) => i.characterId === characterFilter);
+    if (personaFilter) result = result.filter((i) => i.personaMode === personaFilter);
     if (favoritesOnly) result = result.filter((i) => i.isFavorite);
     if (tagFilter.length > 0) {
       result = result.filter((i) => tagFilter.some(t => Array.isArray(i.tags) && i.tags.includes(t)));
@@ -158,12 +182,12 @@ export default function GalleryPage() {
       result = [...result].sort((a, b) => (a.fileSize || 0) - (b.fileSize || 0));
     }
     return result;
-  }, [images, searchQuery, sourceFilter, ratioFilter, favoritesOnly, tagFilter, sortBy]);
+  }, [images, searchQuery, sourceFilter, ratioFilter, characterFilter, personaFilter, favoritesOnly, tagFilter, sortBy]);
 
   const visibleImages = useMemo(() => filteredImages.slice(0, visibleCount), [filteredImages, visibleCount]);
   const galleryImageUrls = useMemo(() => filteredImages.map((i) => galleryApi.imageUrl(i.id)), [filteredImages]);
 
-  const hasActiveFilters = searchQuery || sourceFilter || ratioFilter || favoritesOnly || tagFilter.length > 0;
+  const hasActiveFilters = searchQuery || sourceFilter || ratioFilter || characterFilter || personaFilter || favoritesOnly || tagFilter.length > 0;
 
   const load = async () => {
     setLoadingList(true);
@@ -292,6 +316,8 @@ export default function GalleryPage() {
     setSearchQuery('');
     setSourceFilter('');
     setRatioFilter('');
+    setCharacterFilter('');
+    setPersonaFilter('');
     setFavoritesOnly(false);
     setTagFilter([]);
     setSortBy('newest');
@@ -423,6 +449,29 @@ export default function GalleryPage() {
                 >
                   <option value="">All ratios</option>
                   {availableRatios.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+              )}
+              {availableCharacterIds.length > 1 && (
+                <select
+                  value={characterFilter}
+                  onChange={(e) => setCharacterFilter(e.target.value)}
+                  className="h-8 rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-2 text-sm text-zinc-300 outline-none transition-all duration-200 hover:border-zinc-600 focus:border-blue-500/70 focus:ring-2 focus:ring-blue-500/20 cursor-pointer"
+                >
+                  <option value="">All characters</option>
+                  {availableCharacterIds.map((cId) => {
+                    const char = characters.find((c) => c.id === cId);
+                    return <option key={cId} value={cId}>{char?.name || cId}</option>;
+                  })}
+                </select>
+              )}
+              {availablePersonas.length > 0 && (
+                <select
+                  value={personaFilter}
+                  onChange={(e) => setPersonaFilter(e.target.value)}
+                  className="h-8 rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-2 text-sm text-zinc-300 outline-none transition-all duration-200 hover:border-zinc-600 focus:border-blue-500/70 focus:ring-2 focus:ring-blue-500/20 cursor-pointer"
+                >
+                  <option value="">All themes</option>
+                  {availablePersonas.map((p) => <option key={p} value={p}>{PERSONA_LABELS[p] || p}</option>)}
                 </select>
               )}
               <div className="flex items-center gap-1.5">

@@ -49,3 +49,5 @@ desktop.ini
 npm-debug.log*
 .pnpm-store
 .gstack/
+server/backup-prompt-engine-v1/
+server/backup-prompt-engine-v2/
