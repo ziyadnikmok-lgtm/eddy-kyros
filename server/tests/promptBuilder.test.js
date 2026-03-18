@@ -11,9 +11,9 @@ describe('promptBuilder', () => {
 
     it('returns prompt with identity section for minimal input', () => {
       const result = promptBuilder.buildPrompt({ masterPrompt: 'Tall woman, green eyes' });
-      expect(result).toContain('[CHARACTER IDENTITY');
+      expect(result).toContain('[IDENTITY ANCHOR]');
       expect(result).toContain('Tall woman, green eyes');
-      expect(result).toContain('[IDENTITY ENFORCEMENT]');
+      expect(result).toContain('[TECHNICAL]');
     });
 
     it('includes override section when activeReferences provided', () => {
@@ -47,7 +47,7 @@ describe('promptBuilder', () => {
         masterPrompt: 'Identity text',
         userPrompt: 'Beach sunset scene',
       });
-      expect(result).toContain('[SCENE / GENERATION INSTRUCTIONS]');
+      // User prompt is included directly without a section header
       expect(result).toContain('Beach sunset scene');
     });
 
