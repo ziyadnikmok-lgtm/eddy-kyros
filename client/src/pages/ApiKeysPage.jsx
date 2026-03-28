@@ -398,7 +398,7 @@ export default function ApiKeysPage() {
           value={wavespeedKey}
           onChange={(e) => setWavespeedKey(e.target.value)}
         />
-        <p className="text-xs text-zinc-500">Required for Video Generation (Kling, Grok models). Get your key at wavespeed.ai/accesskey</p>
+        <p className="text-xs text-zinc-500">Only needed for WaveSpeed-backed video models like Kling and Grok. Veo 3.1 uses your active Gemini / AI Studio key instead.</p>
         <div className="flex items-center gap-2">
           <Btn onClick={handleSaveWavespeed} disabled={loading || !wavespeedKey.trim()}>
             {loading ? <Spinner size={16} /> : null} Save WaveSpeed Key

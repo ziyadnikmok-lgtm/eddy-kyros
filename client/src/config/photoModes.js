@@ -69,6 +69,8 @@ export const EXPRESSION_MODES = [
 ];
 
 export const VIDEO_MODELS = [
+  { id: 'veo-3.1-fast-generate-preview', label: 'Veo 3.1 Fast', desc: 'Google AI Studio key, faster with audio', durations: [4, 8], prices: { 4: 0.60, 8: 1.20 } },
+  { id: 'veo-3.1-generate-preview', label: 'Veo 3.1', desc: 'Google AI Studio key, higher quality with audio', durations: [4, 8], prices: { 4: 1.60, 8: 3.20 } },
   { id: 'kling-v2.5-turbo-std', label: 'Kling v2.5 Std', desc: 'Fast standard quality', durations: [5, 10], prices: { 5: 0.21, 10: 0.42 } },
   { id: 'kling-v2.5-turbo-pro', label: 'Kling v2.5 Pro', desc: 'Higher quality, end-frame support', durations: [5, 10], prices: { 5: 0.35, 10: 0.70 } },
   { id: 'grok-imagine-video', label: 'Grok Video', desc: 'X.AI model, 720p/480p', durations: [6, 10], prices: { 6: 0.33, 10: 0.55 } },

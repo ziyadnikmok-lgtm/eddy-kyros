@@ -38,12 +38,12 @@ function _isRetryable(err) {
 }
 
 async function request(path, options = {}) {
-  const { method = 'GET', body, signal: externalSignal, timeoutMs } = options;
+  const { method = 'GET', body, signal: externalSignal, timeoutMs, cache } = options;
   const maxRetries = method === 'GET' ? RETRY_MAX : 0;
 
   for (let attempt = 0; ; attempt++) {
     try {
-      return await _fetchOnce(path, method, body, externalSignal, timeoutMs);
+      return await _fetchOnce(path, method, body, externalSignal, timeoutMs, cache);
     } catch (err) {
       if (attempt < maxRetries && _isRetryable(err) && !externalSignal?.aborted) {
         await new Promise((r) => setTimeout(r, RETRY_BASE_MS * 2 ** attempt));
@@ -54,7 +54,7 @@ async function request(path, options = {}) {
   }
 }
 
-async function _fetchOnce(path, method, body, externalSignal, timeoutMs) {
+async function _fetchOnce(path, method, body, externalSignal, timeoutMs, cache) {
   const resolvedTimeout = timeoutMs || getTimeoutForPath(path, method);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), resolvedTimeout);
@@ -69,6 +69,9 @@ async function _fetchOnce(path, method, body, externalSignal, timeoutMs) {
   }
 
   const config = { method, headers: {}, signal: controller.signal };
+  if (cache) {
+    config.cache = cache;
+  }
   const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
   if (isFormData) {
     config.body = body;
@@ -126,7 +129,7 @@ export const keys = {
 
 export const video = {
   generate: (body) => request('/video/generate', { method: 'POST', body }),
-  status: (taskId) => request(`/video/${taskId}/status`),
+  status: (taskId) => request(`/video/${taskId}/status?_=${Date.now()}`, { cache: 'no-store' }),
   history: () => request('/video/history'),
   removeHistory: (id) => request(`/video/history/${id}`, { method: 'DELETE' }),
   fileUrl: (filename) => `${BASE}/video/file/${filename}`,

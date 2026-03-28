@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { video as videoApi, gallery as galleryApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { usePoll } from '../hooks/usePoll';
@@ -9,6 +9,7 @@ const MODEL_MAP = Object.fromEntries(VIDEO_MODELS.map((m) => [m.id, m]));
 const IS_MOTION = (id) => id === 'kling-v2.6-motion' || id === 'kling-v2.6-motion-pro';
 const IS_PRO = (id) => id === 'kling-v2.5-turbo-pro';
 const IS_GROK = (id) => id === 'grok-imagine-video';
+const IS_VEO = (id) => id === 'veo-3.1-generate-preview' || id === 'veo-3.1-fast-generate-preview';
 
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
@@ -26,9 +27,11 @@ const _cache = {
   negativePrompt: '',
   guidanceScale: 0.5,
   resolution: '720p',
+  aspectRatio: '9:16',
   motionSourceType: 'url',
   motionUrl: '',
   characterOrientation: 'image',
+  generateAudio: true,
 };
 
 export default function VideoPage() {
@@ -40,6 +43,7 @@ export default function VideoPage() {
   const [negativePrompt, setNegativePrompt] = useState(_cache.negativePrompt);
   const [guidanceScale, setGuidanceScale] = useState(_cache.guidanceScale);
   const [resolution, setResolution] = useState(_cache.resolution);
+  const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
 
   const [sourceImage, setSourceImage] = useState(null);
   const [sourcePreview, setSourcePreview] = useState(null);
@@ -53,10 +57,12 @@ export default function VideoPage() {
   const [motionVideo, setMotionVideo] = useState(null);
   const [characterOrientation, setCharacterOrientation] = useState(_cache.characterOrientation);
   const [keepOriginalSound, setKeepOriginalSound] = useState(true);
+  const [generateAudio, setGenerateAudio] = useState(_cache.generateAudio);
 
   const [galleryImages, setGalleryImages] = useState([]);
   const [galleryLoading, setGalleryLoading] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
+  const [galleryTarget, setGalleryTarget] = useState('source');
 
   const [loading, setLoading] = useState(false);
   const [taskId, setTaskId] = useState(null);
@@ -74,11 +80,17 @@ export default function VideoPage() {
   useEffect(() => { _cache.negativePrompt = negativePrompt; }, [negativePrompt]);
   useEffect(() => { _cache.guidanceScale = guidanceScale; }, [guidanceScale]);
   useEffect(() => { _cache.resolution = resolution; }, [resolution]);
+  useEffect(() => { _cache.aspectRatio = aspectRatio; }, [aspectRatio]);
   useEffect(() => { _cache.motionSourceType = motionSourceType; }, [motionSourceType]);
   useEffect(() => { _cache.motionUrl = motionUrl; }, [motionUrl]);
   useEffect(() => { _cache.characterOrientation = characterOrientation; }, [characterOrientation]);
+  useEffect(() => { _cache.generateAudio = generateAudio; }, [generateAudio]);
 
   const modelInfo = MODEL_MAP[model] || VIDEO_MODELS[0];
+  const galleryVideoImages = useMemo(
+    () => galleryImages.filter((img) => img?.aspectRatio === '9:16'),
+    [galleryImages]
+  );
 
   useEffect(() => {
     const validDurations = modelInfo.durations;
@@ -101,7 +113,7 @@ export default function VideoPage() {
   const fetchGallery = useCallback(async () => {
     setGalleryLoading(true);
     try {
-      const res = await galleryApi.list();
+      const res = await galleryApi.list({ limit: 120 });
       setGalleryImages(res.images || res || []);
     } catch {}
     finally { setGalleryLoading(false); }
@@ -174,9 +186,26 @@ export default function VideoPage() {
     setMotionVideo(dataUrl);
   };
 
+  const handlePickFromGallery = (imgId, target = 'source') => {
+    const fullImageUrl = galleryApi.imageUrl(imgId);
+    if (target === 'end') {
+      setLastFramePreview(fullImageUrl);
+      setLastFrameImage(null);
+    } else {
+      setSourceGalleryId(imgId);
+      setSourcePreview(fullImageUrl);
+      setSourceImage(null);
+    }
+    setShowGallery(false);
+  };
+
   const handleGenerate = async () => {
-    if (!sourceImage && !sourceGalleryId) {
+    if (!sourceImage && !sourceGalleryId && !IS_VEO(model)) {
       notify('Select or upload a source image first', 'error');
+      return;
+    }
+    if (IS_VEO(model) && !prompt.trim() && !sourceImage && !sourceGalleryId) {
+      notify('Veo needs a prompt or source image', 'error');
       return;
     }
 
@@ -217,10 +246,15 @@ export default function VideoPage() {
         if (model === 'kling-v2.5-turbo-std' || model === 'kling-v2.5-turbo-pro') {
           body.guidanceScale = guidanceScale;
         }
+        if (IS_VEO(model)) {
+          body.aspectRatio = aspectRatio;
+          body.resolution = resolution;
+          body.generateAudio = generateAudio;
+        }
         if (IS_GROK(model)) {
           body.resolution = resolution;
         }
-        if (IS_PRO(model) && lastFrameImage) {
+        if ((IS_PRO(model) || IS_VEO(model)) && lastFrameImage) {
           const m = lastFrameImage.match(/^data:([^;]+);base64,(.+)$/);
           if (m) {
             body.lastImage = m[2];
@@ -243,7 +277,7 @@ export default function VideoPage() {
       const res = await videoApi.generate(body);
       if (res.status === 'failed') {
         setLoading(false);
-        notify('WaveSpeed returned an error — try again or pick a different model', 'error');
+        notify(IS_VEO(model) ? 'Veo returned an error - try again or pick a different model' : 'WaveSpeed returned an error - try again or pick a different model', 'error');
         fetchHistory();
         return;
       }
@@ -269,7 +303,9 @@ export default function VideoPage() {
 
   const STEPS = IS_MOTION(model)
     ? ['Uploading image & video', 'Submitting to WaveSpeed', 'Generating video']
-    : ['Uploading image', 'Submitting to WaveSpeed', 'Generating video'];
+    : IS_VEO(model)
+      ? ['Preparing prompt and frames', 'Submitting to Veo', 'Generating video']
+      : ['Uploading image', 'Submitting to WaveSpeed', 'Generating video'];
 
   const stepIndex = loading ? (taskId ? 2 : 0) : -1;
 
@@ -280,18 +316,20 @@ export default function VideoPage() {
         <div className="lg:col-span-2 space-y-4">
           {/* Source Image */}
           <Card className="space-y-3">
-            <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">Source Image</h3>
+            <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">
+              {IS_VEO(model) ? 'Source Image / First Frame' : 'Source Image'}
+            </h3>
             <div className="flex items-start gap-4">
               {sourcePreview ? (
                 <div className="relative shrink-0">
-                  <img src={sourcePreview} alt="Source" className="w-32 h-32 object-cover rounded-lg border border-zinc-700/60" />
+                  <img src={sourcePreview} alt="Source" className="w-40 h-52 object-cover rounded-lg border border-zinc-700/60 bg-zinc-950" />
                   <button onClick={() => { setSourceImage(null); setSourcePreview(null); setSourceGalleryId(null); }}
                     className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-zinc-800 border border-zinc-600 text-zinc-400 text-xs flex items-center justify-center hover:text-white cursor-pointer">
                     ×
                   </button>
                 </div>
               ) : (
-                <div className="w-32 h-32 rounded-lg border-2 border-dashed border-zinc-700/60 flex items-center justify-center text-zinc-600 text-xs text-center shrink-0">
+                <div className="w-40 h-52 rounded-lg border-2 border-dashed border-zinc-700/60 flex items-center justify-center text-zinc-600 text-xs text-center shrink-0">
                   No image
                 </div>
               )}
@@ -304,40 +342,46 @@ export default function VideoPage() {
                     </span>
                   </label>
                   <button
-                    onClick={() => { if (!showGallery) fetchGallery(); setShowGallery((v) => !v); }}
+                    onClick={() => {
+                      if (!showGallery && galleryImages.length === 0) fetchGallery();
+                      setGalleryTarget('source');
+                      setShowGallery((v) => !v);
+                    }}
                     className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700/60 transition-colors cursor-pointer"
                   >
                     {showGallery ? 'Hide Gallery' : 'Pick from Gallery'}
                   </button>
                 </div>
-                <p className="text-xs text-zinc-500">PNG, JPG, WebP. This becomes the first frame of the video.</p>
+                <p className="text-xs text-zinc-500">
+                  {IS_VEO(model)
+                    ? 'PNG, JPG, WebP. Optional for Veo text-to-video, or use it as the first frame for image-to-video.'
+                    : 'PNG, JPG, WebP. This becomes the first frame of the video.'}
+                </p>
               </div>
             </div>
 
             {showGallery && (
               <div className="pt-2">
+                <p className="mb-2 text-[11px] text-zinc-500 uppercase tracking-wider">
+                  Picking for: {galleryTarget === 'end' ? 'End Frame' : 'Source Image'}
+                </p>
                 {galleryLoading ? (
                   <div className="flex items-center justify-center py-6 text-zinc-400 text-sm"><Spinner size={16} /> <span className="ml-2">Loading gallery...</span></div>
-                ) : galleryImages.length === 0 ? (
-                  <p className="text-xs text-zinc-500 py-4 text-center">No images in gallery yet.</p>
+                ) : galleryVideoImages.length === 0 ? (
+                  <p className="text-xs text-zinc-500 py-4 text-center">No 9:16 images in gallery yet.</p>
                 ) : (
                   <div className="grid [grid-template-columns:repeat(auto-fill,minmax(80px,1fr))] gap-2 max-h-[240px] overflow-y-auto pr-1">
-                    {galleryImages.map((img) => (
+                    {galleryVideoImages.map((img) => (
                       <button
                         key={img.id}
-                        onClick={() => {
-                          setSourceGalleryId(img.id);
-                          setSourcePreview(galleryApi.imageUrl(img.id));
-                          setSourceImage(null);
-                          setShowGallery(false);
-                        }}
+                        onClick={() => handlePickFromGallery(img.id, galleryTarget)}
                         className={`relative aspect-square overflow-hidden rounded-lg border transition-all cursor-pointer hover:scale-[1.03] hover:shadow-[0_0_16px_rgba(59,130,246,0.2)] ${
-                          sourceGalleryId === img.id
+                          galleryTarget === 'source' && sourceGalleryId === img.id
                             ? 'border-2 border-blue-500 shadow-[0_0_14px_rgba(59,130,246,0.3)]'
                             : 'border-zinc-700/50 hover:border-zinc-600'
                         }`}
                       >
-                        <img src={galleryApi.imageUrl(img.id)} alt="" className="h-full w-full object-cover" loading="lazy" />
+                        <img src={galleryApi.thumbUrl(img.id)} alt="" className="h-full w-full object-cover bg-zinc-950" loading="lazy" />
                       </button>
                     ))}
                   </div>
@@ -406,6 +450,24 @@ export default function VideoPage() {
                 )}
               </div>
 
+              {IS_VEO(model) && (
+                <div className="space-y-1.5">
+                  <span className="text-xs text-zinc-400 font-medium">Aspect Ratio</span>
+                  <div className="flex gap-1">
+                    {['16:9', '9:16'].map((ratio) => (
+                      <button key={ratio} onClick={() => setAspectRatio(ratio)}
+                        className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium border transition-colors cursor-pointer ${
+                          aspectRatio === ratio
+                            ? 'border-blue-500/50 bg-blue-600/12 text-blue-400'
+                            : 'border-zinc-700/40 bg-zinc-800/40 text-zinc-500 hover:text-zinc-300'
+                        }`}>
+                        {ratio}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Guidance Scale (Kling only) */}
               {(model === 'kling-v2.5-turbo-std' || model === 'kling-v2.5-turbo-pro') && (
                 <div className="space-y-1.5">
@@ -413,12 +475,12 @@ export default function VideoPage() {
                 </div>
               )}
 
-              {/* Resolution (Grok only) */}
-              {IS_GROK(model) && (
+              {/* Resolution */}
+              {(IS_GROK(model) || IS_VEO(model)) && (
                 <div className="space-y-1.5">
                   <span className="text-xs text-zinc-400 font-medium">Resolution</span>
                   <div className="flex gap-1">
-                    {['720p', '480p'].map((r) => (
+                    {(IS_VEO(model) ? ['720p', '1080p'] : ['720p', '480p']).map((r) => (
                       <button key={r} onClick={() => setResolution(r)}
                         className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium border transition-colors cursor-pointer ${
                           resolution === r
@@ -432,6 +494,20 @@ export default function VideoPage() {
                 </div>
               )}
             </div>
+
+            {IS_VEO(model) && (
+              <div className="pt-1">
+                <button
+                  onClick={() => setGenerateAudio((v) => !v)}
+                  className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium border transition-colors cursor-pointer ${
+                    generateAudio
+                      ? 'border-blue-500/50 bg-blue-600/12 text-blue-400'
+                      : 'border-zinc-700/40 bg-zinc-800/40 text-zinc-500 hover:text-zinc-300'
+                  }`}>
+                  Audio {generateAudio ? 'On' : 'Off'}
+                </button>
+              </div>
+            )}
 
             {/* Negative Prompt */}
             <Section title="Negative Prompt" hint="Describe what you don't want in the video">
@@ -516,15 +592,19 @@ export default function VideoPage() {
             </Card>
           )}
 
-          {/* End Frame (Kling Pro only) */}
-          {IS_PRO(model) && (
+          {/* End Frame */}
+          {(IS_PRO(model) || IS_VEO(model)) && (
             <Card className="space-y-3">
               <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">End Frame <span className="text-zinc-600 font-normal normal-case">(optional)</span></h3>
-              <p className="text-xs text-zinc-500">Upload an image for the last frame to control the video ending.</p>
+              <p className="text-xs text-zinc-500">
+                {IS_VEO(model)
+                  ? 'Optional final frame for Veo 3.1 interpolation.'
+                  : 'Upload an image for the last frame to control the video ending.'}
+              </p>
               <div className="flex items-center gap-3">
                 {lastFramePreview ? (
                   <div className="relative shrink-0">
-                    <img src={lastFramePreview} alt="End frame" className="w-20 h-20 object-cover rounded-lg border border-zinc-700/60" />
+                    <img src={lastFramePreview} alt="End frame" className="w-32 h-44 object-cover rounded-lg border border-zinc-700/60 bg-zinc-950" />
                     <button onClick={() => { setLastFrameImage(null); setLastFramePreview(null); }}
                       className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-zinc-800 border border-zinc-600 text-zinc-400 text-xs flex items-center justify-center hover:text-white cursor-pointer">
                       ×
@@ -537,6 +617,16 @@ export default function VideoPage() {
                     {lastFramePreview ? 'Replace' : 'Upload End Frame'}
                   </span>
                 </label>
+                <button
+                  onClick={() => {
+                    if (!showGallery && galleryImages.length === 0) fetchGallery();
+                    setGalleryTarget('end');
+                    setShowGallery(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700/60 transition-colors cursor-pointer"
+                >
+                  Pick End Frame from Gallery
+                </button>
               </div>
             </Card>
           )}

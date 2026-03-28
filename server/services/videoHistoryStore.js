@@ -36,6 +36,8 @@ class VideoHistoryStore {
     const entry = {
       id: crypto.randomUUID(),
       taskId: data.taskId || '',
+      provider: data.provider || 'wavespeed',
+      operationName: data.operationName || null,
       model: data.model || '',
       prompt: data.prompt || '',
       sourceImageId: data.sourceImageId || null,
@@ -44,6 +46,9 @@ class VideoHistoryStore {
       localPath: data.localPath || null,
       filename: data.filename || null,
       duration: data.duration || null,
+      aspectRatio: data.aspectRatio || null,
+      resolution: data.resolution || null,
+      spendTracked: !!data.spendTracked,
       createdAt: new Date().toISOString(),
     };
 
@@ -61,6 +66,7 @@ class VideoHistoryStore {
     if (data.localPath !== undefined) entry.localPath = data.localPath;
     if (data.filename !== undefined) entry.filename = data.filename;
     if (data.error !== undefined) entry.error = data.error;
+    if (data.spendTracked !== undefined) entry.spendTracked = !!data.spendTracked;
 
     this._persist();
     return entry;

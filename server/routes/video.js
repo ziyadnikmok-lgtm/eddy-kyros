@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const os = require('node:os');
 const archiver = require('archiver');
 const wavespeed = require('../services/wavespeedService');
+const geminiVideo = require('../services/geminiVideoService');
 const videoHistory = require('../services/videoHistoryStore');
 const galleryManager = require('../services/galleryManager');
 const apiKeyManager = require('../services/apiKeyManager');
@@ -20,6 +21,11 @@ const VIDEO_PRICES = {
   'kling-v2.6-motion': { 5: 0.35 },
   'kling-v2.6-motion-pro': { 5: 0.56 },
 };
+const GEMINI_VIDEO_MODELS = new Set(['veo-3.1-generate-preview', 'veo-3.1-fast-generate-preview']);
+const GEMINI_VIDEO_PRICES_PER_SECOND = {
+  'veo-3.1-generate-preview': 0.40,
+  'veo-3.1-fast-generate-preview': 0.15,
+};
 
 const router = express.Router();
 const VIDEO_DIR = path.join(UPLOADS_DIR, 'videos');
@@ -27,22 +33,89 @@ const parseMultipartIfNeeded = createMultipartParser({ maxBytes: 200 * 1024 * 10
 
 router.post('/generate', parseMultipartIfNeeded, async (req, res, next) => {
   try {
-    const { model, prompt, duration, negativePrompt, guidanceScale, resolution, lastImage, motionSource, characterOrientation, keepOriginalSound } = req.body || {};
+    const {
+      model,
+      prompt,
+      duration,
+      negativePrompt,
+      guidanceScale,
+      resolution,
+      lastImage,
+      motionSource,
+      characterOrientation,
+      keepOriginalSound,
+      aspectRatio,
+      generateAudio,
+    } = req.body || {};
 
     if (!model) throw new AppError('model is required', 400, 'VALIDATION_ERROR');
 
+    const isGeminiVideo = GEMINI_VIDEO_MODELS.has(model);
     let imageUrl;
+    let imageBase64;
+    let imageMimeType;
     const imageData = req.body.image;
     const galleryId = req.body.galleryId;
 
     if (galleryId) {
       const { filePath, mimeType } = galleryManager.getFilePath(galleryId);
       const buffer = fs.readFileSync(filePath);
-      imageUrl = await wavespeed.uploadBase64(buffer.toString('base64'), mimeType);
+      imageBase64 = buffer.toString('base64');
+      imageMimeType = mimeType;
+      if (!isGeminiVideo) {
+        imageUrl = await wavespeed.uploadBase64(imageBase64, mimeType);
+      }
     } else if (imageData) {
-      imageUrl = await wavespeed.uploadBase64(imageData, req.body.imageMimeType || 'image/png');
-    } else {
+      imageBase64 = imageData;
+      imageMimeType = req.body.imageMimeType || 'image/png';
+      if (!isGeminiVideo) {
+        imageUrl = await wavespeed.uploadBase64(imageData, imageMimeType);
+      }
+    } else if (!isGeminiVideo) {
       throw new AppError('An image is required (image base64 or galleryId)', 400, 'VALIDATION_ERROR');
+    }
+
+    if (isGeminiVideo) {
+      if (!imageBase64 && !prompt) {
+        throw new AppError('Veo requires at least a prompt or source image', 400, 'VALIDATION_ERROR');
+      }
+      const apiKey = apiKeyManager.getActiveKey();
+      const operation = await geminiVideo.createVideoOperation(apiKey, {
+        model,
+        prompt: prompt ? String(prompt).slice(0, 2500) : '',
+        imageBase64,
+        imageMimeType,
+        durationSeconds: Number(duration) || undefined,
+        aspectRatio: aspectRatio === '9:16' ? '9:16' : '16:9',
+        resolution: resolution === '1080p' ? '1080p' : '720p',
+        negativePrompt: negativePrompt ? String(negativePrompt) : undefined,
+        generateAudio: generateAudio !== false,
+        lastImageBase64: lastImage || undefined,
+        lastImageMimeType: req.body.lastImageMimeType || 'image/png',
+      });
+
+      const taskId = Buffer.from(operation.operationName, 'utf8').toString('base64url');
+      const historyEntry = videoHistory.add({
+        taskId,
+        provider: 'gemini',
+        operationName: operation.operationName,
+        model,
+        prompt: prompt ? String(prompt).slice(0, 2500) : '',
+        sourceImageId: galleryId || null,
+        status: operation.done ? 'completed' : 'processing',
+        duration: Number(duration) || null,
+        aspectRatio: aspectRatio === '9:16' ? '9:16' : '16:9',
+        resolution: resolution === '1080p' ? '1080p' : '720p',
+      });
+
+      return res.json({
+        success: true,
+        data: {
+          taskId,
+          historyId: historyEntry.id,
+          status: operation.done ? 'completed' : 'processing',
+        },
+      });
     }
 
     const params = { image: imageUrl };
@@ -121,6 +194,51 @@ router.post('/generate', parseMultipartIfNeeded, async (req, res, next) => {
 router.get('/:taskId/status', async (req, res, next) => {
   try {
     const { taskId } = req.params;
+    const entry = videoHistory.findByTaskId(taskId);
+    if (entry?.provider === 'gemini') {
+      const apiKey = apiKeyManager.getActiveKey();
+      const result = await geminiVideo.getVideoOperation(apiKey, entry.operationName);
+
+      if (!result.done) {
+        return res.json({ success: true, data: { status: 'processing' } });
+      }
+
+      const generatedVideo = result.operation?.response?.generatedVideos?.[0]?.video || null;
+      const videoUri = generatedVideo?.uri || null;
+      if (!videoUri) {
+        videoHistory.update(entry.id, { status: 'failed', error: 'Veo completed without a downloadable video URI' });
+        return res.json({ success: true, data: { status: 'failed', error: 'Veo returned no downloadable video' } });
+      }
+
+      if (!entry.localPath) {
+        const { filename, filePath } = await geminiVideo.downloadVideo(apiKey, videoUri, VIDEO_DIR);
+        if (!entry.spendTracked) {
+          const perSecond = GEMINI_VIDEO_PRICES_PER_SECOND[entry.model] || 0;
+          const totalCost = perSecond * (entry.duration || 0);
+          if (totalCost > 0) {
+            apiKeyManager.addExternalSpend(totalCost, 'video');
+          }
+        }
+        videoHistory.update(entry.id, {
+          status: 'completed',
+          videoUrl: videoUri,
+          localPath: filePath,
+          filename,
+          spendTracked: true,
+        });
+        return res.json({ success: true, data: { status: 'completed', outputs: [videoUri], localFilename: filename } });
+      }
+
+      return res.json({
+        success: true,
+        data: {
+          status: 'completed',
+          outputs: [entry.videoUrl].filter(Boolean),
+          localFilename: entry.filename,
+        },
+      });
+    }
+
     let result;
     try {
       result = await wavespeed.getTaskStatus(taskId);
@@ -130,7 +248,6 @@ router.get('/:taskId/status', async (req, res, next) => {
     }
 
     if (result.status === 'completed' && result.outputs?.length > 0) {
-      const entry = videoHistory.findByTaskId(taskId);
       if (entry && !entry.localPath) {
         try {
           const { filename, filePath } = await wavespeed.downloadVideo(result.outputs[0], VIDEO_DIR);

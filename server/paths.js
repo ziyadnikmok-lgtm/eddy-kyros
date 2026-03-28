@@ -1,7 +1,12 @@
 const path = require('node:path');
+const os = require('node:os');
 
 const projectRoot = path.join(__dirname, '..');
-const userDataRoot = process.env.ELECTRON_USER_DATA || null;
+const isTestRuntime = process.env.NODE_ENV === 'test' || !!process.env.VITEST;
+const testDataRoot = isTestRuntime
+  ? path.join(os.tmpdir(), 'ai-content-studio-test-data', `pid-${process.pid}`)
+  : null;
+const userDataRoot = process.env.ELECTRON_USER_DATA || testDataRoot || null;
 
 const DATA_DIR = userDataRoot ? path.join(userDataRoot, 'data') : path.join(__dirname, 'data');
 const UPLOADS_DIR = userDataRoot ? path.join(userDataRoot, 'uploads', 'generated') : path.join(projectRoot, 'uploads', 'generated');
