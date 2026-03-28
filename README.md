@@ -1,108 +1,184 @@
-# AI Content Generation Studio — Phase 1: Backend Core
+# AI Content Studio
 
-Local-only Node.js + Express backend with encrypted API key management and Gemini image generation.
+Local AI creator studio with an Express backend, React/Vite frontend, and Electron shell. It supports image generation, video generation, gallery/history management, character and reference workflows, prompt tools, batch generation, auto-planned content, Instagram clone/recreation flows, and style-library tooling.
 
-## Project Structure
+## Stack
 
-```
-ai-content-studio/
-├── .env.example
-├── .env
-├── .gitignore
-├── package.json
-├── README.md
-└── server/
-    ├── index.js                  # Express entry point
-    ├── middleware/
-    │   └── errorHandler.js       # Centralized error handling
-    ├── routes/
-    │   ├── keys.js               # API key CRUD routes
-    │   └── generate.js           # Image generation route
-    ├── services/
-    │   ├── apiKeyManager.js      # AES-256-GCM encrypted key storage
-    │   └── geminiService.js      # Gemini API wrapper
-    └── data/
-        └── keys.enc              # Encrypted key store (auto-created)
-```
+- Backend: Node.js, Express
+- Frontend: React 19, Vite
+- Desktop shell: Electron
+- AI providers: Gemini / Google AI Studio, WaveSpeed, Apify
 
-## Setup
+## What It Does
 
-### 1. Install dependencies
+- Generate images with Gemini models
+- Generate videos with WaveSpeed models and Veo 3.1 via Gemini / AI Studio keys
+- Manage encrypted API keys locally
+- Save generated assets in a local gallery
+- Build characters, references, outfits, and style atoms
+- Run batch jobs, auto plans, prompt enhancement, scene recreation, and clone workflows
+
+## Requirements
+
+- Node.js 18+
+- npm
+- Windows is the primary packaging target in this repo
+
+## Install
+
+Install backend/electron dependencies from the repo root:
 
 ```bash
-cd ai-content-studio
 npm install
 ```
 
-### 2. Configure environment
+Install frontend dependencies:
 
 ```bash
-cp .env.example .env
+cd client
+npm install
+cd ..
 ```
 
-Edit `.env` and set your `ENCRYPTION_SECRET` (minimum 32 characters). Generate one with:
+## Environment Setup
+
+Copy the example env file:
+
+```bash
+copy .env.example .env
+```
+
+Set `ENCRYPTION_SECRET` in `.env` to at least 32 characters. Example generator:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-### 3. Start the server
+Notes:
+
+- The app can also store runtime data under Electron user data when launched through Electron.
+- API keys are normally added through the UI, not hardcoded in `.env`.
+
+## Run The App
+
+### Option 1: Browser app
+
+Build the client, then start the server:
 
 ```bash
-npm run dev    # with auto-reload (Node 18+)
-# or
-npm start      # standard start
+npm run build:client
+npm start
 ```
 
-Server starts at `http://localhost:3001`.
+The app will be available at:
 
-## API Reference
-
-### Health Check
-
-```
-GET /api/health
+```text
+http://127.0.0.1:3001
 ```
 
-### Add API Key
+For backend-only auto-reload during server work:
 
 ```bash
-curl -X POST http://localhost:3001/api/keys \
-  -H "Content-Type: application/json" \
-  -d '{"name": "My Gemini Key", "apiKey": "AIza..."}'
+npm run dev
 ```
 
-### List Keys (masked)
+Important:
+
+- `npm run dev` only watches the Express server.
+- The frontend is served from `client/dist`, so after UI changes you should rebuild:
 
 ```bash
-curl http://localhost:3001/api/keys
+npm run build:client
 ```
 
-### Activate Key
+### Option 2: Electron desktop shell
+
+Build the client first, then launch Electron:
 
 ```bash
-curl -X PUT http://localhost:3001/api/keys/{id}/activate
+npm run build:client
+npx electron .
 ```
 
-### Remove Key
+Electron will start the backend automatically and open the app window.
+
+## Build Portable Windows EXE
 
 ```bash
-curl -X DELETE http://localhost:3001/api/keys/{id}
+npm run build:exe
 ```
 
-### Generate Image
+## Useful Scripts
 
 ```bash
-curl -X POST http://localhost:3001/api/generate \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "A cat sitting on a rainbow"}'
+npm start
+npm run dev
+npm run build:client
+npm run build:exe
+npm test
+npm run test:watch
+npm run lint
+npm run format
 ```
 
-Returns JSON with `data.image.base64Data` (base64-encoded image) and `data.image.mimeType`.
+## API Keys
 
-## Security Notes
+Add keys from the in-app API Keys page.
 
-- API keys are encrypted with AES-256-GCM + PBKDF2 key derivation
-- Decrypted keys are never logged or returned in HTTP responses
-- CORS restricted to localhost origins only
-- All inputs validated before processing
+Common setup:
+
+- Gemini / Google AI Studio key: required for Gemini image generation and Veo 3.1 video
+- WaveSpeed key: required for Kling / Grok video models and NSFW flows
+- Apify key: required for Instagram/profile scraping and clone flows
+- Instagram session/login: used by some Instagram automation features
+
+## Data Storage
+
+In normal server-only runs, project data is stored in repo-local folders such as:
+
+- `server/data`
+- `uploads/generated`
+- `characters`
+- `temp`
+
+In Electron runs, data is stored under Electron's user-data directory instead.
+
+Test runs are isolated from live app data.
+
+## Testing
+
+Run the test suite:
+
+```bash
+npm test
+```
+
+Current practical validation commands:
+
+```bash
+npm test
+npm run build:client
+```
+
+## Project Structure
+
+```text
+ai-content-studio/
+├─ client/                  # React + Vite frontend
+├─ electron/                # Electron main/preload
+├─ server/
+│  ├─ routes/               # API routes
+│  ├─ services/             # provider integrations and storage managers
+│  ├─ middleware/
+│  ├─ workers/
+│  └─ data/
+├─ uploads/generated/       # generated media in server-only runs
+├─ characters/
+└─ package.json
+```
+
+## Notes
+
+- This repo is no longer just a "Phase 1 backend core" project. The app is much larger and includes a full frontend plus desktop shell.
+- `gh` is not required to run the app.
+- If frontend changes do not appear in browser mode, rebuild `client/dist` with `npm run build:client`.
