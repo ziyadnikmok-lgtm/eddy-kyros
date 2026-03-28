@@ -50,3 +50,14 @@ router.get('/me', (req, res) => {
 });
 
 module.exports = router;
+
+// Alias: /api/auth/status → same as /me (used by frontend auth check)
+router.get('/status', (req, res) => {
+  const { verifyToken, COOKIE_NAME } = require('../auth');
+  const token = req.cookies?.[COOKIE_NAME];
+  const payload = token ? verifyToken(token) : null;
+  if (!payload) {
+    return res.json({ authenticated: false });
+  }
+  res.json({ authenticated: true, username: process.env.AUTH_USERNAME || 'admin' });
+});

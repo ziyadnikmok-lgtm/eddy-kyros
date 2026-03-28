@@ -114,10 +114,8 @@ app.use(express.json({ limit: cfg.JSON_BODY_LIMIT }));
 app.use(cookieParser());
 app.use(compressionMiddleware(cfg.COMPRESSION_MIN_BYTES));
 app.use('/api/auth', authRouter);
-if (process.env.NODE_ENV === 'production') {
-  app.use(authMiddleware);
-}
-// In development, auth is disabled — enable by setting NODE_ENV=production
+// Auth always enforced (removed NODE_ENV gate)
+app.use(authMiddleware);
 
 app.use((req, res, next) => {
   if (req.path === '/api/health') return next();

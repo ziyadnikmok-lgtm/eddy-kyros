@@ -191,7 +191,7 @@ function StatusDot({ active, label, sublabel, offLabel, onClick }) {
   );
 }
 
-function MainApp() {
+function MainApp({ onLogout }) {
   const { activeKey, setActiveKey, page, navigateTo } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [apifyConnected, setApifyConnected] = useState(false);
@@ -211,6 +211,13 @@ function MainApp() {
       });
     return () => { cancelled = true; };
   }, [setActiveKey]);
+
+  async function handleLogout() {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {}
+    onLogout();
+  }
 
   const PageComponent = PAGES[page] || GeneratePage;
   const currentNav = ALL_NAV_ITEMS.find((n) => n.id === page);
@@ -255,8 +262,15 @@ function MainApp() {
           ))}
         </nav>
 
-        <div className="border-t border-zinc-800/40 px-4 py-3">
+        <div className="border-t border-zinc-800/40 px-4 py-3 flex items-center justify-between">
           <div className="text-[10px] text-zinc-600 font-mono">Local Only</div>
+          <button
+            onClick={handleLogout}
+            className="text-[10px] text-zinc-600 hover:text-zinc-400 transition font-mono"
+            title="Sign out"
+          >
+            Sign out
+          </button>
         </div>
       </aside>
 
@@ -295,6 +309,40 @@ function MainApp() {
   );
 }
 
+// Auth states: 'loading' | 'authenticated' | 'unauthenticated'
 export default function App() {
-  return <MainApp />;
+  const [authState, setAuthState] = useState('loading');
+
+  useEffect(() => {
+    fetch('/api/auth/status', { credentials: 'include' })
+      .then((r) => r.json())
+      .then((data) => {
+        setAuthState(data.authenticated ? 'authenticated' : 'unauthenticated');
+      })
+      .catch(() => {
+        setAuthState('unauthenticated');
+      });
+  }, []);
+
+  if (authState === 'loading') {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+        <Spinner size={32} />
+      </div>
+    );
+  }
+
+  if (authState === 'unauthenticated') {
+    return (
+      <Suspense fallback={
+        <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+          <Spinner size={32} />
+        </div>
+      }>
+        <LoginPage onLogin={() => setAuthState('authenticated')} />
+      </Suspense>
+    );
+  }
+
+  return <MainApp onLogout={() => setAuthState('unauthenticated')} />;
 }
