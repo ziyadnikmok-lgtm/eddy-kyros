@@ -94,6 +94,34 @@ Important:
 npm run build:client
 ```
 
+### Option 1b: Frontend dev server
+
+For UI work with hot reload, run the backend and Vite separately:
+
+Terminal 1:
+
+```bash
+npm start
+```
+
+Terminal 2:
+
+```bash
+cd client
+npm run dev
+```
+
+Frontend dev server:
+
+```text
+http://localhost:5173
+```
+
+Notes:
+
+- Vite is configured to proxy `/api` requests to `http://localhost:3001`
+- This is the best mode for frontend iteration
+
 ### Option 2: Electron desktop shell
 
 Build the client first, then launch Electron:
