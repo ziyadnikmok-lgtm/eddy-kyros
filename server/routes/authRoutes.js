@@ -35,11 +35,17 @@ router.post('/register', async (req, res) => {
   const hash = await bcrypt.hash(password, 12);
   const id = uuidv4();
   const token = uuidv4().replace(/-/g, '');
-  db.prepare('INSERT INTO users (id, email, password_hash, name, verified, verification_token) VALUES (?,?,?,?,0,?)').run(id, email.toLowerCase(), hash, name, token);
+  // Auto-verify (no email server required); send email if SMTP is configured
+  const hasSmtp = !!(process.env.SMTP_USER && process.env.SMTP_PASS);
+  const verified = hasSmtp ? 0 : 1;
+  db.prepare('INSERT INTO users (id, email, password_hash, name, verified, verification_token) VALUES (?,?,?,?,?,?)').run(id, email.toLowerCase(), hash, name, verified, token);
   db.prepare('INSERT INTO subscriptions (id, user_id, plan, status) VALUES (?,?,?,?)').run(uuidv4(), id, 'free', 'active');
-  const appUrl = process.env.APP_URL || 'http://localhost:3001';
-  await sendMail(email, 'Verify your AI Content Studio account', `<p>Click <a href="${appUrl}/verify-email?token=${token}">here</a> to verify your email.</p>`);
-  res.status(201).json({ message: 'Registration successful. Check your email to verify.' });
+  if (hasSmtp) {
+    const appUrl = process.env.APP_URL || 'http://localhost:3001';
+    await sendMail(email, 'Verify your AI Content Studio account', `<p>Click <a href="${appUrl}/verify-email?token=${token}">here</a> to verify your email.</p>`);
+    return res.status(201).json({ message: 'Registration successful. Check your email to verify.' });
+  }
+  res.status(201).json({ message: 'Registration successful. You can now log in.' });
 });
 
 // GET /api/auth/verify/:token
@@ -64,7 +70,7 @@ router.post('/login', async (req, res) => {
   req.session.userId = user.id;
   req.session.isAdmin = !!user.is_admin;
   const sub = db.prepare('SELECT plan, status FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(user.id);
-  res.json({ id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan: sub?.plan || 'free' });
+  res.json({ success: true, id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan: sub?.plan || 'free' });
 });
 
 // POST /api/auth/logout
