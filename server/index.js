@@ -68,9 +68,14 @@ const videoRouter = require('./routes/video');
 const nsfwGenerateRouter = require('./routes/nsfwGenerate');
 const loraPresetsRouter = require('./routes/loraPresets');
 const backgroundsRouter = require('./routes/backgrounds');
-const authRouter = require('./routes/auth');
+const authRouter = require('./routes/authRoutes');
 const cookieParser = require('cookie-parser');
-const { authMiddleware } = require('./auth');
+const session = require('express-session');
+const BetterSqlite3Store = require('connect-better-sqlite3')(session);
+const { router: userKeysRouter } = require('./routes/userKeys');
+const billingRouter = require('./routes/billing');
+const adminRouter = require('./routes/admin');
+const { requireAuth } = require('./middleware/requireAuth');
 const imageStore = require('./services/imageStore');
 const batchGenerator = require('./services/batchGenerator');
 const log = require('./utils/logger');
@@ -112,10 +117,29 @@ app.use(
 
 app.use(express.json({ limit: cfg.JSON_BODY_LIMIT }));
 app.use(cookieParser());
+
+// Session middleware (SaaS)
+const DATA_DIR_SESS = process.env.DATA_DIR || require('path').join(__dirname, '..', 'data');
+require('fs').mkdirSync(DATA_DIR_SESS, { recursive: true });
+app.use(session({
+  store: new BetterSqlite3Store({ client: require('./db') }),
+  secret: process.env.SESSION_SECRET || require('crypto').randomBytes(32).toString('hex'),
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  },
+}));
 app.use(compressionMiddleware(cfg.COMPRESSION_MIN_BYTES));
 app.use('/api/auth', authRouter);
 // Auth always enforced (removed NODE_ENV gate)
-app.use(authMiddleware);
+app.use(requireAuth);
+app.use('/api/user/keys', userKeysRouter);
+app.use('/api/billing', billingRouter);
+app.use('/api/admin', adminRouter);
 
 app.use((req, res, next) => {
   if (req.path === '/api/health') return next();
