@@ -10,17 +10,17 @@ RUN pnpm run build
 # ---- Stage 2: Production image ----
 FROM node:20-alpine AS production
 
-# ffmpeg + native build deps (needed for better-sqlite3, sharp, etc.)
+# Build tools for native deps (better-sqlite3, sharp) + ffmpeg
 RUN apk add --no-cache ffmpeg python3 make g++
 
-# Skip Puppeteer chromium download (headless scraping not needed in prod)
+# Skip Puppeteer chromium download
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 WORKDIR /app
 
-# Install server production deps using npm (no pnpm needed for server)
+# Install server production deps (rebuilds native modules for Alpine)
 COPY package.json package-lock.json ./
-RUN npm install --omit=dev
+RUN npm install --omit=dev --build-from-source
 
 # Copy server source
 COPY server/ ./server/
