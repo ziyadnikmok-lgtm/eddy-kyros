@@ -1,64 +1,50 @@
-import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import React, { useState } from 'react';
 
-export default function RegisterPage() {
+const s = {
+  container: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0a0a0f' },
+  box: { background: '#111', border: '1px solid #222', borderRadius: '12px', padding: '2rem', width: '100%', maxWidth: '400px' },
+  title: { color: '#e0e0ff', fontSize: '24px', fontWeight: 700, marginBottom: '1.5rem', textAlign: 'center' },
+  input: { width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #333', background: '#1a1a2e', color: '#e0e0ff', fontSize: '14px', marginBottom: '1rem', boxSizing: 'border-box' },
+  btn: { width: '100%', padding: '0.75rem', background: '#6366f1', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: 600, cursor: 'pointer', marginBottom: '1rem' },
+  err: { color: '#f87171', fontSize: '14px', marginBottom: '1rem', textAlign: 'center' },
+  msg: { color: '#4ade80', fontSize: '14px', textAlign: 'center', padding: '1rem' },
+  link: { color: '#818cf8', cursor: 'pointer', background: 'none', border: 'none', fontSize: '14px', textDecoration: 'underline' },
+  row: { textAlign: 'center', color: '#a0a0c0', fontSize: '14px', marginTop: '0.5rem' }
+};
+
+export default function RegisterPage({ onNavigate }) {
   const [form, setForm] = useState({ name: '', email: '', password: '' });
+  const [msg, setMsg] = useState('');
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError(''); setLoading(true);
+    setLoading(true); setError(''); setMsg('');
     try {
-      const r = await fetch('/api/auth/register', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      });
-      const data = await r.json();
-      if (!r.ok) { setError(data.error || 'Registration failed'); return; }
-      setSuccess('Registration successful! Check your email to verify your account.');
-      setTimeout(() => navigate('/login'), 3000);
+      const res = await fetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(form) });
+      const data = await res.json();
+      if (!res.ok) setError(data.error || 'Registration failed');
+      else setMsg(data.message);
     } catch { setError('Network error'); }
-    finally { setLoading(false); }
+    setLoading(false);
   };
 
-  const s = (f) => (e) => setForm(p => ({ ...p, [f]: e.target.value }));
-
   return (
-    <div style={styles.container}>
-      <div style={styles.card}>
-        <h1 style={styles.title}>Create Account</h1>
-        <p style={styles.subtitle}>AI Content Studio</p>
-        {error && <div style={styles.error}>{error}</div>}
-        {success && <div style={styles.success}>{success}</div>}
-        <form onSubmit={handleSubmit}>
-          <label style={styles.label}>Name</label>
-          <input style={styles.input} value={form.name} onChange={s('name')} required />
-          <label style={styles.label}>Email</label>
-          <input style={styles.input} type="email" value={form.email} onChange={s('email')} required />
-          <label style={styles.label}>Password</label>
-          <input style={styles.input} type="password" value={form.password} onChange={s('password')} minLength={8} required />
-          <button style={styles.button} type="submit" disabled={loading}>{loading ? 'Creating...' : 'Create Account'}</button>
-        </form>
-        <p style={{ textAlign: 'center', marginTop: '16px', color: '#a0a0c0' }}>
-          Already have an account? <Link to="/login" style={styles.link}>Sign in</Link>
-        </p>
+    <div style={s.container}>
+      <div style={s.box}>
+        <h2 style={s.title}>Create Account</h2>
+        {msg ? <div style={s.msg}>{msg}</div> : (
+          <form onSubmit={handleSubmit}>
+            {error && <div style={s.err}>{error}</div>}
+            <input type="text" placeholder="Name" value={form.name} onChange={e => setForm({...form, name: e.target.value})} required style={s.input} />
+            <input type="email" placeholder="Email" value={form.email} onChange={e => setForm({...form, email: e.target.value})} required style={s.input} />
+            <input type="password" placeholder="Password" value={form.password} onChange={e => setForm({...form, password: e.target.value})} required style={s.input} />
+            <button type="submit" style={s.btn} disabled={loading}>{loading ? 'Creating...' : 'Create Account'}</button>
+          </form>
+        )}
+        <div style={s.row}>Already have an account? <button onClick={() => onNavigate && onNavigate('login')} style={s.link}>Sign in</button></div>
       </div>
     </div>
   );
 }
-
-const styles = {
-  container: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0f0f1a' },
-  card: { background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: '12px', padding: '40px', width: '100%', maxWidth: '400px' },
-  title: { color: '#e0e0ff', marginBottom: '4px', fontSize: '24px', fontWeight: 700, textAlign: 'center' },
-  subtitle: { color: '#6b6b8a', textAlign: 'center', marginBottom: '28px', fontSize: '14px' },
-  error: { background: '#3b1f1f', color: '#f87171', padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '14px' },
-  success: { background: '#1f3b2a', color: '#4ade80', padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '14px' },
-  label: { display: 'block', color: '#a0a0c0', fontSize: '13px', marginBottom: '6px', fontWeight: 500 },
-  input: { width: '100%', padding: '10px 12px', background: '#0f0f1a', border: '1px solid #3d3d5e', borderRadius: '8px', color: '#e0e0ff', fontSize: '14px', marginBottom: '16px', boxSizing: 'border-box' },
-  button: { width: '100%', padding: '12px', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: 600, cursor: 'pointer' },
-  link: { color: '#818cf8', textDecoration: 'none' },
-};

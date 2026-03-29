@@ -1,64 +1,56 @@
-import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import React, { useState } from 'react';
 
-export default function LoginPage() {
+const styles = {
+  container: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0a0a0f' },
+  box: { background: '#111', border: '1px solid #222', borderRadius: '12px', padding: '2rem', width: '100%', maxWidth: '400px' },
+  title: { color: '#e0e0ff', fontSize: '24px', fontWeight: 700, marginBottom: '1.5rem', textAlign: 'center' },
+  input: { width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #333', background: '#1a1a2e', color: '#e0e0ff', fontSize: '14px', marginBottom: '1rem', boxSizing: 'border-box' },
+  button: { width: '100%', padding: '0.75rem', background: '#6366f1', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: 600, cursor: 'pointer', marginBottom: '1rem' },
+  error: { color: '#f87171', fontSize: '14px', marginBottom: '1rem', textAlign: 'center' },
+  link: { color: '#818cf8', cursor: 'pointer', background: 'none', border: 'none', fontSize: '14px', textDecoration: 'underline' },
+  linkRow: { textAlign: 'center', color: '#a0a0c0', fontSize: '14px', marginTop: '0.5rem' }
+};
+
+export default function LoginPage({ onLogin, onNavigate }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
-  const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError(''); setLoading(true);
+    setLoading(true); setError('');
     try {
-      const r = await fetch('/api/auth/login', {
-        method: 'POST', credentials: 'include',
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        credentials: 'include',
+        body: JSON.stringify({ email, password })
       });
-      const data = await r.json();
-      if (!r.ok) { setError(data.error || 'Login failed'); return; }
-      login(data);
-      navigate('/');
+      const data = await res.json();
+      if (!res.ok) setError(data.error || 'Login failed');
+      else if (onLogin) onLogin(data.user);
     } catch { setError('Network error'); }
-    finally { setLoading(false); }
+    setLoading(false);
   };
 
   return (
     <div style={styles.container}>
-      <div style={styles.card}>
-        <h1 style={styles.title}>Sign In</h1>
-        <p style={styles.subtitle}>AI Content Studio</p>
-        {error && <div style={styles.error}>{error}</div>}
+      <div style={styles.box}>
+        <h2 style={styles.title}>AI Content Studio</h2>
         <form onSubmit={handleSubmit}>
-          <label style={styles.label}>Email</label>
-          <input style={styles.input} type="email" value={email} onChange={e => setEmail(e.target.value)} required />
-          <label style={styles.label}>Password</label>
-          <input style={styles.input} type="password" value={password} onChange={e => setPassword(e.target.value)} required />
-          <div style={{ textAlign: 'right', marginBottom: '16px' }}>
-            <Link to="/forgot-password" style={styles.link}>Forgot password?</Link>
-          </div>
-          <button style={styles.button} type="submit" disabled={loading}>{loading ? 'Signing in...' : 'Sign In'}</button>
+          {error && <div style={styles.error}>{error}</div>}
+          <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required style={styles.input} />
+          <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={styles.input} />
+          <button type="submit" style={styles.button} disabled={loading}>{loading ? 'Signing in...' : 'Sign In'}</button>
         </form>
-        <p style={{ textAlign: 'center', marginTop: '16px', color: '#a0a0c0' }}>
-          No account? <Link to="/register" style={styles.link}>Register</Link>
-        </p>
+        <div style={styles.linkRow}>
+          <button onClick={() => onNavigate && onNavigate('forgot-password')} style={styles.link}>Forgot password?</button>
+        </div>
+        <div style={styles.linkRow}>
+          No account? <button onClick={() => onNavigate && onNavigate('register')} style={styles.link}>Register</button>
+        </div>
       </div>
     </div>
   );
 }
-
-const styles = {
-  container: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0f0f1a' },
-  card: { background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: '12px', padding: '40px', width: '100%', maxWidth: '400px' },
-  title: { color: '#e0e0ff', marginBottom: '4px', fontSize: '24px', fontWeight: 700, textAlign: 'center' },
-  subtitle: { color: '#6b6b8a', textAlign: 'center', marginBottom: '28px', fontSize: '14px' },
-  error: { background: '#3b1f1f', color: '#f87171', padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '14px' },
-  label: { display: 'block', color: '#a0a0c0', fontSize: '13px', marginBottom: '6px', fontWeight: 500 },
-  input: { width: '100%', padding: '10px 12px', background: '#0f0f1a', border: '1px solid #3d3d5e', borderRadius: '8px', color: '#e0e0ff', fontSize: '14px', marginBottom: '16px', boxSizing: 'border-box' },
-  button: { width: '100%', padding: '12px', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: 600, cursor: 'pointer' },
-  link: { color: '#818cf8', textDecoration: 'none' },
-};

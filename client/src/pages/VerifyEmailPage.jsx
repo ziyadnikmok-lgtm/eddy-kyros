@@ -1,26 +1,35 @@
-import { useEffect, useState } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
 
-export default function VerifyEmailPage() {
-  const [params] = useSearchParams();
-  const [status, setStatus] = useState('verifying');
+const s = {
+  container: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0a0a0f' },
+  box: { background: '#111', border: '1px solid #222', borderRadius: '12px', padding: '2rem', width: '100%', maxWidth: '400px', textAlign: 'center' },
+  title: { color: '#e0e0ff', fontSize: '24px', fontWeight: 700, marginBottom: '1rem' },
+  ok: { color: '#4ade80', fontSize: '16px', marginBottom: '1rem' },
+  err: { color: '#f87171', fontSize: '16px', marginBottom: '1rem' },
+  link: { color: '#818cf8', cursor: 'pointer', background: 'none', border: 'none', fontSize: '14px', textDecoration: 'underline' }
+};
+
+export default function VerifyEmailPage({ onNavigate }) {
+  const [status, setStatus] = useState('loading');
   const [msg, setMsg] = useState('');
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
     const token = params.get('token');
-    if (!token) { setStatus('error'); setMsg('No verification token provided.'); return; }
-    fetch(`/api/auth/verify/${token}`)
-      .then(r => r.json())
-      .then(d => { if (d.message) { setStatus('success'); setMsg(d.message); } else { setStatus('error'); setMsg(d.error || 'Verification failed'); } })
-      .catch(() => { setStatus('error'); setMsg('Network error'); });
+    if (!token) { setStatus('error'); setMsg('No token provided.'); return; }
+    fetch(`/api/auth/verify/${token}`, { redirect: 'manual' })
+      .then(r => { if (r.ok || r.status === 302) { setStatus('success'); setMsg('Email verified! You can now log in.'); } else { setStatus('error'); setMsg('Invalid or expired token.'); } })
+      .catch(() => { setStatus('error'); setMsg('Network error.'); });
   }, []);
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0f0f1a' }}>
-      <div style={{ background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: '12px', padding: '40px', maxWidth: '400px', textAlign: 'center' }}>
-        {status === 'verifying' && <p style={{ color: '#a0a0c0' }}>Verifying your email...</p>}
-        {status === 'success' && <><p style={{ color: '#4ade80', fontSize: '18px' }}>✓ {msg}</p><Link to="/login" style={{ color: '#818cf8' }}>Go to login</Link></>}
-        {status === 'error' && <><p style={{ color: '#f87171', fontSize: '16px' }}>{msg}</p><Link to="/register" style={{ color: '#818cf8' }}>Back to register</Link></>}
+    <div style={s.container}>
+      <div style={s.box}>
+        <h2 style={s.title}>Email Verification</h2>
+        {status === 'loading' && <div style={{ color: '#a0a0c0' }}>Verifying...</div>}
+        {status === 'success' && <div style={s.ok}>{msg}</div>}
+        {status === 'error' && <div style={s.err}>{msg}</div>}
+        <button onClick={() => onNavigate && onNavigate('login')} style={s.link}>Go to Login</button>
       </div>
     </div>
   );
