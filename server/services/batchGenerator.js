@@ -21,6 +21,8 @@ const sceneModeEngine = require('./sceneModeEngine');
 
 const { parseReferenceImagePayload, parseCustomReferenceImages: _parseCustomRefImages, ALLOWED_IMAGE_MIME_TYPES, MAX_REFERENCE_BYTES } = require('../utils/referenceImageParser');
 const cfg = require('../config');
+const { getBatchStore } = require('../paths');
+const { getUserId } = require('../userContext');
 
 const _contentPresets = (() => {
   try {
@@ -68,17 +70,25 @@ const globalQueue = new TaskQueue(MAX_CONCURRENCY);
 
 const jobs = new Map();
 
-const JOB_STORE_PATH = require('../paths').BATCH_STORE;
+// JOB_STORE_PATH is now resolved dynamically per-user via getBatchStore()
 
-function _loadPersistedJobs() {
+const _loadedUsers = new Set();
+
+function _loadPersistedJobsForUser() {
+  const userId = getUserId();
+  const storeKey = userId || '__anon__';
+  if (_loadedUsers.has(storeKey)) return;
+  _loadedUsers.add(storeKey);
   try {
-    if (!fs.existsSync(JOB_STORE_PATH)) return;
-    const raw = fs.readFileSync(JOB_STORE_PATH, 'utf8');
+    const storePath = getBatchStore();
+    if (!fs.existsSync(storePath)) return;
+    const raw = fs.readFileSync(storePath, 'utf8');
     const entries = JSON.parse(raw);
     if (!Array.isArray(entries)) return;
     const now = Date.now();
     for (const entry of entries) {
       if (entry._completedAt && now - entry._completedAt <= JOB_TTL_MS) {
+        if (!entry._userId) entry._userId = storeKey;
         jobs.set(entry.jobId, entry);
       }
     }
@@ -88,18 +98,21 @@ function _loadPersistedJobs() {
   }
 }
 
-let _persistPending = false;
+const _persistPendingUsers = new Set();
 function _persistJobs() {
-  if (_persistPending) return;
-  _persistPending = true;
+  const userId = getUserId() || '__anon__';
+  if (_persistPendingUsers.has(userId)) return;
+  _persistPendingUsers.add(userId);
   queueMicrotask(() => {
-    _persistPending = false;
+    _persistPendingUsers.delete(userId);
     try {
-      const dir = path.dirname(JOB_STORE_PATH);
+      const storePath = getBatchStore();
+      const dir = path.dirname(storePath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
       const entries = [];
       for (const job of jobs.values()) {
+        if (job._userId !== userId) continue;
         if (job.status === 'running') continue;
         const lite = { ...job };
         if (Array.isArray(lite.results)) {
@@ -112,15 +125,13 @@ function _persistJobs() {
         delete lite._sharedBaseImage;
         entries.push(lite);
       }
-      atomicWriteJSON(JOB_STORE_PATH, entries, 0);
+      atomicWriteJSON(storePath, entries, 0);
     } catch (err) {
       const log = require('../utils/logger');
       log.warn('batch_persist_failed', { message: err.message });
     }
   });
 }
-
-_loadPersistedJobs();
 
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
@@ -144,10 +155,12 @@ class BatchGenerator extends EventEmitter {
 
   startBatch(mode, config, generationOptions = {}) {
     this._validateMode(mode);
+    const userId = getUserId() || '__anon__';
+    _loadPersistedJobsForUser();
 
     let runningCount = 0;
     for (const job of jobs.values()) {
-      if (job.status === 'running') runningCount++;
+      if (job.status === 'running' && job._userId === userId) runningCount++;
     }
     if (runningCount >= MAX_RUNNING_JOBS) {
       throw new AppError(
@@ -215,6 +228,7 @@ class BatchGenerator extends EventEmitter {
     const jobId = crypto.randomUUID();
     const job = {
       jobId,
+      _userId: userId,
       mode,
       status: 'running',
       total: enrichedTasks.length,
@@ -252,8 +266,10 @@ class BatchGenerator extends EventEmitter {
     if (!jobId || typeof jobId !== 'string') {
       throw new AppError('Job ID is required', 400, 'VALIDATION_ERROR');
     }
+    _loadPersistedJobsForUser();
+    const userId = getUserId() || '__anon__';
     const job = jobs.get(jobId);
-    if (!job) {
+    if (!job || job._userId !== userId) {
       throw new AppError('Job not found', 404, 'JOB_NOT_FOUND');
     }
     return this._toSafeJob(job);
@@ -263,8 +279,9 @@ class BatchGenerator extends EventEmitter {
     if (!jobId || typeof jobId !== 'string') {
       throw new AppError('Job ID is required', 400, 'VALIDATION_ERROR');
     }
+    const userId = getUserId() || '__anon__';
     const job = jobs.get(jobId);
-    if (!job) {
+    if (!job || job._userId !== userId) {
       throw new AppError('Job not found', 404, 'JOB_NOT_FOUND');
     }
     if (job.status !== 'running') {
@@ -1176,8 +1193,11 @@ class BatchGenerator extends EventEmitter {
   }
 
   listJobs(statusFilter) {
+    _loadPersistedJobsForUser();
+    const userId = getUserId() || '__anon__';
     const result = [];
     for (const job of jobs.values()) {
+      if (job._userId !== userId) continue;
       if (statusFilter && job.status !== statusFilter) continue;
       result.push(this._toSafeJob(job));
     }
@@ -1185,17 +1205,17 @@ class BatchGenerator extends EventEmitter {
   }
 
   jobStats() {
-    let running = 0;
-    let completed = 0;
-    let failed = 0;
-    let cancelled = 0;
+    const userId = getUserId() || null;
+    let running = 0, completed = 0, failed = 0, cancelled = 0, total = 0;
     for (const job of jobs.values()) {
+      if (userId && job._userId !== userId) continue;
+      total++;
       if (job.status === 'running') running++;
       else if (job.status === 'completed') completed++;
       else if (job.status === 'failed') failed++;
       else if (job.status === 'cancelled') cancelled++;
     }
-    return { total: jobs.size, running, completed, failed, cancelled };
+    return { total, running, completed, failed, cancelled };
   }
 
   _toSafeJob(job, includeImages = false) {

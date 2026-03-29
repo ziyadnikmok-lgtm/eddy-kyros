@@ -5,8 +5,8 @@ const apiKeyManager = require('./apiKeyManager');
 
 const LOGIN_TIMEOUT_MS = 90_000;
 const LOGIN_URL = 'https://www.instagram.com/accounts/login/';
-const { DATA_DIR } = require('../paths');
-const DEBUG_DIR = path.join(DATA_DIR, 'ig-debug');
+const { getDataDir } = require('../paths');
+function _debugDir() { return path.join(getDataDir(), 'ig-debug'); }
 
 function generateTOTP(base32Secret) {
   const { TOTP } = require('otpauth');
@@ -35,23 +35,23 @@ const DEBUG_MAX_FILES = 20;
 
 function cleanOldDebugFiles() {
   try {
-    if (!fs.existsSync(DEBUG_DIR)) return;
-    const files = fs.readdirSync(DEBUG_DIR)
-      .map((f) => ({ name: f, mtime: fs.statSync(path.join(DEBUG_DIR, f)).mtimeMs }))
+    if (!fs.existsSync(_debugDir())) return;
+    const files = fs.readdirSync(_debugDir())
+      .map((f) => ({ name: f, mtime: fs.statSync(path.join(_debugDir(), f)).mtimeMs }))
       .sort((a, b) => b.mtime - a.mtime);
     for (const file of files.slice(DEBUG_MAX_FILES)) {
-      try { fs.unlinkSync(path.join(DEBUG_DIR, file.name)); } catch {}
+      try { fs.unlinkSync(path.join(_debugDir(), file.name)); } catch {}
     }
   } catch {}
 }
 
 async function debugSnapshot(page, label) {
   try {
-    if (!fs.existsSync(DEBUG_DIR)) fs.mkdirSync(DEBUG_DIR, { recursive: true });
+    if (!fs.existsSync(_debugDir())) fs.mkdirSync(_debugDir(), { recursive: true });
     const ts = Date.now();
-    await page.screenshot({ path: path.join(DEBUG_DIR, `${label}-${ts}.png`), fullPage: true });
+    await page.screenshot({ path: path.join(_debugDir(), `${label}-${ts}.png`), fullPage: true });
     const html = await page.content();
-    fs.writeFileSync(path.join(DEBUG_DIR, `${label}-${ts}.html`), html, 'utf8');
+    fs.writeFileSync(path.join(_debugDir(), `${label}-${ts}.html`), html, 'utf8');
     console.log(`[ig-auto-login] debug snapshot saved: ${label}-${ts}`);
     cleanOldDebugFiles();
   } catch (e) {

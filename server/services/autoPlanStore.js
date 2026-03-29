@@ -4,32 +4,39 @@ const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const { DATA_DIR } = require('../paths');
-const DATA_FILE = path.join(DATA_DIR, 'auto-plans.json');
+const { getDataDir } = require('../paths');
+
 const MAX_PLANS = 50;
 
 class AutoPlanStore {
+  get _dataFile() { return path.join(getDataDir(), 'auto-plans.json'); }
+
   constructor() {
-    this._ensureDataDir();
-    this._store = this._load();
+    // no eager load — all reads happen per-request
   }
 
   list() {
-    return this._store
+    this._ensureDataDir();
+    return this._load()
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
       .map((p) => this._toSummary(p));
   }
 
   get(id) {
-    const plan = this._store.find((p) => p.id === id);
+    this._ensureDataDir();
+    const store = this._load();
+    const plan = store.find((p) => p.id === id);
     if (!plan) throw new AppError('Plan not found', 404, 'NOT_FOUND');
     return plan;
   }
 
   save(data) {
-    if (this._store.length >= MAX_PLANS) {
-      this._store.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-      this._store.shift();
+    this._ensureDataDir();
+    const store = this._load();
+
+    if (store.length >= MAX_PLANS) {
+      store.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      store.shift();
     }
 
     const plan = {
@@ -47,13 +54,15 @@ class AutoPlanStore {
       createdAt: new Date().toISOString(),
     };
 
-    this._store.push(plan);
-    this._persist();
+    store.push(plan);
+    this._persist(store);
     return plan;
   }
 
   update(id, data) {
-    const plan = this._store.find((p) => p.id === id);
+    this._ensureDataDir();
+    const store = this._load();
+    const plan = store.find((p) => p.id === id);
     if (!plan) throw new AppError('Plan not found', 404, 'NOT_FOUND');
 
     if (data.name !== undefined) plan.name = String(data.name).trim().slice(0, 100);
@@ -61,12 +70,14 @@ class AutoPlanStore {
     if (data.days !== undefined) plan.days = data.days;
     if (data.status !== undefined) plan.status = data.status;
 
-    this._persist();
+    this._persist(store);
     return plan;
   }
 
   markDayExecuted(id, dayNumber, jobIds) {
-    const plan = this._store.find((p) => p.id === id);
+    this._ensureDataDir();
+    const store = this._load();
+    const plan = store.find((p) => p.id === id);
     if (!plan) throw new AppError('Plan not found', 404, 'NOT_FOUND');
 
     if (!plan.executedDays) plan.executedDays = [];
@@ -80,15 +91,17 @@ class AutoPlanStore {
     const executedCount = new Set(plan.executedDays.map((d) => d.day)).size;
     plan.status = executedCount >= totalDays ? 'completed' : 'partial';
 
-    this._persist();
+    this._persist(store);
     return plan;
   }
 
   remove(id) {
-    const idx = this._store.findIndex((p) => p.id === id);
+    this._ensureDataDir();
+    const store = this._load();
+    const idx = store.findIndex((p) => p.id === id);
     if (idx === -1) throw new AppError('Plan not found', 404, 'NOT_FOUND');
-    this._store.splice(idx, 1);
-    this._persist();
+    store.splice(idx, 1);
+    this._persist(store);
     return { removed: true };
   }
 
@@ -108,22 +121,22 @@ class AutoPlanStore {
   }
 
   _ensureDataDir() {
-    const dir = path.dirname(DATA_FILE);
+    const dir = path.dirname(this._dataFile);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   }
 
   _load() {
     try {
-      if (fs.existsSync(DATA_FILE)) {
-        const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+      if (fs.existsSync(this._dataFile)) {
+        const parsed = JSON.parse(fs.readFileSync(this._dataFile, 'utf8'));
         if (Array.isArray(parsed)) return parsed;
       }
     } catch { }
     return [];
   }
 
-  _persist() {
-    atomicWriteJSON(DATA_FILE, this._store);
+  _persist(data) {
+    atomicWriteJSON(this._dataFile, data);
   }
 }
 

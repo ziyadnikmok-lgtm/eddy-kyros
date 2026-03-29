@@ -4,18 +4,20 @@ const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const { DATA_DIR } = require('../paths');
-const DATA_FILE = path.join(DATA_DIR, 'templates.json');
+const { getDataDir } = require('../paths');
+
 const VALID_PAGES = ['generate', 'batch'];
 
 class TemplateManager {
+  get _dataFile() { return path.join(getDataDir(), 'templates.json'); }
+
   constructor() {
-    this._ensureDataDir();
-    this._store = this._load();
+    // no eager load — all reads happen per-request
   }
 
   list(page) {
-    let result = this._store;
+    this._ensureDataDir();
+    let result = this._load();
     if (page && VALID_PAGES.includes(page)) {
       result = result.filter((t) => t.page === page);
     }
@@ -25,13 +27,17 @@ class TemplateManager {
   }
 
   get(id) {
-    const t = this._store.find((t) => t.id === id);
+    this._ensureDataDir();
+    const store = this._load();
+    const t = store.find((t) => t.id === id);
     if (!t) throw new AppError('Template not found', 404, 'NOT_FOUND');
     return this._toSafe(t);
   }
 
   create(data) {
     this._validate(data);
+    this._ensureDataDir();
+    const store = this._load();
 
     const template = {
       id: crypto.randomUUID(),
@@ -41,13 +47,15 @@ class TemplateManager {
       createdAt: new Date().toISOString(),
     };
 
-    this._store.push(template);
-    this._persist();
+    store.push(template);
+    this._persist(store);
     return this._toSafe(template);
   }
 
   update(id, data) {
-    const t = this._store.find((t) => t.id === id);
+    this._ensureDataDir();
+    const store = this._load();
+    const t = store.find((t) => t.id === id);
     if (!t) throw new AppError('Template not found', 404, 'NOT_FOUND');
 
     if (data.name !== undefined) {
@@ -66,15 +74,17 @@ class TemplateManager {
       t.config = data.config;
     }
 
-    this._persist();
+    this._persist(store);
     return this._toSafe(t);
   }
 
   remove(id) {
-    const idx = this._store.findIndex((t) => t.id === id);
+    this._ensureDataDir();
+    const store = this._load();
+    const idx = store.findIndex((t) => t.id === id);
     if (idx === -1) throw new AppError('Template not found', 404, 'NOT_FOUND');
-    this._store.splice(idx, 1);
-    this._persist();
+    store.splice(idx, 1);
+    this._persist(store);
     return { removed: true };
   }
 
@@ -107,14 +117,14 @@ class TemplateManager {
   }
 
   _ensureDataDir() {
-    const dir = path.dirname(DATA_FILE);
+    const dir = path.dirname(this._dataFile);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   }
 
   _load() {
     try {
-      if (fs.existsSync(DATA_FILE)) {
-        const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+      if (fs.existsSync(this._dataFile)) {
+        const parsed = JSON.parse(fs.readFileSync(this._dataFile, 'utf8'));
         if (Array.isArray(parsed)) return parsed;
       }
     } catch (err) {
@@ -123,8 +133,8 @@ class TemplateManager {
     return [];
   }
 
-  _persist() {
-    atomicWriteJSON(DATA_FILE, this._store);
+  _persist(data) {
+    atomicWriteJSON(this._dataFile, data);
   }
 }
 

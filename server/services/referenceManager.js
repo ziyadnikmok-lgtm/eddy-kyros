@@ -4,7 +4,7 @@ const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const { CHARACTERS_DIR } = require('../paths');
+const { getCharactersDir } = require('../paths');
 const CHARACTER_JSON = 'character.json';
 const PRIMARY_IMAGE = 'primary.png';
 const REFERENCES_DIR = 'references';
@@ -54,7 +54,7 @@ class ReferenceManager {
 
     this._validateImage(primaryImage, 'Primary image');
 
-    const charDir = path.join(CHARACTERS_DIR, sanitizedName);
+    const charDir = path.join(getCharactersDir(), sanitizedName);
     if (fs.existsSync(charDir)) {
       throw new AppError(`Character "${sanitizedName}" already exists`, 409, 'DUPLICATE_CHARACTER');
     }
@@ -116,12 +116,12 @@ class ReferenceManager {
   listCharacters() {
     this._ensureCharactersDir();
 
-    const entries = fs.readdirSync(CHARACTERS_DIR, { withFileTypes: true });
+    const entries = fs.readdirSync(getCharactersDir(), { withFileTypes: true });
     const characters = [];
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const jsonPath = path.join(CHARACTERS_DIR, entry.name, CHARACTER_JSON);
+      const jsonPath = path.join(getCharactersDir(), entry.name, CHARACTER_JSON);
       if (!fs.existsSync(jsonPath)) continue;
 
       try {
@@ -333,8 +333,8 @@ class ReferenceManager {
   }
 
   _ensureCharactersDir() {
-    if (!fs.existsSync(CHARACTERS_DIR)) {
-      fs.mkdirSync(CHARACTERS_DIR, { recursive: true });
+    if (!fs.existsSync(getCharactersDir())) {
+      fs.mkdirSync(getCharactersDir(), { recursive: true });
     }
   }
 
@@ -348,11 +348,11 @@ class ReferenceManager {
     }
 
     this._ensureCharactersDir();
-    const entries = fs.readdirSync(CHARACTERS_DIR, { withFileTypes: true });
+    const entries = fs.readdirSync(getCharactersDir(), { withFileTypes: true });
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const charDir = path.join(CHARACTERS_DIR, entry.name);
+      const charDir = path.join(getCharactersDir(), entry.name);
       const jsonPath = path.join(charDir, CHARACTER_JSON);
       if (!fs.existsSync(jsonPath)) continue;
 

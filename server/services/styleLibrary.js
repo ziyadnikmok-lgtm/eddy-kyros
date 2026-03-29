@@ -5,9 +5,7 @@ const { AppError } = require('../middleware/errorHandler');
 const log = require('../utils/logger');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const { DATA_DIR } = require('../paths');
-const DATA_FILE = path.join(DATA_DIR, 'styleLibrary.json');
-const PROFILES_FILE = path.join(DATA_DIR, 'analyzedProfiles.json');
+const { getDataDir } = require('../paths');
 
 const VALID_CATEGORIES = ['pose', 'expression', 'outfit', 'scene', 'lighting', 'camera', 'vibe', 'accessories', 'format'];
 const VALID_SOURCE_TYPES = ['profile_analysis', 'post_clone', 'manual', 'json_import', 'backfill'];
@@ -27,37 +25,41 @@ const IDENTITY_PATTERNS = [
 ];
 
 class StyleLibraryService {
+  get _dataFile() { return path.join(getDataDir(), 'styleLibrary.json'); }
+  get _profilesFile() { return path.join(getDataDir(), 'analyzedProfiles.json'); }
+
   constructor() {
-    this._ensureDataFile(DATA_FILE);
-    this._ensureDataFile(PROFILES_FILE);
-    this._store = this._loadFile(DATA_FILE);
-    this._profiles = this._loadFile(PROFILES_FILE);
-    this._rebuildNormIndex();
+    // no eager load — all reads happen per-request
   }
 
-  _rebuildNormIndex() {
-    this._normIndex = new Map();
-    for (const a of this._store) {
-      this._addToNormIndex(a.category, a.text);
+  _buildNormIndex(store) {
+    const normIndex = new Map();
+    for (const a of store) {
+      const key = a.text.trim().toLowerCase().replace(/\s+/g, ' ');
+      if (!normIndex.has(a.category)) normIndex.set(a.category, new Set());
+      normIndex.get(a.category).add(key);
     }
+    return normIndex;
   }
 
-  _addToNormIndex(category, text) {
+  _addToNormIndex(normIndex, category, text) {
     const key = text.trim().toLowerCase().replace(/\s+/g, ' ');
-    if (!this._normIndex.has(category)) this._normIndex.set(category, new Set());
-    this._normIndex.get(category).add(key);
+    if (!normIndex.has(category)) normIndex.set(category, new Set());
+    normIndex.get(category).add(key);
   }
 
-  isDuplicate(category, text) {
+  isDuplicate(category, text, store) {
+    const normalizedStore = store || this._loadStore();
+    const normIndex = this._buildNormIndex(normalizedStore);
     const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ');
     if (normalized.length < 5) return true;
 
-    if (this._normIndex.get(category)?.has(normalized)) return true;
+    if (normIndex.get(category)?.has(normalized)) return true;
 
     const wordsNew = new Set(normalized.split(/\s+/));
     if (wordsNew.size === 0) return true;
 
-    for (const a of this._store) {
+    for (const a of normalizedStore) {
       if (a.category !== category) continue;
       const wordsExisting = new Set(a.text.trim().toLowerCase().split(/\s+/));
       // Inline Jaccard — avoid allocating intermediate Sets
@@ -105,7 +107,10 @@ class StyleLibraryService {
       return null;
     }
 
-    if (!skipDuplicateCheck && this.isDuplicate(data.category, text)) {
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+
+    if (!skipDuplicateCheck && this.isDuplicate(data.category, text, store)) {
       log.info('style_library_duplicate_skip', { text: text.substring(0, 60) });
       return null;
     }
@@ -121,9 +126,8 @@ class StyleLibraryService {
       favorite: false,
     };
 
-    this._store.push(atom);
-    this._addToNormIndex(atom.category, atom.text);
-    this._persistStore();
+    store.push(atom);
+    this._persistStore(store);
     return { ...atom };
   }
 
@@ -131,6 +135,10 @@ class StyleLibraryService {
     if (!Array.isArray(atoms) || atoms.length === 0) {
       throw new AppError('atoms must be a non-empty array', 400, 'VALIDATION_ERROR');
     }
+
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+    const normIndex = this._buildNormIndex(store);
 
     const created = [];
     let skippedQuality = 0;
@@ -143,7 +151,7 @@ class StyleLibraryService {
       const quality = this.passesQualityGate(data.category, text);
       if (!quality.pass) { skippedQuality++; continue; }
 
-      if (!skipDuplicateCheck && this.isDuplicate(data.category, text)) { skippedDuplicate++; continue; }
+      if (!skipDuplicateCheck && this._isDuplicateInStore(store, normIndex, data.category, text)) { skippedDuplicate++; continue; }
 
       const atom = {
         id: crypto.randomUUID(),
@@ -155,8 +163,8 @@ class StyleLibraryService {
         usageCount: 0,
         favorite: false,
       };
-      this._store.push(atom);
-      this._addToNormIndex(atom.category, atom.text);
+      store.push(atom);
+      this._addToNormIndex(normIndex, atom.category, atom.text);
       created.push({ ...atom });
     }
 
@@ -164,19 +172,22 @@ class StyleLibraryService {
       log.info(`[style-library] createBulk: ${created.length} created, ${skippedQuality} failed quality, ${skippedDuplicate} duplicates skipped`);
     }
 
-    if (created.length > 0) this._persistStore();
+    if (created.length > 0) this._persistStore(store);
     return created;
   }
 
   getAtom(id) {
     this._validateId(id);
-    const atom = this._store.find(a => a.id === id);
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+    const atom = store.find(a => a.id === id);
     if (!atom) throw new AppError('Atom not found', 404, 'ATOM_NOT_FOUND');
     return { ...atom };
   }
 
   listAtoms(filters = {}) {
-    let results = this._store;
+    this._ensureDataFile(this._dataFile);
+    let results = this._loadStore();
 
     if (filters.category) {
       results = results.filter(a => a.category === filters.category);
@@ -220,10 +231,12 @@ class StyleLibraryService {
 
   updateAtom(id, updates) {
     this._validateId(id);
-    const idx = this._store.findIndex(a => a.id === id);
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+    const idx = store.findIndex(a => a.id === id);
     if (idx === -1) throw new AppError('Atom not found', 404, 'ATOM_NOT_FOUND');
 
-    const atom = this._store[idx];
+    const atom = store[idx];
 
     if (typeof updates.text === 'string' && updates.text.trim().length > 0) {
       atom.text = updates.text.trim();
@@ -238,18 +251,18 @@ class StyleLibraryService {
       atom.category = updates.category;
     }
 
-    this._rebuildNormIndex();
-    this._persistStore();
+    this._persistStore(store);
     return { ...atom };
   }
 
   deleteAtom(id) {
     this._validateId(id);
-    const idx = this._store.findIndex(a => a.id === id);
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+    const idx = store.findIndex(a => a.id === id);
     if (idx === -1) throw new AppError('Atom not found', 404, 'ATOM_NOT_FOUND');
-    this._store.splice(idx, 1);
-    this._rebuildNormIndex();
-    this._persistStore();
+    store.splice(idx, 1);
+    this._persistStore(store);
     return { removed: true };
   }
 
@@ -257,25 +270,28 @@ class StyleLibraryService {
     if (!Array.isArray(ids) || ids.length === 0) {
       throw new AppError('ids must be a non-empty array', 400, 'VALIDATION_ERROR');
     }
+    this._ensureDataFile(this._dataFile);
+    let store = this._loadStore();
+    const before = store.length;
     const idSet = new Set(ids);
-    const before = this._store.length;
-    this._store = this._store.filter(a => !idSet.has(a.id));
-    this._rebuildNormIndex();
-    this._persistStore();
-    return { removed: before - this._store.length };
+    store = store.filter(a => !idSet.has(a.id));
+    this._persistStore(store);
+    return { removed: before - store.length };
   }
 
   deleteAll() {
-    const count = this._store.length;
-    this._store = [];
-    this._normIndex = new Map();
-    this._persistStore();
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+    const count = store.length;
+    this._persistStore([]);
     return { removed: count };
   }
 
   findDuplicates() {
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
     const groups = new Map();
-    for (const atom of this._store) {
+    for (const atom of store) {
       const key = `${atom.category}::${atom.text.trim().toLowerCase().replace(/\s+/g, ' ')}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(atom);
@@ -302,21 +318,25 @@ class StyleLibraryService {
   deleteDuplicates() {
     const { duplicateCount, removeIds } = this.findDuplicates();
     if (removeIds.length === 0) return { removed: 0 };
+    this._ensureDataFile(this._dataFile);
+    let store = this._loadStore();
     const idSet = new Set(removeIds);
-    this._store = this._store.filter(a => !idSet.has(a.id));
-    this._rebuildNormIndex();
-    this._persistStore();
+    store = store.filter(a => !idSet.has(a.id));
+    this._persistStore(store);
     return { removed: duplicateCount };
   }
 
   deleteBySource(username) {
-    const before = this._store.length;
-    this._store = this._store.filter(a => a.source?.profileUsername !== username);
-    this._rebuildNormIndex();
-    this._persistStore();
-    this._profiles = this._profiles.filter(p => p.username !== username);
-    this._persistProfiles();
-    return { removed: before - this._store.length };
+    this._ensureDataFile(this._dataFile);
+    this._ensureDataFile(this._profilesFile);
+    let store = this._loadStore();
+    const before = store.length;
+    store = store.filter(a => a.source?.profileUsername !== username);
+    this._persistStore(store);
+    let profiles = this._loadProfiles();
+    profiles = profiles.filter(p => p.username !== username);
+    this._persistProfiles(profiles);
+    return { removed: before - store.length };
   }
 
   composePrompt(atomIds) {
@@ -324,7 +344,9 @@ class StyleLibraryService {
       throw new AppError('atomIds must be a non-empty array', 400, 'VALIDATION_ERROR');
     }
 
-    const atoms = atomIds.map(id => this._store.find(a => a.id === id)).filter(Boolean);
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+    const atoms = atomIds.map(id => store.find(a => a.id === id)).filter(Boolean);
     if (atoms.length === 0) {
       throw new AppError('No valid atoms found for the given IDs', 404, 'ATOMS_NOT_FOUND');
     }
@@ -354,8 +376,10 @@ class StyleLibraryService {
       .filter(k => k.length >= 3);
     if (normalizedKeywords.length === 0) return [];
 
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
     const excludeSet = new Set(excludeIds);
-    const candidates = this._store.filter(a => !excludeSet.has(a.id));
+    const candidates = store.filter(a => !excludeSet.has(a.id));
 
     const scored = candidates.map(atom => {
       const hay = `${atom.text} ${(atom.tags || []).join(' ')}`.toLowerCase();
@@ -386,54 +410,64 @@ class StyleLibraryService {
   }
 
   getStats() {
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
     const byCategory = {};
     const bySource = {};
     for (const cat of VALID_CATEGORIES) byCategory[cat] = 0;
 
-    for (const atom of this._store) {
+    for (const atom of store) {
       byCategory[atom.category] = (byCategory[atom.category] || 0) + 1;
       const src = atom.source?.type || 'unknown';
       bySource[src] = (bySource[src] || 0) + 1;
     }
 
     return {
-      total: this._store.length,
+      total: store.length,
       byCategory,
       bySource,
-      favorites: this._store.filter(a => a.favorite).length,
+      favorites: store.filter(a => a.favorite).length,
     };
   }
 
   incrementUsage(atomId) {
-    const atom = this._store.find(a => a.id === atomId);
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+    const atom = store.find(a => a.id === atomId);
     if (atom) {
       atom.usageCount = (atom.usageCount || 0) + 1;
-      this._schedulePersist();
+      this._persistStore(store);
     }
   }
 
   getAnalyzedProfiles() {
-    return this._profiles.map(p => {
-      const atomCount = this._store.filter(a => a.source?.profileUsername === p.username).length;
+    this._ensureDataFile(this._dataFile);
+    this._ensureDataFile(this._profilesFile);
+    const store = this._loadStore();
+    const profiles = this._loadProfiles();
+    return profiles.map(p => {
+      const atomCount = store.filter(a => a.source?.profileUsername === p.username).length;
       return { ...p, atomCount };
     });
   }
 
   markProfileAnalyzed(username, meta = {}) {
-    const existing = this._profiles.find(p => p.username === username);
+    this._ensureDataFile(this._profilesFile);
+    const profiles = this._loadProfiles();
+    const existing = profiles.find(p => p.username === username);
     if (existing) {
       existing.analyzedAt = new Date().toISOString();
       if (meta.postCount !== undefined) existing.postCount = meta.postCount;
       if (meta.selectedAtomCount !== undefined) existing.selectedAtomCount = meta.selectedAtomCount;
     } else {
-      this._profiles.push({
+      profiles.push({
         username,
         analyzedAt: new Date().toISOString(),
         postCount: meta.postCount !== undefined ? meta.postCount : 0,
         selectedAtomCount: meta.selectedAtomCount !== undefined ? meta.selectedAtomCount : 0,
       });
     }
-    this._persistProfiles();
+    this._persistProfiles(profiles);
   }
 
   stripIdentity(text) {
@@ -703,7 +737,7 @@ class StyleLibraryService {
   }
 
   backfillFromPromptKnowledge() {
-    const pkFile = path.join(DATA_DIR, 'promptKnowledge.json');
+    const pkFile = path.join(getDataDir(), 'promptKnowledge.json');
     if (!fs.existsSync(pkFile)) return { imported: 0 };
 
     let pkData;
@@ -778,10 +812,40 @@ class StyleLibraryService {
     };
   }
 
+  _isDuplicateInStore(store, normIndex, category, text) {
+    const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (normalized.length < 5) return true;
+    if (normIndex.get(category)?.has(normalized)) return true;
+
+    const wordsNew = new Set(normalized.split(/\s+/));
+    if (wordsNew.size === 0) return true;
+
+    for (const a of store) {
+      if (a.category !== category) continue;
+      const wordsExisting = new Set(a.text.trim().toLowerCase().split(/\s+/));
+      let intersectionSize = 0;
+      for (const w of wordsNew) {
+        if (wordsExisting.has(w)) intersectionSize++;
+      }
+      const unionSize = wordsNew.size + wordsExisting.size - intersectionSize;
+      if (unionSize > 0 && intersectionSize / unionSize > 0.6) return true;
+    }
+
+    return false;
+  }
+
   _ensureDataFile(filePath) {
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, '[]', 'utf8');
+  }
+
+  _loadStore() {
+    return this._loadFile(this._dataFile);
+  }
+
+  _loadProfiles() {
+    return this._loadFile(this._profilesFile);
   }
 
   _loadFile(filePath) {
@@ -795,20 +859,12 @@ class StyleLibraryService {
     return [];
   }
 
-  _persistStore() {
-    atomicWriteJSON(DATA_FILE, this._store);
+  _persistStore(data) {
+    atomicWriteJSON(this._dataFile, data);
   }
 
-  _schedulePersist() {
-    if (this._persistTimer) return;
-    this._persistTimer = setTimeout(() => {
-      this._persistTimer = null;
-      this._persistStore();
-    }, 2000);
-  }
-
-  _persistProfiles() {
-    atomicWriteJSON(PROFILES_FILE, this._profiles);
+  _persistProfiles(data) {
+    atomicWriteJSON(this._profilesFile, data);
   }
 }
 

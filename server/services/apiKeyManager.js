@@ -11,35 +11,47 @@ const AUTH_TAG_LENGTH = 16;
 const SALT_LENGTH = 32;
 const KEY_DERIVATION_ITERATIONS = 100000;
 const DERIVED_KEY_CACHE_MAX = 20;
-const { DATA_DIR } = require('../paths');
-const DATA_FILE = path.join(DATA_DIR, 'keys.enc');
+const { getDataDir } = require('../paths');
+const { getUserId } = require('../userContext');
 
 class ApiKeyManager {
   constructor() {
-    this._ensureDataDir();
-    this._store = this._loadStore();
+    this._userStores = new Map(); // userId -> store object (lazy-loaded)
     this._derivedKeyCache = new Map();
-    this._migrateGlobalSpend();
+  }
+
+  get _dataFile() { return path.join(getDataDir(), 'keys.enc'); }
+
+  /** Returns (and lazily initialises) the per-user in-memory store */
+  get _store() {
+    const userId = getUserId() || '__anon__';
+    if (!this._userStores.has(userId)) {
+      this._ensureDataDir();
+      const store = this._loadStore();
+      this._migrateGlobalSpendFor(store);
+      this._userStores.set(userId, store);
+    }
+    return this._userStores.get(userId);
   }
 
   /** Migrate old global spend data to the active key entry (one-time) */
-  _migrateGlobalSpend() {
-    if (typeof this._store.totalSpendUsd === 'number' && this._store.totalSpendUsd > 0) {
-      const entry = this._getActiveEntry();
+  _migrateGlobalSpendFor(store) {
+    if (typeof store.totalSpendUsd === 'number' && store.totalSpendUsd > 0) {
+      const entry = store.activeKeyId ? store.keys.find(k => k.id === store.activeKeyId) : null;
       if (entry && !(entry.totalSpendUsd > 0)) {
-        entry.totalSpendUsd = this._store.totalSpendUsd;
-        entry.textCallCount = this._store.textCallCount || 0;
-        entry.imageCallCount = this._store.imageCallCount || 0;
-        entry.spendBudgetUsd = this._store.spendBudgetUsd || 300;
+        entry.totalSpendUsd = store.totalSpendUsd;
+        entry.textCallCount = store.textCallCount || 0;
+        entry.imageCallCount = store.imageCallCount || 0;
+        entry.spendBudgetUsd = store.spendBudgetUsd || 300;
       }
-      delete this._store.totalSpendUsd;
-      delete this._store.spendBudgetUsd;
-      delete this._store.textCallCount;
-      delete this._store.imageCallCount;
-      this._saveStore();
+      delete store.totalSpendUsd;
+      delete store.spendBudgetUsd;
+      delete store.textCallCount;
+      delete store.imageCallCount;
+      atomicWriteJSON(this._dataFile, store);
     }
     // Ensure all keys have spend fields
-    for (const k of this._store.keys) {
+    for (const k of store.keys) {
       if (typeof k.totalSpendUsd !== 'number') k.totalSpendUsd = 0;
       if (typeof k.spendBudgetUsd !== 'number') k.spendBudgetUsd = 300;
       if (typeof k.textCallCount !== 'number') k.textCallCount = 0;
@@ -399,7 +411,7 @@ class ApiKeyManager {
   }
 
   _ensureDataDir() {
-    const dataDir = path.dirname(DATA_FILE);
+    const dataDir = path.dirname(this._dataFile);
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
     }
@@ -407,8 +419,9 @@ class ApiKeyManager {
 
   _loadStore() {
     try {
-      if (fs.existsSync(DATA_FILE)) {
-        const raw = fs.readFileSync(DATA_FILE, 'utf8');
+      const dataFile = this._dataFile;
+      if (fs.existsSync(dataFile)) {
+        const raw = fs.readFileSync(dataFile, 'utf8');
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed.keys)) {
           return {
@@ -666,7 +679,7 @@ class ApiKeyManager {
   }
 
   _saveStore() {
-    atomicWriteJSON(DATA_FILE, this._store);
+    atomicWriteJSON(this._dataFile, this._store);
   }
 }
 

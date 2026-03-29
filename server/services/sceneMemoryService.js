@@ -5,22 +5,25 @@ const { AppError } = require('../middleware/errorHandler');
 const log = require('../utils/logger');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const { DATA_DIR } = require('../paths');
-const DATA_FILE = path.join(DATA_DIR, 'sceneMemory.json');
+const { getDataDir } = require('../paths');
 
 class SceneMemoryService {
+  get _dataFile() { return path.join(getDataDir(), 'sceneMemory.json'); }
+
   constructor() {
-    this._ensureDataFile();
-    this._store = this._load();
+    // no eager load — all reads happen per-request
   }
 
   getAllScenes() {
-    return this._store.map((scene) => ({ ...scene }));
+    this._ensureDataFile();
+    return this._load().map((scene) => ({ ...scene }));
   }
 
   getSceneById(id) {
     this._validateId(id);
-    const scene = this._store.find((item) => item.id === id);
+    this._ensureDataFile();
+    const store = this._load();
+    const scene = store.find((item) => item.id === id);
     if (!scene) {
       throw new AppError('Scene memory not found', 404, 'SCENE_MEMORY_NOT_FOUND');
     }
@@ -29,6 +32,7 @@ class SceneMemoryService {
 
   createScene(sceneObject) {
     this._validateScenePayload(sceneObject);
+    this._ensureDataFile();
 
     const scene = {
       id: crypto.randomUUID(),
@@ -41,21 +45,24 @@ class SceneMemoryService {
       createdAt: new Date().toISOString(),
     };
 
-    this._store.push(scene);
-    this._persist();
+    const store = this._load();
+    store.push(scene);
+    this._persist(store);
 
     return { ...scene };
   }
 
   deleteScene(id) {
     this._validateId(id);
-    const index = this._store.findIndex((item) => item.id === id);
+    this._ensureDataFile();
+    const store = this._load();
+    const index = store.findIndex((item) => item.id === id);
     if (index === -1) {
       throw new AppError('Scene memory not found', 404, 'SCENE_MEMORY_NOT_FOUND');
     }
 
-    this._store.splice(index, 1);
-    this._persist();
+    store.splice(index, 1);
+    this._persist(store);
     return { removed: true };
   }
 
@@ -87,18 +94,20 @@ class SceneMemoryService {
   }
 
   _ensureDataFile() {
-    const dir = path.dirname(DATA_FILE);
+    const dataFile = this._dataFile;
+    const dir = path.dirname(dataFile);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    if (!fs.existsSync(DATA_FILE)) {
-      fs.writeFileSync(DATA_FILE, '[]', 'utf8');
+    if (!fs.existsSync(dataFile)) {
+      fs.writeFileSync(dataFile, '[]', 'utf8');
     }
   }
 
   _load() {
+    const dataFile = this._dataFile;
     try {
-      const raw = fs.readFileSync(DATA_FILE, 'utf8');
+      const raw = fs.readFileSync(dataFile, 'utf8');
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
         return parsed;
@@ -106,18 +115,18 @@ class SceneMemoryService {
     } catch (err) {
       log.warn('scenememory_load_failed', { message: err.message });
       try {
-        if (fs.existsSync(DATA_FILE)) {
-          fs.copyFileSync(DATA_FILE, `${DATA_FILE}.corrupt.${Date.now()}`);
+        if (fs.existsSync(dataFile)) {
+          fs.copyFileSync(dataFile, `${dataFile}.corrupt.${Date.now()}`);
         }
       } catch {}
     }
 
-    fs.writeFileSync(DATA_FILE, '[]', 'utf8');
+    fs.writeFileSync(dataFile, '[]', 'utf8');
     return [];
   }
 
-  _persist() {
-    atomicWriteJSON(DATA_FILE, this._store);
+  _persist(data) {
+    atomicWriteJSON(this._dataFile, data);
   }
 }
 

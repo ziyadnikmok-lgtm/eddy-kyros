@@ -3,26 +3,33 @@ const fs = require('node:fs');
 const path = require('node:path');
 const sharp = require('sharp');
 const { AppError } = require('../middleware/errorHandler');
-const { DATA_DIR } = require('../paths');
-
-const BACKGROUNDS_DIR = path.join(DATA_DIR, 'backgrounds');
-const META_FILE = path.join(BACKGROUNDS_DIR, 'backgrounds.json');
+const { getDataDir } = require('../paths');
 
 const ALLOWED_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
 const REF_MAX_DIMENSION = 2048; // max px for reference images sent to Gemini
 
+function _bgDir() {
+  return path.join(getDataDir(), 'backgrounds');
+}
+
+function _metaFile() {
+  return path.join(_bgDir(), 'backgrounds.json');
+}
+
 function _ensureDir() {
-  if (!fs.existsSync(BACKGROUNDS_DIR)) {
-    fs.mkdirSync(BACKGROUNDS_DIR, { recursive: true });
+  const bgDir = _bgDir();
+  if (!fs.existsSync(bgDir)) {
+    fs.mkdirSync(bgDir, { recursive: true });
   }
 }
 
 function _loadMeta() {
   _ensureDir();
   try {
-    if (fs.existsSync(META_FILE)) {
-      return JSON.parse(fs.readFileSync(META_FILE, 'utf-8'));
+    const metaFile = _metaFile();
+    if (fs.existsSync(metaFile)) {
+      return JSON.parse(fs.readFileSync(metaFile, 'utf-8'));
     }
   } catch { /* ignore */ }
   return [];
@@ -30,7 +37,7 @@ function _loadMeta() {
 
 function _saveMeta(items) {
   _ensureDir();
-  fs.writeFileSync(META_FILE, JSON.stringify(items, null, 2), 'utf-8');
+  fs.writeFileSync(_metaFile(), JSON.stringify(items, null, 2), 'utf-8');
 }
 
 function list() {
@@ -52,7 +59,7 @@ function add({ name, mimeType, base64Data }) {
   const id = crypto.randomUUID();
   const ext = mimeType === 'image/png' ? '.png' : mimeType === 'image/webp' ? '.webp' : '.jpg';
   const filename = `${id}${ext}`;
-  const filepath = path.join(BACKGROUNDS_DIR, filename);
+  const filepath = path.join(_bgDir(), filename);
 
   _ensureDir();
   fs.writeFileSync(filepath, buf);
@@ -71,7 +78,7 @@ function remove(id) {
   if (idx === -1) throw new AppError('Background not found', 404, 'NOT_FOUND');
 
   const entry = items[idx];
-  const filepath = path.join(BACKGROUNDS_DIR, entry.filename);
+  const filepath = path.join(_bgDir(), entry.filename);
   try { fs.unlinkSync(filepath); } catch { /* file may already be gone */ }
 
   items.splice(idx, 1);
@@ -88,7 +95,7 @@ async function getImageData(id) {
   const entry = items.find((b) => b.id === id);
   if (!entry) return null;
 
-  const filepath = path.join(BACKGROUNDS_DIR, entry.filename);
+  const filepath = path.join(_bgDir(), entry.filename);
   if (!fs.existsSync(filepath)) return null;
 
   try {
@@ -109,7 +116,7 @@ function getImageFile(id) {
   const entry = items.find((b) => b.id === id);
   if (!entry) return null;
 
-  const filepath = path.join(BACKGROUNDS_DIR, entry.filename);
+  const filepath = path.join(_bgDir(), entry.filename);
   if (!fs.existsSync(filepath)) return null;
 
   return { filepath, mimeType: entry.mimeType };

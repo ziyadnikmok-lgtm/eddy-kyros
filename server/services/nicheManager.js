@@ -5,8 +5,7 @@ const { AppError } = require('../middleware/errorHandler');
 const log = require('../utils/logger');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const { DATA_DIR } = require('../paths');
-const DATA_FILE = path.join(DATA_DIR, 'niches.json');
+const { getDataDir } = require('../paths');
 
 const BUILT_IN_NICHES = [
   {
@@ -180,20 +179,24 @@ const BUILT_IN_NICHES = [
 ];
 
 class NicheManager {
+  get _dataFile() { return path.join(getDataDir(), 'niches.json'); }
+
   constructor() {
-    this._ensureDataDir();
-    this._store = this._loadStore();
+    // no eager load — all reads happen per-request via _loadStore()
   }
 
   listNiches() {
-    return this._store.map((n) => this._toSafe(n));
+    this._ensureDataDir();
+    return this._loadStore().map((n) => this._toSafe(n));
   }
 
   getNiche(id) {
     if (!id || typeof id !== 'string') {
       throw new AppError('Niche ID is required', 400, 'VALIDATION_ERROR');
     }
-    const niche = this._store.find((n) => n.id === id);
+    this._ensureDataDir();
+    const store = this._loadStore();
+    const niche = store.find((n) => n.id === id);
     if (!niche) {
       throw new AppError('Niche not found', 404, 'NICHE_NOT_FOUND');
     }
@@ -202,7 +205,9 @@ class NicheManager {
 
   createNiche(data) {
     this._validateNicheData(data);
-    this._checkUniqueName(data.name.trim());
+    this._ensureDataDir();
+    const store = this._loadStore();
+    this._checkUniqueNameInStore(store, data.name.trim());
 
     const niche = {
       id: crypto.randomUUID(),
@@ -216,8 +221,8 @@ class NicheManager {
       createdAt: new Date().toISOString(),
     };
 
-    this._store.push(niche);
-    this._save();
+    store.push(niche);
+    this._save(store);
 
     return this._toSafe(niche);
   }
@@ -226,19 +231,21 @@ class NicheManager {
     if (!id || typeof id !== 'string') {
       throw new AppError('Niche ID is required', 400, 'VALIDATION_ERROR');
     }
-    const index = this._store.findIndex((n) => n.id === id);
+    this._ensureDataDir();
+    const store = this._loadStore();
+    const index = store.findIndex((n) => n.id === id);
     if (index === -1) {
       throw new AppError('Niche not found', 404, 'NICHE_NOT_FOUND');
     }
 
-    const existing = this._store[index];
+    const existing = store[index];
 
     if (data.name !== undefined) {
       if (typeof data.name !== 'string' || data.name.trim().length === 0) {
         throw new AppError('Niche name must be a non-empty string', 400, 'VALIDATION_ERROR');
       }
       if (data.name.trim().toLowerCase() !== existing.name.toLowerCase()) {
-        this._checkUniqueName(data.name.trim(), id);
+        this._checkUniqueNameInStore(store, data.name.trim(), id);
       }
       existing.name = data.name.trim();
     }
@@ -273,7 +280,7 @@ class NicheManager {
       existing.ctaStyle = data.ctaStyle.trim();
     }
 
-    this._save();
+    this._save(store);
     return this._toSafe(existing);
   }
 
@@ -281,12 +288,14 @@ class NicheManager {
     if (!id || typeof id !== 'string') {
       throw new AppError('Niche ID is required', 400, 'VALIDATION_ERROR');
     }
-    const index = this._store.findIndex((n) => n.id === id);
+    this._ensureDataDir();
+    const store = this._loadStore();
+    const index = store.findIndex((n) => n.id === id);
     if (index === -1) {
       throw new AppError('Niche not found', 404, 'NICHE_NOT_FOUND');
     }
-    this._store.splice(index, 1);
-    this._save();
+    store.splice(index, 1);
+    this._save(store);
     return { removed: true };
   }
 
@@ -311,8 +320,8 @@ class NicheManager {
     }
   }
 
-  _checkUniqueName(name, excludeId = null) {
-    const conflict = this._store.find(
+  _checkUniqueNameInStore(store, name, excludeId = null) {
+    const conflict = store.find(
       (n) => n.name.toLowerCase() === name.toLowerCase() && n.id !== excludeId
     );
     if (conflict) {
@@ -341,7 +350,7 @@ class NicheManager {
   }
 
   _ensureDataDir() {
-    const dir = path.dirname(DATA_FILE);
+    const dir = path.dirname(this._dataFile);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
@@ -349,8 +358,8 @@ class NicheManager {
 
   _loadStore() {
     try {
-      if (fs.existsSync(DATA_FILE)) {
-        const raw = fs.readFileSync(DATA_FILE, 'utf8');
+      if (fs.existsSync(this._dataFile)) {
+        const raw = fs.readFileSync(this._dataFile, 'utf8');
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
           return parsed;
@@ -370,13 +379,12 @@ class NicheManager {
       isBuiltIn: true,
       createdAt: new Date().toISOString(),
     }));
-    this._store = niches;
-    this._save();
+    this._save(niches);
     return niches;
   }
 
-  _save() {
-    atomicWriteJSON(DATA_FILE, this._store);
+  _save(data) {
+    atomicWriteJSON(this._dataFile, data);
   }
 }
 

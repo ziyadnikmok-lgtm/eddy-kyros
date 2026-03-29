@@ -5,22 +5,25 @@ const { AppError } = require('../middleware/errorHandler');
 const log = require('../utils/logger');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const { DATA_DIR } = require('../paths');
-const DATA_FILE = path.join(DATA_DIR, 'outfits.json');
+const { getDataDir } = require('../paths');
 
 class OutfitMemoryService {
+  get _dataFile() { return path.join(getDataDir(), 'outfits.json'); }
+
   constructor() {
-    this._ensureDataFile();
-    this._store = this._load();
+    // no eager load — all reads happen per-request
   }
 
   getAllOutfits() {
-    return this._store.map((outfit) => ({ ...outfit }));
+    this._ensureDataFile();
+    return this._load().map((outfit) => ({ ...outfit }));
   }
 
   getOutfitById(id) {
     this._validateId(id);
-    const outfit = this._store.find((item) => item.id === id);
+    this._ensureDataFile();
+    const store = this._load();
+    const outfit = store.find((item) => item.id === id);
     if (!outfit) {
       throw new AppError('Outfit not found', 404, 'OUTFIT_NOT_FOUND');
     }
@@ -28,12 +31,15 @@ class OutfitMemoryService {
   }
 
   getOutfitsByCharacter(characterId) {
-    if (!characterId) return this._store.filter((o) => !o.characterId).map((o) => ({ ...o }));
-    return this._store.filter((o) => o.characterId === characterId || !o.characterId).map((o) => ({ ...o }));
+    this._ensureDataFile();
+    const store = this._load();
+    if (!characterId) return store.filter((o) => !o.characterId).map((o) => ({ ...o }));
+    return store.filter((o) => o.characterId === characterId || !o.characterId).map((o) => ({ ...o }));
   }
 
   createOutfit(data) {
     this._validateOutfitPayload(data);
+    this._ensureDataFile();
 
     const outfit = {
       id: crypto.randomUUID(),
@@ -56,15 +62,18 @@ class OutfitMemoryService {
       createdAt: new Date().toISOString(),
     };
 
-    this._store.push(outfit);
-    this._persist();
+    const store = this._load();
+    store.push(outfit);
+    this._persist(store);
 
     return { ...outfit };
   }
 
   updateOutfit(id, data) {
     this._validateId(id);
-    const outfit = this._store.find((item) => item.id === id);
+    this._ensureDataFile();
+    const store = this._load();
+    const outfit = store.find((item) => item.id === id);
     if (!outfit) {
       throw new AppError('Outfit not found', 404, 'OUTFIT_NOT_FOUND');
     }
@@ -91,20 +100,22 @@ class OutfitMemoryService {
     }
 
     outfit.updatedAt = new Date().toISOString();
-    this._persist();
+    this._persist(store);
 
     return { ...outfit };
   }
 
   deleteOutfit(id) {
     this._validateId(id);
-    const index = this._store.findIndex((item) => item.id === id);
+    this._ensureDataFile();
+    const store = this._load();
+    const index = store.findIndex((item) => item.id === id);
     if (index === -1) {
       throw new AppError('Outfit not found', 404, 'OUTFIT_NOT_FOUND');
     }
 
-    this._store.splice(index, 1);
-    this._persist();
+    store.splice(index, 1);
+    this._persist(store);
     return { removed: true };
   }
 
@@ -137,18 +148,19 @@ class OutfitMemoryService {
   }
 
   _ensureDataFile() {
-    const dir = path.dirname(DATA_FILE);
+    const dataFile = this._dataFile;
+    const dir = path.dirname(dataFile);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    if (!fs.existsSync(DATA_FILE)) {
-      fs.writeFileSync(DATA_FILE, '[]', 'utf8');
+    if (!fs.existsSync(dataFile)) {
+      fs.writeFileSync(dataFile, '[]', 'utf8');
     }
   }
 
   _load() {
     try {
-      const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+      const parsed = JSON.parse(fs.readFileSync(this._dataFile, 'utf8'));
       if (Array.isArray(parsed)) {
         return parsed;
       }
@@ -156,12 +168,12 @@ class OutfitMemoryService {
       log.warn('outfit_load_failed', { message: err.message });
     }
 
-    fs.writeFileSync(DATA_FILE, '[]', 'utf8');
+    fs.writeFileSync(this._dataFile, '[]', 'utf8');
     return [];
   }
 
-  _persist() {
-    atomicWriteJSON(DATA_FILE, this._store);
+  _persist(data) {
+    atomicWriteJSON(this._dataFile, data);
   }
 }
 

@@ -4,30 +4,29 @@ const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const { DATA_DIR } = require('../paths');
-const DATA_FILE = path.join(DATA_DIR, 'video-history.json');
+const { getDataDir } = require('../paths');
 const MAX_ENTRIES = 100;
 
 class VideoHistoryStore {
-  constructor() {
-    this._ensureDataDir();
-    this._store = this._load();
-  }
+  get _dataFile() { return path.join(getDataDir(), 'video-history.json'); }
+
+  constructor() { /* dirs ensured on first use */ }
 
   list() {
-    return [...this._store].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    return [...this._load()].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }
 
   get(id) {
-    const entry = this._store.find((e) => e.id === id);
+    const entry = this._load().find((e) => e.id === id);
     if (!entry) throw new AppError('Video not found', 404, 'NOT_FOUND');
     return entry;
   }
 
   add(data) {
-    if (this._store.length >= MAX_ENTRIES) {
-      this._store.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-      const evicted = this._store.shift();
+    const store = this._load();
+    if (store.length >= MAX_ENTRIES) {
+      store.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      const evicted = store.shift();
       if (evicted?.localPath) {
         try { fs.unlinkSync(evicted.localPath); } catch {}
       }
@@ -52,13 +51,14 @@ class VideoHistoryStore {
       createdAt: new Date().toISOString(),
     };
 
-    this._store.push(entry);
-    this._persist();
+    store.push(entry);
+    this._persist(store);
     return entry;
   }
 
   update(id, data) {
-    const entry = this._store.find((e) => e.id === id);
+    const store = this._load();
+    const entry = store.find((e) => e.id === id);
     if (!entry) return null;
 
     if (data.status !== undefined) entry.status = data.status;
@@ -68,31 +68,34 @@ class VideoHistoryStore {
     if (data.error !== undefined) entry.error = data.error;
     if (data.spendTracked !== undefined) entry.spendTracked = !!data.spendTracked;
 
-    this._persist();
+    this._persist(store);
     return entry;
   }
 
   findByTaskId(taskId) {
-    return this._store.find((e) => e.taskId === taskId) || null;
+    return this._load().find((e) => e.taskId === taskId) || null;
   }
 
   remove(id) {
-    const idx = this._store.findIndex((e) => e.id === id);
+    const store = this._load();
+    const idx = store.findIndex((e) => e.id === id);
     if (idx === -1) throw new AppError('Video not found', 404, 'NOT_FOUND');
-    this._store.splice(idx, 1);
-    this._persist();
+    store.splice(idx, 1);
+    this._persist(store);
     return { removed: true };
   }
 
   _ensureDataDir() {
-    const dir = path.dirname(DATA_FILE);
+    const dir = path.dirname(this._dataFile);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   }
 
   _load() {
     try {
-      if (fs.existsSync(DATA_FILE)) {
-        const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+      const f = this._dataFile;
+      this._ensureDataDir();
+      if (fs.existsSync(f)) {
+        const parsed = JSON.parse(fs.readFileSync(f, 'utf8'));
         if (Array.isArray(parsed)) return parsed;
       }
     } catch (err) {
@@ -101,8 +104,8 @@ class VideoHistoryStore {
     return [];
   }
 
-  _persist() {
-    atomicWriteJSON(DATA_FILE, this._store);
+  _persist(store) {
+    atomicWriteJSON(this._dataFile, store);
   }
 }
 

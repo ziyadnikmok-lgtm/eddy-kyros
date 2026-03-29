@@ -4,15 +4,36 @@ const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const { DATA_DIR, UPLOADS_DIR } = require('../paths');
-const DATA_FILE = path.join(DATA_DIR, 'gallery.json');
+const { getDataDir, getUploadsDir } = require('../paths');
+const { getUserId } = require('../userContext');
 
 class GalleryManager {
   constructor() {
-    this._ensureDirs();
-    this._store = this._load();
-    this._validFiles = new Set();
-    this._validFilesAt = 0;
+    // Per-user state: userId -> { store, validFiles, validFilesAt }
+    this._userStates = new Map();
+  }
+
+  get _dataFile() { return path.join(getDataDir(), 'gallery.json'); }
+  get _uploadsDir() { return getUploadsDir(); }
+
+  // Returns (and lazily initialises) per-user in-memory state
+  _getState() {
+    const userId = getUserId() || '__anon__';
+    if (!this._userStates.has(userId)) {
+      this._ensureDirs();
+      this._userStates.set(userId, {
+        store: this._load(),
+        validFiles: new Set(),
+        validFilesAt: 0,
+      });
+    }
+    return this._userStates.get(userId);
+  }
+
+  // Invalidate cached state for the current user (e.g. after data-dir changes)
+  _invalidateState() {
+    const userId = getUserId() || '__anon__';
+    this._userStates.delete(userId);
   }
 
   save({ base64Data, mimeType, prompt, source, characterId, aspectRatio, seed, tags, personaMode, sessionId }) {
@@ -20,14 +41,17 @@ class GalleryManager {
       throw new AppError('Image data required for gallery', 400, 'VALIDATION_ERROR');
     }
 
+    const state = this._getState();
+    const uploadsDir = this._uploadsDir;
+
     const id = crypto.randomUUID();
     const ext = mimeType === 'image/jpeg' ? '.jpg' : mimeType === 'image/webp' ? '.webp' : '.png';
     const filename = `${id}${ext}`;
-    const filePath = path.join(UPLOADS_DIR, filename);
+    const filePath = path.join(uploadsDir, filename);
 
     const buffer = Buffer.from(base64Data, 'base64');
     fs.writeFileSync(filePath, buffer); // sync is intentional — entry depends on file being written
-    this._validFiles.add(filename);
+    state.validFiles.add(filename);
 
     const entry = {
       id,
@@ -46,25 +70,27 @@ class GalleryManager {
       createdAt: new Date().toISOString(),
     };
 
-    this._store.push(entry);
-    this._persist();
+    state.store.push(entry);
+    this._persist(state);
 
     return entry;
   }
 
   list({ page, limit, tag } = {}) {
+    const state = this._getState();
+    const uploadsDir = this._uploadsDir;
     const now = Date.now();
     // Revalidate file list every 2 minutes (was 30s — too aggressive for large galleries)
-    if (now - this._validFilesAt > 120_000) {
-      this._validFilesAt = now; // set immediately to prevent thundering herd
+    if (now - state.validFilesAt > 120_000) {
+      state.validFilesAt = now; // set immediately to prevent thundering herd
       try {
-        const files = fs.readdirSync(UPLOADS_DIR);
-        this._validFiles = new Set(files);
-      } catch { this._validFiles = new Set(); }
+        const files = fs.readdirSync(uploadsDir);
+        state.validFiles = new Set(files);
+      } catch { state.validFiles = new Set(); }
     }
 
-    let results = this._store
-      .filter((e) => this._validFiles.has(e.filename));
+    let results = state.store
+      .filter((e) => state.validFiles.has(e.filename));
 
     if (tag) {
       const t = tag.toLowerCase();
@@ -85,16 +111,19 @@ class GalleryManager {
   }
 
   get(id) {
-    const entry = this._store.find((e) => e.id === id);
+    const state = this._getState();
+    const entry = state.store.find((e) => e.id === id);
     if (!entry) throw new AppError('Gallery image not found', 404, 'NOT_FOUND');
     return this._toSafe(entry);
   }
 
   getFilePath(id) {
-    const entry = this._store.find((e) => e.id === id);
+    const state = this._getState();
+    const uploadsDir = this._uploadsDir;
+    const entry = state.store.find((e) => e.id === id);
     if (!entry) throw new AppError('Gallery image not found', 404, 'NOT_FOUND');
-    const fp = path.join(UPLOADS_DIR, entry.filename);
-    if (!path.resolve(fp).startsWith(path.resolve(UPLOADS_DIR))) {
+    const fp = path.join(uploadsDir, entry.filename);
+    if (!path.resolve(fp).startsWith(path.resolve(uploadsDir))) {
       throw new AppError('Invalid file path', 403, 'INVALID_PATH');
     }
     if (!fs.existsSync(fp)) throw new AppError('Image file missing from disk', 404, 'FILE_MISSING');
@@ -102,38 +131,43 @@ class GalleryManager {
   }
 
   remove(id) {
-    const idx = this._store.findIndex((e) => e.id === id);
+    const state = this._getState();
+    const uploadsDir = this._uploadsDir;
+    const idx = state.store.findIndex((e) => e.id === id);
     if (idx === -1) throw new AppError('Gallery image not found', 404, 'NOT_FOUND');
 
-    const entry = this._store[idx];
-    const fp = path.join(UPLOADS_DIR, entry.filename);
-    if (path.resolve(fp).startsWith(path.resolve(UPLOADS_DIR)) && fs.existsSync(fp)) fs.unlinkSync(fp);
-    this._validFiles.delete(entry.filename);
+    const entry = state.store[idx];
+    const fp = path.join(uploadsDir, entry.filename);
+    if (path.resolve(fp).startsWith(path.resolve(uploadsDir)) && fs.existsSync(fp)) fs.unlinkSync(fp);
+    state.validFiles.delete(entry.filename);
 
-    this._store.splice(idx, 1);
-    this._persist();
+    state.store.splice(idx, 1);
+    this._persist(state);
     return { removed: true };
   }
 
   toggleFavorite(id) {
-    const entry = this._store.find((e) => e.id === id);
+    const state = this._getState();
+    const entry = state.store.find((e) => e.id === id);
     if (!entry) throw new AppError('Gallery image not found', 404, 'NOT_FOUND');
     entry.isFavorite = !entry.isFavorite;
-    this._persist();
+    this._persist(state);
     return this._toSafe(entry);
   }
 
   updateTags(id, tags) {
-    const entry = this._store.find((e) => e.id === id);
+    const state = this._getState();
+    const entry = state.store.find((e) => e.id === id);
     if (!entry) throw new AppError('Gallery image not found', 404, 'NOT_FOUND');
     if (!Array.isArray(tags)) throw new AppError('tags must be an array', 400, 'VALIDATION_ERROR');
     entry.tags = tags.filter(t => typeof t === 'string').map(t => t.trim().toLowerCase()).slice(0, 20);
-    this._persist();
+    this._persist(state);
     return this._toSafe(entry);
   }
 
   addTag(id, tag) {
-    const entry = this._store.find((e) => e.id === id);
+    const state = this._getState();
+    const entry = state.store.find((e) => e.id === id);
     if (!entry) throw new AppError('Gallery image not found', 404, 'NOT_FOUND');
     if (!tag || typeof tag !== 'string') throw new AppError('tag must be a non-empty string', 400, 'VALIDATION_ERROR');
     const normalized = tag.trim().toLowerCase();
@@ -141,24 +175,26 @@ class GalleryManager {
     if (!entry.tags.includes(normalized)) {
       entry.tags.push(normalized);
       if (entry.tags.length > 20) entry.tags = entry.tags.slice(0, 20);
-      this._persist();
+      this._persist(state);
     }
     return this._toSafe(entry);
   }
 
   removeTag(id, tag) {
-    const entry = this._store.find((e) => e.id === id);
+    const state = this._getState();
+    const entry = state.store.find((e) => e.id === id);
     if (!entry) throw new AppError('Gallery image not found', 404, 'NOT_FOUND');
     if (!tag || typeof tag !== 'string') throw new AppError('tag must be a non-empty string', 400, 'VALIDATION_ERROR');
     const normalized = tag.trim().toLowerCase();
     if (!entry.tags) entry.tags = [];
     entry.tags = entry.tags.filter(t => t !== normalized);
-    this._persist();
+    this._persist(state);
     return this._toSafe(entry);
   }
 
   updateMetadata(id, patch) {
-    const entry = this._store.find((e) => e.id === id);
+    const state = this._getState();
+    const entry = state.store.find((e) => e.id === id);
     if (!entry) throw new AppError('Gallery image not found', 404, 'NOT_FOUND');
     if (!patch || typeof patch !== 'object') return this._toSafe(entry);
 
@@ -168,13 +204,14 @@ class GalleryManager {
         entry[key] = patch[key];
       }
     }
-    this._persist();
+    this._persist(state);
     return this._toSafe(entry);
   }
 
   getAllTags() {
+    const state = this._getState();
     const tagSet = new Set();
-    for (const entry of this._store) {
+    for (const entry of state.store) {
       if (Array.isArray(entry.tags)) {
         for (const t of entry.tags) tagSet.add(t);
       }
@@ -186,27 +223,31 @@ class GalleryManager {
     if (!Array.isArray(ids) || ids.length === 0) {
       throw new AppError('No IDs provided', 400, 'VALIDATION_ERROR');
     }
+    const state = this._getState();
+    const uploadsDir = this._uploadsDir;
     const idSet = new Set(ids);
     const removed = [];
-    this._store = this._store.filter((entry) => {
+    state.store = state.store.filter((entry) => {
       if (!idSet.has(entry.id)) return true;
-      const fp = path.join(UPLOADS_DIR, entry.filename);
-      if (path.resolve(fp).startsWith(path.resolve(UPLOADS_DIR)) && fs.existsSync(fp)) fs.unlinkSync(fp);
-      this._validFiles.delete(entry.filename);
+      const fp = path.join(uploadsDir, entry.filename);
+      if (path.resolve(fp).startsWith(path.resolve(uploadsDir)) && fs.existsSync(fp)) fs.unlinkSync(fp);
+      state.validFiles.delete(entry.filename);
       removed.push(entry.id);
       return false;
     });
-    this._persist();
+    this._persist(state);
     return { removed, count: removed.length };
   }
 
   getMultipleFilePaths(ids) {
+    const state = this._getState();
+    const uploadsDir = this._uploadsDir;
     const results = [];
     for (const id of ids) {
-      const entry = this._store.find((e) => e.id === id);
+      const entry = state.store.find((e) => e.id === id);
       if (!entry) continue;
-      const fp = path.join(UPLOADS_DIR, entry.filename);
-      if (!path.resolve(fp).startsWith(path.resolve(UPLOADS_DIR))) continue;
+      const fp = path.join(uploadsDir, entry.filename);
+      if (!path.resolve(fp).startsWith(path.resolve(uploadsDir))) continue;
       if (fs.existsSync(fp)) {
         results.push({ filePath: fp, filename: entry.filename, mimeType: entry.mimeType });
       }
@@ -215,7 +256,7 @@ class GalleryManager {
   }
 
   getFolderPath() {
-    return UPLOADS_DIR;
+    return this._uploadsDir;
   }
 
   _toSafe(entry) {
@@ -242,15 +283,17 @@ class GalleryManager {
   }
 
   _ensureDirs() {
-    if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-    const dataDir = path.dirname(DATA_FILE);
+    const uploadsDir = this._uploadsDir;
+    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+    const dataDir = path.dirname(this._dataFile);
     if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
   }
 
   _load() {
     try {
-      if (fs.existsSync(DATA_FILE)) {
-        const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+      const dataFile = this._dataFile;
+      if (fs.existsSync(dataFile)) {
+        const parsed = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
         if (Array.isArray(parsed)) return parsed;
       }
     } catch (err) {
@@ -259,8 +302,8 @@ class GalleryManager {
     return [];
   }
 
-  _persist() {
-    atomicWriteJSON(DATA_FILE, this._store);
+  _persist(state) {
+    atomicWriteJSON(this._dataFile, state.store);
   }
 }
 

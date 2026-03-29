@@ -5,8 +5,7 @@ const { AppError } = require('../middleware/errorHandler');
 const { asText, atomicWriteJSON } = require('../utils/helpers');
 const log = require('../utils/logger');
 
-const { DATA_DIR } = require('../paths');
-const DATA_FILE = path.join(DATA_DIR, 'promptKnowledge.json');
+const { getDataDir } = require('../paths');
 
 const TEXT_FIELDS = [
   'lighting',
@@ -22,9 +21,10 @@ const TEXT_FIELDS = [
 ];
 
 class PromptKnowledgeService {
+  get _dataFile() { return path.join(getDataDir(), 'promptKnowledge.json'); }
+
   constructor() {
-    this._ensureDataFile();
-    this._store = this._load();
+    // no eager load — all reads happen per-request
   }
 
   create(entry) {
@@ -58,19 +58,24 @@ class PromptKnowledgeService {
       normalized[field] = asText(entry[field]);
     }
 
-    this._store.push(normalized);
-    this._persist();
+    this._ensureDataFile();
+    const store = this._load();
+    store.push(normalized);
+    this._persist(store);
     return { ...normalized };
   }
 
   list(filters = {}) {
+    this._ensureDataFile();
+    const store = this._load();
+
     const character = asText(filters.character);
     const sourceType = asText(filters.source_type).toLowerCase();
     const mode = asText(filters.mode).toLowerCase();
     const field = asText(filters.field);
     const q = asText(filters.q).toLowerCase();
 
-    return this._store
+    return store
       .filter((item) => !character || item.character_id === character)
       .filter((item) => !sourceType || item.source_type === sourceType)
       .filter((item) => !mode || item.mode === mode)
@@ -86,26 +91,26 @@ class PromptKnowledgeService {
   }
 
   _ensureDataFile() {
-    const dir = path.dirname(DATA_FILE);
+    const dataFile = this._dataFile;
+    const dir = path.dirname(dataFile);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, '[]', 'utf8');
+    if (!fs.existsSync(dataFile)) fs.writeFileSync(dataFile, '[]', 'utf8');
   }
 
   _load() {
     try {
-      const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+      const parsed = JSON.parse(fs.readFileSync(this._dataFile, 'utf8'));
       if (Array.isArray(parsed)) return parsed;
     } catch (err) {
       log.warn('promptknowledge_load_failed', { message: err.message });
     }
-    fs.writeFileSync(DATA_FILE, '[]', 'utf8');
+    fs.writeFileSync(this._dataFile, '[]', 'utf8');
     return [];
   }
 
-  _persist() {
-    atomicWriteJSON(DATA_FILE, this._store);
+  _persist(data) {
+    atomicWriteJSON(this._dataFile, data);
   }
 }
 
 module.exports = new PromptKnowledgeService();
-

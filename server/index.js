@@ -71,7 +71,7 @@ const backgroundsRouter = require('./routes/backgrounds');
 const authRouter = require('./routes/authRoutes');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
-const BetterSqlite3Store = require('connect-better-sqlite3')(session);
+const SqliteStore = require('better-sqlite3-session-store')(session);
 const { router: userKeysRouter } = require('./routes/userKeys');
 const billingRouter = require('./routes/billing');
 const adminRouter = require('./routes/admin');
@@ -83,15 +83,6 @@ const cfg = require('./config');
 const { readLimiter, generateLimiter, batchLimiter, cloneLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
-
-// Backfill spend tracking from existing gallery on first run
-try {
-  const galleryManager = require('./services/galleryManager');
-  const apiKeyManager = require('./services/apiKeyManager');
-  const allImages = galleryManager.list();
-  const totalImages = Array.isArray(allImages?.images) ? allImages.images.length : Array.isArray(allImages) ? allImages.length : 0;
-  apiKeyManager.backfillFromGallery(totalImages);
-} catch (err) { console.error('[backfill] Spend backfill failed:', err.message); }
 
 app.set('trust proxy', 1);
 
@@ -122,7 +113,7 @@ app.use(cookieParser());
 const DATA_DIR_SESS = process.env.DATA_DIR || require('path').join(__dirname, '..', 'data');
 require('fs').mkdirSync(DATA_DIR_SESS, { recursive: true });
 app.use(session({
-  store: new BetterSqlite3Store({ client: require('./db') }),
+  store: new SqliteStore({ client: require('./db') }),
   secret: process.env.SESSION_SECRET || require('crypto').randomBytes(32).toString('hex'),
   resave: false,
   saveUninitialized: false,

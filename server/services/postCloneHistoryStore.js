@@ -4,18 +4,20 @@ const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
 const { atomicWriteJSON } = require('../utils/helpers');
 
-const { DATA_DIR } = require('../paths');
-const DATA_FILE = path.join(DATA_DIR, 'post-clone-history.json');
+const { getDataDir } = require('../paths');
+
 const MAX_ITEMS = 50;
 
 class PostCloneHistoryStore {
+  get _dataFile() { return path.join(getDataDir(), 'post-clone-history.json'); }
+
   constructor() {
-    this._ensureDataDir();
-    this._store = this._load();
+    // no eager load — all reads happen per-request
   }
 
   list() {
-    return this._store
+    this._ensureDataDir();
+    return this._load()
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }
 
@@ -23,9 +25,12 @@ class PostCloneHistoryStore {
     const galleryIds = Array.isArray(data.galleryIds) ? data.galleryIds.filter(Boolean) : [];
     if (galleryIds.length === 0) return null;
 
-    if (this._store.length >= MAX_ITEMS) {
-      this._store.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-      this._store.shift();
+    this._ensureDataDir();
+    const store = this._load();
+
+    if (store.length >= MAX_ITEMS) {
+      store.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      store.shift();
     }
 
     const item = {
@@ -39,28 +44,30 @@ class PostCloneHistoryStore {
       createdAt: new Date().toISOString(),
     };
 
-    this._store.push(item);
-    this._persist();
+    store.push(item);
+    this._persist(store);
     return item;
   }
 
   remove(id) {
-    const idx = this._store.findIndex((i) => i.id === id);
+    this._ensureDataDir();
+    const store = this._load();
+    const idx = store.findIndex((i) => i.id === id);
     if (idx === -1) throw new AppError('History entry not found', 404, 'NOT_FOUND');
-    this._store.splice(idx, 1);
-    this._persist();
+    store.splice(idx, 1);
+    this._persist(store);
     return { removed: true };
   }
 
   _ensureDataDir() {
-    const dir = path.dirname(DATA_FILE);
+    const dir = path.dirname(this._dataFile);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   }
 
   _load() {
     try {
-      if (fs.existsSync(DATA_FILE)) {
-        const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+      if (fs.existsSync(this._dataFile)) {
+        const parsed = JSON.parse(fs.readFileSync(this._dataFile, 'utf8'));
         if (Array.isArray(parsed)) return parsed;
       }
     } catch (err) {
@@ -69,8 +76,8 @@ class PostCloneHistoryStore {
     return [];
   }
 
-  _persist() {
-    atomicWriteJSON(DATA_FILE, this._store);
+  _persist(data) {
+    atomicWriteJSON(this._dataFile, data);
   }
 }
 
