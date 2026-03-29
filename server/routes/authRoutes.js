@@ -27,25 +27,30 @@ async function sendMail(to, subject, html) {
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
-  const { email, password, name } = req.body || {};
-  if (!email || !password || !name) return res.status(400).json({ error: 'email, password and name are required' });
-  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase());
-  if (existing) return res.status(409).json({ error: 'Email already registered' });
-  const hash = await bcrypt.hash(password, 12);
-  const id = uuidv4();
-  const token = uuidv4().replace(/-/g, '');
-  // Auto-verify (no email server required); send email if SMTP is configured
-  const hasSmtp = !!(process.env.SMTP_USER && process.env.SMTP_PASS);
-  const verified = hasSmtp ? 0 : 1;
-  db.prepare('INSERT INTO users (id, email, password_hash, name, verified, verification_token) VALUES (?,?,?,?,?,?)').run(id, email.toLowerCase(), hash, name, verified, token);
-  db.prepare('INSERT INTO subscriptions (id, user_id, plan, status) VALUES (?,?,?,?)').run(uuidv4(), id, 'free', 'active');
-  if (hasSmtp) {
-    const appUrl = process.env.APP_URL || 'http://localhost:3001';
-    await sendMail(email, 'Verify your AI Content Studio account', `<p>Click <a href="${appUrl}/verify-email?token=${token}">here</a> to verify your email.</p>`);
-    return res.status(201).json({ message: 'Registration successful. Check your email to verify.' });
+  try {
+    const { email, password, name } = req.body || {};
+    if (!email || !password || !name) return res.status(400).json({ error: 'email, password and name are required' });
+    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase());
+    if (existing) return res.status(409).json({ error: 'Email already registered' });
+    const hash = await bcrypt.hash(password, 12);
+    const id = uuidv4();
+    const token = uuidv4().replace(/-/g, '');
+    // Auto-verify when no SMTP configured
+    const hasSmtp = !!(process.env.SMTP_USER && process.env.SMTP_PASS);
+    const verified = hasSmtp ? 0 : 1;
+    db.prepare('INSERT INTO users (id, email, password_hash, name, verified, verification_token) VALUES (?,?,?,?,?,?)').run(id, email.toLowerCase(), hash, name, verified, token);
+    db.prepare('INSERT INTO subscriptions (id, user_id, plan, status) VALUES (?,?,?,?)').run(uuidv4(), id, 'free', 'active');
+    if (hasSmtp) {
+      const appUrl = process.env.APP_URL || 'http://localhost:3001';
+      await sendMail(email, 'Verify your AI Content Studio account', `<p>Click <a href="${appUrl}/verify-email?token=${token}">here</a> to verify your email.</p>`);
+      return res.status(201).json({ success: true, message: 'Registration successful. Check your email to verify.' });
+    }
+    return res.status(201).json({ success: true, message: 'Registration successful. You can now log in.' });
+  } catch (err) {
+    console.error('[register]', err.message);
+    return res.status(500).json({ error: err.message });
   }
-  res.status(201).json({ message: 'Registration successful. You can now log in.' });
 });
 
 // GET /api/auth/verify/:token
@@ -59,18 +64,23 @@ router.get('/verify/:token', (req, res) => {
 
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase());
-  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
-  if (user.is_banned) return res.status(403).json({ error: 'Account suspended' });
-  if (!user.verified) return res.status(403).json({ error: 'Please verify your email first' });
-  const ok = await bcrypt.compare(password, user.password_hash);
-  if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
-  req.session.userId = user.id;
-  req.session.isAdmin = !!user.is_admin;
-  const sub = db.prepare('SELECT plan, status FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(user.id);
-  res.json({ success: true, id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan: sub?.plan || 'free' });
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase());
+    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    if (user.is_banned) return res.status(403).json({ error: 'Account suspended' });
+    if (!user.verified) return res.status(403).json({ error: 'Please verify your email first' });
+    const ok = await bcrypt.compare(password, user.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+    req.session.userId = user.id;
+    req.session.isAdmin = !!user.is_admin;
+    const sub = db.prepare('SELECT plan, status FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(user.id);
+    return res.json({ success: true, id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan: sub?.plan || 'free' });
+  } catch (err) {
+    console.error('[login]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/auth/logout
