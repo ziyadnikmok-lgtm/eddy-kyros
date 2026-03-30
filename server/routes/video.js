@@ -211,7 +211,14 @@ router.get('/:taskId/status', async (req, res, next) => {
       }
 
       if (!entry.localPath) {
-        const { filename, filePath } = await geminiVideo.downloadVideo(apiKey, videoUri, VIDEO_DIR);
+        let filename, filePath;
+        try {
+          ({ filename, filePath } = await geminiVideo.downloadVideo(apiKey, videoUri, VIDEO_DIR));
+        } catch (dlErr) {
+          log.warn('veo_download_failed', { taskId, error: dlErr.message });
+          videoHistory.update(entry.id, { status: 'failed', error: `Video download failed: ${dlErr.message}` });
+          return res.json({ success: true, data: { status: 'failed', error: 'Video download failed — please regenerate' } });
+        }
         if (!entry.spendTracked) {
           const perSecond = GEMINI_VIDEO_PRICES_PER_SECOND[entry.model] || 0;
           const totalCost = perSecond * (entry.duration || 0);
@@ -226,14 +233,13 @@ router.get('/:taskId/status', async (req, res, next) => {
           filename,
           spendTracked: true,
         });
-        return res.json({ success: true, data: { status: 'completed', outputs: [videoUri], localFilename: filename } });
+        return res.json({ success: true, data: { status: 'completed', localFilename: filename } });
       }
 
       return res.json({
         success: true,
         data: {
           status: 'completed',
-          outputs: [entry.videoUrl].filter(Boolean),
           localFilename: entry.filename,
         },
       });

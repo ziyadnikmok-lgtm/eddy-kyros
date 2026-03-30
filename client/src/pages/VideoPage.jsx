@@ -645,28 +645,54 @@ export default function VideoPage() {
           )}
 
           {/* Result */}
-          {result && result.outputs?.length > 0 && (
+          {result && (result.localFilename || result.outputs?.length > 0) && (
             <Card className="space-y-3">
               <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">Result</h3>
-              <video
-                src={result.localFilename ? videoApi.fileUrl(result.localFilename) : result.outputs[0]}
-                controls
-                autoPlay
-                loop
-                className="w-full rounded-lg border border-zinc-700/60"
-              />
-              <div className="flex items-center gap-2">
-                <a
-                  href={result.localFilename ? videoApi.fileUrl(result.localFilename) : result.outputs[0]}
-                  download
-                  className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700/60 transition-colors"
-                >
-                  Download
-                </a>
-                <Btn variant="ghost" onClick={() => { setResult(null); setTaskId(null); }}>
-                  Generate Again
-                </Btn>
-              </div>
+              {result.localFilename ? (
+                <>
+                  <video
+                    src={videoApi.fileUrl(result.localFilename)}
+                    controls
+                    autoPlay
+                    loop
+                    className="w-full rounded-lg border border-zinc-700/60"
+                  />
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={videoApi.fileUrl(result.localFilename)}
+                      download
+                      className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700/60 transition-colors"
+                    >
+                      Download
+                    </a>
+                    <Btn variant="ghost" onClick={() => { setResult(null); setTaskId(null); }}>
+                      Generate Again
+                    </Btn>
+                  </div>
+                </>
+              ) : result.outputs?.length > 0 ? (
+                <>
+                  <video
+                    src={result.outputs[0]}
+                    controls
+                    autoPlay
+                    loop
+                    className="w-full rounded-lg border border-zinc-700/60"
+                  />
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={result.outputs[0]}
+                      download
+                      className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700/60 transition-colors"
+                    >
+                      Download
+                    </a>
+                    <Btn variant="ghost" onClick={() => { setResult(null); setTaskId(null); }}>
+                      Generate Again
+                    </Btn>
+                  </div>
+                </>
+              ) : null}
               {result.timings?.inference && (
                 <p className="text-[10px] text-zinc-600">Generated in {(result.timings.inference / 1000).toFixed(1)}s</p>
               )}

@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { nsfwGenerate as api, loraPresets as presetsApi } from '../services/api';
+import { nsfwGenerate as api, loraPresets as presetsApi, characters as charApi } from '../services/api';
 import { useAsync } from '../hooks/useAsync';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Textarea, Spinner } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 import { ASPECT_RATIOS } from '../config/photoModes';
 
-const _cache = { result: null, history: [], selectedPresetId: '', presetStrength: 1.0, extraLoras: [], prompt: '', aspectRatio: '4:5' };
+const _cache = { result: null, history: [], selectedPresetId: '', presetStrength: 1.0, extraLoras: [], prompt: '', aspectRatio: '4:5', selectedCharId: '' };
 
 export default function NsfwGeneratePage() {
   const { notify } = useApp();
@@ -29,6 +29,10 @@ export default function NsfwGeneratePage() {
   const [newPresetPath, setNewPresetPath] = useState('');
   const [newPresetScale, setNewPresetScale] = useState(1.0);
 
+  // Character selector
+  const [characters, setCharacters] = useState([]);
+  const [selectedCharId, setSelectedCharId] = useState(_cache.selectedCharId);
+
   // Variation mode
   const [varyPrompt, setVaryPrompt] = useState('');
   const [varyStrength, setVaryStrength] = useState(0.6);
@@ -44,6 +48,10 @@ export default function NsfwGeneratePage() {
   }, []);
 
   useEffect(() => { loadPresets(); }, [loadPresets]);
+
+  useEffect(() => {
+    charApi.list().then((data) => setCharacters(data || [])).catch(() => {});
+  }, []);
 
   const selectedPreset = presets.find((p) => p.id === selectedPresetId) || null;
 
@@ -95,12 +103,22 @@ export default function NsfwGeneratePage() {
     } catch { notify('Failed to delete preset', 'error'); }
   };
 
+  const selectedChar = characters.find((c) => c.id === selectedCharId) || null;
+
+  const buildFinalPrompt = () => {
+    const base = prompt.trim();
+    if (selectedChar?.masterPrompt) {
+      return `${selectedChar.masterPrompt.trim()}, ${base}`;
+    }
+    return base;
+  };
+
   const handleGenerate = () => {
     if (busyRef.current) return;
     busyRef.current = true;
     run(async () => {
       if (!prompt.trim()) { notify('Enter a prompt', 'error'); return; }
-      const data = await api.image({ prompt: prompt.trim(), aspectRatio, loras: buildLoras() });
+      const data = await api.image({ prompt: buildFinalPrompt(), aspectRatio, loras: buildLoras() });
       setResult(data);
       sync('result', data);
       setVariations([]);
@@ -117,7 +135,7 @@ export default function NsfwGeneratePage() {
     if (busyRef.current || !result?.image) return;
     busyRef.current = true;
     run(async () => {
-      const varPrompt = varyPrompt.trim() || prompt.trim();
+      const varPrompt = varyPrompt.trim() || buildFinalPrompt();
       if (!varPrompt) { notify('Enter a variation prompt', 'error'); return; }
       const data = await api.vary({
         imageBase64: result.image.base64Data, mimeType: result.image.mimeType,
@@ -147,6 +165,26 @@ export default function NsfwGeneratePage() {
       {/* Left panel — controls */}
       <div className="w-80 shrink-0 space-y-4 overflow-y-auto pr-2 pb-8">
         <Card className="p-4 space-y-4">
+          {/* Character Selector */}
+          {characters.length > 0 && (
+            <div>
+              <span className="text-xs text-zinc-400 font-medium block mb-1.5">Character</span>
+              <select
+                value={selectedCharId}
+                onChange={(e) => { setSelectedCharId(e.target.value); sync('selectedCharId', e.target.value); }}
+                className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-purple-500/70 focus:ring-1 focus:ring-purple-500/20 cursor-pointer"
+              >
+                <option value="">No character</option>
+                {characters.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              {selectedChar && (
+                <p className="text-[10px] text-zinc-500 mt-1 truncate">{selectedChar.masterPrompt?.slice(0, 80)}…</p>
+              )}
+            </div>
+          )}
+
           {/* Prompt */}
           <div>
             <span className="text-xs text-zinc-400 font-medium block mb-1.5">Prompt</span>
