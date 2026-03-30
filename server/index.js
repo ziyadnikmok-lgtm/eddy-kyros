@@ -87,6 +87,7 @@ const nsfwGenerateRouter = require('./routes/nsfwGenerate');
 const loraPresetsRouter = require('./routes/loraPresets');
 const backgroundsRouter = require('./routes/backgrounds');
 const videoComposeRouter = require('./routes/videoCompose');
+const photoMatchRouter = require('./routes/photoMatch');
 const authRouter = require('./routes/authRoutes');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
@@ -243,6 +244,7 @@ app.use('/api/nsfw-generate', generateLimiter, nsfwGenerateRouter);
 app.use('/api/lora-presets', loraPresetsRouter);
 app.use('/api/backgrounds', backgroundsRouter);
 app.use('/api/video-compose', generateLimiter, videoComposeRouter);
+app.use('/api/photo-match', generateLimiter, photoMatchRouter);
 
 const { CLIENT_DIST } = require('./paths');
 if (fs.existsSync(CLIENT_DIST)) {

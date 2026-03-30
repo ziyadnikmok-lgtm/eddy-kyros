@@ -11,7 +11,7 @@ const LONG_RUNNING_PATHS = [
   '/scene/recreate', '/story/generate',
   '/auto/plan', '/auto/execute',
   '/video/generate', '/reformat',
-  '/nsfw-generate',
+  '/nsfw-generate', '/photo-match',
 ];
 
 const EXTRA_LONG_PATHS = ['/profile-clone'];
@@ -247,6 +247,10 @@ export const gallery = {
 export const scene = {
   analyze: (image, mimeType) => request('/scene/analyze', { method: 'POST', body: { image, mimeType } }),
   recreate: (body) => request('/scene/recreate', { method: 'POST', body }),
+};
+
+export const photoMatch = {
+  recreate: (body) => request('/photo-match/recreate', { method: 'POST', body }),
 };
 
 export const niches = {
