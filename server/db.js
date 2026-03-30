@@ -104,27 +104,5 @@ if (process.env.SEED_ADMIN_EMAIL) {
   }
 }
 
-// One-time password reset: if RESET_ADMIN_PASSWORD is set, upsert the admin account
-if (process.env.SEED_ADMIN_EMAIL && process.env.RESET_ADMIN_PASSWORD) {
-  try {
-    const bcrypt = require('bcryptjs');
-    const { v4: uuidv4 } = require('uuid');
-    const hash = bcrypt.hashSync(process.env.RESET_ADMIN_PASSWORD, 12);
-    const email = process.env.SEED_ADMIN_EMAIL.toLowerCase();
-    const existing = db.prepare('SELECT id FROM users WHERE email=?').get(email);
-    if (existing) {
-      db.prepare('UPDATE users SET password_hash=?, verified=1, is_admin=1 WHERE email=?').run(hash, email);
-      console.log('[db] Admin password reset for:', email);
-    } else {
-      const id = uuidv4();
-      db.prepare('INSERT INTO users (id, email, password_hash, name, verified, is_admin) VALUES (?,?,?,?,1,1)').run(id, email, hash, 'Admin');
-      db.prepare('INSERT OR IGNORE INTO subscriptions (id, user_id, plan, status) VALUES (?,?,?,?)').run(uuidv4(), id, 'free', 'active');
-      console.log('[db] Admin account created:', email);
-    }
-    process.env.RESET_ADMIN_PASSWORD = '';
-  } catch (e) {
-    console.error('[db] Admin password reset failed:', e.message);
-  }
-}
 
 module.exports = db;
