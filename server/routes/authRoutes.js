@@ -49,7 +49,7 @@ router.post('/register', async (req, res) => {
     return res.status(201).json({ success: true, message: 'Registration successful. You can now log in.' });
   } catch (err) {
     console.error('[register]', err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Registration failed. Please try again.' });
   }
 });
 
@@ -78,16 +78,23 @@ router.post('/login', async (req, res) => {
       db.prepare('UPDATE users SET is_admin=1, verified=1 WHERE id=?').run(user.id);
       user.is_admin = 1;
     }
-    req.session.userId = user.id;
-    req.session.isAdmin = !!user.is_admin;
-    if (keepSignedIn) {
-      req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000; // 30 days
-    }
-    const sub = db.prepare('SELECT plan, status FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(user.id);
-    return res.json({ success: true, id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan: sub?.plan || 'free' });
+    // Regenerate session ID to prevent session fixation attacks
+    req.session.regenerate((err) => {
+      if (err) {
+        console.error('[login] session regenerate failed:', err.message);
+        return res.status(500).json({ error: 'Login failed. Please try again.' });
+      }
+      req.session.userId = user.id;
+      req.session.isAdmin = !!user.is_admin;
+      if (keepSignedIn) {
+        req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000; // 30 days
+      }
+      const sub = db.prepare('SELECT plan, status FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(user.id);
+      return res.json({ success: true, id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan: sub?.plan || 'free' });
+    });
   } catch (err) {
     console.error('[login]', err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Login failed. Please try again.' });
   }
 });
 

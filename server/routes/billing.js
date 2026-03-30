@@ -57,10 +57,10 @@ router.get('/status', requireAuth, (req, res) => {
 router.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['x-heleket-signature'] || req.headers['x-signature'] || '';
   const apiKey = process.env.HELEKET_API_KEY || '';
-  // Verify HMAC-SHA256 signature
+  // Verify HMAC-SHA256 signature — reject if missing or wrong
   const expected = crypto.createHmac('sha256', apiKey).update(req.body).digest('hex');
-  if (sig && sig !== expected) {
-    console.warn('[BILLING] Webhook signature mismatch');
+  if (!sig || sig !== expected) {
+    console.warn('[BILLING] Webhook signature missing or mismatch');
     return res.status(403).json({ error: 'Invalid signature' });
   }
   let body;

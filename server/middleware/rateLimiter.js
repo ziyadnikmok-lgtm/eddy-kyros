@@ -1,5 +1,14 @@
 const rateLimit = require('express-rate-limit');
 
+// Auth endpoints: stricter limit to prevent brute-force / credential stuffing
+const authLimiter = rateLimit({
+  windowMs: 15 * 60_000, // 15 minutes
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: { code: 'RATE_LIMIT', message: 'Too many attempts — please try again in 15 minutes' } },
+});
+
 const readLimiter = rateLimit({
   windowMs: 60_000,
   max: 300,
@@ -32,4 +41,4 @@ const cloneLimiter = rateLimit({
   message: { success: false, error: { code: 'RATE_LIMIT', message: 'Too many clone requests — try again shortly' } },
 });
 
-module.exports = { readLimiter, generateLimiter, batchLimiter, cloneLimiter };
+module.exports = { authLimiter, readLimiter, generateLimiter, batchLimiter, cloneLimiter };

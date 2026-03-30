@@ -99,7 +99,7 @@ const imageStore = require('./services/imageStore');
 const batchGenerator = require('./services/batchGenerator');
 const log = require('./utils/logger');
 const cfg = require('./config');
-const { readLimiter, generateLimiter, batchLimiter, cloneLimiter } = require('./middleware/rateLimiter');
+const { authLimiter, readLimiter, generateLimiter, batchLimiter, cloneLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
 
@@ -152,7 +152,7 @@ try {
   process.exit(1);
 }
 app.use(compressionMiddleware(cfg.COMPRESSION_MIN_BYTES));
-app.use('/api/auth', authRouter);
+app.use('/api/auth', authLimiter, authRouter);
 
 // One-time admin bootstrap — no auth required, protected by BOOTSTRAP_SECRET env var
 app.get('/api/bootstrap-admin', (req, res) => {

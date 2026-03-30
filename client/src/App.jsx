@@ -4,6 +4,7 @@ const RegisterPage = lazy(() => import('./pages/RegisterPage'));
 const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
+const LandingPage = lazy(() => import('./pages/LandingPage'));
 import { useApp } from './context/AppContext';
 import { Toasts, Spinner } from './components/UI';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
@@ -374,7 +375,7 @@ const AuthSuspense = ({ children }) => (
 // Auth states: 'loading' | 'authenticated' | 'unauthenticated'
 export default function App() {
   const [authState, setAuthState] = useState('loading');
-  const [authPage, setAuthPage] = useState('login');
+  const [authPage, setAuthPage] = useState('landing');
 
   useEffect(() => {
     // Check for token in URL (verify email, reset password)
@@ -405,6 +406,9 @@ export default function App() {
 
   if (authState === 'unauthenticated') {
     const navigate = (page) => setAuthPage(page);
+    if (authPage === 'login') {
+      return <AuthSuspense><LoginPage onLogin={() => setAuthState('authenticated')} onNavigate={navigate} /></AuthSuspense>;
+    }
     if (authPage === 'register') {
       return <AuthSuspense><RegisterPage onNavigate={navigate} /></AuthSuspense>;
     }
@@ -417,8 +421,9 @@ export default function App() {
     if (authPage === 'verify-email') {
       return <AuthSuspense><VerifyEmailPage onNavigate={navigate} /></AuthSuspense>;
     }
-    return <AuthSuspense><LoginPage onLogin={() => setAuthState('authenticated')} onNavigate={navigate} /></AuthSuspense>;
+    // Default: landing page
+    return <AuthSuspense><LandingPage onNavigate={navigate} /></AuthSuspense>;
   }
 
-  return <MainApp onLogout={() => { setAuthState('unauthenticated'); setAuthPage('login'); }} />;
+  return <MainApp onLogout={() => { setAuthState('unauthenticated'); setAuthPage('landing'); }} />;
 }
