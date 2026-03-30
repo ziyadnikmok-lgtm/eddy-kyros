@@ -144,7 +144,11 @@ router.post('/login', async (req, res) => {
 
 // POST /api/auth/logout
 router.post('/logout', (req, res) => {
-  req.session.destroy(() => res.json({ message: 'Logged out' }));
+  req.session.destroy((err) => {
+    if (err) console.error('[logout] session destroy failed:', err.message);
+    res.clearCookie('connect.sid');
+    res.json({ message: 'Logged out' });
+  });
 });
 
 // GET /api/auth/me
@@ -202,8 +206,8 @@ router.post('/change-password', async (req, res) => {
     if (!ok) return res.status(401).json({ error: 'Current password is incorrect' });
     const hash = await bcrypt.hash(newPassword, 12);
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
-    req.session.destroy(() => {});
     res.json({ message: 'Password changed. Please log in again.' });
+    req.session.destroy((err) => { if (err) console.error('[change-password] session destroy:', err.message); });
   } catch (err) {
     console.error('[change-password]', err.message);
     res.status(500).json({ error: 'Failed to change password. Please try again.' });
@@ -222,8 +226,8 @@ router.delete('/account', async (req, res) => {
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) return res.status(401).json({ error: 'Incorrect password' });
     db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
-    req.session.destroy(() => {});
     res.json({ message: 'Account deleted.' });
+    req.session.destroy((err) => { if (err) console.error('[delete-account] session destroy:', err.message); });
   } catch (err) {
     console.error('[delete-account]', err.message);
     res.status(500).json({ error: 'Failed to delete account. Please try again.' });
