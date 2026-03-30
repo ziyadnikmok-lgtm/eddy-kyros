@@ -14,12 +14,15 @@ const s = {
 
 export default function RegisterPage({ onNavigate }) {
   const [form, setForm] = useState({ name: '', email: '', password: '' });
+  const [confirm, setConfirm] = useState('');
   const [msg, setMsg] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (form.password !== confirm) { setError('Passwords do not match'); return; }
+    if (form.password.length < 8) { setError('Password must be at least 8 characters'); return; }
     setLoading(true); setError(''); setMsg('');
     try {
       const res = await fetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(form) });
@@ -30,6 +33,8 @@ export default function RegisterPage({ onNavigate }) {
     setLoading(false);
   };
 
+  const passwordsMatch = confirm.length === 0 || form.password === confirm;
+
   return (
     <div style={s.container}>
       <div style={s.box}>
@@ -39,8 +44,17 @@ export default function RegisterPage({ onNavigate }) {
             {error && <div style={s.err}>{error}</div>}
             <input type="text" placeholder="Name" value={form.name} onChange={e => setForm({...form, name: e.target.value})} required style={s.input} />
             <input type="email" placeholder="Email" value={form.email} onChange={e => setForm({...form, email: e.target.value})} required style={s.input} />
-            <input type="password" placeholder="Password" value={form.password} onChange={e => setForm({...form, password: e.target.value})} required style={s.input} />
-            <button type="submit" style={s.btn} disabled={loading}>{loading ? 'Creating...' : 'Create Account'}</button>
+            <input type="password" placeholder="Password (min 8 characters)" value={form.password} onChange={e => setForm({...form, password: e.target.value})} required style={s.input} />
+            <input
+              type="password"
+              placeholder="Confirm password"
+              value={confirm}
+              onChange={e => setConfirm(e.target.value)}
+              required
+              style={{ ...s.input, borderColor: passwordsMatch ? '#333' : '#ef4444', marginBottom: '0.25rem' }}
+            />
+            {!passwordsMatch && <p style={{ color: '#f87171', fontSize: '12px', marginBottom: '0.75rem' }}>Passwords don't match</p>}
+            <button type="submit" style={{ ...s.btn, marginTop: '0.5rem' }} disabled={loading || !passwordsMatch}>{loading ? 'Creating...' : 'Create Account'}</button>
           </form>
         )}
         <div style={s.row}>Already have an account? <button onClick={() => onNavigate && onNavigate('login')} style={s.link}>Sign in</button></div>
