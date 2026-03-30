@@ -104,4 +104,19 @@ if (process.env.SEED_ADMIN_EMAIL) {
   }
 }
 
+// One-time password reset: if RESET_ADMIN_PASSWORD is set, update the admin password then clear the env var
+if (process.env.SEED_ADMIN_EMAIL && process.env.RESET_ADMIN_PASSWORD) {
+  try {
+    const bcrypt = require('bcryptjs');
+    const hash = bcrypt.hashSync(process.env.RESET_ADMIN_PASSWORD, 12);
+    const result = db.prepare('UPDATE users SET password_hash=?, verified=1, is_admin=1 WHERE email=?').run(hash, process.env.SEED_ADMIN_EMAIL.toLowerCase());
+    if (result.changes > 0) {
+      console.log('[db] Admin password reset for:', process.env.SEED_ADMIN_EMAIL);
+    }
+    process.env.RESET_ADMIN_PASSWORD = '';
+  } catch (e) {
+    console.error('[db] Admin password reset failed:', e.message);
+  }
+}
+
 module.exports = db;
