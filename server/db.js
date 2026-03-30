@@ -23,6 +23,29 @@ const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+// Migrate sessions table: rename 'expired' column to 'expire' if needed
+try {
+  const cols = db.pragma('table_info(sessions)');
+  const hasExpired = cols.some(c => c.name === 'expired');
+  const hasExpire  = cols.some(c => c.name === 'expire');
+  if (hasExpired && !hasExpire) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS sessions_new (
+        sid    TEXT NOT NULL PRIMARY KEY,
+        sess   JSON NOT NULL,
+        expire TEXT NOT NULL
+      );
+      INSERT INTO sessions_new (sid, sess, expire)
+        SELECT sid, sess, expired FROM sessions;
+      DROP TABLE sessions;
+      ALTER TABLE sessions_new RENAME TO sessions;
+    `);
+    console.log('[db] Migrated sessions table: expired → expire');
+  }
+} catch (e) {
+  // Table may not exist yet — that's fine, CREATE TABLE below will handle it
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id         TEXT PRIMARY KEY,
