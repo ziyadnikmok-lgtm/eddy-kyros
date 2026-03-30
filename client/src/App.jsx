@@ -1,5 +1,9 @@
 import { lazy, Suspense, useState, useEffect, useCallback } from 'react';
 const LoginPage = lazy(() => import('./pages/LoginPage'));
+const RegisterPage = lazy(() => import('./pages/RegisterPage'));
+const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
+const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
 import { useApp } from './context/AppContext';
 import { Toasts, Spinner } from './components/UI';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
@@ -309,11 +313,26 @@ function MainApp({ onLogout }) {
   );
 }
 
+const AuthSuspense = ({ children }) => (
+  <Suspense fallback={<div className="min-h-screen bg-zinc-950 flex items-center justify-center"><Spinner size={32} /></div>}>
+    {children}
+  </Suspense>
+);
+
 // Auth states: 'loading' | 'authenticated' | 'unauthenticated'
 export default function App() {
   const [authState, setAuthState] = useState('loading');
+  const [authPage, setAuthPage] = useState('login');
 
   useEffect(() => {
+    // Check for token in URL (verify email, reset password)
+    const params = new URLSearchParams(window.location.search);
+    if (window.location.pathname === '/verify-email' && params.get('token')) {
+      setAuthPage('verify-email');
+    } else if (window.location.pathname === '/reset-password' && params.get('token')) {
+      setAuthPage('reset-password');
+    }
+
     fetch('/api/auth/status', { credentials: 'include' })
       .then((r) => r.json())
       .then((data) => {
@@ -333,16 +352,21 @@ export default function App() {
   }
 
   if (authState === 'unauthenticated') {
-    return (
-      <Suspense fallback={
-        <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
-          <Spinner size={32} />
-        </div>
-      }>
-        <LoginPage onLogin={() => setAuthState('authenticated')} />
-      </Suspense>
-    );
+    const navigate = (page) => setAuthPage(page);
+    if (authPage === 'register') {
+      return <AuthSuspense><RegisterPage onNavigate={navigate} /></AuthSuspense>;
+    }
+    if (authPage === 'forgot-password') {
+      return <AuthSuspense><ForgotPasswordPage onNavigate={navigate} /></AuthSuspense>;
+    }
+    if (authPage === 'reset-password') {
+      return <AuthSuspense><ResetPasswordPage onNavigate={navigate} /></AuthSuspense>;
+    }
+    if (authPage === 'verify-email') {
+      return <AuthSuspense><VerifyEmailPage onNavigate={navigate} /></AuthSuspense>;
+    }
+    return <AuthSuspense><LoginPage onLogin={() => setAuthState('authenticated')} onNavigate={navigate} /></AuthSuspense>;
   }
 
-  return <MainApp onLogout={() => setAuthState('unauthenticated')} />;
+  return <MainApp onLogout={() => { setAuthState('unauthenticated'); setAuthPage('login'); }} />;
 }
