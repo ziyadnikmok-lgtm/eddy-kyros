@@ -57,8 +57,10 @@ async function sendMail(to, subject, html) {
   try {
     const t = getTransport();
     await t.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to, subject, html });
+    return true;
   } catch (e) {
     console.error('[MAIL] Failed to send email:', e.message);
+    return false;
   }
 }
 
@@ -73,16 +75,8 @@ router.post('/register', async (req, res) => {
     const hash = await bcrypt.hash(password, 12);
     const id = uuidv4();
     const token = uuidv4().replace(/-/g, '');
-    // Auto-verify when no SMTP configured
-    const hasSmtp = !!(process.env.SMTP_USER && process.env.SMTP_PASS);
-    const verified = hasSmtp ? 0 : 1;
-    db.prepare('INSERT INTO users (id, email, password_hash, name, verified, verification_token) VALUES (?,?,?,?,?,?)').run(id, email.toLowerCase(), hash, name, verified, token);
+    db.prepare('INSERT INTO users (id, email, password_hash, name, verified, verification_token) VALUES (?,?,?,?,?,?)').run(id, email.toLowerCase(), hash, name, 1, null);
     db.prepare('INSERT INTO subscriptions (id, user_id, plan, status) VALUES (?,?,?,?)').run(uuidv4(), id, 'free', 'active');
-    if (hasSmtp) {
-      const appUrl = process.env.APP_URL || 'http://localhost:3001';
-      await sendMail(email, 'Verify your AI Content Studio account', `<p>Click <a href="${appUrl}/verify-email?token=${token}">here</a> to verify your email.</p>`);
-      return res.status(201).json({ success: true, message: 'Registration successful. Check your email to verify.' });
-    }
     return res.status(201).json({ success: true, message: 'Registration successful. You can now log in.' });
   } catch (err) {
     console.error('[register]', err.message);
@@ -113,7 +107,10 @@ router.post('/login', async (req, res) => {
     const user = db.prepare('SELECT * FROM users WHERE email = ?').get(emailLower);
     if (!user) { recordFailedLogin(emailLower); return res.status(401).json({ error: 'Invalid credentials' }); }
     if (user.is_banned) return res.status(403).json({ error: 'Account suspended' });
-    if (!user.verified) return res.status(403).json({ error: 'Please verify your email first' });
+    if (!user.verified) {
+      db.prepare('UPDATE users SET verified = 1, verification_token = NULL WHERE id = ?').run(user.id);
+      user.verified = 1;
+    }
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) { recordFailedLogin(emailLower); return res.status(401).json({ error: 'Invalid credentials' }); }
     clearLoginAttempts(emailLower);
