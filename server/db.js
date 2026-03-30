@@ -60,9 +60,9 @@ db.exec(`
   );
 
   CREATE TABLE IF NOT EXISTS sessions (
-    sid     TEXT PRIMARY KEY,
-    sess    TEXT NOT NULL,
-    expired TEXT NOT NULL
+    sid    TEXT NOT NULL PRIMARY KEY,
+    sess   JSON NOT NULL,
+    expire TEXT NOT NULL
   );
 `);
 
