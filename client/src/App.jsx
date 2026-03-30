@@ -32,6 +32,7 @@ import {
   IconCreditCards,
   IconBulletList,
   IconCrosshairs,
+  IconSettingsWrench,
 } from 'nucleo-glass';
 
 const GeneratePage = lazy(() => import('./pages/GeneratePage'));
@@ -57,6 +58,7 @@ const BillingPage = lazy(() => import('./pages/BillingPage'));
 const VideoComposePage = lazy(() => import('./pages/VideoComposePage'));
 const LogsPage = lazy(() => import('./pages/LogsPage'));
 const PhotoMatchPage = lazy(() => import('./pages/PhotoMatchPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 
 const NAV_ICONS = {
   generate: IconBadgeSparkle,
@@ -81,6 +83,7 @@ const NAV_ICONS = {
   billing: IconCreditCards,
   logs: IconBulletList,
   photoMatch: IconCrosshairs,
+  settings: IconSettingsWrench,
 };
 
 // Each entry: [gradientTop, gradientBottom] matching --nc-gradient-1-color-1 / color-2
@@ -107,6 +110,7 @@ const NAV_COLORS = {
   billing:        ['#86efac', '#16a34a'],
   logs:           ['#fda4af', '#e11d48'],
   photoMatch:     ['#6ee7b7', '#0891b2'],
+  settings:       ['#94a3b8', '#64748b'],
 };
 
 const NAV_SECTIONS = [
@@ -149,6 +153,7 @@ const NAV_SECTIONS = [
       { id: 'characters', label: 'Characters' },
       { id: 'keys', label: 'API Keys' },
       { id: 'billing', label: 'Billing' },
+      { id: 'settings', label: 'Settings' },
       { id: 'logs', label: 'App Logs' },
     ],
   },
@@ -190,6 +195,7 @@ const PAGE_DESCRIPTIONS = {
   billing: 'View your plan and upgrade your subscription',
   videoCompose: 'Drop a video — add audio and text overlay',
   logs: 'View recent app logs and copy them for support',
+  settings: 'Change password, manage your account',
   photoMatch: 'Paste any photo — match background & pose with your character',
 };
 
@@ -216,6 +222,7 @@ const PAGES = {
   videoCompose: VideoComposePage,
   logs: LogsPage,
   photoMatch: PhotoMatchPage,
+  settings: SettingsPage,
 };
 
 function PageFallback() {

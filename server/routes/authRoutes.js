@@ -7,6 +7,43 @@ const db = require('../db');
 
 const router = express.Router();
 
+// Account lockout: max 5 failed attempts per email, locked 15 min
+const LOCKOUT_MAX = 5;
+const LOCKOUT_MS = 15 * 60 * 1000;
+const loginAttempts = new Map(); // email -> { count, lockedUntil }
+
+function checkLockout(email) {
+  const entry = loginAttempts.get(email);
+  if (!entry) return null;
+  if (entry.lockedUntil && Date.now() < entry.lockedUntil) {
+    const mins = Math.ceil((entry.lockedUntil - Date.now()) / 60000);
+    return `Too many failed attempts. Try again in ${mins} minute${mins > 1 ? 's' : ''}.`;
+  }
+  return null;
+}
+
+function recordFailedLogin(email) {
+  const entry = loginAttempts.get(email) || { count: 0, lockedUntil: null };
+  entry.count += 1;
+  if (entry.count >= LOCKOUT_MAX) {
+    entry.lockedUntil = Date.now() + LOCKOUT_MS;
+    entry.count = 0;
+  }
+  loginAttempts.set(email, entry);
+}
+
+function clearLoginAttempts(email) {
+  loginAttempts.delete(email);
+}
+
+// Clean up old lockouts every 30 min
+setInterval(() => {
+  const now = Date.now();
+  for (const [email, entry] of loginAttempts) {
+    if (!entry.lockedUntil || now > entry.lockedUntil) loginAttempts.delete(email);
+  }
+}, 30 * 60 * 1000);
+
 function getTransport() {
   return nodemailer.createTransport({
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
@@ -67,12 +104,19 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password, keepSignedIn } = req.body || {};
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase());
-    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    const emailLower = email.toLowerCase();
+
+    // Check lockout before any DB query
+    const lockMsg = checkLockout(emailLower);
+    if (lockMsg) return res.status(429).json({ error: lockMsg });
+
+    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(emailLower);
+    if (!user) { recordFailedLogin(emailLower); return res.status(401).json({ error: 'Invalid credentials' }); }
     if (user.is_banned) return res.status(403).json({ error: 'Account suspended' });
     if (!user.verified) return res.status(403).json({ error: 'Please verify your email first' });
     const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!ok) { recordFailedLogin(emailLower); return res.status(401).json({ error: 'Invalid credentials' }); }
+    clearLoginAttempts(emailLower);
     // Auto-promote SEED_ADMIN_EMAIL on login if not already admin
     if (process.env.SEED_ADMIN_EMAIL && user.email === process.env.SEED_ADMIN_EMAIL.toLowerCase() && !user.is_admin) {
       db.prepare('UPDATE users SET is_admin=1, verified=1 WHERE id=?').run(user.id);
@@ -143,6 +187,47 @@ router.post('/reset-password/:token', async (req, res) => {
   const hash = await bcrypt.hash(password, 12);
   db.prepare('UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expiry = NULL WHERE id = ?').run(hash, user.id);
   res.json({ message: 'Password reset successfully. You can now log in.' });
+});
+
+// POST /api/auth/change-password (must be logged in)
+router.post('/change-password', async (req, res) => {
+  if (!req.session?.userId) return res.status(401).json({ error: 'Not authenticated' });
+  const { currentPassword, newPassword } = req.body || {};
+  if (!currentPassword || !newPassword) return res.status(400).json({ error: 'currentPassword and newPassword required' });
+  if (newPassword.length < 8) return res.status(400).json({ error: 'New password must be at least 8 characters' });
+  try {
+    const user = db.prepare('SELECT id, password_hash FROM users WHERE id = ?').get(req.session.userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const ok = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Current password is incorrect' });
+    const hash = await bcrypt.hash(newPassword, 12);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
+    req.session.destroy(() => {});
+    res.json({ message: 'Password changed. Please log in again.' });
+  } catch (err) {
+    console.error('[change-password]', err.message);
+    res.status(500).json({ error: 'Failed to change password. Please try again.' });
+  }
+});
+
+// DELETE /api/auth/account (self-delete, must be logged in)
+router.delete('/account', async (req, res) => {
+  if (!req.session?.userId) return res.status(401).json({ error: 'Not authenticated' });
+  const { password } = req.body || {};
+  if (!password) return res.status(400).json({ error: 'Password required to delete account' });
+  try {
+    const user = db.prepare('SELECT id, password_hash, is_admin FROM users WHERE id = ?').get(req.session.userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.is_admin) return res.status(403).json({ error: 'Admin accounts cannot be self-deleted' });
+    const ok = await bcrypt.compare(password, user.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Incorrect password' });
+    db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+    req.session.destroy(() => {});
+    res.json({ message: 'Account deleted.' });
+  } catch (err) {
+    console.error('[delete-account]', err.message);
+    res.status(500).json({ error: 'Failed to delete account. Please try again.' });
+  }
 });
 
 module.exports = router;

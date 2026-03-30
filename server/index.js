@@ -54,6 +54,7 @@ process.on('uncaughtException', (err) => {
 
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const { errorHandler, AppError } = require('./middleware/errorHandler');
 const compressionMiddleware = require('./middleware/compression');
 const keysRouter = require('./routes/keys');
@@ -106,6 +107,12 @@ const app = express();
 
 app.set('trust proxy', 1);
 
+// Security headers
+app.use(helmet({
+  contentSecurityPolicy: false, // Disabled — React app loads inline scripts via Vite
+  crossOriginEmbedderPolicy: false,
+}));
+
 const PORT = cfg.PORT;
 const HOST = cfg.HOST;
 
@@ -142,7 +149,7 @@ try {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: false, // Railway terminates TLS at proxy; cookies work over http internally
+      secure: !!process.env.APP_URL?.startsWith('https'), // secure on Railway/HTTPS, off for local
       sameSite: 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000,
     },
@@ -193,6 +200,7 @@ app.use((req, res, next) => {
 });
 
 app.get('/api/logs', (req, res) => {
+  if (!req.session?.isAdmin) return res.status(403).json({ error: 'Forbidden' });
   const logBuffer = require('./utils/logBuffer');
   const n = Math.min(parseInt(req.query.n || '200', 10), 500);
   res.json({ success: true, lines: logBuffer.getLines(n) });
