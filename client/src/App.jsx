@@ -52,7 +52,6 @@ const ReformatPage = lazy(() => import('./pages/ReformatPage'));
 const NsfwGeneratePage = lazy(() => import('./pages/NsfwGeneratePage'));
 const ImageEditorPage = lazy(() => import('./pages/ImageEditorPage'));
 const BillingPage = lazy(() => import('./pages/BillingPage'));
-const InstaFramePage = lazy(() => import('./pages/InstaFramePage'));
 const VideoComposePage = lazy(() => import('./pages/VideoComposePage'));
 const LogsPage = lazy(() => import('./pages/LogsPage'));
 
@@ -73,7 +72,6 @@ const NAV_ICONS = {
   storyteller: IconBookOpen,
   gallery: IconImage,
   imageEditor: IconRulerPen,
-  instaFrame: IconCamera,
   videoCompose: IconVideo,
   characters: IconUsers,
   keys: IconKey,
@@ -99,7 +97,6 @@ const NAV_COLORS = {
   storyteller:    ['#bef264', '#65a30d'],
   gallery:        ['#fcd34d', '#d97706'],
   imageEditor:    ['#f9a8d4', '#db2777'],
-  instaFrame:     ['#67e8f9', '#0891b2'],
   videoCompose:   ['#fdba74', '#ea580c'],
   characters:     ['#c4b5fd', '#7c3aed'],
   keys:           ['#94a3b8', '#475569'],
@@ -125,7 +122,6 @@ const NAV_SECTIONS = [
       { id: 'scene', label: 'Scene Recreate' },
       { id: 'reel', label: 'Reel Copy' },
       { id: 'postClone', label: 'Post Clone' },
-      { id: 'instaFrame', label: 'Insta Frame' },
       { id: 'videoCompose', label: 'Video Composer' },
     ],
   },
@@ -186,7 +182,6 @@ const PAGE_DESCRIPTIONS = {
   characters: 'Manage character identities and references',
   keys: 'Configure API keys and connections',
   billing: 'View your plan and upgrade your subscription',
-  instaFrame: 'Extract the first frame from any Instagram Reel',
   videoCompose: 'Drop a video — add audio and text overlay',
   logs: 'View recent app logs and copy them for support',
 };
@@ -211,7 +206,6 @@ const PAGES = {
   characters: CharactersPage,
   keys: ApiKeysPage,
   billing: BillingPage,
-  instaFrame: InstaFramePage,
   videoCompose: VideoComposePage,
   logs: LogsPage,
 };

@@ -86,7 +86,6 @@ const videoRouter = require('./routes/video');
 const nsfwGenerateRouter = require('./routes/nsfwGenerate');
 const loraPresetsRouter = require('./routes/loraPresets');
 const backgroundsRouter = require('./routes/backgrounds');
-const instaFrameRouter = require('./routes/instaFrame');
 const videoComposeRouter = require('./routes/videoCompose');
 const authRouter = require('./routes/authRoutes');
 const cookieParser = require('cookie-parser');
@@ -231,7 +230,6 @@ app.use('/api/video', generateLimiter, videoRouter);
 app.use('/api/nsfw-generate', generateLimiter, nsfwGenerateRouter);
 app.use('/api/lora-presets', loraPresetsRouter);
 app.use('/api/backgrounds', backgroundsRouter);
-app.use('/api/insta-frame', generateLimiter, instaFrameRouter);
 app.use('/api/video-compose', generateLimiter, videoComposeRouter);
 
 const { CLIENT_DIST } = require('./paths');

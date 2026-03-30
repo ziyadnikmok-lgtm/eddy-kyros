@@ -51,3 +51,5 @@ npm-debug.log*
 .gstack/
 server/backup-prompt-engine-v1/
 server/backup-prompt-engine-v2/
+dist-electron/
+userdata/
