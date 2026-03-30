@@ -5,6 +5,16 @@ const { requireAdmin } = require('../middleware/requireAuth');
 
 const router = express.Router();
 
+// GET /api/admin/bootstrap?secret=XXX — one-time admin grant using BOOTSTRAP_SECRET env var
+router.get('/bootstrap', (req, res) => {
+  const secret = process.env.BOOTSTRAP_SECRET;
+  if (!secret || req.query.secret !== secret) return res.status(403).json({ error: 'Forbidden' });
+  const email = process.env.SEED_ADMIN_EMAIL;
+  if (!email) return res.status(400).json({ error: 'SEED_ADMIN_EMAIL not set' });
+  const result = db.prepare('UPDATE users SET is_admin=1, verified=1 WHERE email=?').run(email.toLowerCase());
+  res.json({ ok: true, changes: result.changes, email });
+});
+
 // GET /api/admin/users
 router.get('/users', requireAdmin, (req, res) => {
   const users = db.prepare(`
