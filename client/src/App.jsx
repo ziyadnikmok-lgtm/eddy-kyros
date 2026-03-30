@@ -45,6 +45,7 @@ const VideoGalleryPage = lazy(() => import('./pages/VideoGalleryPage'));
 const ReformatPage = lazy(() => import('./pages/ReformatPage'));
 const NsfwGeneratePage = lazy(() => import('./pages/NsfwGeneratePage'));
 const ImageEditorPage = lazy(() => import('./pages/ImageEditorPage'));
+const BillingPage = lazy(() => import('./pages/BillingPage'));
 
 const NAV_ICONS = {
   generate: IconBadgeSparkle,
@@ -65,6 +66,7 @@ const NAV_ICONS = {
   imageEditor: IconColorPalette,
   characters: IconUsers,
   keys: IconKey,
+  billing: IconBadgeSparkle,
 };
 
 const NAV_SECTIONS = [
@@ -104,6 +106,7 @@ const NAV_SECTIONS = [
       { id: 'videoGallery', label: 'Video Gallery' },
       { id: 'characters', label: 'Characters' },
       { id: 'keys', label: 'API Keys' },
+      { id: 'billing', label: 'Billing' },
     ],
   },
 ];
@@ -141,6 +144,7 @@ const PAGE_DESCRIPTIONS = {
   videoGallery: 'Browse and manage all generated videos',
   characters: 'Manage character identities and references',
   keys: 'Configure API keys and connections',
+  billing: 'View your plan and upgrade your subscription',
 };
 
 const PAGES = {
@@ -162,6 +166,7 @@ const PAGES = {
   imageEditor: ImageEditorPage,
   characters: CharactersPage,
   keys: ApiKeysPage,
+  billing: BillingPage,
 };
 
 function PageFallback() {
