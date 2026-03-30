@@ -92,11 +92,15 @@ const HOST = cfg.HOST;
 app.use(
   cors({
     origin: (origin, callback) => {
+      // APP_URL-based origin (covers Railway, custom domains, etc.)
+      const appOrigin = process.env.APP_URL ? new URL(process.env.APP_URL).origin : null;
       if (
         !origin ||
+        (appOrigin && origin === appOrigin) ||
         /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
         /^https?:\/\/(www\.)?creationpanel1337\.xyz$/.test(origin) ||
-        /^https?:\/\/[a-z0-9-]+\.traefik\.me(:\d+)?$/.test(origin)
+        /^https?:\/\/[a-z0-9-]+\.traefik\.me(:\d+)?$/.test(origin) ||
+        /^https?:\/\/[a-z0-9-]+\.up\.railway\.app$/.test(origin)
       ) {
         callback(null, true);
       } else {
@@ -110,20 +114,24 @@ app.use(express.json({ limit: cfg.JSON_BODY_LIMIT }));
 app.use(cookieParser());
 
 // Session middleware (SaaS)
-const DATA_DIR_SESS = process.env.DATA_DIR || require('path').join(__dirname, '..', 'data');
-require('fs').mkdirSync(DATA_DIR_SESS, { recursive: true });
-app.use(session({
-  store: new SqliteStore({ client: require('./db') }),
-  secret: process.env.SESSION_SECRET || require('crypto').randomBytes(32).toString('hex'),
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  },
-}));
+try {
+  app.use(session({
+    store: new SqliteStore({ client: require('./db') }),
+    secret: process.env.SESSION_SECRET || require('crypto').randomBytes(32).toString('hex'),
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: false, // Railway terminates TLS at proxy; cookies work over http internally
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    },
+  }));
+  console.log('[session] middleware initialized OK');
+} catch (e) {
+  console.error('[session] FAILED TO INIT:', e.message, e.stack);
+  process.exit(1);
+}
 app.use(compressionMiddleware(cfg.COMPRESSION_MIN_BYTES));
 app.use('/api/auth', authRouter);
 // Auth always enforced (removed NODE_ENV gate)
