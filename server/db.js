@@ -89,4 +89,16 @@ db.exec(`
   );
 `);
 
+// Seed admin user: if SEED_ADMIN_EMAIL is set, promote that user to verified admin
+if (process.env.SEED_ADMIN_EMAIL) {
+  try {
+    const result = db.prepare('UPDATE users SET verified=1, is_admin=1 WHERE email=?').run(process.env.SEED_ADMIN_EMAIL.toLowerCase());
+    if (result.changes > 0) {
+      console.log('[db] Admin promoted:', process.env.SEED_ADMIN_EMAIL);
+    }
+  } catch (e) {
+    console.error('[db] Admin seed failed:', e.message);
+  }
+}
+
 module.exports = db;
