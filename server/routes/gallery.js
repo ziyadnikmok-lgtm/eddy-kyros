@@ -309,7 +309,8 @@ function runEditWorker(workerData) {
     worker.on('message', (msg) => {
       settle(() => {
         if (msg?.error) reject(new Error(msg.error));
-        else resolve(msg);
+        // postMessage transfers Uint8Array — convert back to Buffer so .toString('base64') works
+        else resolve(Buffer.isBuffer(msg) ? msg : Buffer.from(msg));
       });
     });
     worker.on('error', (err) => settle(() => reject(err)));
