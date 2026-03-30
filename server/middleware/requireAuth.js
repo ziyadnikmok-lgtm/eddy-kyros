@@ -2,7 +2,7 @@
 const { runWithUser } = require('../userContext');
 
 function requireAuth(req, res, next) {
-  if (req.path.startsWith('/api/auth/') || req.path === '/api/health') return next();
+  if (req.path.startsWith('/api/auth/') || req.path === '/api/health' || req.path === '/api/bootstrap-admin') return next();
   if (req.session && req.session.userId) {
     // Thread the userId through AsyncLocalStorage so all services can read it
     return runWithUser(req.session.userId, () => next());
