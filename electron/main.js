@@ -9,6 +9,29 @@ const { fork } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 
+// ── Error log file ──────────────────────────────────────────────────────
+let _logStream = null;
+function getLogStream() {
+  if (_logStream) return _logStream;
+  const logDir = app.getPath('logs');
+  fs.mkdirSync(logDir, { recursive: true });
+  const logFile = path.join(logDir, 'app.log');
+  _logStream = fs.createWriteStream(logFile, { flags: 'a' });
+  _logStream.write(`\n\n=== Session started ${new Date().toISOString()} ===\n`);
+  console.log(`[electron] Log file: ${logFile}`);
+  return _logStream;
+}
+function writeLog(line) {
+  try { getLogStream().write(`[${new Date().toISOString()}] ${line}\n`); } catch {}
+}
+// Patch console to also write to log file
+const _origLog = console.log.bind(console);
+const _origErr = console.error.bind(console);
+console.log = (...a) => { _origLog(...a); writeLog(a.join(' ')); };
+console.error = (...a) => { _origErr(...a); writeLog('[ERROR] ' + a.join(' ')); };
+process.on('uncaughtException', (e) => { writeLog('[UNCAUGHT] ' + e.stack); });
+process.on('unhandledRejection', (r) => { writeLog('[UNHANDLED] ' + r); });
+
 let mainWindow = null;
 let serverProcess = null;
 let serverPort = null;
@@ -110,14 +133,25 @@ function copyDirRecursive(src, dest) {
 
 // ── Find free port ──────────────────────────────────────────────────────
 
+// Use a fixed port so session cookies survive app restarts.
+// If the port is already in use (e.g. two instances), fall back to random.
+const PREFERRED_PORT = 18421;
+
 function findFreePort() {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const srv = net.createServer();
-    srv.listen(0, '127.0.0.1', () => {
-      const { port } = srv.address();
-      srv.close(() => resolve(port));
+    srv.listen(PREFERRED_PORT, '127.0.0.1', () => {
+      srv.close(() => resolve(PREFERRED_PORT));
     });
-    srv.on('error', reject);
+    srv.on('error', () => {
+      // Preferred port busy — pick a random available one
+      const srv2 = net.createServer();
+      srv2.listen(0, '127.0.0.1', () => {
+        const { port } = srv2.address();
+        srv2.close(() => resolve(port));
+      });
+      srv2.on('error', () => resolve(PREFERRED_PORT + 1));
+    });
   });
 }
 
@@ -162,8 +196,8 @@ async function startBackend() {
     stdio: 'pipe',
   });
 
-  serverProcess.stdout?.on('data', (d) => process.stdout.write(d));
-  serverProcess.stderr?.on('data', (d) => process.stderr.write(d));
+  serverProcess.stdout?.on('data', (d) => { process.stdout.write(d); writeLog('[server] ' + d.toString().trim()); });
+  serverProcess.stderr?.on('data', (d) => { process.stderr.write(d); writeLog('[server:err] ' + d.toString().trim()); });
 
   serverProcess.on('exit', (code) => {
     console.log(`[electron] Backend exited with code ${code}`);

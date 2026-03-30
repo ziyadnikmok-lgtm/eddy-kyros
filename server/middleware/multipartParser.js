@@ -42,6 +42,7 @@ function createMultipartParser(options = {}) {
         const parts = raw.split(`--${boundary}`);
         const body = {};
         let file = null;
+        const files = {}; // keyed by fieldname, supports multiple files
 
         for (const part of parts) {
           if (!part || part === '--\r\n' || part === '--') continue;
@@ -60,19 +61,23 @@ function createMultipartParser(options = {}) {
           const mimeType = headers.match(/Content-Type:\s*([^\r\n]+)/i)?.[1]?.trim();
 
           if (filename !== undefined && filename !== '') {
-            file = {
+            const fileObj = {
               fieldname: name,
               originalname: filename,
               mimetype: mimeType || 'application/octet-stream',
               buffer: Buffer.from(value, 'latin1'),
               size: Buffer.byteLength(value, 'latin1'),
             };
+            // last file wins for req.file (backwards compat)
+            file = fileObj;
+            files[name] = fileObj;
           } else {
             body[name] = value;
           }
         }
 
         req.body = { ...(req.body || {}), ...body };
+        req.files = files;
         if (file) {
           req.file = file;
           return next();

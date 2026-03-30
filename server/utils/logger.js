@@ -1,7 +1,11 @@
+const logBuffer = require('./logBuffer');
+
 function _emit(level, event, meta = {}) {
   const entry = { level, event, ...meta, ts: new Date().toISOString() };
+  const line = JSON.stringify(entry);
   const fn = level === 'error' ? console.error : console.log;
-  fn(JSON.stringify(entry));
+  fn(line);
+  logBuffer.push(level, `[${event}] ${meta ? JSON.stringify(meta) : ''}`);
 }
 
 module.exports = {

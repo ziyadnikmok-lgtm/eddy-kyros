@@ -14,6 +14,7 @@ const styles = {
 export default function LoginPage({ onLogin, onNavigate }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [keepSignedIn, setKeepSignedIn] = useState(true);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -25,7 +26,7 @@ export default function LoginPage({ onLogin, onNavigate }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password, keepSignedIn })
       });
       const data = await res.json();
       if (!res.ok) setError(data.error || 'Login failed');
@@ -42,6 +43,10 @@ export default function LoginPage({ onLogin, onNavigate }) {
           {error && <div style={styles.error}>{error}</div>}
           <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required style={styles.input} />
           <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={styles.input} />
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a0a0c0', fontSize: '14px', marginBottom: '1rem', cursor: 'pointer' }}>
+            <input type="checkbox" checked={keepSignedIn} onChange={e => setKeepSignedIn(e.target.checked)} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
+            Keep me signed in for 30 days
+          </label>
           <button type="submit" style={styles.button} disabled={loading}>{loading ? 'Signing in...' : 'Sign In'}</button>
         </form>
         <div style={styles.linkRow}>

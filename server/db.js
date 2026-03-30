@@ -12,7 +12,10 @@ function getDbPath() {
     return path.join(os.tmpdir(), 'ai-content-studio-test-data', `pid-${process.pid}`, 'saas.db');
   }
   // Shared DB (not per-user): lives at WEB_DATA_ROOT/saas.db
-  const WEB_DATA_ROOT = process.env.WEB_DATA_ROOT || path.join(projectRoot, 'userdata');
+  // ELECTRON_USER_DATA is set by electron/main.js to app.getPath('userData')
+  const WEB_DATA_ROOT = process.env.WEB_DATA_ROOT
+    || (process.env.ELECTRON_USER_DATA ? path.join(process.env.ELECTRON_USER_DATA, 'data') : null)
+    || path.join(projectRoot, 'userdata');
   return path.join(WEB_DATA_ROOT, 'saas.db');
 }
 

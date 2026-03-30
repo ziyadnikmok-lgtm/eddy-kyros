@@ -26,7 +26,11 @@ function _getRoot() {
 function getDataDir()       { return path.join(_getRoot(), 'data'); }
 function getUploadsDir()    { return path.join(_getRoot(), 'uploads', 'generated'); }
 function getCharactersDir() { return path.join(_getRoot(), 'characters'); }
-function getTempDir()       { return path.join(projectRoot, 'temp'); }
+function getTempDir() {
+  if (isTestRuntime) return path.join(os.tmpdir(), 'ai-content-studio-test-data', `pid-${process.pid}`, 'temp');
+  if (process.env.ELECTRON_USER_DATA) return path.join(process.env.ELECTRON_USER_DATA, 'temp');
+  return path.join(projectRoot, 'temp');
+}
 function getBatchStore()    { return path.join(_getRoot(), 'data', 'batch-jobs.json'); }
 
 module.exports = {

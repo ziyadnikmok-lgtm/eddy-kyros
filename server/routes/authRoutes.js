@@ -65,7 +65,7 @@ router.get('/verify/:token', (req, res) => {
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body || {};
+    const { email, password, keepSignedIn } = req.body || {};
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
     const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase());
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });
@@ -75,6 +75,9 @@ router.post('/login', async (req, res) => {
     if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
     req.session.userId = user.id;
     req.session.isAdmin = !!user.is_admin;
+    if (keepSignedIn) {
+      req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000; // 30 days
+    }
     const sub = db.prepare('SELECT plan, status FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(user.id);
     return res.json({ success: true, id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan: sub?.plan || 'free' });
   } catch (err) {

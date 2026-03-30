@@ -1,7 +1,7 @@
 appId: com.aistudio.app
 productName: AI Content Studio
 directories:
-  output: "C:/Users/X/Pictures/xaxa/aistudclean"
+  output: "dist-electron"
 files:
   - server/**/*
   - "!server/data/**/*"
@@ -23,6 +23,14 @@ extraResources:
     to: .env
 asarUnpack:
   - node_modules/ffmpeg-static/**
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  category: public.app-category.productivity
+  identity: null
 win:
   target:
     - target: portable

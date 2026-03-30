@@ -11,19 +11,25 @@ import { PageErrorBoundary } from './components/ErrorBoundary';
 import { keys as keysApi } from './services/api';
 import {
   IconBadgeSparkle,
+  IconFlame,
   IconAppStack,
   IconBolt,
   IconLayers,
   IconCamera,
   IconVideo,
-  IconDuplicate,
+  IconSwap,
+  IconCopies,
   IconColorPalette,
   IconMagicWandSparkle,
   IconMagnifier,
   IconBookOpen,
   IconImage,
+  IconRulerPen,
+  IconGrid2,
   IconUsers,
   IconKey,
+  IconCreditCards,
+  IconBulletList,
 } from 'nucleo-glass';
 
 const GeneratePage = lazy(() => import('./pages/GeneratePage'));
@@ -46,27 +52,59 @@ const ReformatPage = lazy(() => import('./pages/ReformatPage'));
 const NsfwGeneratePage = lazy(() => import('./pages/NsfwGeneratePage'));
 const ImageEditorPage = lazy(() => import('./pages/ImageEditorPage'));
 const BillingPage = lazy(() => import('./pages/BillingPage'));
+const InstaFramePage = lazy(() => import('./pages/InstaFramePage'));
+const VideoComposePage = lazy(() => import('./pages/VideoComposePage'));
+const LogsPage = lazy(() => import('./pages/LogsPage'));
 
 const NAV_ICONS = {
   generate: IconBadgeSparkle,
-  nsfwGenerate: IconBadgeSparkle,
+  nsfwGenerate: IconFlame,
   batch: IconAppStack,
   auto: IconBolt,
   carousel: IconLayers,
   scene: IconCamera,
   video: IconVideo,
-  videoGallery: IconVideo,
-  reel: IconVideo,
-  postClone: IconDuplicate,
+  videoGallery: IconGrid2,
+  reel: IconSwap,
+  postClone: IconCopies,
   styleLibrary: IconColorPalette,
   promptBuilder: IconMagicWandSparkle,
   profileAnalyzer: IconMagnifier,
   storyteller: IconBookOpen,
   gallery: IconImage,
-  imageEditor: IconColorPalette,
+  imageEditor: IconRulerPen,
+  instaFrame: IconCamera,
+  videoCompose: IconVideo,
   characters: IconUsers,
   keys: IconKey,
-  billing: IconBadgeSparkle,
+  billing: IconCreditCards,
+  logs: IconBulletList,
+};
+
+// Each entry: [gradientTop, gradientBottom] matching --nc-gradient-1-color-1 / color-2
+const NAV_COLORS = {
+  generate:       ['#a5b4fc', '#6366f1'],
+  nsfwGenerate:   ['#fca5a5', '#ef4444'],
+  batch:          ['#c4b5fd', '#8b5cf6'],
+  auto:           ['#fde68a', '#f59e0b'],
+  carousel:       ['#93c5fd', '#3b82f6'],
+  scene:          ['#67e8f9', '#0891b2'],
+  video:          ['#f9a8d4', '#ec4899'],
+  videoGallery:   ['#5eead4', '#0d9488'],
+  reel:           ['#fdba74', '#ea580c'],
+  postClone:      ['#d8b4fe', '#9333ea'],
+  styleLibrary:   ['#6ee7b7', '#059669'],
+  promptBuilder:  ['#a5b4fc', '#4f46e5'],
+  profileAnalyzer:['#7dd3fc', '#0284c7'],
+  storyteller:    ['#bef264', '#65a30d'],
+  gallery:        ['#fcd34d', '#d97706'],
+  imageEditor:    ['#f9a8d4', '#db2777'],
+  instaFrame:     ['#67e8f9', '#0891b2'],
+  videoCompose:   ['#fdba74', '#ea580c'],
+  characters:     ['#c4b5fd', '#7c3aed'],
+  keys:           ['#94a3b8', '#475569'],
+  billing:        ['#86efac', '#16a34a'],
+  logs:           ['#fda4af', '#e11d48'],
 };
 
 const NAV_SECTIONS = [
@@ -87,6 +125,8 @@ const NAV_SECTIONS = [
       { id: 'scene', label: 'Scene Recreate' },
       { id: 'reel', label: 'Reel Copy' },
       { id: 'postClone', label: 'Post Clone' },
+      { id: 'instaFrame', label: 'Insta Frame' },
+      { id: 'videoCompose', label: 'Video Composer' },
     ],
   },
   {
@@ -107,6 +147,7 @@ const NAV_SECTIONS = [
       { id: 'characters', label: 'Characters' },
       { id: 'keys', label: 'API Keys' },
       { id: 'billing', label: 'Billing' },
+      { id: 'logs', label: 'App Logs' },
     ],
   },
 ];
@@ -145,6 +186,9 @@ const PAGE_DESCRIPTIONS = {
   characters: 'Manage character identities and references',
   keys: 'Configure API keys and connections',
   billing: 'View your plan and upgrade your subscription',
+  instaFrame: 'Extract the first frame from any Instagram Reel',
+  videoCompose: 'Drop a video — add audio and text overlay',
+  logs: 'View recent app logs and copy them for support',
 };
 
 const PAGES = {
@@ -167,6 +211,9 @@ const PAGES = {
   characters: CharactersPage,
   keys: ApiKeysPage,
   billing: BillingPage,
+  instaFrame: InstaFramePage,
+  videoCompose: VideoComposePage,
+  logs: LogsPage,
 };
 
 function PageFallback() {
@@ -258,8 +305,14 @@ function MainApp({ onLogout }) {
                           : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200 hover:translate-x-0.5'
                       }`}>
                       {IconComponent ? (
-                        <span className={`flex items-center justify-center w-5 transition-opacity duration-150 ${page === item.id ? 'opacity-100' : 'opacity-60 group-hover:opacity-90'}`}>
-                          <IconComponent uniqueId={`nav-${item.id}`} size={20} className="[--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]" aria-hidden />
+                        <span
+                          className={`flex items-center justify-center w-5 transition-all duration-150 ${page === item.id ? 'opacity-100' : 'opacity-50 group-hover:opacity-80'}`}
+                          style={{
+                            '--nc-gradient-1-color-1': (NAV_COLORS[item.id] || ['#a5b4fc','#6366f1'])[0],
+                            '--nc-gradient-1-color-2': (NAV_COLORS[item.id] || ['#a5b4fc','#6366f1'])[1],
+                          }}
+                        >
+                          <IconComponent uniqueId={`nav-${item.id}`} size={20} aria-hidden />
                         </span>
                       ) : null}
                       {item.label}

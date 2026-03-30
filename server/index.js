@@ -24,6 +24,24 @@ if (!process.env.ENCRYPTION_SECRET || process.env.ENCRYPTION_SECRET.length < 32)
   } catch {}
 }
 
+if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
+  const secret = crypto.randomBytes(32).toString('hex');
+  process.env.SESSION_SECRET = secret;
+  try {
+    if (fs.existsSync(dotenvPath)) {
+      let envContent = fs.readFileSync(dotenvPath, 'utf8');
+      if (/^SESSION_SECRET=\s*$/m.test(envContent)) {
+        envContent = envContent.replace(/^SESSION_SECRET=\s*$/m, `SESSION_SECRET=${secret}`);
+      } else if (!envContent.includes('SESSION_SECRET=')) {
+        envContent += `\nSESSION_SECRET=${secret}\n`;
+      }
+      fs.writeFileSync(dotenvPath, envContent);
+    } else {
+      fs.appendFileSync(dotenvPath, `\nSESSION_SECRET=${secret}\n`);
+    }
+  } catch {}
+}
+
 process.on('unhandledRejection', (reason) => {
   console.error('[ERROR] Unhandled promise rejection:', reason?.stack || reason?.message || reason);
   // Log but don't crash — batch jobs and other async work shouldn't kill the server
@@ -68,6 +86,8 @@ const videoRouter = require('./routes/video');
 const nsfwGenerateRouter = require('./routes/nsfwGenerate');
 const loraPresetsRouter = require('./routes/loraPresets');
 const backgroundsRouter = require('./routes/backgrounds');
+const instaFrameRouter = require('./routes/instaFrame');
+const videoComposeRouter = require('./routes/videoCompose');
 const authRouter = require('./routes/authRoutes');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
@@ -117,7 +137,7 @@ app.use(cookieParser());
 try {
   app.use(session({
     store: new SqliteStore({ client: require('./db') }),
-    secret: process.env.SESSION_SECRET || require('crypto').randomBytes(32).toString('hex'),
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -158,6 +178,12 @@ app.use((req, res, next) => {
     });
   });
   next();
+});
+
+app.get('/api/logs', (req, res) => {
+  const logBuffer = require('./utils/logBuffer');
+  const n = Math.min(parseInt(req.query.n || '200', 10), 500);
+  res.json({ success: true, lines: logBuffer.getLines(n) });
 });
 
 app.get('/api/health', (_req, res) => {
@@ -205,6 +231,8 @@ app.use('/api/video', generateLimiter, videoRouter);
 app.use('/api/nsfw-generate', generateLimiter, nsfwGenerateRouter);
 app.use('/api/lora-presets', loraPresetsRouter);
 app.use('/api/backgrounds', backgroundsRouter);
+app.use('/api/insta-frame', generateLimiter, instaFrameRouter);
+app.use('/api/video-compose', generateLimiter, videoComposeRouter);
 
 const { CLIENT_DIST } = require('./paths');
 if (fs.existsSync(CLIENT_DIST)) {
