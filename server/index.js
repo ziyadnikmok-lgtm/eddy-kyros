@@ -222,8 +222,11 @@ if (fs.existsSync(CLIENT_DIST)) {
     },
   }));
   app.get('*splat', (_req, res) => {
+    // Prevent browser AND CDN edge caching of index.html
+    // Surrogate-Control is the Fastly/Railway CDN override
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.set('Pragma', 'no-cache');
+    res.set('Surrogate-Control', 'no-store');
     res.sendFile(path.join(CLIENT_DIST, 'index.html'));
   });
 }
