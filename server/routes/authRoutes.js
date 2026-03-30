@@ -73,6 +73,11 @@ router.post('/login', async (req, res) => {
     if (!user.verified) return res.status(403).json({ error: 'Please verify your email first' });
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+    // Auto-promote SEED_ADMIN_EMAIL on login if not already admin
+    if (process.env.SEED_ADMIN_EMAIL && user.email === process.env.SEED_ADMIN_EMAIL.toLowerCase() && !user.is_admin) {
+      db.prepare('UPDATE users SET is_admin=1, verified=1 WHERE id=?').run(user.id);
+      user.is_admin = 1;
+    }
     req.session.userId = user.id;
     req.session.isAdmin = !!user.is_admin;
     if (keepSignedIn) {
