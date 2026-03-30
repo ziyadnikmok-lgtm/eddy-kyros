@@ -86,6 +86,7 @@ const captionTemplatesRouter = require('./routes/captionTemplates');
 const videoRouter = require('./routes/video');
 const nsfwGenerateRouter = require('./routes/nsfwGenerate');
 const loraPresetsRouter = require('./routes/loraPresets');
+const loraDatasetsRouter = require('./routes/loraDatasets');
 const backgroundsRouter = require('./routes/backgrounds');
 const videoComposeRouter = require('./routes/videoCompose');
 const photoMatchRouter = require('./routes/photoMatch');
@@ -250,6 +251,7 @@ app.use('/api/caption-templates', captionTemplatesRouter);
 app.use('/api/video', generateLimiter, videoRouter);
 app.use('/api/nsfw-generate', generateLimiter, nsfwGenerateRouter);
 app.use('/api/lora-presets', loraPresetsRouter);
+app.use('/api/lora-datasets', generateLimiter, loraDatasetsRouter);
 app.use('/api/backgrounds', backgroundsRouter);
 app.use('/api/video-compose', generateLimiter, videoComposeRouter);
 app.use('/api/photo-match', generateLimiter, photoMatchRouter);
@@ -380,3 +382,4 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 module.exports = app;
+

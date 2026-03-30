@@ -11,7 +11,7 @@ const LONG_RUNNING_PATHS = [
   '/scene/recreate', '/story/generate',
   '/auto/plan', '/auto/execute',
   '/video/generate', '/reformat',
-  '/nsfw-generate', '/photo-match',
+  '/nsfw-generate', '/photo-match', '/lora-datasets/generate',
 ];
 
 const EXTRA_LONG_PATHS = ['/profile-clone'];
@@ -186,6 +186,27 @@ export const loraPresets = {
   remove: (id) => request(`/lora-presets/${id}`, { method: 'DELETE' }),
 };
 
+export const loraDatasets = {
+  list: () => request('/lora-datasets'),
+  get: (id) => request(`/lora-datasets/${id}`),
+  generate: (body) => request('/lora-datasets/generate', { method: 'POST', body }),
+  progress: (id) => new EventSource(`${BASE}/lora-datasets/${id}/progress`),
+  imageUrl: (galleryId) => `${BASE}/gallery/${galleryId}/image`,
+  download: async (id) => {
+    const res = await fetch(`${BASE}/lora-datasets/${id}/download`);
+    if (!res.ok) {
+      const json = await res.json().catch(() => null);
+      throw new Error(json?.error?.message || `Download failed (${res.status})`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `lora-dataset-${id}.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+};
 export const batch = {
   list: (status) => request(`/batch${status ? `?status=${status}` : ''}`),
   start: (body) => request('/batch', { method: 'POST', body }),
@@ -394,3 +415,4 @@ export const backgrounds = {
   remove: (id) => request(`/backgrounds/${id}`, { method: 'DELETE' }),
   imageUrl: (id) => `${BASE}/backgrounds/${id}/image`,
 };
+

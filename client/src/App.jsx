@@ -48,6 +48,7 @@ const PostClonePage = lazy(() => import('./pages/PostClonePage'));
 const StyleLibraryPage = lazy(() => import('./pages/StyleLibraryPage'));
 const ProfileAnalyzerPage = lazy(() => import('./pages/ProfileAnalyzerPage'));
 const PromptBuilderPage = lazy(() => import('./pages/PromptBuilderPage'));
+const LoraDatasetPage = lazy(() => import('./pages/LoraDatasetPage'));
 const ApiKeysPage = lazy(() => import('./pages/ApiKeysPage'));
 const VideoPage = lazy(() => import('./pages/VideoPage'));
 const VideoGalleryPage = lazy(() => import('./pages/VideoGalleryPage'));
@@ -73,6 +74,7 @@ const NAV_ICONS = {
   postClone: IconCopies,
   styleLibrary: IconColorPalette,
   promptBuilder: IconMagicWandSparkle,
+  loraDataset: IconLayers,
   profileAnalyzer: IconMagnifier,
   storyteller: IconBookOpen,
   gallery: IconImage,
@@ -140,6 +142,7 @@ const NAV_SECTIONS = [
     items: [
       { id: 'styleLibrary', label: 'Style Library' },
       { id: 'promptBuilder', label: 'Prompt Builder' },
+      { id: 'loraDataset', label: 'LoRA Dataset' },
       { id: 'profileAnalyzer', label: 'Profile Analyzer' },
       { id: 'storyteller', label: 'Storyteller' },
     ],
@@ -186,6 +189,7 @@ const PAGE_DESCRIPTIONS = {
   postClone: 'Clone Instagram posts with your character',
   styleLibrary: 'Manage reusable style building blocks',
   promptBuilder: 'Visual prompt composition with Nano-Banana formula',
+  loraDataset: 'Build captioned LoRA training datasets from characters',
   profileAnalyzer: 'Extract style patterns from Instagram profiles',
   storyteller: 'Generate captions and hashtags for images',
   gallery: 'Browse and manage all generated images',
@@ -209,6 +213,7 @@ const PAGES = {
   postClone: PostClonePage,
   styleLibrary: StyleLibraryPage,
   promptBuilder: PromptBuilderPage,
+  loraDataset: LoraDatasetPage,
   profileAnalyzer: ProfileAnalyzerPage,
   storyteller: StorytellerPage,
   video: VideoPage,
@@ -441,3 +446,4 @@ export default function App() {
 
   return <MainApp onLogout={() => { setAuthState('unauthenticated'); setAuthPage('landing'); }} />;
 }
+
