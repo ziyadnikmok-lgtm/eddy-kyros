@@ -29,7 +29,7 @@ class SceneAnalyzer {
     return scene;
   }
 
-  buildRecreationPrompt({ sceneData, characterId, activeReferenceIds }) {
+  buildRecreationPrompt({ sceneData, characterId, activeReferenceIds, sameBackground = false, samePose = false }) {
     if (!sceneData || typeof sceneData !== 'object') {
       throw new AppError('sceneData is required', 400, 'VALIDATION_ERROR');
     }
@@ -49,8 +49,18 @@ class SceneAnalyzer {
       userPrompt: sceneParagraph,
     });
 
+    const bgLock = sameBackground
+      ? 'BACKGROUND LOCK: EXACTLY replicate the background — identical environment, same location, same colors, same depth, same lighting direction. Do NOT change anything behind the subject.'
+      : null;
+
+    const poseLock = samePose
+      ? 'POSE LOCK: EXACTLY replicate the body pose — identical stance, same weight distribution, same arm and hand positions, same head angle. Mirror the pose precisely.'
+      : null;
+
     const sceneSheet = [
       '',
+      bgLock,
+      poseLock,
       '[SCENE DATA]',
       `Camera: ${sceneData.camera || 'as described'}`,
       `Lighting: ${sceneData.lighting || 'as described'}`,

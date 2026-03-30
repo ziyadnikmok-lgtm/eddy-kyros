@@ -24,6 +24,8 @@ const _cache = {
   aspectRatio: '4:5',
   resolutionTier: '2K',
   imageModel: DEFAULT_IMAGE_MODEL,
+  sameBackground: false,
+  samePose: false,
   result: null,
   history: [],
 };
@@ -42,6 +44,8 @@ export default function SceneRecreatePage() {
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [resolutionTier, setResolutionTier] = useState(_cache.resolutionTier);
   const [imageModel, setImageModel] = useState(_cache.imageModel);
+  const [sameBackground, setSameBackground] = useState(_cache.sameBackground);
+  const [samePose, setSamePose] = useState(_cache.samePose);
   const [result, setResult] = useState(_cache.result);
   const [history, setHistory] = useState(_cache.history);
 
@@ -51,6 +55,8 @@ export default function SceneRecreatePage() {
   useEffect(() => { _cache.aspectRatio = aspectRatio; }, [aspectRatio]);
   useEffect(() => { _cache.resolutionTier = resolutionTier; }, [resolutionTier]);
   useEffect(() => { _cache.imageModel = imageModel; }, [imageModel]);
+  useEffect(() => { _cache.sameBackground = sameBackground; }, [sameBackground]);
+  useEffect(() => { _cache.samePose = samePose; }, [samePose]);
   useEffect(() => { _cache.result = result; }, [result]);
   useEffect(() => { _cache.history = history; }, [history]);
 
@@ -114,6 +120,8 @@ export default function SceneRecreatePage() {
       aspectRatio,
       resolutionTier,
       imageModel,
+      sameBackground,
+      samePose,
     });
     setResult(data);
     setHistory((h) => [data, ...h].slice(0, 10));
@@ -213,6 +221,34 @@ export default function SceneRecreatePage() {
                       {tier}
                     </button>
                   ))}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-xs text-zinc-400 font-medium block mb-2">Lock Options</span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSameBackground(v => !v)}
+                    className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition cursor-pointer border ${
+                      sameBackground
+                        ? 'bg-blue-600/20 text-blue-300 border-blue-500/60'
+                        : 'bg-zinc-800/60 text-zinc-400 border-zinc-700/60 hover:bg-zinc-700/60'
+                    }`}
+                  >
+                    {sameBackground ? '🔒' : '🔓'} Same BG
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSamePose(v => !v)}
+                    className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition cursor-pointer border ${
+                      samePose
+                        ? 'bg-purple-600/20 text-purple-300 border-purple-500/60'
+                        : 'bg-zinc-800/60 text-zinc-400 border-zinc-700/60 hover:bg-zinc-700/60'
+                    }`}
+                  >
+                    {samePose ? '🔒' : '🔓'} Same Pose
+                  </button>
                 </div>
               </div>
 
