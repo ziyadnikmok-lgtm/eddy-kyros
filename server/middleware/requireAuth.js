@@ -1,4 +1,5 @@
 'use strict';
+const db = require('../db');
 const { runWithUser } = require('../userContext');
 
 function requireAuth(req, res, next) {
@@ -16,8 +17,16 @@ function requireAuth(req, res, next) {
 }
 
 function requireAdmin(req, res, next) {
-  if (req.session && req.session.userId && req.session.isAdmin) {
-    return runWithUser(req.session.userId, () => next());
+  if (req.session && req.session.userId) {
+    if (req.session.isAdmin) {
+      return runWithUser(req.session.userId, () => next());
+    }
+
+    const user = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(req.session.userId);
+    if (user?.is_admin) {
+      req.session.isAdmin = true;
+      return runWithUser(req.session.userId, () => next());
+    }
   }
   return res.status(403).json({ error: 'Forbidden' });
 }
