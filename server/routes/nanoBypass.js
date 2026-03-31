@@ -49,7 +49,6 @@ async function callGemini(apiKey, modelId, parts, aspectRatio, imageSize, temper
     contents: [{ parts }],
     generationConfig: genConfig,
     safetySettings: SAFETY_SETTINGS,
-    personGeneration: 'ALLOW_ALL',
   };
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
