@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { requireAdmin } = require('../middleware/requireAuth');
 const { logAdminAction } = require('../services/adminAuditLogger');
+const apiKeyManager = require('../services/apiKeyManager');
 const galleryManager = require('../services/galleryManager');
 const videoHistory = require('../services/videoHistoryStore');
 const { runWithUser } = require('../userContext');
@@ -81,7 +82,7 @@ function getSupportNotes(userId, limit = 20) {
   `).all(userId, limit);
 }
 
-function getUserLibraryItems(userId, limit = 12) {
+function getUserContentSnapshot(userId, limit = 12) {
   return runWithUser(userId, () => {
     const images = (galleryManager.list().images || []).map((image) => ({
       id: image.id,
@@ -114,9 +115,50 @@ function getUserLibraryItems(userId, limit = 12) {
       },
     }));
 
-    return [...images, ...videos]
-      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
-      .slice(0, limit);
+    const allItems = [...images, ...videos].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    const byFeature = new Map();
+
+    for (const item of allItems) {
+      const feature = item.mediaType === 'video'
+        ? 'video'
+        : (item.source || 'generate');
+      byFeature.set(feature, (byFeature.get(feature) || 0) + 1);
+    }
+
+    const cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000);
+    const count30d = allItems.filter((item) => {
+      const time = new Date(item.createdAt).getTime();
+      return Number.isFinite(time) && time >= cutoff;
+    }).length;
+
+    return {
+      items: allItems.slice(0, limit),
+      total: allItems.length,
+      count30d,
+      byFeature: [...byFeature.entries()]
+        .map(([feature, count]) => ({ feature, count }))
+        .sort((a, b) => b.count - a.count || a.feature.localeCompare(b.feature)),
+    };
+  });
+}
+
+function getUserKeySummary(userId) {
+  return runWithUser(userId, () => {
+    const providerKeys = apiKeyManager.listKeys();
+    const extras = [
+      apiKeyManager.getApifyKeyInfo()?.hasApifyKey ? { service: 'apify' } : null,
+      apiKeyManager.getWavespeedKeyInfo()?.hasWavespeedKey ? { service: 'wavespeed' } : null,
+      apiKeyManager.getInstagramSessionInfo()?.hasInstagramSession ? { service: 'instagram-session' } : null,
+      apiKeyManager.getInstagramLoginInfo()?.hasInstagramLogin ? { service: 'instagram-login' } : null,
+    ].filter(Boolean);
+
+    return {
+      count: providerKeys.length + extras.length,
+      items: [
+        ...providerKeys.map((item) => ({ service: item.name || 'gemini', maskedKey: item.maskedKey || '', createdAt: item.createdAt || null })),
+        ...extras,
+      ],
+    };
   });
 }
 
@@ -493,14 +535,17 @@ router.get('/users/:id', requireAdmin, (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const subscription = getCurrentSubscription(req.params.id);
+  const content = getUserContentSnapshot(req.params.id, 16);
+  const keySummary = getUserKeySummary(req.params.id);
 
-  const generationByFeature = db.prepare(`
+  let generationByFeature = db.prepare(`
     SELECT feature, COUNT(*) AS count
     FROM generation_runs
     WHERE user_id = ?
     GROUP BY feature
     ORDER BY count DESC, feature ASC
   `).all(req.params.id);
+  if (!generationByFeature.length && content.byFeature.length) generationByFeature = content.byFeature;
 
   const recentRuns = db.prepare(`
     SELECT id, feature, provider, model, status, error_code, error_message, output_count, started_at, finished_at
@@ -521,12 +566,16 @@ router.get('/users/:id', requireAdmin, (req, res) => {
   res.json({
     user: {
       ...user,
+      connected_key_count: keySummary.count,
+      connected_keys: keySummary.items,
+      generation_count_total: user.generation_count_total || content.total,
+      generation_count_30d: user.generation_count_30d || content.count30d,
       subscription,
       generationByFeature,
       recentRuns,
       billingHistory,
       supportNotes: getSupportNotes(req.params.id, 25),
-      recentLibraryItems: getUserLibraryItems(req.params.id, 16),
+      recentLibraryItems: content.items,
     },
   });
 });
