@@ -3,7 +3,7 @@ import { characters as charApi } from '../services/api';
 
 const AppContext = createContext(null);
 
-const VALID_PAGE_IDS = new Set(['generate', 'nsfwGenerate', 'batch', 'auto', 'video', 'videoGallery', 'carousel', 'scene', 'reel', 'postClone', 'styleLibrary', 'promptBuilder', 'profileAnalyzer', 'storyteller', 'loraDataset', 'gallery', 'imageEditor', 'characters', 'keys', 'billing', 'videoCompose', 'logs', 'photoMatch', 'settings']);
+const VALID_PAGE_IDS = new Set(['generate', 'nsfwGenerate', 'batch', 'auto', 'video', 'videoGallery', 'carousel', 'scene', 'reel', 'postClone', 'styleLibrary', 'promptBuilder', 'profileAnalyzer', 'storyteller', 'loraDataset', 'gallery', 'imageEditor', 'characters', 'keys', 'billing', 'videoCompose', 'logs', 'photoMatch', 'nanoBypass', 'settings']);
 
 function pageFromPathname(pathname) {
   const segment = (pathname || '/').replace(/^\/+|\/+$/g, '') || 'generate';

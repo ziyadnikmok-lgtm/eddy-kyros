@@ -90,6 +90,7 @@ const loraDatasetsRouter = require('./routes/loraDatasets');
 const backgroundsRouter = require('./routes/backgrounds');
 const videoComposeRouter = require('./routes/videoCompose');
 const photoMatchRouter = require('./routes/photoMatch');
+const nanoBypassRouter = require('./routes/nanoBypass');
 const authRouter = require('./routes/authRoutes');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
@@ -255,6 +256,7 @@ app.use('/api/lora-datasets', generateLimiter, loraDatasetsRouter);
 app.use('/api/backgrounds', backgroundsRouter);
 app.use('/api/video-compose', generateLimiter, videoComposeRouter);
 app.use('/api/photo-match', generateLimiter, photoMatchRouter);
+app.use('/api/nano-bypass', generateLimiter, nanoBypassRouter);
 
 const { CLIENT_DIST } = require('./paths');
 if (fs.existsSync(CLIENT_DIST)) {

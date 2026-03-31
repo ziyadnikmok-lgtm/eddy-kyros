@@ -59,6 +59,7 @@ const BillingPage = lazy(() => import('./pages/BillingPage'));
 const VideoComposePage = lazy(() => import('./pages/VideoComposePage'));
 const LogsPage = lazy(() => import('./pages/LogsPage'));
 const PhotoMatchPage = lazy(() => import('./pages/PhotoMatchPage'));
+const NanoBypassPage = lazy(() => import('./pages/NanoBypassPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 
 const NAV_ICONS = {
@@ -85,6 +86,7 @@ const NAV_ICONS = {
   billing: IconCreditCards,
   logs: IconBulletList,
   photoMatch: IconCrosshairs,
+  nanoBypass: IconMagicWandSparkle,
   settings: IconSettingsWrench,
 };
 
@@ -112,6 +114,7 @@ const NAV_COLORS = {
   billing:        ['#86efac', '#16a34a'],
   logs:           ['#fda4af', '#e11d48'],
   photoMatch:     ['#6ee7b7', '#0891b2'],
+  nanoBypass:     ['#c4b5fd', '#7c3aed'],
   settings:       ['#94a3b8', '#64748b'],
 };
 
@@ -135,6 +138,7 @@ const NAV_SECTIONS = [
       { id: 'postClone', label: 'Post Clone' },
       { id: 'videoCompose', label: 'Video Composer' },
       { id: 'photoMatch', label: 'Photo Match' },
+      { id: 'nanoBypass', label: 'Nano Bypass' },
     ],
   },
   {
@@ -201,6 +205,7 @@ const PAGE_DESCRIPTIONS = {
   logs: 'View recent app logs and copy them for support',
   settings: 'Change password, manage your account',
   photoMatch: 'Paste any photo — match background & pose with your character',
+  nanoBypass: 'Multi-image AI editing — combine, transform, reimagine with Gemini 3',
 };
 
 const PAGES = {
@@ -227,6 +232,7 @@ const PAGES = {
   videoCompose: VideoComposePage,
   logs: LogsPage,
   photoMatch: PhotoMatchPage,
+  nanoBypass: NanoBypassPage,
   settings: SettingsPage,
 };
 

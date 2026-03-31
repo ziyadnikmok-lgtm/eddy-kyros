@@ -11,7 +11,7 @@ const LONG_RUNNING_PATHS = [
   '/scene/recreate', '/story/generate',
   '/auto/plan', '/auto/execute',
   '/video/generate', '/reformat',
-  '/nsfw-generate', '/photo-match', '/lora-datasets/generate',
+  '/nsfw-generate', '/photo-match', '/nano-bypass', '/lora-datasets/generate',
 ];
 
 const EXTRA_LONG_PATHS = ['/profile-clone'];
@@ -272,6 +272,10 @@ export const scene = {
 
 export const photoMatch = {
   recreate: (body) => request('/photo-match/recreate', { method: 'POST', body }),
+};
+
+export const nanoBypass = {
+  edit: (body) => request('/nano-bypass/edit', { method: 'POST', body }),
 };
 
 export const niches = {
