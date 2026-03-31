@@ -12,6 +12,7 @@ const LOCKED_MODEL = { id: 'flash', label: 'Flash 3.1', sublabel: 'gemini-3.1-fl
 
 const _cache = {
   prompt: '',
+  characterId: '',
   model: 'flash',
   aspectRatio: 'auto',
   imageSize: '2K',
@@ -64,11 +65,12 @@ function ImageSlot({ index, image, onAdd, onRemove }) {
 }
 
 export default function NanoBypassPage() {
-  const { notify } = useApp();
+  const { notify, characters } = useApp();
   const { openLightbox, LightboxComponent } = useImageLightbox();
 
   const [images, setImages] = useState([null, null, null, null, null]);
   const [prompt, setPrompt] = useState(_cache.prompt);
+  const [characterId, setCharacterId] = useState(_cache.characterId);
   const [model, setModel] = useState(_cache.model);
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [imageSize, setImageSize] = useState(_cache.imageSize);
@@ -129,6 +131,7 @@ export default function NanoBypassPage() {
 
     // Update cache
     _cache.prompt = prompt;
+    _cache.characterId = characterId;
     _cache.model = model;
     _cache.aspectRatio = aspectRatio;
     _cache.imageSize = imageSize;
@@ -138,6 +141,7 @@ export default function NanoBypassPage() {
       const data = await api.edit({
         images: activeImages.map((img) => ({ base64: img.base64, mimeType: img.mimeType })),
         prompt: prompt.trim(),
+        characterId: characterId || undefined,
         model,
         aspectRatio,
         imageSize,
@@ -202,6 +206,24 @@ export default function NanoBypassPage() {
                 <ImageSlot key={i} index={i} image={img} onAdd={handleAdd} onRemove={handleRemove} />
               ))}
             </div>
+          </div>
+
+          {/* Prompt */}
+          <div>
+            <span className="text-xs text-zinc-400 font-medium block mb-1.5">Character</span>
+            <select
+              value={characterId}
+              onChange={(e) => setCharacterId(e.target.value)}
+              className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500"
+            >
+              <option value="">No character</option>
+              {characters.map((character) => (
+                <option key={character.id} value={character.id}>{character.name || character.id}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-[10px] text-zinc-500">
+              Optional. Helps keep the edit tied to the chosen character and saves the result under that character.
+            </p>
           </div>
 
           {/* Prompt */}

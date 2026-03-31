@@ -248,6 +248,20 @@ export default function AutoGeneratorPage() {
   const [expandedDay, setExpandedDay] = useState(_cache.expandedDay);
   const [executingDay, setExecutingDay] = useState(null);
 
+  const schedulePreview = useMemo(() => {
+    const carousel = Number.parseInt(String(carouselCount), 10) || 0;
+    const reels = includeReels ? (Number.parseInt(String(reelCount), 10) || 0) : 0;
+    const stories = includeStories ? (Number.parseInt(String(storyCount), 10) || 0) : 0;
+    const lifestyle = 1;
+    return {
+      carousel,
+      reels,
+      stories,
+      lifestyle,
+      total: carousel + reels + stories + lifestyle,
+    };
+  }, [carouselCount, includeReels, reelCount, includeStories, storyCount]);
+
   useEffect(() => {
     if (!characterId && characters.length > 0) {
       setCharacterId(characters[0].id);
@@ -973,6 +987,15 @@ export default function AutoGeneratorPage() {
                   ))}
                 </select>
               </label>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 pt-2">
+              <Badge color="blue">{schedulePreview.carousel} Posts</Badge>
+              <Badge color="green">{schedulePreview.lifestyle} Lifestyle</Badge>
+              {schedulePreview.reels > 0 ? <Badge color="purple">{schedulePreview.reels} Reels</Badge> : null}
+              {schedulePreview.stories > 0 ? <Badge color="yellow">{schedulePreview.stories} Stories</Badge> : null}
+              <span className="text-xs text-zinc-500">
+                {schedulePreview.total} total images per day. The extra image is the lifestyle insert.
+              </span>
             </div>
           </Section>
 

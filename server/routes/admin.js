@@ -1,9 +1,13 @@
 'use strict';
 const express = require('express');
+const fs = require('node:fs');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { requireAdmin } = require('../middleware/requireAuth');
 const { logAdminAction } = require('../services/adminAuditLogger');
+const galleryManager = require('../services/galleryManager');
+const videoHistory = require('../services/videoHistoryStore');
+const { runWithUser } = require('../userContext');
 
 const router = express.Router();
 const PLAN_PRICES = {
@@ -75,6 +79,45 @@ function getSupportNotes(userId, limit = 20) {
     ORDER BY datetime(n.created_at) DESC
     LIMIT ?
   `).all(userId, limit);
+}
+
+function getUserLibraryItems(userId, limit = 12) {
+  return runWithUser(userId, () => {
+    const images = (galleryManager.list().images || []).map((image) => ({
+      id: image.id,
+      mediaType: 'image',
+      createdAt: image.createdAt,
+      prompt: image.prompt || '',
+      source: image.source || 'generate',
+      aspectRatio: image.aspectRatio || null,
+      status: 'completed',
+      previewUrl: `/api/admin/users/${userId}/library/image/${image.id}`,
+      metadata: {
+        fileSize: image.fileSize || null,
+        filename: image.filename || null,
+      },
+    }));
+
+    const videos = (videoHistory.list() || []).map((video) => ({
+      id: video.id,
+      mediaType: 'video',
+      createdAt: video.createdAt,
+      prompt: video.prompt || '',
+      source: video.provider || 'video',
+      aspectRatio: video.aspectRatio || null,
+      status: video.status || 'processing',
+      previewUrl: video.localPath ? `/api/admin/users/${userId}/library/video/${video.id}` : null,
+      metadata: {
+        model: video.model || null,
+        duration: video.duration || null,
+        error: video.error || null,
+      },
+    }));
+
+    return [...images, ...videos]
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+      .slice(0, limit);
+  });
 }
 
 function performAdminAction({ adminUserId, targetId, type, plan, note }) {
@@ -483,7 +526,28 @@ router.get('/users/:id', requireAdmin, (req, res) => {
       recentRuns,
       billingHistory,
       supportNotes: getSupportNotes(req.params.id, 25),
+      recentLibraryItems: getUserLibraryItems(req.params.id, 16),
     },
+  });
+});
+
+// GET /api/admin/users/:id/library/image/:imageId
+router.get('/users/:id/library/image/:imageId', requireAdmin, (req, res) => {
+  return runWithUser(req.params.id, () => {
+    const { filePath, mimeType } = galleryManager.getFilePath(req.params.imageId);
+    res.type(mimeType);
+    return res.sendFile(filePath);
+  });
+});
+
+// GET /api/admin/users/:id/library/video/:videoId
+router.get('/users/:id/library/video/:videoId', requireAdmin, (req, res) => {
+  return runWithUser(req.params.id, () => {
+    const entry = videoHistory.get(req.params.videoId);
+    if (!entry.localPath || !fs.existsSync(entry.localPath)) {
+      return res.status(404).json({ error: 'Video file missing' });
+    }
+    return res.sendFile(entry.localPath);
   });
 });
 

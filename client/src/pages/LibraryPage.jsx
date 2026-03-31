@@ -41,9 +41,53 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function PromptSnippet({ prompt }) {
+function PromptSnippet({ prompt, notify }) {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+
   if (!prompt) return <p className="text-sm text-zinc-500 italic">No prompt</p>;
-  return <p className="text-sm text-zinc-300 line-clamp-2" title={prompt}>{prompt}</p>;
+
+  const isLong = prompt.length > 180;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setCopied(true);
+      notify?.('Prompt copied', 'success');
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch (err) {
+      notify?.(err?.message || 'Failed to copy prompt', 'error');
+    }
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <p
+        className={`text-sm text-zinc-300 whitespace-pre-wrap break-words ${expanded ? '' : 'line-clamp-2'}`}
+        title={expanded ? undefined : prompt}
+      >
+        {prompt}
+      </p>
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="text-[11px] text-blue-400 hover:text-blue-300 transition"
+        >
+          {copied ? 'Copied' : 'Copy prompt'}
+        </button>
+        {isLong ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((prev) => !prev)}
+            className="text-[11px] text-zinc-500 hover:text-zinc-300 transition"
+          >
+            {expanded ? 'Hide' : 'Expand'}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 export default function LibraryPage() {
@@ -523,6 +567,7 @@ export default function LibraryPage() {
                 item={item}
                 bulkMode={bulkMode}
                 selected={selectedIds.has(item.id)}
+                notify={notify}
                 onSelect={() => toggleSelection(item.id)}
                 onOpen={() => openImage(item)}
                 onFavorite={() => handleImageFavorite(item)}
@@ -543,6 +588,7 @@ export default function LibraryPage() {
                 item={item}
                 bulkMode={bulkMode}
                 selected={selectedIds.has(item.id)}
+                notify={notify}
                 onSelect={() => toggleSelection(item.id)}
                 expanded={expandedVideoId === item.id}
                 onToggle={() => setExpandedVideoId((prev) => prev === item.id ? null : item.id)}
@@ -578,7 +624,7 @@ export default function LibraryPage() {
   );
 }
 
-function ImageLibraryCard({ item, bulkMode, selected, onSelect, onOpen, onFavorite, onDelete, onDownload, onRecreate, onEdit }) {
+function ImageLibraryCard({ item, bulkMode, selected, onSelect, onOpen, onFavorite, onDelete, onDownload, onRecreate, onEdit, notify }) {
   return (
     <div className={`rounded-2xl overflow-hidden bg-zinc-900 border shadow-lg hover:shadow-xl transition-all duration-300 group ${
       selected ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-zinc-800/60'
@@ -614,7 +660,7 @@ function ImageLibraryCard({ item, bulkMode, selected, onSelect, onOpen, onFavori
         </button>
       </div>
       <div className="px-3 py-3 space-y-2">
-        <PromptSnippet prompt={item.prompt} />
+        <PromptSnippet prompt={item.prompt} notify={notify} />
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[10px] text-zinc-500">{formatDate(item.createdAt)}</span>
           <Badge color="blue">Image</Badge>
@@ -644,7 +690,7 @@ function ImageLibraryCard({ item, bulkMode, selected, onSelect, onOpen, onFavori
   );
 }
 
-function VideoLibraryCard({ item, bulkMode, selected, onSelect, expanded, onToggle, onDelete }) {
+function VideoLibraryCard({ item, bulkMode, selected, onSelect, expanded, onToggle, onDelete, notify }) {
   const hasFile = !!item.previewUrl;
   const statusColor = item.status === 'completed' ? 'green' : item.status === 'failed' ? 'red' : 'blue';
 
@@ -680,7 +726,7 @@ function VideoLibraryCard({ item, bulkMode, selected, onSelect, expanded, onTogg
         {bulkMode ? <button type="button" onClick={onSelect} className={`absolute top-2 right-2 h-8 w-8 rounded-md border-2 flex items-center justify-center ${selected ? 'border-blue-500 bg-blue-500 text-white' : 'border-zinc-400 bg-black/40 text-transparent'}`}>{selected ? '\u2713' : ''}</button> : null}
       </div>
       <div className="px-3 py-3 space-y-2">
-        <PromptSnippet prompt={item.prompt} />
+        <PromptSnippet prompt={item.prompt} notify={notify} />
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[10px] text-zinc-500">{formatDate(item.createdAt)}</span>
           {item.metadata?.model ? <Badge color="zinc">{item.metadata.model}</Badge> : null}

@@ -537,6 +537,46 @@ export default function AdminPage() {
 
             <Card className="space-y-4">
               <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold text-zinc-200">Recent Library Items</h3>
+                <span className="text-xs text-zinc-500">Real user gallery + video history</span>
+              </div>
+              {selectedUser.recentLibraryItems?.length ? (
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  {selectedUser.recentLibraryItems.map((item) => (
+                    <div key={`${item.mediaType}-${item.id}`} className="overflow-hidden rounded-xl border border-zinc-800/60 bg-zinc-900/40">
+                      <div className="aspect-[4/5] bg-zinc-950 flex items-center justify-center overflow-hidden">
+                        {item.mediaType === 'image' && item.previewUrl ? (
+                          <img src={item.previewUrl} alt={item.prompt ? item.prompt.slice(0, 120) : 'Generated image'} className="h-full w-full object-cover" loading="lazy" />
+                        ) : item.mediaType === 'video' && item.previewUrl ? (
+                          <video src={item.previewUrl} className="h-full w-full object-cover" muted controls preload="metadata" />
+                        ) : (
+                          <div className="px-3 text-center text-xs text-zinc-600">Preview unavailable</div>
+                        )}
+                      </div>
+                      <div className="space-y-2 p-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge color={item.mediaType === 'image' ? 'blue' : 'purple'}>
+                            {item.mediaType === 'image' ? 'Image' : 'Video'}
+                          </Badge>
+                          {item.aspectRatio ? <Badge color="zinc">{item.aspectRatio}</Badge> : null}
+                        </div>
+                        <div className="text-xs text-zinc-300 whitespace-pre-wrap break-words line-clamp-4">
+                          {item.prompt || 'No prompt'}
+                        </div>
+                        <div className="text-[11px] text-zinc-500">
+                          {formatDate(item.createdAt)}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <Empty icon="image" title="No saved library items yet" subtitle="This section shows the user’s real generated images and video history, even when run analytics are sparse." />
+              )}
+            </Card>
+
+            <Card className="space-y-4">
+              <div className="flex items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold text-zinc-200">Support Notes</h3>
                 <a
                   href="https://t.me/contentstudioaiQ"

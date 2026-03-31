@@ -18,9 +18,11 @@ function push(level, text, meta = {}) {
 
 function getLines(n = 200, options = {}) {
   const userId = options.userId || null;
-  const source = userId
+  const excludePaths = new Set(options.excludePaths || []);
+  const source = (userId
     ? _buf.filter((line) => line.userId === userId)
-    : _buf;
+    : _buf)
+    .filter((line) => !excludePaths.has(line.path || ''));
   return source.slice(-n);
 }
 

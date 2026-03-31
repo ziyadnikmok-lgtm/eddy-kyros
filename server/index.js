@@ -207,7 +207,13 @@ app.get('/api/logs', (req, res) => {
   if (!req.session?.userId) return res.status(401).json({ error: 'Unauthorized' });
   const logBuffer = require('./utils/logBuffer');
   const n = Math.min(parseInt(req.query.n || '200', 10), 500);
-  res.json({ success: true, lines: logBuffer.getLines(n, { userId: req.session.userId }) });
+  res.json({
+    success: true,
+    lines: logBuffer.getLines(n, {
+      userId: req.session.userId,
+      excludePaths: ['/api/logs', '/api/logs?n=200'],
+    }),
+  });
 });
 
 app.get('/api/health', (_req, res) => {

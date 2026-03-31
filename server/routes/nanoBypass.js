@@ -1,6 +1,7 @@
 const express = require('express');
 const galleryManager = require('../services/galleryManager');
 const apiKeyManager = require('../services/apiKeyManager');
+const referenceManager = require('../services/referenceManager');
 const { AppError } = require('../middleware/errorHandler');
 const { logUsageEvent, startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
 const log = require('../utils/logger');
@@ -107,6 +108,7 @@ router.post('/edit', express.json({ limit: '50mb' }), async (req, res, next) => 
     const {
       images,        // array of { base64, mimeType }
       prompt,
+      characterId = null,
       model = 'flash',
       aspectRatio = 'auto',
       imageSize = '2K',
@@ -150,6 +152,20 @@ router.post('/edit', express.json({ limit: '50mb' }), async (req, res, next) => 
       payload: { feature: 'nano-bypass', model: modelId, imageCount: images.length },
     });
 
+    let effectivePrompt = prompt.trim();
+    let characterName = null;
+    if (characterId) {
+      try {
+        const character = referenceManager.getCharacter(characterId);
+        characterName = character?.name || null;
+      } catch {
+        characterName = null;
+      }
+      if (characterName) {
+        effectivePrompt = `Keep the character identity consistent with ${characterName}. ${effectivePrompt}`;
+      }
+    }
+
     // Build parts: images first, then prompt (mirrors ComfyUI node)
     const parts = [];
     for (const img of images) {
@@ -160,7 +176,7 @@ router.post('/edit', express.json({ limit: '50mb' }), async (req, res, next) => 
       const raw = img.base64.replace(/^data:[^;]+;base64,/, '');
       parts.push({ inlineData: { mimeType: img.mimeType || 'image/png', data: raw } });
     }
-    parts.push({ text: prompt.trim() });
+    parts.push({ text: effectivePrompt });
 
     const b64Result = await callGemini(apiKey, modelId, parts, aspectRatio, imageSize, temperature);
 
@@ -169,9 +185,9 @@ router.post('/edit', express.json({ limit: '50mb' }), async (req, res, next) => 
       const entry = galleryManager.save({
         base64Data: b64Result,
         mimeType: 'image/png',
-        prompt: `[Nano Bypass ${model.toUpperCase()}] ${prompt.trim().slice(0, 200)}`,
+        prompt: `[Nano Bypass ${model.toUpperCase()}] ${effectivePrompt.slice(0, 200)}`,
         source: 'nano-bypass',
-        characterId: null,
+        characterId: characterId || null,
         aspectRatio: aspectRatio !== 'auto' ? aspectRatio : null,
         tags: ['nano-bypass', model],
       });
