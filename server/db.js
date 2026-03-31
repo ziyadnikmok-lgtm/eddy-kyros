@@ -1,6 +1,7 @@
 'use strict';
 const path = require('path');
 const fs = require('fs');
+const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 
 const projectRoot = path.join(__dirname, '..');
@@ -49,10 +50,20 @@ try {
   // Table may not exist yet — that's fine, CREATE TABLE below will handle it
 }
 
+try {
+  const userCols = db.pragma('table_info(users)');
+  if (userCols.length > 0 && !userCols.some((c) => c.name === 'username')) {
+    db.exec('ALTER TABLE users ADD COLUMN username TEXT');
+  }
+} catch (e) {
+  // Users table may not exist yet; CREATE TABLE below will handle it
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id         TEXT PRIMARY KEY,
     email      TEXT UNIQUE NOT NULL COLLATE NOCASE,
+    username   TEXT UNIQUE COLLATE NOCASE,
     password_hash TEXT NOT NULL,
     name       TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -65,6 +76,7 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_users_email ON users(email COLLATE NOCASE);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username COLLATE NOCASE);
 
   CREATE TABLE IF NOT EXISTS subscriptions (
     id         TEXT PRIMARY KEY,
@@ -160,12 +172,52 @@ db.exec(`
     ON support_notes(user_id, created_at);
 `);
 
-// Seed admin user: if SEED_ADMIN_EMAIL is set, promote that user to verified admin
+// Seed or create an admin user when explicit bootstrap env vars are present.
 if (process.env.SEED_ADMIN_EMAIL) {
   try {
-    const result = db.prepare('UPDATE users SET verified=1, is_admin=1 WHERE email=?').run(process.env.SEED_ADMIN_EMAIL.toLowerCase());
-    if (result.changes > 0) {
-      console.log('[db] Admin promoted:', process.env.SEED_ADMIN_EMAIL);
+    const adminEmail = process.env.SEED_ADMIN_EMAIL.toLowerCase();
+    const adminUsername = (process.env.SEED_ADMIN_USERNAME || 'admin').trim().toLowerCase() || 'admin';
+    const adminName = (process.env.SEED_ADMIN_NAME || 'Admin').trim() || 'Admin';
+    const passwordHash = process.env.SEED_ADMIN_PASSWORD
+      ? bcrypt.hashSync(process.env.SEED_ADMIN_PASSWORD, 12)
+      : null;
+    const existingByEmail = db.prepare('SELECT id FROM users WHERE email = ?').get(adminEmail);
+    const existingByUsername = db.prepare('SELECT id, email FROM users WHERE username = ?').get(adminUsername);
+
+    if (existingByUsername && existingByUsername.email !== adminEmail) {
+      console.warn('[db] Admin username already belongs to another account:', adminUsername);
+    } else if (existingByEmail) {
+      if (passwordHash) {
+        db.prepare(`
+          UPDATE users
+          SET verified = 1, is_admin = 1, username = ?, name = ?, password_hash = ?
+          WHERE email = ?
+        `).run(adminUsername, adminName, passwordHash, adminEmail);
+      } else {
+        db.prepare(`
+          UPDATE users
+          SET verified = 1, is_admin = 1, username = ?, name = ?
+          WHERE email = ?
+        `).run(adminUsername, adminName, adminEmail);
+      }
+      console.log('[db] Admin promoted:', adminEmail);
+    } else if (passwordHash) {
+      db.prepare(`
+        INSERT INTO users (id, email, username, password_hash, name, verified, is_admin)
+        VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?, 1, 1)
+      `).run(adminEmail, adminUsername, passwordHash, adminName);
+      db.prepare(`
+        INSERT INTO subscriptions (id, user_id, plan, status)
+        VALUES (lower(hex(randomblob(16))), (SELECT id FROM users WHERE email = ?), 'unlimited', 'active')
+      `).run(adminEmail);
+      console.log('[db] Admin account created:', adminEmail);
+    } else {
+      const result = db.prepare('UPDATE users SET verified=1, is_admin=1, username=?, name=? WHERE email=?').run(adminUsername, adminName, adminEmail);
+      if (result.changes > 0) {
+        console.log('[db] Admin promoted:', adminEmail);
+      } else {
+        console.warn('[db] SEED_ADMIN_EMAIL is set but no matching user exists and SEED_ADMIN_PASSWORD is missing');
+      }
     }
   } catch (e) {
     console.error('[db] Admin seed failed:', e.message);

@@ -13,6 +13,19 @@ const LOCKOUT_MAX = 5;
 const LOCKOUT_MS = 15 * 60 * 1000;
 const loginAttempts = new Map(); // email -> { count, lockedUntil }
 
+function normalizeLogin(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function getUserByLogin(login) {
+  return db.prepare(`
+    SELECT *
+    FROM users
+    WHERE email = ?
+       OR username = ?
+  `).get(login, login);
+}
+
 function checkLockout(email) {
   const entry = loginAttempts.get(email);
   if (!entry) return null;
@@ -106,26 +119,26 @@ router.get('/verify/:token', (req, res) => {
 router.post('/login', async (req, res) => {
   try {
     const { email, password, keepSignedIn } = req.body || {};
-    if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-    const emailLower = email.toLowerCase();
+    if (!email || !password) return res.status(400).json({ error: 'Email/username and password required' });
+    const login = normalizeLogin(email);
 
     // Check lockout before any DB query
-    const lockMsg = checkLockout(emailLower);
+    const lockMsg = checkLockout(login);
     if (lockMsg) return res.status(429).json({ error: lockMsg });
 
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(emailLower);
-    if (!user) { recordFailedLogin(emailLower); return res.status(401).json({ error: 'Invalid credentials' }); }
+    const user = getUserByLogin(login);
+    if (!user) { recordFailedLogin(login); return res.status(401).json({ error: 'Invalid credentials' }); }
     if (user.is_banned) return res.status(403).json({ error: 'Account suspended' });
     if (!user.verified) {
       db.prepare('UPDATE users SET verified = 1, verification_token = NULL WHERE id = ?').run(user.id);
       user.verified = 1;
     }
     const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) { recordFailedLogin(emailLower); return res.status(401).json({ error: 'Invalid credentials' }); }
-    clearLoginAttempts(emailLower);
+    if (!ok) { recordFailedLogin(login); return res.status(401).json({ error: 'Invalid credentials' }); }
+    clearLoginAttempts(login);
     // Auto-promote SEED_ADMIN_EMAIL on login if not already admin
     if (process.env.SEED_ADMIN_EMAIL && user.email === process.env.SEED_ADMIN_EMAIL.toLowerCase() && !user.is_admin) {
-      db.prepare('UPDATE users SET is_admin=1, verified=1 WHERE id=?').run(user.id);
+      db.prepare('UPDATE users SET is_admin=1, verified=1, username=COALESCE(username, ?) WHERE id=?').run(process.env.SEED_ADMIN_USERNAME || 'admin', user.id);
       user.is_admin = 1;
     }
     // Regenerate session ID to prevent session fixation attacks
