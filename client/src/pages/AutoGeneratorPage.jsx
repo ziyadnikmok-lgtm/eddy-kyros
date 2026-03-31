@@ -1068,11 +1068,16 @@ export default function AutoGeneratorPage() {
         const allDone = executeJobs.length > 0 && executeJobs.every((j) => j?.status !== 'running');
         const jobsLoaded = executeJobs.length > 0;
         const jobsLost = !jobsLoaded && result.data.jobIds.length > 0;
+        const jobsMissing = jobsLoaded && executeJobs.length < result.data.jobIds.length;
+        const hasInterruptedJobs = executeJobs.some((j) => j?.status === 'partial');
+        const interrupted = !isExecuteRunning && (jobsMissing || hasInterruptedJobs);
         return (
           <Card className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-medium text-zinc-300">
-                {allDone ? 'Generation Complete' : jobsLost ? 'Jobs lost (server restarted?)' : jobsLoaded ? 'Generating...' : 'Starting jobs...'}
+                {allDone
+                  ? (interrupted ? 'Generation Interrupted' : 'Generation Complete')
+                  : jobsLost ? 'Jobs lost (server restarted?)' : jobsLoaded ? 'Generating...' : 'Starting jobs...'}
               </h2>
               <span className="text-xs text-zinc-400">
                 {totalCompleted}/{totalTarget} images
@@ -1089,6 +1094,11 @@ export default function AutoGeneratorPage() {
               <p className="text-xs text-zinc-500 font-mono">
                 {executeElapsedSec}s elapsed
                 {totalCompleted === 0 && executeElapsedSec > 5 && ' — generating anchor images first...'}
+              </p>
+            )}
+            {interrupted && (
+              <p className="text-xs text-amber-400">
+                The run recovered with partial progress. Finished images were kept and are still available in the library.
               </p>
             )}
             {completedImages.length > 0 && (

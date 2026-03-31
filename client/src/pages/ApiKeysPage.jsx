@@ -106,7 +106,7 @@ function KeyHeader({ infoKey, isConnected, children }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function ApiKeysPage() {
-  const { activeKey, setActiveKey, notify } = useApp();
+  const { activeKey, setActiveKey, refreshIntegrationStatus, notify } = useApp();
   const [keyList, setKeyList] = useState([]);
   const [name, setName] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -153,6 +153,7 @@ export default function ApiKeysPage() {
     const act = data.find((k) => k.isActive);
     if (act) setActiveKey(act);
     else if (data.length === 0) setActiveKey(null);
+    refreshIntegrationStatus();
     await refreshHealth();
   });
 

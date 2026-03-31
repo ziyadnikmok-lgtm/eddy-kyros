@@ -187,10 +187,11 @@ app.use((req, res, next) => {
   req.id = crypto.randomUUID();
   const start = Date.now();
   const requestPath = req.originalUrl || req.url || req.path;
-  log.info('req_start', { rid: req.id, method: req.method, path: requestPath });
+  log.info('req_start', { userId: req.session?.userId || null, rid: req.id, method: req.method, path: requestPath });
   res.on('finish', () => {
     const durationMs = Date.now() - start;
     log.info('req_end', {
+      userId: req.session?.userId || null,
       rid: req.id,
       method: req.method,
       path: requestPath,
@@ -203,10 +204,10 @@ app.use((req, res, next) => {
 });
 
 app.get('/api/logs', (req, res) => {
-  if (!req.session?.isAdmin) return res.status(403).json({ error: 'Forbidden' });
+  if (!req.session?.userId) return res.status(401).json({ error: 'Unauthorized' });
   const logBuffer = require('./utils/logBuffer');
   const n = Math.min(parseInt(req.query.n || '200', 10), 500);
-  res.json({ success: true, lines: logBuffer.getLines(n) });
+  res.json({ success: true, lines: logBuffer.getLines(n, { userId: req.session.userId }) });
 });
 
 app.get('/api/health', (_req, res) => {

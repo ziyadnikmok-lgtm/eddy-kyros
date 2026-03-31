@@ -43,6 +43,7 @@ export default function ReelRecreatePage() {
   const [useSourceFrameReference, setUseSourceFrameReference] = useState(_cache.useSourceFrameReference);
   const [outfitTransition, setOutfitTransition] = useState(_cache.outfitTransition);
   const [availability, setAvailability] = useState(null);
+  const hasLocalVideo = !!localVideoFile;
 
   const STRENGTH_LEVELS = ['soft', 'medium', 'strict'];
   const strengthToIndex = (value) => {
@@ -81,6 +82,12 @@ export default function ReelRecreatePage() {
     else setCharDetail(null);
   }, [charId]);
 
+  useEffect(() => {
+    if (hasLocalVideo) {
+      setAvailability(null);
+    }
+  }, [hasLocalVideo]);
+
   const handleRun = () => run(async () => {
     if (!reelUrl.trim() && !localVideoFile) { notify('Reel URL or local video is required', 'error'); return; }
     if (!charId) { notify('Select a character', 'error'); return; }
@@ -101,7 +108,6 @@ export default function ReelRecreatePage() {
       payload = new FormData();
       payload.append('video', localVideoFile);
       payload.append('characterId', charId);
-      if (reelUrl.trim()) payload.append('reelUrl', reelUrl.trim());
       if (activeRefIds.length) payload.append('activeReferenceIds', JSON.stringify(activeRefIds));
       payload.append('poseMatchStrength', poseMatchStrength);
       payload.append('environmentMatchStrength', environmentMatchStrength);
@@ -176,8 +182,8 @@ export default function ReelRecreatePage() {
         <div className="lg:col-span-1 space-y-4">
           <Card className="space-y-4">
             <Input
-              label="Instagram Reel URL"
-              placeholder="https://www.instagram.com/reel/..."
+              label={hasLocalVideo ? 'Instagram Reel URL (optional)' : 'Instagram Reel URL'}
+              placeholder={hasLocalVideo ? 'Optional, only for your own notes/context' : 'https://www.instagram.com/reel/...'}
               value={reelUrl}
               onChange={(e) => setReelUrl(e.target.value)}
             />
@@ -193,15 +199,25 @@ export default function ReelRecreatePage() {
                 {localVideoFile ? 'Change Local Video' : 'Choose Local Video'}
               </label>
               {localVideoFile && (
-                <div className="flex items-center justify-between text-[11px] text-zinc-500">
-                  <span className="truncate pr-2">{localVideoFile.name}</span>
-                  <button
-                    type="button"
-                    className="text-zinc-400 hover:text-red-400"
-                    onClick={() => setLocalVideoFile(null)}
-                  >
-                    Remove
-                  </button>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                    <span className="truncate pr-2">{localVideoFile.name}</span>
+                    <button
+                      type="button"
+                      className="text-zinc-400 hover:text-red-400"
+                      onClick={() => setLocalVideoFile(null)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[11px] text-blue-200">
+                    Local upload mode active. This run will use your uploaded video directly and will not require Apify.
+                  </div>
+                </div>
+              )}
+              {!localVideoFile && (
+                <div className="text-[11px] text-zinc-500">
+                  Use a local video if you want to skip Instagram scraping entirely.
                 </div>
               )}
             </div>
@@ -218,7 +234,7 @@ export default function ReelRecreatePage() {
               </select>
             </div>
 
-            {availability && (
+            {availability && !hasLocalVideo && (
               <div className={`rounded-lg border px-3 py-2 text-xs ${
                 availability.color === 'green'
                   ? 'border-green-500/40 bg-green-500/10 text-green-300'
@@ -332,7 +348,7 @@ export default function ReelRecreatePage() {
             </label>
 
             <Btn onClick={handleRun} disabled={loading || (!reelUrl.trim() && !localVideoFile) || !charId} className="w-full">
-              {loading ? <><Spinner size={16} /> Processing... {elapsedSec}s</> : 'Fetch + Recreate Frames'}
+              {loading ? <><Spinner size={16} /> Processing... {elapsedSec}s</> : (hasLocalVideo ? 'Use Local Video + Recreate Frames' : 'Fetch + Recreate Frames')}
             </Btn>
             <Btn
               onClick={handleRerunFromFrames}
@@ -348,7 +364,7 @@ export default function ReelRecreatePage() {
         <div className="lg:col-span-2 space-y-4">
           {!loading && !result && (
             <Card className="min-h-[360px] flex items-center justify-center">
-              <Empty icon={<IconVideo uniqueId="empty-reel" size={40} aria-hidden />} title="No reel processed yet" subtitle="Paste a reel URL and run recreation" />
+              <Empty icon={<IconVideo uniqueId="empty-reel" size={40} aria-hidden />} title="No reel processed yet" subtitle="Paste a reel URL or upload a local video to start" />
             </Card>
           )}
 

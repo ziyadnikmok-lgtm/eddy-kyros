@@ -8,14 +8,11 @@ import useImageLightbox from '../components/lightbox/useImageLightbox';
 const ASPECT_RATIOS = ['auto', '1:1', '9:16', '16:9', '4:5', '3:4', '2:3'];
 const IMAGE_SIZES = ['1K', '2K', '4K'];
 
-const MODEL_OPTIONS = [
-  { id: 'pro', label: 'Pro', sublabel: 'gemini-3-pro', color: 'bg-purple-600 hover:bg-purple-500' },
-  { id: 'flash', label: 'Flash', sublabel: 'gemini-3.1-flash', color: 'bg-blue-600 hover:bg-blue-500' },
-];
+const LOCKED_MODEL = { id: 'flash', label: 'Flash 3.1', sublabel: 'gemini-3.1-flash', color: 'bg-blue-600 hover:bg-blue-500' };
 
 const _cache = {
   prompt: '',
-  model: 'pro',
+  model: 'flash',
   aspectRatio: 'auto',
   imageSize: '2K',
   temperature: 1.0,
@@ -177,26 +174,20 @@ export default function NanoBypassPage() {
       {/* Left panel */}
       <div className="w-80 shrink-0 space-y-4 overflow-y-auto pr-2 pb-8">
 
-        {/* Model selector */}
         <Card className="p-4 space-y-4">
           <div>
-            <span className="text-xs text-zinc-400 font-medium block mb-2">Model</span>
-            <div className="grid grid-cols-2 gap-2">
-              {MODEL_OPTIONS.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => setModel(m.id)}
-                  className={`rounded-lg px-3 py-2.5 text-xs font-semibold transition cursor-pointer border
-                    ${model === m.id
-                      ? 'bg-purple-600/20 border-purple-500/60 text-purple-300'
-                      : 'bg-zinc-800/40 border-zinc-700/40 text-zinc-400 hover:border-zinc-500/60 hover:text-zinc-300'
-                    }`}
-                >
-                  <div>{m.label}</div>
-                  <div className="text-[9px] opacity-60 font-mono mt-0.5">{m.sublabel}</div>
-                </button>
-              ))}
+            <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <span className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-300 block">Locked Model</span>
+                  <div className="mt-1 text-sm font-semibold text-zinc-100">{LOCKED_MODEL.label}</div>
+                  <div className="text-[10px] font-mono text-blue-200/80 mt-0.5">{LOCKED_MODEL.sublabel}</div>
+                </div>
+                <Badge color="blue">Bypass Safe</Badge>
+              </div>
+              <p className="mt-2 text-[11px] text-blue-100/85">
+                Nano Bypass only works reliably on Gemini 3.1 Flash. Pro has been disabled for this tool.
+              </p>
             </div>
           </div>
 
@@ -235,7 +226,7 @@ export default function NanoBypassPage() {
                   type="button"
                   onClick={() => setAspectRatio(ar)}
                   className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition cursor-pointer
-                    ${aspectRatio === ar ? 'bg-purple-600 text-white' : 'bg-zinc-700/60 text-zinc-400 hover:bg-zinc-600 hover:text-zinc-200'}`}
+                    ${aspectRatio === ar ? 'bg-blue-600 text-white' : 'bg-zinc-700/60 text-zinc-400 hover:bg-zinc-600 hover:text-zinc-200'}`}
                 >
                   {ar}
                 </button>
@@ -253,7 +244,7 @@ export default function NanoBypassPage() {
                   type="button"
                   onClick={() => setImageSize(s)}
                   className={`flex-1 rounded-md py-1.5 text-xs font-medium transition cursor-pointer
-                    ${imageSize === s ? 'bg-purple-600 text-white' : 'bg-zinc-700/60 text-zinc-400 hover:bg-zinc-600 hover:text-zinc-200'}`}
+                    ${imageSize === s ? 'bg-blue-600 text-white' : 'bg-zinc-700/60 text-zinc-400 hover:bg-zinc-600 hover:text-zinc-200'}`}
                 >
                   {s}
                 </button>
@@ -271,7 +262,7 @@ export default function NanoBypassPage() {
               type="range" min={0.0} max={2.0} step={0.1}
               value={temperature}
               onChange={(e) => setTemperature(parseFloat(e.target.value))}
-              className="w-full accent-purple-500"
+              className="w-full accent-blue-500"
             />
             <div className="flex justify-between text-[10px] text-zinc-600 mt-0.5">
               <span>Precise</span>
@@ -282,7 +273,7 @@ export default function NanoBypassPage() {
           <Btn
             onClick={handleGenerate}
             disabled={loading || activeImages.length === 0 || !prompt.trim()}
-            className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 disabled:opacity-40"
+            className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-40"
           >
             {loading ? <><Spinner size={14} /> Bypassing...</> : '⚡ Nano Bypass'}
           </Btn>
@@ -298,7 +289,7 @@ export default function NanoBypassPage() {
             <div className="text-center space-y-3">
               <Spinner size={32} />
               <p className="text-sm text-zinc-400">Nano Bypass processing...</p>
-              <p className="text-xs text-zinc-600">Model: {MODEL_OPTIONS.find(m => m.id === model)?.sublabel}</p>
+              <p className="text-xs text-zinc-600">Model: {LOCKED_MODEL.sublabel}</p>
             </div>
           </Card>
         )}
@@ -308,7 +299,7 @@ export default function NanoBypassPage() {
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-zinc-300">Result</h3>
               <div className="flex items-center gap-2">
-                <Badge color="purple">{MODEL_OPTIONS.find(m => m.id === model)?.label}</Badge>
+                <Badge color="blue">{LOCKED_MODEL.label}</Badge>
                 {result.galleryId && <Badge color="green">Saved</Badge>}
               </div>
             </div>

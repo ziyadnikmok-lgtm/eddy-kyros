@@ -87,10 +87,15 @@ function _loadPersistedJobsForUser() {
     if (!Array.isArray(entries)) return;
     const now = Date.now();
     for (const entry of entries) {
-      if (entry._completedAt && now - entry._completedAt <= JOB_TTL_MS) {
-        if (!entry._userId) entry._userId = storeKey;
-        jobs.set(entry.jobId, entry);
+      const withinTtl = entry._completedAt && now - entry._completedAt <= JOB_TTL_MS;
+      const wasRunning = entry.status === 'running';
+      if (!withinTtl && !wasRunning) continue;
+      if (!entry._userId) entry._userId = storeKey;
+      if (wasRunning) {
+        entry.status = (entry.completed || entry.failed) > 0 ? 'partial' : 'failed';
+        entry._completedAt = entry._completedAt || Date.now();
       }
+      jobs.set(entry.jobId, entry);
     }
   } catch (err) {
     const log = require('../utils/logger');
@@ -113,7 +118,6 @@ function _persistJobs() {
       const entries = [];
       for (const job of jobs.values()) {
         if (job._userId !== userId) continue;
-        if (job.status === 'running') continue;
         const lite = { ...job };
         if (Array.isArray(lite.results)) {
           lite.results = lite.results.map((r) => {
@@ -248,6 +252,7 @@ class BatchGenerator extends EventEmitter {
       createdAt: new Date().toISOString(),
     };
     jobs.set(jobId, job);
+    _persistJobs();
 
     this._executeTasks(job, enrichedTasks).catch((err) => {
       const log = require('../utils/logger');
@@ -932,6 +937,7 @@ class BatchGenerator extends EventEmitter {
         error: null,
       };
       job.completed++;
+      _persistJobs();
       this.emit('task', { jobId: job.jobId, index: task.index, success: true, completed: job.completed, failed: job.failed, total: job.total });
     } catch (err) {
       job.results[task.index] = {
@@ -941,6 +947,7 @@ class BatchGenerator extends EventEmitter {
         error: err.message || 'Generation failed',
       };
       job.failed++;
+      _persistJobs();
       this.emit('task', { jobId: job.jobId, index: task.index, success: false, completed: job.completed, failed: job.failed, total: job.total });
     }
   }

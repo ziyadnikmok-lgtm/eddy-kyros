@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { nsfwGenerate as api, loraPresets as presetsApi, characters as charApi } from '../services/api';
+import { nsfwGenerate as api, loraPresets as presetsApi } from '../services/api';
 import { useAsync } from '../hooks/useAsync';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Textarea, Spinner } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 import { ASPECT_RATIOS } from '../config/photoModes';
 
-const _cache = { result: null, history: [], selectedPresetId: '', presetStrength: 1.0, extraLoras: [], prompt: '', aspectRatio: '4:5', selectedCharId: '' };
+const _cache = { result: null, history: [], selectedPresetId: '', presetStrength: 1.0, extraLoras: [], prompt: '', aspectRatio: '4:5' };
 
 export default function NsfwGeneratePage() {
   const { notify } = useApp();
@@ -29,10 +29,6 @@ export default function NsfwGeneratePage() {
   const [newPresetPath, setNewPresetPath] = useState('');
   const [newPresetScale, setNewPresetScale] = useState(1.0);
 
-  // Character selector
-  const [characters, setCharacters] = useState([]);
-  const [selectedCharId, setSelectedCharId] = useState(_cache.selectedCharId);
-
   // Variation mode
   const [varyPrompt, setVaryPrompt] = useState('');
   const [varyStrength, setVaryStrength] = useState(0.6);
@@ -48,10 +44,6 @@ export default function NsfwGeneratePage() {
   }, []);
 
   useEffect(() => { loadPresets(); }, [loadPresets]);
-
-  useEffect(() => {
-    charApi.list().then((data) => setCharacters(data || [])).catch(() => {});
-  }, []);
 
   const selectedPreset = presets.find((p) => p.id === selectedPresetId) || null;
 
@@ -103,15 +95,7 @@ export default function NsfwGeneratePage() {
     } catch { notify('Failed to delete preset', 'error'); }
   };
 
-  const selectedChar = characters.find((c) => c.id === selectedCharId) || null;
-
-  const buildFinalPrompt = () => {
-    const base = prompt.trim();
-    if (selectedChar?.masterPrompt) {
-      return `${selectedChar.masterPrompt.trim()}, ${base}`;
-    }
-    return base;
-  };
+  const buildFinalPrompt = () => prompt.trim();
 
   const handleGenerate = () => {
     if (busyRef.current) return;
@@ -165,25 +149,21 @@ export default function NsfwGeneratePage() {
       {/* Left panel — controls */}
       <div className="w-80 shrink-0 space-y-4 overflow-y-auto pr-2 pb-8">
         <Card className="p-4 space-y-4">
-          {/* Character Selector */}
-          {characters.length > 0 && (
-            <div>
-              <span className="text-xs text-zinc-400 font-medium block mb-1.5">Character</span>
-              <select
-                value={selectedCharId}
-                onChange={(e) => { setSelectedCharId(e.target.value); sync('selectedCharId', e.target.value); }}
-                className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-purple-500/70 focus:ring-1 focus:ring-purple-500/20 cursor-pointer"
-              >
-                <option value="">No character</option>
-                {characters.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-              {selectedChar && (
-                <p className="text-[10px] text-zinc-500 mt-1 truncate">{selectedChar.masterPrompt?.slice(0, 80)}…</p>
-              )}
+          <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-300">Beta</span>
+              <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-0.5 text-[10px] font-medium text-amber-200">
+                Character LoRA Recommended
+              </span>
             </div>
-          )}
+            <p className="text-xs leading-relaxed text-amber-100/90">
+              This mode works best when you use a trained character LoRA. Without one, outputs can still generate,
+              but character consistency and likeness will be unreliable.
+            </p>
+            <p className="text-[11px] leading-relaxed text-amber-200/70">
+              Pick your trained character LoRA below before generating if you want repeatable results.
+            </p>
+          </div>
 
           {/* Prompt */}
           <div>

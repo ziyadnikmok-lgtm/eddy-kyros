@@ -24,6 +24,7 @@ async function fetchJson(url) {
 
 export function AppProvider({ children }) {
   const [activeKey, setActiveKey] = useState(null);
+  const [integrationRefreshToken, setIntegrationRefreshToken] = useState(0);
   const [toasts, setToasts] = useState([]);
   const timers = useRef({});
 
@@ -88,18 +89,22 @@ export function AppProvider({ children }) {
     setToasts((t) => t.filter((x) => x.id !== id));
   }, []);
 
+  const refreshIntegrationStatus = useCallback(() => {
+    setIntegrationRefreshToken((value) => value + 1);
+  }, []);
+
   useEffect(() => {
     const t = timers;
     return () => { for (const id of Object.keys(t.current)) clearTimeout(t.current[id]); };
   }, []);
 
   const value = useMemo(() => ({
-    activeKey, setActiveKey, toasts, notify, dismissToast,
+    activeKey, setActiveKey, integrationRefreshToken, refreshIntegrationStatus, toasts, notify, dismissToast,
     page, navigateTo, consumePageParams,
     characters, refreshCharacters,
     sceneMemories, refreshSceneMemories,
     outfits, refreshOutfits,
-  }), [activeKey, setActiveKey, toasts, notify, dismissToast,
+  }), [activeKey, setActiveKey, integrationRefreshToken, refreshIntegrationStatus, toasts, notify, dismissToast,
     page, navigateTo, consumePageParams,
     characters, refreshCharacters, sceneMemories, refreshSceneMemories,
     outfits, refreshOutfits]);

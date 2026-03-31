@@ -519,6 +519,9 @@ class ApiKeyManager {
    * @param {number} outputTokens - output token count (text portion)
    */
   addImageSpend(model, resolution = '2K', refImageCount = 0, promptTokens = 0, outputTokens = 0, characterId) {
+    if (model === 'nano-bypass-experimental') {
+      model = 'gemini-3.1-flash-image-preview';
+    }
     let imageCost = 0;
     let inputTokenCostPer1M = 0;
     let outputTextCostPer1M = 0;

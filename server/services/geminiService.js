@@ -7,6 +7,9 @@ const cfg = require('../config');
 
 const IMAGE_MODEL = 'gemini-3-pro-image-preview';
 const IMAGE_MODEL_ALTERNATES = ['gemini-3.1-flash-image-preview'];
+const EXPERIMENTAL_IMAGE_MODEL_ALIASES = {
+  'nano-bypass-experimental': 'gemini-3.1-flash-image-preview',
+};
 const ALLOWED_IMAGE_MODELS = [IMAGE_MODEL, ...IMAGE_MODEL_ALTERNATES];
 const MINIMAL_THINKING_IMAGE_MODELS = new Set(['gemini-3.1-flash-image-preview']);
 const TEXT_MODEL = 'gemini-3-flash-preview';
@@ -344,9 +347,12 @@ class GeminiService {
   resolveImageModel(model) {
     const requested = typeof model === 'string' ? model.trim() : '';
     if (!requested) return IMAGE_MODEL;
+    if (EXPERIMENTAL_IMAGE_MODEL_ALIASES[requested]) {
+      return EXPERIMENTAL_IMAGE_MODEL_ALIASES[requested];
+    }
     if (!ALLOWED_IMAGE_MODELS.includes(requested)) {
       throw new AppError(
-        `Unsupported image model "${requested}". Allowed: ${ALLOWED_IMAGE_MODELS.join(', ')}`,
+        `Unsupported image model "${requested}". Allowed: ${[...ALLOWED_IMAGE_MODELS, ...Object.keys(EXPERIMENTAL_IMAGE_MODEL_ALIASES)].join(', ')}`,
         400,
         'VALIDATION_ERROR'
       );

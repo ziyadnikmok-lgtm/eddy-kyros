@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { scene as sceneApi, characters as charApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
@@ -79,16 +79,62 @@ export default function SceneRecreatePage() {
     return () => { if (preview) URL.revokeObjectURL(preview); };
   }, [preview]);
 
-  const handleFile = (e) => {
-    const f = e.target.files?.[0];
+  const applyFile = useCallback((f) => {
     if (f) {
+      if (!f.type.startsWith('image/')) {
+        notify('Please use an image file (PNG, JPEG, WebP)', 'error');
+        return;
+      }
       setFile(f);
-      setPreview(URL.createObjectURL(f));
+      setPreview((prev) => {
+        if (prev?.startsWith?.('blob:')) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(f);
+      });
       setSceneData(null);
       setEditableScene('');
       setResult(null);
     }
+  }, [notify]);
+
+  useEffect(() => {
+    const onPaste = (e) => {
+      const item = [...(e.clipboardData?.items || [])].find((entry) => entry.type.startsWith('image/'));
+      if (!item) return;
+      e.preventDefault();
+      const pastedFile = item.getAsFile();
+      if (pastedFile) {
+        applyFile(pastedFile);
+        notify('Pasted scene image from clipboard', 'success');
+      }
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [applyFile, notify]);
+
+  const handleFile = (e) => {
+    const f = e.target.files?.[0];
+    if (f) applyFile(f);
   };
+
+  const handlePasteFromClipboard = () => runAnalyze(async () => {
+    if (!navigator.clipboard?.read) {
+      notify('Clipboard image paste is not supported in this browser. Try Ctrl+V instead.', 'error');
+      return;
+    }
+
+    const clipboardItems = await navigator.clipboard.read();
+    const imageItem = clipboardItems.find((entry) => entry.types.some((type) => type.startsWith('image/')));
+    if (!imageItem) {
+      notify('No image found in clipboard', 'error');
+      return;
+    }
+
+    const imageType = imageItem.types.find((type) => type.startsWith('image/'));
+    const blob = await imageItem.getType(imageType);
+    const pastedFile = new File([blob], `scene-paste-${Date.now()}.${imageType.split('/')[1] || 'png'}`, { type: imageType });
+    applyFile(pastedFile);
+    notify('Pasted scene image from clipboard', 'success');
+  });
 
   const handleAnalyze = () => runAnalyze(async () => {
     if (!file) { notify('Upload an image first', 'error'); return; }
@@ -135,21 +181,30 @@ export default function SceneRecreatePage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         <div className="lg:col-span-1 space-y-4">
           <Card className="space-y-4">
-            <h3 className="text-lg font-medium text-zinc-200">1. Upload Scene Image</h3>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-lg font-medium text-zinc-200">1. Upload Scene Image</h3>
+              <Badge color="zinc">Ctrl+V to paste</Badge>
+            </div>
             <label className="flex items-center justify-center border-2 border-dashed border-zinc-700/80 rounded-lg cursor-pointer hover:border-zinc-500 transition h-40 overflow-hidden">
               {preview ? (
                 <img src={preview} alt="Scene" className="max-h-full max-w-full object-contain" />
               ) : (
                 <div className="text-center flex flex-col items-center [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]">
                 <IconCamera uniqueId="scene-upload" size={32} className="mb-1 text-zinc-500" aria-hidden />
-                <span className="text-zinc-500 text-sm">Click to upload</span>
+                <span className="text-zinc-500 text-sm">Click, paste or drop image</span>
+                <span className="text-zinc-600 text-xs mt-1">PNG, JPEG, WebP</span>
               </div>
               )}
               <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile} />
             </label>
-            <Btn onClick={handleAnalyze} disabled={analyzing || !file} className="w-full">
+            <div className="flex gap-2">
+              <Btn variant="secondary" onClick={handlePasteFromClipboard} disabled={analyzing} className="flex-1">
+                Paste
+              </Btn>
+              <Btn onClick={handleAnalyze} disabled={analyzing || !file} className="flex-1">
               {analyzing ? <><Spinner size={16} /> Analyzing... {analyzeElapsedSec}s</> : <>Analyze Scene</>}
-            </Btn>
+              </Btn>
+            </div>
           </Card>
 
           {sceneData && (

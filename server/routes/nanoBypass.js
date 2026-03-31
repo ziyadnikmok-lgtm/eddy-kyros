@@ -9,10 +9,9 @@ const router = express.Router();
 
 const VALID_ASPECT_RATIOS = ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '4:5', '5:4', '21:9'];
 const VALID_IMAGE_SIZES = ['1K', '2K', '4K'];
-const VALID_MODELS = ['pro', 'flash'];
+const VALID_MODELS = ['flash'];
 
 const MODEL_IDS = {
-  pro: 'gemini-3-pro-image-preview',
   flash: 'gemini-3.1-flash-image-preview',
 };
 
@@ -108,7 +107,7 @@ router.post('/edit', express.json({ limit: '50mb' }), async (req, res, next) => 
     const {
       images,        // array of { base64, mimeType }
       prompt,
-      model = 'pro',
+      model = 'flash',
       aspectRatio = 'auto',
       imageSize = '2K',
       temperature = 1.0,
@@ -125,7 +124,7 @@ router.post('/edit', express.json({ limit: '50mb' }), async (req, res, next) => 
       throw new AppError('maximum 5 images at once', 400, 'VALIDATION_ERROR');
     }
     if (!VALID_MODELS.includes(model)) {
-      throw new AppError(`model must be one of: ${VALID_MODELS.join(', ')}`, 400, 'VALIDATION_ERROR');
+      throw new AppError('Nano Bypass only supports Gemini 3.1 Flash', 400, 'VALIDATION_ERROR');
     }
     if (aspectRatio && !VALID_ASPECT_RATIOS.includes(aspectRatio)) {
       throw new AppError(`invalid aspectRatio`, 400, 'VALIDATION_ERROR');

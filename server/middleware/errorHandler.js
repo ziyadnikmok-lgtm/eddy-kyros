@@ -25,6 +25,7 @@ function errorHandler(err, req, res, _next) {
 
   if (statusCode >= 500) {
     const meta = {
+      userId: req.session?.userId || null,
       rid: req.id || null,
       method: req.method,
       path: req.path,

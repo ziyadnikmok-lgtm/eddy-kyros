@@ -278,7 +278,7 @@ function StatusDot({ active, label, sublabel, offLabel, onClick }) {
 }
 
 function MainApp({ onLogout, currentUser }) {
-  const { activeKey, setActiveKey, page, navigateTo } = useApp();
+  const { activeKey, setActiveKey, integrationRefreshToken, page, navigateTo } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [apifyConnected, setApifyConnected] = useState(false);
 
@@ -302,7 +302,7 @@ function MainApp({ onLogout, currentUser }) {
         if (!cancelled) setApifyConnected(false);
       });
     return () => { cancelled = true; };
-  }, [setActiveKey]);
+  }, [integrationRefreshToken, setActiveKey]);
 
   async function handleLogout() {
     try {

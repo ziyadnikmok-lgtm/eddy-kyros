@@ -1,11 +1,18 @@
 const logBuffer = require('./logBuffer');
+const { getUserId } = require('../userContext');
 
 function _emit(level, event, meta = {}) {
-  const entry = { level, event, ...meta, ts: new Date().toISOString() };
+  const userId = meta.userId || getUserId() || null;
+  const entry = { level, event, ...meta, userId, ts: new Date().toISOString() };
   const line = JSON.stringify(entry);
   const fn = level === 'error' ? console.error : console.log;
   fn(line);
-  logBuffer.push(level, `[${event}] ${meta ? JSON.stringify(meta) : ''}`);
+  logBuffer.push(level, `[${event}] ${meta ? JSON.stringify(meta) : ''}`, {
+    userId,
+    rid: meta.rid || null,
+    path: meta.path || null,
+    event,
+  });
 }
 
 module.exports = {
