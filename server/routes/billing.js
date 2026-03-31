@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
 const db = require('../db');
 const { requireAuth } = require('../middleware/requireAuth');
+const { logUsageEvent } = require('../services/eventLogger');
 
 const router = express.Router();
 
@@ -41,6 +42,14 @@ router.post('/create-invoice', requireAuth, async (req, res) => {
     if (!resp.ok) return res.status(502).json({ error: data.message || 'Payment gateway error' });
     // Save pending subscription
     db.prepare('INSERT INTO subscriptions (id, user_id, plan, status, heleket_order_id) VALUES (?,?,?,?,?)').run(uuidv4(), req.session.userId, plan, 'pending', orderId);
+    logUsageEvent({
+      userId: req.session.userId,
+      eventType: 'billing.invoice_created',
+      entityType: 'subscription',
+      entityId: orderId,
+      source: 'billing',
+      payload: { plan, amount: PLANS[plan].amount, currency: PLANS[plan].currency },
+    });
     res.json({ url: data.url || data.payment_url, orderId });
   } catch (e) {
     res.status(502).json({ error: 'Failed to reach payment gateway: ' + e.message });
@@ -71,6 +80,14 @@ router.post('/webhook', express.raw({ type: 'application/json' }), (req, res) =>
     if (sub) {
       const expires = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
       db.prepare('UPDATE subscriptions SET status = ?, expires_at = ? WHERE id = ?').run('active', expires, sub.id);
+      logUsageEvent({
+        userId: sub.user_id,
+        eventType: 'billing.subscription_activated',
+        entityType: 'subscription',
+        entityId: sub.id,
+        source: 'billing',
+        payload: { plan: sub.plan, orderId: order_id, expiresAt: expires },
+      });
       console.log(`[BILLING] Subscription activated: ${sub.user_id} plan=${sub.plan}`);
     }
   }

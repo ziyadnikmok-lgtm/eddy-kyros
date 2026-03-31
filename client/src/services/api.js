@@ -265,6 +265,10 @@ export const gallery = {
   saveEdit: (id, params) => request(`/gallery/${id}/edit`, { method: 'POST', body: { ...params, save: true } }),
 };
 
+export const library = {
+  list: () => request('/library'),
+};
+
 export const scene = {
   analyze: (image, mimeType) => request('/scene/analyze', { method: 'POST', body: { image, mimeType } }),
   recreate: (body) => request('/scene/recreate', { method: 'POST', body }),
@@ -418,5 +422,24 @@ export const backgrounds = {
   upload: (body) => request('/backgrounds', { method: 'POST', body }),
   remove: (id) => request(`/backgrounds/${id}`, { method: 'DELETE' }),
   imageUrl: (id) => `${BASE}/backgrounds/${id}/image`,
+};
+
+export const admin = {
+  overview: () => request('/admin/overview'),
+  analytics: (days = 14) => request(`/admin/analytics?days=${days}`),
+  users: (params = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+    }
+    const query = qs.toString();
+    return request(`/admin/users${query ? `?${query}` : ''}`);
+  },
+  user: (id) => request(`/admin/users/${id}`),
+  userActivity: (id) => request(`/admin/users/${id}/activity`),
+  userSupportNotes: (id) => request(`/admin/users/${id}/support-notes`),
+  addUserSupportNote: (id, body) => request(`/admin/users/${id}/support-notes`, { method: 'POST', body: { body } }),
+  auditLogs: (limit = 50) => request(`/admin/audit-logs?limit=${limit}`),
+  actOnUser: (id, body) => request(`/admin/users/${id}/action`, { method: 'POST', body }),
 };
 

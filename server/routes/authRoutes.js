@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const nodemailer = require('nodemailer');
 const db = require('../db');
+const { logUsageEvent } = require('../services/eventLogger');
 
 const router = express.Router();
 
@@ -77,6 +78,14 @@ router.post('/register', async (req, res) => {
     const token = uuidv4().replace(/-/g, '');
     db.prepare('INSERT INTO users (id, email, password_hash, name, verified, verification_token) VALUES (?,?,?,?,?,?)').run(id, email.toLowerCase(), hash, name, 1, null);
     db.prepare('INSERT INTO subscriptions (id, user_id, plan, status) VALUES (?,?,?,?)').run(uuidv4(), id, 'free', 'active');
+    logUsageEvent({
+      userId: id,
+      eventType: 'auth.registered',
+      entityType: 'user',
+      entityId: id,
+      source: 'auth',
+      payload: { email: email.toLowerCase() },
+    });
     return res.status(201).json({ success: true, message: 'Registration successful. You can now log in.' });
   } catch (err) {
     console.error('[register]', err.message);
@@ -131,6 +140,14 @@ router.post('/login', async (req, res) => {
         req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000; // 30 days
       }
       const sub = db.prepare('SELECT plan, status FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(user.id);
+      logUsageEvent({
+        userId: user.id,
+        eventType: 'auth.logged_in',
+        entityType: 'session',
+        entityId: req.sessionID,
+        source: 'auth',
+        payload: { keepSignedIn: !!keepSignedIn },
+      });
       return res.json({ success: true, id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan: sub?.plan || 'free' });
     });
   } catch (err) {
@@ -141,6 +158,16 @@ router.post('/login', async (req, res) => {
 
 // POST /api/auth/logout
 router.post('/logout', (req, res) => {
+  const userId = req.session?.userId || null;
+  if (userId) {
+    logUsageEvent({
+      userId,
+      eventType: 'auth.logged_out',
+      entityType: 'session',
+      entityId: req.sessionID || null,
+      source: 'auth',
+    });
+  }
   req.session.destroy((err) => {
     if (err) console.error('[logout] session destroy failed:', err.message);
     res.clearCookie('connect.sid');

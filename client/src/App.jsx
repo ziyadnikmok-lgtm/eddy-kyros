@@ -42,6 +42,7 @@ const StorytellerPage = lazy(() => import('./pages/StorytellerPage'));
 const AutoGeneratorPage = lazy(() => import('./pages/AutoGeneratorPage'));
 const CharactersPage = lazy(() => import('./pages/CharactersPage'));
 const GalleryPage = lazy(() => import('./pages/GalleryPage'));
+const LibraryPage = lazy(() => import('./pages/LibraryPage'));
 const SceneRecreatePage = lazy(() => import('./pages/SceneRecreatePage'));
 const ReelRecreatePage = lazy(() => import('./pages/ReelRecreatePage'));
 const PostClonePage = lazy(() => import('./pages/PostClonePage'));
@@ -60,6 +61,7 @@ const VideoComposePage = lazy(() => import('./pages/VideoComposePage'));
 const LogsPage = lazy(() => import('./pages/LogsPage'));
 const PhotoMatchPage = lazy(() => import('./pages/PhotoMatchPage'));
 const NanoBypassPage = lazy(() => import('./pages/NanoBypassPage'));
+const AdminPage = lazy(() => import('./pages/AdminPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 
 const NAV_ICONS = {
@@ -78,6 +80,7 @@ const NAV_ICONS = {
   loraDataset: IconLayers,
   profileAnalyzer: IconMagnifier,
   storyteller: IconBookOpen,
+  library: IconGrid2,
   gallery: IconImage,
   imageEditor: IconRulerPen,
   videoCompose: IconVideo,
@@ -87,6 +90,7 @@ const NAV_ICONS = {
   logs: IconBulletList,
   photoMatch: IconCrosshairs,
   nanoBypass: IconMagicWandSparkle,
+  admin: IconBulletList,
   settings: IconSettingsWrench,
 };
 
@@ -106,6 +110,7 @@ const NAV_COLORS = {
   promptBuilder:  ['#a5b4fc', '#4f46e5'],
   profileAnalyzer:['#7dd3fc', '#0284c7'],
   storyteller:    ['#bef264', '#65a30d'],
+  library:        ['#67e8f9', '#0284c7'],
   gallery:        ['#fcd34d', '#d97706'],
   imageEditor:    ['#f9a8d4', '#db2777'],
   videoCompose:   ['#fdba74', '#ea580c'],
@@ -115,6 +120,7 @@ const NAV_COLORS = {
   logs:           ['#fda4af', '#e11d48'],
   photoMatch:     ['#6ee7b7', '#0891b2'],
   nanoBypass:     ['#c4b5fd', '#7c3aed'],
+  admin:          ['#fcd34d', '#d97706'],
   settings:       ['#94a3b8', '#64748b'],
 };
 
@@ -154,12 +160,12 @@ const NAV_SECTIONS = [
   {
     label: 'Manage',
     items: [
-      { id: 'gallery', label: 'Gallery' },
+      { id: 'library', label: 'Library' },
       { id: 'imageEditor', label: 'Image Editor' },
-      { id: 'videoGallery', label: 'Video Gallery' },
       { id: 'characters', label: 'Characters' },
       { id: 'keys', label: 'API Keys' },
       { id: 'billing', label: 'Billing' },
+      { id: 'admin', label: 'Admin' },
       { id: 'settings', label: 'Settings' },
       { id: 'logs', label: 'App Logs' },
     ],
@@ -196,6 +202,7 @@ const PAGE_DESCRIPTIONS = {
   loraDataset: 'Build captioned LoRA training datasets from characters',
   profileAnalyzer: 'Extract style patterns from Instagram profiles',
   storyteller: 'Generate captions and hashtags for images',
+  library: 'Browse and manage all generated images and videos',
   gallery: 'Browse and manage all generated images',
   videoGallery: 'Browse and manage all generated videos',
   characters: 'Manage character identities and references',
@@ -206,6 +213,7 @@ const PAGE_DESCRIPTIONS = {
   settings: 'Change password, manage your account',
   photoMatch: 'Paste any photo — match background & pose with your character',
   nanoBypass: 'Multi-image AI editing — combine, transform, reimagine with Gemini 3',
+  admin: 'Run the SaaS, inspect users, and review audit activity',
 };
 
 const PAGES = {
@@ -221,6 +229,7 @@ const PAGES = {
   loraDataset: LoraDatasetPage,
   profileAnalyzer: ProfileAnalyzerPage,
   storyteller: StorytellerPage,
+  library: LibraryPage,
   video: VideoPage,
   videoGallery: VideoGalleryPage,
   auto: AutoGeneratorPage,
@@ -233,6 +242,7 @@ const PAGES = {
   logs: LogsPage,
   photoMatch: PhotoMatchPage,
   nanoBypass: NanoBypassPage,
+  admin: AdminPage,
   settings: SettingsPage,
 };
 
@@ -267,10 +277,16 @@ function StatusDot({ active, label, sublabel, offLabel, onClick }) {
   );
 }
 
-function MainApp({ onLogout }) {
+function MainApp({ onLogout, currentUser }) {
   const { activeKey, setActiveKey, page, navigateTo } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [apifyConnected, setApifyConnected] = useState(false);
+
+  useEffect(() => {
+    if (page === 'admin' && !currentUser?.isAdmin) {
+      navigateTo('generate');
+    }
+  }, [page, currentUser, navigateTo]);
 
   useEffect(() => {
     let cancelled = false;
@@ -291,12 +307,19 @@ function MainApp({ onLogout }) {
   async function handleLogout() {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
-    } catch {}
+    } catch {
+      // Best-effort logout. Local auth state is cleared below.
+    }
     onLogout();
   }
 
   const PageComponent = PAGES[page] || GeneratePage;
-  const currentNav = ALL_NAV_ITEMS.find((n) => n.id === page);
+  const visibleSections = NAV_SECTIONS.map((section) => ({
+    ...section,
+    items: section.items.filter((item) => item.id !== 'admin' || currentUser?.isAdmin),
+  })).filter((section) => section.items.length > 0);
+  const visibleNavItems = visibleSections.flatMap((section) => section.items);
+  const currentNav = visibleNavItems.find((n) => n.id === page);
 
   return (
     <TooltipPrimitive.Provider delayDuration={200}>
@@ -308,7 +331,7 @@ function MainApp({ onLogout }) {
       <aside className={`fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-zinc-800/50 bg-zinc-900/95 backdrop-blur-md transition-transform duration-250 lg:static lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <SidebarHeader />
         <nav className="flex-1 overflow-y-auto px-3 py-3">
-          {NAV_SECTIONS.map((section, sIdx) => (
+          {visibleSections.map((section, sIdx) => (
             <div key={section.label} className={`mb-1.5 ${sIdx > 0 ? 'pt-3 mt-1' : ''}`}>
               <div className="flex items-center gap-2 px-3 py-1.5">
                 <span className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider whitespace-nowrap">{section.label}</span>
@@ -345,7 +368,10 @@ function MainApp({ onLogout }) {
         </nav>
 
         <div className="border-t border-zinc-800/40 px-4 py-3 flex items-center justify-between">
-          <div className="text-[10px] text-zinc-600 font-mono">Local Only</div>
+          <div>
+            <div className="text-[10px] text-zinc-600 font-mono">{currentUser?.isAdmin ? 'Admin Session' : 'Signed In'}</div>
+            <div className="text-[10px] text-zinc-500 truncate max-w-[120px]">{currentUser?.email || 'Unknown user'}</div>
+          </div>
           <button
             onClick={handleLogout}
             className="text-[10px] text-zinc-600 hover:text-zinc-400 transition font-mono"
@@ -400,26 +426,52 @@ const AuthSuspense = ({ children }) => (
 // Auth states: 'loading' | 'authenticated' | 'unauthenticated'
 export default function App() {
   const [authState, setAuthState] = useState('loading');
-  const [authPage, setAuthPage] = useState('landing');
+  const [authPage, setAuthPage] = useState(() => {
+    if (typeof window === 'undefined') return 'landing';
+    const params = new URLSearchParams(window.location.search);
+    if (window.location.pathname === '/verify-email' && params.get('token')) return 'verify-email';
+    if (window.location.pathname === '/reset-password' && params.get('token')) return 'reset-password';
+    return 'landing';
+  });
+  const [currentUser, setCurrentUser] = useState(null);
 
   useEffect(() => {
-    // Check for token in URL (verify email, reset password)
-    const params = new URLSearchParams(window.location.search);
-    if (window.location.pathname === '/verify-email' && params.get('token')) {
-      setAuthPage('verify-email');
-    } else if (window.location.pathname === '/reset-password' && params.get('token')) {
-      setAuthPage('reset-password');
-    }
-
     fetch('/api/auth/status', { credentials: 'include' })
       .then((r) => r.json())
       .then((data) => {
         setAuthState(data.authenticated ? 'authenticated' : 'unauthenticated');
+        if (!data.authenticated) setCurrentUser(null);
       })
       .catch(() => {
         setAuthState('unauthenticated');
+        setCurrentUser(null);
       });
   }, []);
+
+  useEffect(() => {
+    if (authState !== 'authenticated') return;
+    let cancelled = false;
+    fetch('/api/auth/me', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        if (!data) {
+          setCurrentUser(null);
+          setAuthState('unauthenticated');
+          return;
+        }
+        setCurrentUser(data);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCurrentUser(null);
+          setAuthState('unauthenticated');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authState]);
 
   if (authState === 'loading') {
     return (
@@ -450,6 +502,14 @@ export default function App() {
     return <AuthSuspense><LandingPage onNavigate={navigate} /></AuthSuspense>;
   }
 
-  return <MainApp onLogout={() => { setAuthState('unauthenticated'); setAuthPage('landing'); }} />;
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+        <Spinner size={32} />
+      </div>
+    );
+  }
+
+  return <MainApp currentUser={currentUser} onLogout={() => { setCurrentUser(null); setAuthState('unauthenticated'); setAuthPage('landing'); }} />;
 }
 

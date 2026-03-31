@@ -12,6 +12,7 @@ const apiKeyManager = require('../services/apiKeyManager');
 const { AppError } = require('../middleware/errorHandler');
 const { createMultipartParser } = require('../middleware/multipartParser');
 const { UPLOADS_DIR } = require('../paths');
+const { logUsageEvent, startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
 const log = require('../utils/logger');
 
 const VIDEO_PRICES = {
@@ -32,6 +33,7 @@ const VIDEO_DIR = path.join(UPLOADS_DIR, 'videos');
 const parseMultipartIfNeeded = createMultipartParser({ maxBytes: 200 * 1024 * 1024 });
 
 router.post('/generate', parseMultipartIfNeeded, async (req, res, next) => {
+  let runId = null;
   try {
     const {
       model,
@@ -95,6 +97,25 @@ router.post('/generate', parseMultipartIfNeeded, async (req, res, next) => {
       });
 
       const taskId = Buffer.from(operation.operationName, 'utf8').toString('base64url');
+      runId = startGenerationRun({
+        id: taskId,
+        userId: req.session?.userId,
+        feature: 'video',
+        provider: 'gemini',
+        model,
+        status: operation.done ? 'succeeded' : 'processing',
+      });
+      logUsageEvent({
+        userId: req.session?.userId,
+        eventType: operation.done ? 'generation.succeeded' : 'generation.started',
+        entityType: 'generation_run',
+        entityId: runId,
+        source: 'video',
+        payload: { feature: 'video', provider: 'gemini', model, duration: Number(duration) || null },
+      });
+      if (operation.done) {
+        finishGenerationRun(runId, { status: 'succeeded', outputCount: 1, provider: 'gemini', model });
+      }
       const historyEntry = videoHistory.add({
         taskId,
         provider: 'gemini',
@@ -136,7 +157,7 @@ router.post('/generate', parseMultipartIfNeeded, async (req, res, next) => {
         try {
           videoUrl = await wavespeed.uploadFile(videoPath);
         } finally {
-          try { fs.unlinkSync(videoPath); } catch {}
+          try { fs.unlinkSync(videoPath); } catch { /* ignore temp cleanup errors */ }
         }
       } else if (motionSource.type === 'upload' && motionSource.videoBase64) {
         const tempPath = path.join(os.tmpdir(), `motion-${crypto.randomUUID()}.mp4`);
@@ -147,7 +168,7 @@ router.post('/generate', parseMultipartIfNeeded, async (req, res, next) => {
           fs.writeFileSync(tempPath, Buffer.from(raw, 'base64'));
           videoUrl = await wavespeed.uploadFile(tempPath);
         } finally {
-          try { fs.unlinkSync(tempPath); } catch {}
+          try { fs.unlinkSync(tempPath); } catch { /* ignore temp cleanup errors */ }
         }
       } else {
         throw new AppError('motionSource must have type "url" with url, or type "upload" with videoBase64', 400, 'VALIDATION_ERROR');
@@ -175,6 +196,22 @@ router.post('/generate', parseMultipartIfNeeded, async (req, res, next) => {
     }
 
     const { taskId, status } = await wavespeed.createVideoTask(model, params);
+    runId = startGenerationRun({
+      id: taskId,
+      userId: req.session?.userId,
+      feature: 'video',
+      provider: 'wavespeed',
+      model,
+      status: status || 'processing',
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.started',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'video',
+      payload: { feature: 'video', provider: 'wavespeed', model, duration: params.duration || null },
+    });
 
     const historyEntry = videoHistory.add({
       taskId,
@@ -187,6 +224,20 @@ router.post('/generate', parseMultipartIfNeeded, async (req, res, next) => {
 
     res.json({ success: true, data: { taskId, historyId: historyEntry.id, status } });
   } catch (err) {
+    finishGenerationRun(runId, {
+      status: 'failed',
+      outputCount: 0,
+      errorCode: err.code || err.name || 'UNKNOWN',
+      errorMessage: err.message || 'Video generation failed',
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.failed',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'video',
+      payload: { feature: 'video', errorCode: err.code || err.name || 'UNKNOWN', message: err.message || 'Video generation failed' },
+    });
     next(err);
   }
 });
@@ -207,6 +258,22 @@ router.get('/:taskId/status', async (req, res, next) => {
       const videoUri = generatedVideo?.uri || null;
       if (!videoUri) {
         videoHistory.update(entry.id, { status: 'failed', error: 'Veo completed without a downloadable video URI' });
+        finishGenerationRun(taskId, {
+          status: 'failed',
+          outputCount: 0,
+          provider: 'gemini',
+          model: entry.model,
+          errorCode: 'NO_VIDEO_URI',
+          errorMessage: 'Veo completed without a downloadable video URI',
+        });
+        logUsageEvent({
+          userId: req.session?.userId,
+          eventType: 'generation.failed',
+          entityType: 'generation_run',
+          entityId: taskId,
+          source: 'video',
+          payload: { feature: 'video', provider: 'gemini', errorCode: 'NO_VIDEO_URI' },
+        });
         return res.json({ success: true, data: { status: 'failed', error: 'Veo returned no downloadable video' } });
       }
 
@@ -217,6 +284,22 @@ router.get('/:taskId/status', async (req, res, next) => {
         } catch (dlErr) {
           log.warn('veo_download_failed', { taskId, error: dlErr.message });
           videoHistory.update(entry.id, { status: 'failed', error: `Video download failed: ${dlErr.message}` });
+          finishGenerationRun(taskId, {
+            status: 'failed',
+            outputCount: 0,
+            provider: 'gemini',
+            model: entry.model,
+            errorCode: 'DOWNLOAD_FAILED',
+            errorMessage: dlErr.message,
+          });
+          logUsageEvent({
+            userId: req.session?.userId,
+            eventType: 'generation.failed',
+            entityType: 'generation_run',
+            entityId: taskId,
+            source: 'video',
+            payload: { feature: 'video', provider: 'gemini', errorCode: 'DOWNLOAD_FAILED', message: dlErr.message },
+          });
           return res.json({ success: true, data: { status: 'failed', error: 'Video download failed — please regenerate' } });
         }
         if (!entry.spendTracked) {
@@ -232,6 +315,20 @@ router.get('/:taskId/status', async (req, res, next) => {
           localPath: filePath,
           filename,
           spendTracked: true,
+        });
+        finishGenerationRun(taskId, {
+          status: 'succeeded',
+          outputCount: 1,
+          provider: 'gemini',
+          model: entry.model,
+        });
+        logUsageEvent({
+          userId: req.session?.userId,
+          eventType: 'generation.succeeded',
+          entityType: 'generation_run',
+          entityId: taskId,
+          source: 'video',
+          payload: { feature: 'video', provider: 'gemini', localFilename: filename },
         });
         return res.json({ success: true, data: { status: 'completed', localFilename: filename } });
       }
@@ -263,10 +360,38 @@ router.get('/:taskId/status', async (req, res, next) => {
             localPath: filePath,
             filename,
           });
+          finishGenerationRun(taskId, {
+            status: 'succeeded',
+            outputCount: 1,
+            provider: 'wavespeed',
+            model: entry.model,
+          });
+          logUsageEvent({
+            userId: req.session?.userId,
+            eventType: 'generation.succeeded',
+            entityType: 'generation_run',
+            entityId: taskId,
+            source: 'video',
+            payload: { feature: 'video', provider: 'wavespeed', localFilename: filename },
+          });
           result.localFilename = filename;
         } catch (dlErr) {
           log.warn('video_auto_download_failed', { taskId, error: dlErr.message });
           videoHistory.update(entry.id, { status: 'completed', videoUrl: result.outputs[0] });
+          finishGenerationRun(taskId, {
+            status: 'succeeded',
+            outputCount: 1,
+            provider: 'wavespeed',
+            model: entry?.model,
+          });
+          logUsageEvent({
+            userId: req.session?.userId,
+            eventType: 'generation.succeeded',
+            entityType: 'generation_run',
+            entityId: taskId,
+            source: 'video',
+            payload: { feature: 'video', provider: 'wavespeed', localFilename: null },
+          });
         }
         // Track WaveSpeed spend on first completion (guard against double-count)
         if (entry && !entry.spendTracked) {
@@ -288,6 +413,22 @@ router.get('/:taskId/status', async (req, res, next) => {
     if (result.status === 'failed') {
       const entry = videoHistory.findByTaskId(taskId);
       if (entry) videoHistory.update(entry.id, { status: 'failed', error: result.error || 'Generation failed' });
+      finishGenerationRun(taskId, {
+        status: 'failed',
+        outputCount: 0,
+        provider: entry?.provider || 'wavespeed',
+        model: entry?.model || null,
+        errorCode: 'TASK_FAILED',
+        errorMessage: result.error || 'Generation failed',
+      });
+      logUsageEvent({
+        userId: req.session?.userId,
+        eventType: 'generation.failed',
+        entityType: 'generation_run',
+        entityId: taskId,
+        source: 'video',
+        payload: { feature: 'video', provider: entry?.provider || 'wavespeed', errorCode: 'TASK_FAILED', message: result.error || 'Generation failed' },
+      });
     }
 
     res.json({ success: true, data: result });
@@ -321,7 +462,7 @@ router.delete('/history/:id', (req, res, next) => {
   try {
     const entry = videoHistory.get(req.params.id);
     if (entry.localPath) {
-      try { fs.unlinkSync(entry.localPath); } catch {}
+      try { fs.unlinkSync(entry.localPath); } catch { /* ignore missing local file */ }
     }
     res.json({ success: true, data: videoHistory.remove(req.params.id) });
   } catch (err) {

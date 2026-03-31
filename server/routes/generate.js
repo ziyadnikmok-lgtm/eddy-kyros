@@ -14,6 +14,7 @@ const galleryManager = require('../services/galleryManager');
 const styleLibrary = require('../services/styleLibrary');
 const styleFocusStore = require('../services/styleFocusStore');
 const { AppError } = require('../middleware/errorHandler');
+const { logUsageEvent, startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
 const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 const { parseReferenceImagePayload, parseCustomReferenceImages } = require('../utils/referenceImageParser');
@@ -49,6 +50,7 @@ function buildCharacterReferenceImages(characterId, activeRefs) {
 }
 
 router.post('/', async (req, res, next) => {
+  let runId = null;
   try {
     const {
       prompt,
@@ -218,6 +220,21 @@ router.post('/', async (req, res, next) => {
 
     finalPrompt = `${finalPrompt}\n\n${REALISM_DIRECTIVE}`;
 
+    runId = startGenerationRun({
+      userId: req.session?.userId,
+      feature: 'generate',
+      provider: 'gemini',
+      model: imageModel || null,
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.started',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'generate',
+      payload: { feature: 'generate', model: imageModel || null, aspectRatio: finalAspectRatio },
+    });
+
     const apiKey = apiKeyManager.getActiveKey();
     const result = await geminiService.generateImage(apiKey, finalPrompt, {
       aspectRatio: finalAspectRatio,
@@ -256,6 +273,21 @@ router.post('/', async (req, res, next) => {
       tags: autoTags,
     });
 
+    finishGenerationRun(runId, {
+      status: 'succeeded',
+      outputCount: 1,
+      provider: 'gemini',
+      model: result.modelUsed || imageModel || null,
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.succeeded',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'generate',
+      payload: { feature: 'generate', galleryId: galleryEntry.id, imageId: stored.imageId },
+    });
+
     res.json({
       success: true,
       data: {
@@ -270,6 +302,21 @@ router.post('/', async (req, res, next) => {
       },
     });
   } catch (err) {
+    finishGenerationRun(runId, {
+      status: 'failed',
+      outputCount: 0,
+      errorCode: err.code || err.name || 'UNKNOWN',
+      errorMessage: err.message || 'Generation failed',
+      provider: 'gemini',
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.failed',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'generate',
+      payload: { feature: 'generate', errorCode: err.code || err.name || 'UNKNOWN', message: err.message || 'Generation failed' },
+    });
     next(err);
   }
 });

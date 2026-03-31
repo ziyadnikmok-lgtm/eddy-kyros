@@ -41,7 +41,7 @@ export default function LoginPage({ onLogin, onNavigate }) {
         <h2 style={styles.title}>AI Content Studio</h2>
         <form onSubmit={handleSubmit}>
           {error && <div style={styles.error}>{error}</div>}
-          <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required style={styles.input} />
+          <input type="text" placeholder="Email or username" value={email} onChange={e => setEmail(e.target.value)} required style={styles.input} />
           <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={styles.input} />
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a0a0c0', fontSize: '14px', marginBottom: '1rem', cursor: 'pointer' }}>
             <input type="checkbox" checked={keepSignedIn} onChange={e => setKeepSignedIn(e.target.checked)} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />

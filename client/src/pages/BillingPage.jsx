@@ -166,6 +166,21 @@ export default function BillingPage() {
       <p className="text-xs text-zinc-600 text-center">
         Payments processed via Heleket (crypto). Contact support if you have billing questions.
       </p>
+
+      <Card className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-zinc-100">Need help with billing or setup?</p>
+          <p className="text-xs text-zinc-500 mt-1">Join the community support chat and talk directly with the team.</p>
+        </div>
+        <a
+          href="https://t.me/contentstudioaiQ"
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-500 transition"
+        >
+          Open Telegram Support
+        </a>
+      </Card>
     </div>
   );
 }

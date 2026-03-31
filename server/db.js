@@ -90,6 +90,74 @@ db.exec(`
     sess   JSON NOT NULL,
     expire TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS usage_events (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT REFERENCES users(id) ON DELETE CASCADE,
+    event_type  TEXT NOT NULL,
+    entity_type TEXT,
+    entity_id   TEXT,
+    source      TEXT,
+    payload_json TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_usage_events_type_created
+    ON usage_events(event_type, created_at);
+
+  CREATE INDEX IF NOT EXISTS idx_usage_events_user_created
+    ON usage_events(user_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS admin_audit_logs (
+    id            TEXT PRIMARY KEY,
+    admin_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    target_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    action_type   TEXT NOT NULL,
+    before_json   TEXT,
+    after_json    TEXT,
+    note          TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_created
+    ON admin_audit_logs(created_at);
+
+  CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_target_created
+    ON admin_audit_logs(target_user_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS generation_runs (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    feature       TEXT NOT NULL,
+    provider      TEXT,
+    model         TEXT,
+    status        TEXT NOT NULL,
+    error_code    TEXT,
+    error_message TEXT,
+    output_count  INTEGER NOT NULL DEFAULT 0,
+    started_at    TEXT NOT NULL,
+    finished_at   TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_generation_runs_user_started
+    ON generation_runs(user_id, started_at);
+
+  CREATE INDEX IF NOT EXISTS idx_generation_runs_feature_started
+    ON generation_runs(feature, started_at);
+
+  CREATE INDEX IF NOT EXISTS idx_generation_runs_status_started
+    ON generation_runs(status, started_at);
+
+  CREATE TABLE IF NOT EXISTS support_notes (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    admin_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    body          TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_support_notes_user_created
+    ON support_notes(user_id, created_at);
 `);
 
 // Seed admin user: if SEED_ADMIN_EMAIL is set, promote that user to verified admin

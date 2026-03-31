@@ -2,6 +2,7 @@ const express = require('express');
 const galleryManager = require('../services/galleryManager');
 const apiKeyManager = require('../services/apiKeyManager');
 const { AppError } = require('../middleware/errorHandler');
+const { logUsageEvent, startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
 const log = require('../utils/logger');
 
 const router = express.Router();
@@ -102,6 +103,7 @@ async function callGemini(apiKey, modelId, parts, aspectRatio, imageSize, temper
 
 // POST /api/nano-bypass/edit
 router.post('/edit', express.json({ limit: '50mb' }), async (req, res, next) => {
+  let runId = null;
   try {
     const {
       images,        // array of { base64, mimeType }
@@ -134,6 +136,20 @@ router.post('/edit', express.json({ limit: '50mb' }), async (req, res, next) => 
 
     const apiKey = apiKeyManager.getActiveKey();
     const modelId = MODEL_IDS[model];
+    runId = startGenerationRun({
+      userId: req.session?.userId,
+      feature: 'nano-bypass',
+      provider: 'gemini',
+      model: modelId,
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.started',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'nano-bypass',
+      payload: { feature: 'nano-bypass', model: modelId, imageCount: images.length },
+    });
 
     // Build parts: images first, then prompt (mirrors ComfyUI node)
     const parts = [];
@@ -163,6 +179,21 @@ router.post('/edit', express.json({ limit: '50mb' }), async (req, res, next) => 
       galleryId = entry.id;
     }
 
+    finishGenerationRun(runId, {
+      status: 'succeeded',
+      outputCount: 1,
+      provider: 'gemini',
+      model: modelId,
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.succeeded',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'nano-bypass',
+      payload: { feature: 'nano-bypass', galleryId, model: modelId },
+    });
+
     log.info('nano_bypass_edit_ok', { model: modelId, imageCount: images.length, galleryId });
 
     res.json({
@@ -175,6 +206,21 @@ router.post('/edit', express.json({ limit: '50mb' }), async (req, res, next) => 
       },
     });
   } catch (err) {
+    finishGenerationRun(runId, {
+      status: 'failed',
+      outputCount: 0,
+      provider: 'gemini',
+      errorCode: err.code || err.name || 'UNKNOWN',
+      errorMessage: err.message || 'Nano bypass failed',
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.failed',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'nano-bypass',
+      payload: { feature: 'nano-bypass', errorCode: err.code || err.name || 'UNKNOWN', message: err.message || 'Nano bypass failed' },
+    });
     next(err);
   }
 });
