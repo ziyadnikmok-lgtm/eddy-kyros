@@ -339,10 +339,10 @@ class ApiKeyManager {
   }
 
   _getEncryptionSecret() {
-    const secret = process.env.ENCRYPTION_SECRET;
+    const secret = process.env.ENCRYPTION_SECRET || process.env.SERVER_ENCRYPTION_KEY;
     if (!secret || secret.length < 32) {
       throw new AppError(
-        'ENCRYPTION_SECRET must be set in .env and be at least 32 characters',
+        'ENCRYPTION_SECRET or SERVER_ENCRYPTION_KEY must be set and be at least 32 characters',
         500,
         'CONFIG_ERROR'
       );
@@ -401,7 +401,7 @@ class ApiKeyManager {
       const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
       return decrypted.toString('utf8');
     } catch {
-      throw new AppError('Failed to decrypt API key. Check your ENCRYPTION_SECRET.', 500, 'DECRYPTION_FAILED');
+      throw new AppError('Failed to decrypt API key. Check your ENCRYPTION_SECRET or SERVER_ENCRYPTION_KEY.', 500, 'DECRYPTION_FAILED');
     }
   }
 

@@ -6,6 +6,12 @@ const crypto = require('node:crypto');
 const dotenvPath = process.env.DOTENV_CONFIG_PATH || path.join(__dirname, '..', '.env');
 require('dotenv').config({ path: dotenvPath });
 
+if ((!process.env.ENCRYPTION_SECRET || process.env.ENCRYPTION_SECRET.length < 32)
+  && process.env.SERVER_ENCRYPTION_KEY
+  && process.env.SERVER_ENCRYPTION_KEY.length >= 32) {
+  process.env.ENCRYPTION_SECRET = process.env.SERVER_ENCRYPTION_KEY;
+}
+
 if (!process.env.ENCRYPTION_SECRET || process.env.ENCRYPTION_SECRET.length < 32) {
   const secret = crypto.randomBytes(32).toString('hex');
   process.env.ENCRYPTION_SECRET = secret;
