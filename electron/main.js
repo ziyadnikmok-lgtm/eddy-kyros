@@ -2,7 +2,7 @@
 // Electron main process — creates the window, spawns the Express backend,
 // and manages the app lifecycle.
 
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const net = require('node:net');
 const { fork } = require('node:child_process');
@@ -130,6 +130,80 @@ function copyDirRecursive(src, dest) {
     }
   }
 }
+
+function sanitizeFileName(name = 'download') {
+  return String(name)
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim() || 'download';
+}
+
+function timestampForFolder(date = new Date()) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}-${min}-${ss}`;
+}
+
+function ensureUniqueDirectory(baseDir) {
+  if (!fs.existsSync(baseDir)) return baseDir;
+  let attempt = 2;
+  while (true) {
+    const candidate = `${baseDir} ${attempt}`;
+    if (!fs.existsSync(candidate)) return candidate;
+    attempt += 1;
+  }
+}
+
+function ensureUniqueFilePath(directory, fileName) {
+  const parsed = path.parse(fileName);
+  let candidate = path.join(directory, fileName);
+  if (!fs.existsSync(candidate)) return candidate;
+  let attempt = 2;
+  while (true) {
+    candidate = path.join(directory, `${parsed.name} ${attempt}${parsed.ext}`);
+    if (!fs.existsSync(candidate)) return candidate;
+    attempt += 1;
+  }
+}
+
+ipcMain.handle('downloads:choose-directory', async (_event, options = {}) => {
+  const result = await dialog.showOpenDialog(mainWindow || undefined, {
+    title: options.title || 'Choose where to save files',
+    defaultPath: app.getPath('downloads'),
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (result.canceled || !result.filePaths?.[0]) return null;
+
+  const folderName = sanitizeFileName(options.folderName || `AI Content Studio Library ${timestampForFolder()}`);
+  const targetDir = ensureUniqueDirectory(path.join(result.filePaths[0], folderName));
+  fs.mkdirSync(targetDir, { recursive: true });
+  return targetDir;
+});
+
+ipcMain.handle('downloads:save-file', async (_event, payload = {}) => {
+  const { directory, fileName, data } = payload;
+  if (!directory || !fileName || data == null) {
+    throw new Error('directory, fileName, and data are required');
+  }
+
+  fs.mkdirSync(directory, { recursive: true });
+  const safeName = sanitizeFileName(fileName);
+  const filePath = ensureUniqueFilePath(directory, safeName);
+  const buffer = Buffer.isBuffer(data)
+    ? data
+    : ArrayBuffer.isView(data)
+      ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+      : data instanceof ArrayBuffer
+        ? Buffer.from(data)
+        : Buffer.from(data);
+
+  await fs.promises.writeFile(filePath, buffer);
+  return { filePath, fileName: path.basename(filePath) };
+});
 
 // ── Find free port ──────────────────────────────────────────────────────
 

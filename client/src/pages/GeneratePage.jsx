@@ -1,9 +1,8 @@
 import { useState, useEffect, useMemo, useReducer, useRef, lazy, Suspense } from 'react';
 import { generate as genApi, characters as charApi, templates as templatesApi, styleLibrary as styleApi, captionTemplates as captionApi, styleFocus as styleFocusApi } from '../services/api';
-import { useAsync } from '../hooks/useAsync';
 import { useStepTimer } from '../hooks/useStepTimer';
 import { useApp } from '../context/AppContext';
-import { Card, Btn, Textarea, Toggle, Spinner, ImageCard, Badge, StepProgress, Section, Hint, CopyBtn } from '../components/UI';
+import { Card, Btn, Textarea, Toggle, Spinner, ImageCard, Badge, Section, Hint, CopyBtn } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 import {
   ASPECT_RATIOS, RESOLUTION_TIERS,
@@ -72,6 +71,91 @@ const INITIAL_STATE = {
   specificSceneRef: null,
 };
 
+const GENERATE_STEPS = [
+  'Building prompt with identity lock',
+  'Sending to Gemini for generation',
+  'Processing generated image',
+];
+
+const GENERATE_THRESHOLDS = [2, 5];
+
+function toAspectRatioValue(aspectRatio = '1:1') {
+  const [w = '1', h = '1'] = String(aspectRatio).split(':');
+  return `${w} / ${h}`;
+}
+
+function GenerationQueueCard({ job, onDismiss }) {
+  const { elapsedSec, stepIndex } = useStepTimer(job.status === 'running', GENERATE_THRESHOLDS);
+  const currentStep = GENERATE_STEPS[Math.min(stepIndex, GENERATE_STEPS.length - 1)];
+
+  return (
+    <Card className="!p-0 overflow-hidden">
+      <div className="relative border-b border-zinc-800/70 bg-zinc-950/80" style={{ aspectRatio: toAspectRatioValue(job.aspectRatio) }}>
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.16),transparent_55%)]" />
+        <div className="absolute inset-0 flex flex-col justify-between p-4">
+          <div className="flex items-center justify-between gap-2">
+            <Badge color={job.status === 'running' ? 'blue' : 'red'}>
+              {job.status === 'running' ? 'Generating' : 'Failed'}
+            </Badge>
+            <span className="text-[10px] font-mono text-zinc-500">{job.aspectRatio} · {job.resolutionTier}</span>
+          </div>
+
+          {job.status === 'running' ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <Spinner size={18} />
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-zinc-100">{currentStep}</div>
+                  <div className="text-xs text-zinc-500">{elapsedSec}s elapsed · {job.imageModelLabel}</div>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                {GENERATE_STEPS.map((step, idx) => (
+                  <div
+                    key={step}
+                    className={`flex items-center gap-2 text-[11px] ${
+                      idx < stepIndex ? 'text-green-400' : idx === stepIndex ? 'text-blue-300' : 'text-zinc-600'
+                    }`}
+                  >
+                    <span className="w-4 text-center">{idx < stepIndex ? '✓' : idx === stepIndex ? '›' : '○'}</span>
+                    <span>{step}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2">
+              <div className="text-sm font-medium text-red-300">Generation failed</div>
+              <div className="mt-1 text-xs text-red-200/80 line-clamp-4">{job.errorMessage || 'Something went wrong'}</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-2 p-3">
+        <div className="text-sm text-zinc-200 line-clamp-3">{job.promptPreview}</div>
+        <div className="flex flex-wrap gap-1.5">
+          {job.characterName && <Badge color="zinc">{job.characterName}</Badge>}
+          <Badge color="zinc">{job.imageModelLabel}</Badge>
+        </div>
+        {job.status === 'running' ? (
+          <div className="text-[11px] text-zinc-500">You can keep editing the prompt and queue the next image.</div>
+        ) : (
+          <div className="flex items-center justify-end">
+            <button
+              type="button"
+              onClick={() => onDismiss?.(job.id)}
+              className="text-xs text-zinc-500 hover:text-zinc-300 cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 function formReducer(state, action) {
   if (typeof action === 'function') return { ...state, ...action(state) };
   return { ...state, ...action };
@@ -91,8 +175,7 @@ const _cache = {
 
 export default function GeneratePage() {
   const { notify, activeKey, characters: chars, sceneMemories, outfits, consumePageParams } = useApp();
-  const { loading, run } = useAsync();
-  const busyRef = useRef(false);
+  const mountedRef = useRef(true);
   const { openLightbox, LightboxComponent } = useImageLightbox();
   const [state, update] = useReducer(formReducer, _cache.formState || INITIAL_STATE);
   const {
@@ -106,6 +189,7 @@ export default function GeneratePage() {
   } = state;
   const [result, setResult] = useState(_cache.result);
   const [history, setHistory] = useState(_cache.history);
+  const [queueItems, setQueueItems] = useState([]);
   const recentHistory = history.slice(1, 9).filter((h) => h?.imageId);
 
   const [tplList, setTplList] = useState([]);
@@ -146,6 +230,13 @@ export default function GeneratePage() {
   useEffect(() => { _cache.contentTab = contentTab; }, [contentTab]);
   useEffect(() => { _cache.selectedFocusId = selectedFocusId; }, [selectedFocusId]);
   useEffect(() => { _cache.captionDraft = captionDraft; }, [captionDraft]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => { templatesApi.list('generate').then(setTplList).catch(() => {}); }, []);
   useEffect(() => { styleFocusApi.list().then(setStyleFocusList).catch(() => {}); }, []);
@@ -230,14 +321,6 @@ export default function GeneratePage() {
     }
   }, [useExtraReference]);
 
-  const GENERATE_STEPS = useMemo(() => [
-    'Building prompt with identity lock',
-    'Sending to Gemini for generation',
-    'Processing generated image',
-  ], []);
-  const GENERATE_THRESHOLDS = useMemo(() => [2, 5], []);
-  const { elapsedSec, stepIndex: generateStepIndex } = useStepTimer(loading, GENERATE_THRESHOLDS);
-
   const getSaveableConfig = () => {
     const { selectedChar, extraReference, extraReferencePreview, specificOutfitRef, specificItemRef, specificSceneRef, ...saveable } = state;
     return saveable;
@@ -267,12 +350,30 @@ export default function GeneratePage() {
     } catch (err) { notify(err.message || 'Failed to delete template', 'error'); }
   };
 
-  const handleGenerate = () => {
-    if (busyRef.current) return;
-    busyRef.current = true;
+  const dismissQueueItem = (queueId) => {
+    setQueueItems((prev) => prev.filter((job) => job.id !== queueId));
+  };
+
+  const handleGenerate = async () => {
     setEnhancedPreview(null);
-    run(async () => {
     if (!prompt.trim() && !selectedCharId) { notify('Enter a prompt or select a character', 'error'); return; }
+    const queueId = globalThis.crypto?.randomUUID?.() || `generate-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const imageModelLabel = IMAGE_MODEL_OPTIONS.find((opt) => opt.value === imageModel)?.label || imageModel;
+    const promptPreview = prompt.trim() || (selectedChar?.name ? `Generate ${selectedChar.name}` : 'Character generation');
+
+    setQueueItems((prev) => [
+      {
+        id: queueId,
+        status: 'running',
+        promptPreview,
+        aspectRatio,
+        resolutionTier,
+        imageModelLabel,
+        characterName: useCharacter && selectedChar?.name ? selectedChar.name : '',
+      },
+      ...prev.slice(0, 5),
+    ]);
+
     let finalPrompt = prompt.trim();
     if (activeMods.size > 0) {
       const modTexts = AUTHENTICITY_MODIFIERS.filter(m => activeMods.has(m.id)).map(m => m.text);
@@ -287,7 +388,7 @@ export default function GeneratePage() {
           characterId: selectedCharId || null,
           hasReferences: !!(selectedChar?.references?.some((r) => r.isActive)),
         });
-        if (enhanceResult?.changed && enhanceResult.enhanced) {
+        if (mountedRef.current && enhanceResult?.changed && enhanceResult.enhanced) {
           setEnhancedPreview(enhanceResult);
           finalPrompt = enhanceResult.enhanced;
         }
@@ -337,18 +438,31 @@ export default function GeneratePage() {
         note: ref.note || '',
       }));
     }
-    const data = await genApi.image(body);
-    setResult(data);
-    setRecreateSourceId(null);
-    setHistory((h) => [{
-      imageId: data.imageId,
-      galleryId: data.galleryId || data.imageId,
-      mimeType: data.image?.mimeType,
-      identityConfidence: data.image?.validation?.identity_match_score,
-    }, ...h].slice(0, 9));
-    notify('Image generated!', 'success');
-    captionApi.suggest(contentTab || 'lifestyle', 3).then(setSuggestedCaptions).catch(() => {});
-  }).finally(() => { busyRef.current = false; });
+    try {
+      const data = await genApi.image(body);
+      if (!mountedRef.current) return;
+      setQueueItems((prev) => prev.filter((job) => job.id !== queueId));
+      setResult(data);
+      setRecreateSourceId(null);
+      setHistory((h) => [{
+        imageId: data.imageId,
+        galleryId: data.galleryId || data.imageId,
+        mimeType: data.image?.mimeType,
+        identityConfidence: data.image?.validation?.identity_match_score,
+      }, ...h].slice(0, 9));
+      notify('Image generated!', 'success');
+      captionApi.suggest(contentTab || 'lifestyle', 3).then((items) => {
+        if (mountedRef.current) setSuggestedCaptions(items);
+      }).catch(() => {});
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setQueueItems((prev) => prev.map((job) => (
+        job.id === queueId
+          ? { ...job, status: 'error', errorMessage: err?.message || 'Failed to generate image' }
+          : job
+      )));
+      notify(err?.message || 'Failed to generate image', 'error');
+    }
   };
 
   const handleExtraReferenceUpload = async (event) => {
@@ -390,6 +504,7 @@ export default function GeneratePage() {
 
   const activeRefCount = [specificOutfitRef, specificItemRef, specificSceneRef].filter(Boolean).length;
   const activeTechCount = [cameraProfileId, poseMode !== 'none' && poseMode, useExpressionMode && expressionMode !== 'none', useSceneMode && sceneMode !== 'none'].filter(Boolean).length;
+  const activeQueueCount = queueItems.filter((job) => job.status === 'running').length;
 
   return (
     <div className="space-y-6 animate-in">
@@ -405,12 +520,24 @@ export default function GeneratePage() {
         </div>
       )}
 
-      {/* Mobile: show result/loading at top so users don't have to scroll past the form */}
+      {/* Mobile: show queue/result at top so users don't have to scroll past the form */}
       <div className="lg:hidden space-y-4">
-        {loading && (
-          <StepProgress steps={GENERATE_STEPS} currentIndex={generateStepIndex} elapsedSec={elapsedSec} className="w-full" />
+        {queueItems.length > 0 && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-zinc-400">Generation Queue</h3>
+              <Badge color={activeQueueCount > 0 ? 'blue' : 'zinc'}>
+                {activeQueueCount > 0 ? `${activeQueueCount} running` : `${queueItems.length} update${queueItems.length === 1 ? '' : 's'}`}
+              </Badge>
+            </div>
+            <div className="space-y-3">
+              {queueItems.map((job) => (
+                <GenerationQueueCard key={job.id} job={job} onDismiss={dismissQueueItem} />
+              ))}
+            </div>
+          </div>
         )}
-        {result && !loading && (
+        {result && (
           <Card className="animate-in !p-3">
             <ImageCard base64={result.image?.base64Data} mimeType={result.image?.mimeType}
               meta={{ imageId: result.imageId, identityConfidence: result.image?.validation?.identity_match_score }}
@@ -932,9 +1059,14 @@ export default function GeneratePage() {
                 <Toggle checked={enhanceEnabled} onChange={setEnhanceEnabled} label="Enhance Prompt" />
                 {enhanceEnabled && <span className="text-[10px] text-blue-400">AI adds technical photo details</span>}
               </div>
-              <Btn onClick={handleGenerate} disabled={loading || (!prompt.trim() && !selectedCharId)} className="w-full">
-                {loading ? <><Spinner size={16} /> Generating...</> : `✦ Generate Image · ~$${state.resolutionTier === '4K' ? '0.15' : state.resolutionTier === '1K' ? '0.07' : '0.10'}`}
+              <Btn onClick={handleGenerate} disabled={!prompt.trim() && !selectedCharId} className="w-full">
+                {activeQueueCount > 0
+                  ? `✦ Queue Another · ${activeQueueCount} running`
+                  : `✦ Generate Image · ~$${state.resolutionTier === '4K' ? '0.15' : state.resolutionTier === '1K' ? '0.07' : '0.10'}`}
               </Btn>
+              {activeQueueCount > 0 && (
+                <p className="mt-2 text-[11px] text-zinc-500">New prompts can be submitted while the earlier images are still generating.</p>
+              )}
               {enhancedPreview?.changed && (
                 <div className="mt-2 rounded-lg border border-blue-500/20 bg-blue-500/5 p-2.5 text-xs space-y-1.5">
                   <div className="flex items-center gap-1.5 text-blue-400 font-medium">
@@ -950,7 +1082,7 @@ export default function GeneratePage() {
         </div>
 
         <div className="hidden lg:block lg:col-span-2 space-y-4">
-          {recreateSourceId && !result && !loading && (
+          {recreateSourceId && !result && activeQueueCount === 0 && (
             <Card className="animate-in !p-3">
               <div className="flex items-center gap-3 mb-2">
                 <span className="text-xs font-medium text-zinc-400 uppercase tracking-wide">Recreating from</span>
@@ -960,9 +1092,19 @@ export default function GeneratePage() {
             </Card>
           )}
 
-          {loading && (
-            <div className="flex items-center justify-center min-h-[calc(100vh-10rem)]">
-              <StepProgress steps={GENERATE_STEPS} currentIndex={generateStepIndex} elapsedSec={elapsedSec} className="w-full max-w-md" />
+          {queueItems.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-zinc-400">Generation Queue</h3>
+                <Badge color={activeQueueCount > 0 ? 'blue' : 'zinc'}>
+                  {activeQueueCount > 0 ? `${activeQueueCount} running` : `${queueItems.length} update${queueItems.length === 1 ? '' : 's'}`}
+                </Badge>
+              </div>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                {queueItems.map((job) => (
+                  <GenerationQueueCard key={job.id} job={job} onDismiss={dismissQueueItem} />
+                ))}
+              </div>
             </div>
           )}
 

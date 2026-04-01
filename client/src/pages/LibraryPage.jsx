@@ -41,6 +41,64 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function sanitizeDownloadName(name = 'download') {
+  return String(name)
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim() || 'download';
+}
+
+function extensionFromMimeType(mimeType) {
+  const normalized = String(mimeType || '').toLowerCase();
+  if (normalized.includes('jpeg') || normalized.includes('jpg')) return '.jpg';
+  if (normalized.includes('png')) return '.png';
+  if (normalized.includes('webp')) return '.webp';
+  if (normalized.includes('gif')) return '.gif';
+  if (normalized.includes('mp4')) return '.mp4';
+  if (normalized.includes('quicktime')) return '.mov';
+  if (normalized.includes('webm')) return '.webm';
+  return '';
+}
+
+function filenameFromContentDisposition(header) {
+  if (!header) return '';
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) return decodeURIComponent(utf8Match[1]);
+  const basicMatch = header.match(/filename="?([^";]+)"?/i);
+  return basicMatch?.[1] || '';
+}
+
+function filenameFromUrl(url) {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url, window.location.origin);
+    return decodeURIComponent(parsed.pathname.split('/').pop() || '');
+  } catch {
+    return '';
+  }
+}
+
+function buildBulkDownloadName(item, { spoofEnabled = false } = {}) {
+  const explicitName = item.metadata?.filename || filenameFromUrl(item.downloadUrl);
+  if (explicitName) {
+    const parsed = /^(.*?)(\.[^.]+)?$/.exec(explicitName);
+    const baseName = parsed?.[1] || explicitName;
+    const ext = spoofEnabled && item.mediaType === 'image'
+      ? '.jpg'
+      : parsed?.[2] || extensionFromMimeType(item.metadata?.mimeType) || (item.mediaType === 'video' ? '.mp4' : '.png');
+    return sanitizeDownloadName(`${baseName}${ext}`);
+  }
+
+  const fallbackExt = spoofEnabled && item.mediaType === 'image'
+    ? '.jpg'
+    : extensionFromMimeType(item.metadata?.mimeType) || (item.mediaType === 'video' ? '.mp4' : '.png');
+  return sanitizeDownloadName(`${item.mediaType}-${item.originalId}${fallbackExt}`);
+}
+
+function bulkFolderName() {
+  return `AI Content Studio Library ${new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)}`;
+}
+
 function PromptSnippet({ prompt, notify }) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -93,6 +151,7 @@ function PromptSnippet({ prompt, notify }) {
 export default function LibraryPage() {
   const { notify, navigateTo, characters } = useApp();
   const { openLightbox, LightboxComponent } = useImageLightbox();
+  const isElectron = Boolean(window.electronAPI?.isElectron);
   const [items, setItems] = useState([]);
   const [totals, setTotals] = useState({ all: 0, images: 0, videos: 0 });
   const [loading, setLoading] = useState(true);
@@ -322,6 +381,49 @@ export default function LibraryPage() {
     if (selected.length === 0) return;
     setBulkBusy(true);
     try {
+      if (isElectron && window.electronAPI?.chooseDownloadFolder && window.electronAPI?.saveFileToFolder) {
+        const directory = await window.electronAPI.chooseDownloadFolder({
+          title: 'Choose where to save selected library items',
+          folderName: bulkFolderName(),
+        });
+        if (!directory) return;
+
+        let savedCount = 0;
+        let failedCount = 0;
+
+        for (const item of selected) {
+          try {
+            const spoof = item.mediaType === 'image' && spoofAvailable && spoofEnabled;
+            const downloadUrl = spoof ? galleryApi.spoofedDownloadUrl(item.originalId) : item.downloadUrl;
+            if (!downloadUrl) throw new Error('No download URL available');
+
+            const response = await fetch(downloadUrl, { credentials: 'include' });
+            if (!response.ok) {
+              const json = await response.json().catch(() => null);
+              throw new Error(json?.error?.message || `Download failed (${response.status})`);
+            }
+
+            const contentDispositionName = filenameFromContentDisposition(response.headers.get('content-disposition'));
+            const fileName = sanitizeDownloadName(contentDispositionName || buildBulkDownloadName(item, { spoofEnabled: spoof }));
+            const data = new Uint8Array(await response.arrayBuffer());
+            await window.electronAPI.saveFileToFolder({ directory, fileName, data });
+            savedCount += 1;
+          } catch (err) {
+            failedCount += 1;
+            console.error('[library] Failed to save selected item', item.id, err);
+          }
+        }
+
+        if (savedCount > 0 && failedCount === 0) {
+          notify(`Saved ${savedCount} item${savedCount === 1 ? '' : 's'} to a folder`, 'success');
+        } else if (savedCount > 0) {
+          notify(`Saved ${savedCount} item${savedCount === 1 ? '' : 's'}, ${failedCount} failed`, 'info');
+        } else {
+          throw new Error('No selected items could be saved');
+        }
+        return;
+      }
+
       const imageIds = selected.filter((item) => item.mediaType === 'image').map((item) => item.originalId);
       const videoIds = selected.filter((item) => item.mediaType === 'video').map((item) => item.originalId);
       if (imageIds.length > 0) await galleryApi.bulkDownload(imageIds, { spoof: spoofAvailable && spoofEnabled });
@@ -396,7 +498,7 @@ export default function LibraryPage() {
               <Btn variant="secondary" onClick={selectedIds.size === visibleItems.length && visibleItems.length > 0 ? clearSelection : selectAllVisible} disabled={bulkBusy}>
                 {selectedIds.size === visibleItems.length && visibleItems.length > 0 ? 'Deselect' : 'Select All'}
               </Btn>
-              <Btn variant="secondary" onClick={handleBulkDownload} disabled={selectedIds.size === 0 || bulkBusy}>Download</Btn>
+              <Btn variant="secondary" onClick={handleBulkDownload} disabled={selectedIds.size === 0 || bulkBusy}>{isElectron ? 'Save Folder' : 'Download'}</Btn>
               <Btn variant="danger" onClick={() => setBulkDeleteTarget(true)} disabled={selectedIds.size === 0 || bulkBusy}>Delete</Btn>
               <Btn variant="secondary" onClick={clearSelection} disabled={bulkBusy}>Cancel</Btn>
             </>
@@ -746,5 +848,4 @@ function VideoLibraryCard({ item, bulkMode, selected, onSelect, expanded, onTogg
     </div>
   );
 }
-
 
