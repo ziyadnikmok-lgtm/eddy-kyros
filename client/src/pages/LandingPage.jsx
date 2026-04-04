@@ -30,8 +30,8 @@ const DS = {
   borderHover: 'rgba(255,255,255,0.14)',
   primary: '#0EA5E9',
   primaryGlow: 'rgba(14,165,233,0.15)',
-  cta: '#F97316',
-  ctaGlow: 'rgba(249,115,22,0.18)',
+  cta: '#3b82f6',
+  ctaGlow: 'rgba(59,130,246,0.25)',
   text: '#FAFAFA',
   textMuted: 'rgba(250,250,250,0.45)',
   textSubtle: 'rgba(250,250,250,0.25)',
@@ -341,7 +341,7 @@ export default function LandingPage({ onNavigate }) {
         @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.3} }
         @keyframes shimmer { 0%{background-position:-200% center} 100%{background-position:200% center} }
         .shimmer-text {
-          background: linear-gradient(90deg, #0EA5E9 0%, #38bdf8 40%, #F97316 60%, #0EA5E9 100%);
+          background: linear-gradient(90deg, #3b82f6 0%, #7dd3fc 40%, #60a5fa 60%, #3b82f6 100%);
           background-size: 200% auto;
           -webkit-background-clip: text;
           -webkit-text-fill-color: transparent;
