@@ -94,7 +94,7 @@ function FAQItem({ question, answer, isOpen, onToggle }) {
   );
 }
 
-function AuthModal({ mode, onClose, onSuccess }) {
+function AuthModal({ mode, onClose, onSuccess, onNavigate }) {
   const [tab, setTab] = useState(mode || 'register');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -302,7 +302,7 @@ function AuthModal({ mode, onClose, onSuccess }) {
                         </label>
                         <button
                           type="button"
-                          onClick={() => onNavigate?.('forgot-password')}
+                          onClick={() => { onClose?.(); onNavigate?.('forgot-password'); }}
                           className="text-sm text-zinc-400 hover:text-white transition-colors"
                         >
                           Forgot password?
@@ -532,6 +532,7 @@ export default function LandingPage({ onNavigate }) {
             setAuthModal(null);
             window.location.reload();
           }}
+          onNavigate={(page) => { setAuthModal(null); onNavigate?.(page); }}
         />
       ) : null}
       <IntroSweep />
