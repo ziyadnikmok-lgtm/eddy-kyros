@@ -208,8 +208,31 @@ router.post('/forgot-password', async (req, res) => {
     const token = uuidv4().replace(/-/g, '');
     const expiry = new Date(Date.now() + 3600000).toISOString();
     db.prepare('UPDATE users SET reset_token = ?, reset_token_expiry = ? WHERE id = ?').run(token, expiry, user.id);
-    const appUrl = process.env.APP_URL || 'http://localhost:3001';
-    await sendMail(email, 'Reset your password', `<p>Click <a href="${appUrl}/reset-password?token=${token}">here</a> to reset your password. Link expires in 1 hour.</p>`);
+    const appUrl = (process.env.APP_URL || 'http://localhost:3001').replace(/\/$/, '');
+    const resetLink = `${appUrl}/reset-password?token=${token}`;
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#09090b;font-family:system-ui,sans-serif;">
+  <div style="max-width:480px;margin:40px auto;background:#111;border:1px solid #222;border-radius:12px;overflow:hidden;">
+    <div style="background:#1a1a2e;padding:20px 28px;border-bottom:1px solid #222;">
+      <span style="color:#60a5fa;font-weight:700;font-size:17px;">Kyros Studio</span>
+    </div>
+    <div style="padding:32px 28px;">
+      <h2 style="color:#f0f0f0;margin:0 0 8px;font-size:20px;">Reset your password</h2>
+      <p style="color:#a0a0c0;margin:0 0 28px;font-size:14px;line-height:1.6;">
+        We received a request to reset the password for your Kyros Studio account.
+        Click the button below to set a new password. This link expires in <strong style="color:#e0e0e0;">1 hour</strong>.
+      </p>
+      <a href="${resetLink}" style="display:inline-block;padding:12px 28px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;">
+        Reset Password
+      </a>
+      <p style="color:#666;font-size:12px;margin:24px 0 0;line-height:1.6;">
+        If you didn't request this, you can safely ignore this email.<br>
+        Or copy this link: <a href="${resetLink}" style="color:#60a5fa;">${resetLink}</a>
+      </p>
+    </div>
+  </div>
+</body></html>`;
+    await sendMail(email, 'Reset your Kyros Studio password', html);
   }
   res.json({ message: 'If that email is registered you will receive a reset link.' });
 });
