@@ -3,6 +3,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
 const db = require('../db');
+const log = require('../utils/logger');
 const { requireAuth } = require('../middleware/requireAuth');
 const { logUsageEvent } = require('../services/eventLogger');
 
@@ -69,7 +70,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), (req, res) =>
   // Verify HMAC-SHA256 signature — reject if missing or wrong
   const expected = crypto.createHmac('sha256', apiKey).update(req.body).digest('hex');
   if (!sig || sig !== expected) {
-    console.warn('[BILLING] Webhook signature missing or mismatch');
+    log.warn('billing_webhook_bad_signature', { sig: sig ? 'present' : 'missing' });
     return res.status(403).json({ error: 'Invalid signature' });
   }
   let body;
@@ -88,7 +89,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), (req, res) =>
         source: 'billing',
         payload: { plan: sub.plan, orderId: order_id, expiresAt: expires },
       });
-      console.log(`[BILLING] Subscription activated: ${sub.user_id} plan=${sub.plan}`);
+      log.info('billing_subscription_activated', { userId: sub.user_id, plan: sub.plan, orderId: order_id });
     }
   }
   res.json({ ok: true });

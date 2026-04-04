@@ -3,7 +3,6 @@ const apiKeyManager = require('./apiKeyManager');
 const geminiService = require('./geminiService');
 const referenceManager = require('./referenceManager');
 const promptBuilder = require('./promptBuilder');
-const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 const SCENE_FIELDS = [
   'environment', 'lighting', 'camera', 'composition',
@@ -71,7 +70,6 @@ class SceneAnalyzer {
       '',
       'Match BRIGHTNESS score and shadow coverage exactly. Dark stays dark.',
       this._buildDarknessEnforcement(sceneData),
-      REALISM_DIRECTIVE,
     ].filter(Boolean).join('\n');
 
     return basePrompt + sceneSheet;

@@ -108,9 +108,23 @@ const libraryRouter = require('./routes/library');
 const { requireAuth } = require('./middleware/requireAuth');
 const imageStore = require('./services/imageStore');
 const batchGenerator = require('./services/batchGenerator');
+const { handleJobDone } = require('./services/jobMailer');
+batchGenerator.on('done', handleJobDone);
 const log = require('./utils/logger');
 const cfg = require('./config');
 const { authLimiter, readLimiter, generateLimiter, batchLimiter, cloneLimiter } = require('./middleware/rateLimiter');
+const { requirePlanCapacity } = require('./middleware/planLimits');
+
+// ── Startup security checks ─────────────────────────────────────────────
+// If the known-publicly-leaked secret is still in use, warn loudly.
+const KNOWN_LEAKED_ENCRYPTION_SECRET = 'b5386590d0f8a051299126e60f946622cb3bb7f68deba412f944af9a138489a4';
+if (process.env.ENCRYPTION_SECRET === KNOWN_LEAKED_ENCRYPTION_SECRET) {
+  console.error('┌─────────────────────────────────────────────────────────────────┐');
+  console.error('│  ⚠️  SECURITY WARNING: ENCRYPTION_SECRET is a known leaked value. │');
+  console.error('│  Rotate it immediately: generate a new 64-char hex secret and    │');
+  console.error('│  replace ENCRYPTION_SECRET in your .env, then delete keys.enc.   │');
+  console.error('└─────────────────────────────────────────────────────────────────┘');
+}
 
 const app = express();
 
@@ -125,24 +139,40 @@ app.use(helmet({
 const PORT = cfg.PORT;
 const HOST = cfg.HOST;
 
+// ── CORS ─────────────────────────────────────────────────────────────────
+// Allowlist is explicit — no wildcard tenant subdomains.
+// Add your production domain to APP_URL in .env.
+const _allowedCorsOrigins = new Set();
+(function buildCorsAllowlist() {
+  // Always allow localhost dev origins
+  _allowedCorsOrigins.add('http://localhost:3001');
+  _allowedCorsOrigins.add('http://localhost:5173');
+  _allowedCorsOrigins.add('http://127.0.0.1:3001');
+  _allowedCorsOrigins.add('http://127.0.0.1:5173');
+  // Explicit production domain (if set)
+  if (process.env.APP_URL) {
+    try { _allowedCorsOrigins.add(new URL(process.env.APP_URL).origin); } catch {}
+  }
+  // Extra comma-separated origins via env (e.g. EXTRA_CORS_ORIGINS=https://a.com,https://b.com)
+  if (process.env.EXTRA_CORS_ORIGINS) {
+    for (const o of process.env.EXTRA_CORS_ORIGINS.split(',')) {
+      const trimmed = o.trim();
+      if (trimmed) _allowedCorsOrigins.add(trimmed);
+    }
+  }
+})();
+
 app.use(
   cors({
     origin: (origin, callback) => {
-      // APP_URL-based origin (covers Railway, custom domains, etc.)
-      const appOrigin = process.env.APP_URL ? new URL(process.env.APP_URL).origin : null;
-      if (
-        !origin ||
-        (appOrigin && origin === appOrigin) ||
-        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
-        /^https?:\/\/(www\.)?creationpanel1337\.xyz$/.test(origin) ||
-        /^https?:\/\/[a-z0-9-]+\.traefik\.me(:\d+)?$/.test(origin) ||
-        /^https?:\/\/[a-z0-9-]+\.up\.railway\.app$/.test(origin)
-      ) {
-        callback(null, true);
-      } else {
-        callback(new AppError('Not allowed by CORS', 403, 'CORS_ERROR'));
-      }
+      // No origin = same-origin / Electron / curl — allow
+      if (!origin) return callback(null, true);
+      if (_allowedCorsOrigins.has(origin)) return callback(null, true);
+      // Allow any localhost port during local dev
+      if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return callback(null, true);
+      return callback(new AppError('Not allowed by CORS', 403, 'CORS_ERROR'));
     },
+    credentials: true,
   })
 );
 
@@ -172,9 +202,10 @@ app.use(compressionMiddleware(cfg.COMPRESSION_MIN_BYTES));
 app.use('/api/auth', authLimiter, authRouter);
 
 // One-time admin bootstrap — no auth required, protected by BOOTSTRAP_SECRET env var
-app.get('/api/bootstrap-admin', (req, res) => {
+// Secret must be sent in POST body, not query param (query params appear in logs/history)
+app.post('/api/bootstrap-admin', (req, res) => {
   const secret = process.env.BOOTSTRAP_SECRET;
-  if (!secret || req.query.secret !== secret) return res.status(403).json({ error: 'Forbidden' });
+  if (!secret || req.body?.secret !== secret) return res.status(403).json({ error: 'Forbidden' });
   const email = process.env.SEED_ADMIN_EMAIL;
   if (!email) return res.status(400).json({ error: 'SEED_ADMIN_EMAIL not set' });
   const db = require('./db');
@@ -239,8 +270,8 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api/keys', readLimiter, keysRouter);
 app.use('/api/characters', readLimiter, charactersRouter);
-app.use('/api/batch', batchLimiter, batchRouter);
-app.use('/api/tweak', generateLimiter, tweakRouter);
+app.use('/api/batch', batchLimiter, requirePlanCapacity(), batchRouter);
+app.use('/api/tweak', generateLimiter, requirePlanCapacity(), tweakRouter);
 app.use('/api/reformat', generateLimiter, reformatRouter);
 app.use('/api/images', imagesRouter);
 app.use('/api/niches', nichesRouter);
@@ -251,13 +282,13 @@ app.use('/api/library', libraryRouter);
 app.use('/api/scene', generateLimiter, sceneRouter);
 app.use('/api/scene-memory', sceneMemoryRouter);
 app.use('/api/outfits', outfitsRouter);
-app.use('/api/generate', generateLimiter, generateRouter);
-app.use('/api/auto', batchLimiter, autoRoute);
-app.use('/api/carousel', batchLimiter, carouselRoute);
-app.use('/api/reel', generateLimiter, reelRoute);
-app.use('/api/reel-copy', cloneLimiter, reelCopyRoute);
-app.use('/api/post-clone', cloneLimiter, postCloneRoute);
-app.use('/api/profile-clone', cloneLimiter, profileCloneRoute);
+app.use('/api/generate', generateLimiter, requirePlanCapacity(), generateRouter);
+app.use('/api/auto', batchLimiter, requirePlanCapacity(), autoRoute);
+app.use('/api/carousel', batchLimiter, requirePlanCapacity(), carouselRoute);
+app.use('/api/reel', generateLimiter, requirePlanCapacity(), reelRoute);
+app.use('/api/reel-copy', cloneLimiter, requirePlanCapacity(), reelCopyRoute);
+app.use('/api/post-clone', cloneLimiter, requirePlanCapacity(), postCloneRoute);
+app.use('/api/profile-clone', cloneLimiter, requirePlanCapacity(), profileCloneRoute);
 app.use('/api/prompt-knowledge', promptKnowledgeRoute);
 app.use('/api/availability', availabilityRoute);
 app.use('/api/templates', templatesRouter);
@@ -265,7 +296,7 @@ app.use('/api/style-library', styleLibraryRouter);
 app.use('/api/profile-analyzer', profileAnalyzerRouter);
 app.use('/api/caption-templates', captionTemplatesRouter);
 app.use('/api/video', generateLimiter, videoRouter);
-app.use('/api/nsfw-generate', generateLimiter, nsfwGenerateRouter);
+app.use('/api/nsfw-generate', generateLimiter, requirePlanCapacity(), nsfwGenerateRouter);
 app.use('/api/lora-presets', loraPresetsRouter);
 app.use('/api/lora-datasets', generateLimiter, loraDatasetsRouter);
 app.use('/api/backgrounds', backgroundsRouter);

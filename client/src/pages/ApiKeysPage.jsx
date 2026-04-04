@@ -104,6 +104,47 @@ function KeyHeader({ infoKey, isConnected, children }) {
   );
 }
 
+function SetupGuide({ title, subtitle, url, steps, note, onCopyLink, badge = 'START HERE' }) {
+  return (
+    <div className="rounded-xl border border-zinc-700/50 bg-zinc-900/40 p-3.5 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          <p className="text-sm font-semibold text-zinc-100">{title}</p>
+          <p className="text-xs text-zinc-400 leading-relaxed">{subtitle}</p>
+        </div>
+        <Badge color="blue">{badge}</Badge>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-3">
+        {steps.map((step, index) => (
+          <div key={`${title}-${index}`} className="rounded-lg border border-zinc-700/40 bg-zinc-950/50 px-3 py-2.5">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-blue-400">Step {index + 1}</div>
+            <div className="mt-1 text-xs text-zinc-300 leading-relaxed">{step}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-lg border border-zinc-700/40 bg-zinc-950/60 px-3 py-2.5 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Direct link</span>
+          <Btn variant="secondary" className="!py-1 !px-2.5 !text-[11px]" onClick={() => onCopyLink?.(url, title)}>
+            Copy Link
+          </Btn>
+        </div>
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block break-all text-xs text-blue-400 hover:text-blue-300 underline underline-offset-2"
+        >
+          {url}
+        </a>
+        {note ? <p className="text-[11px] text-zinc-500 leading-relaxed">{note}</p> : null}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function ApiKeysPage() {
   const { activeKey, setActiveKey, refreshIntegrationStatus, notify } = useApp();
@@ -252,6 +293,15 @@ export default function ApiKeysPage() {
     }
   };
 
+  const handleCopyLink = async (url, label) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      notify(`${label} link copied`, 'success');
+    } catch {
+      notify(`Failed to copy ${label.toLowerCase()} link`, 'error');
+    }
+  };
+
   return (
     <div className="space-y-5 animate-in max-w-2xl">
 
@@ -385,6 +435,19 @@ export default function ApiKeysPage() {
       <Card>
         <KeyHeader infoKey="gemini" isConnected={keyList.some(k => k.isActive)}>
           <div className="space-y-3 pt-1">
+            <SetupGuide
+              title="Need a Gemini key?"
+              subtitle="Gemini is the main key for the app. Get it first, then paste it below."
+              url="https://aistudio.google.com/app/apikey"
+              steps={[
+                'Open Google AI Studio.',
+                'Create a new API key.',
+                'Copy it and paste it into the fields below.',
+              ]}
+              note="Want higher paid limits later? You can connect the key to a Google Cloud project and use Google Cloud credits there."
+              onCopyLink={handleCopyLink}
+              badge="REQUIRED"
+            />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Input label="Key Name" placeholder="e.g. My Key" value={name} onChange={(e) => setName(e.target.value)} />
               <Input label="API Key" placeholder="AIza..." type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
@@ -454,6 +517,19 @@ export default function ApiKeysPage() {
       <Card>
         <KeyHeader infoKey="wavespeed" isConnected={wavespeedInfo?.hasWavespeedKey}>
           <div className="space-y-3 pt-1">
+            <SetupGuide
+              title="Need a WaveSpeed key?"
+              subtitle="Only add this if you want extra video models like Kling or Grok video. Veo uses your Gemini key instead."
+              url="https://wavespeed.ai"
+              steps={[
+                'Open WaveSpeed.ai and sign in.',
+                'Find your API key in the dashboard/account area.',
+                'Copy it and paste it into the field below.',
+              ]}
+              note="If you only use Gemini / Veo video, you can skip this section."
+              onCopyLink={handleCopyLink}
+              badge="OPTIONAL"
+            />
             <Input label="WaveSpeed API Key" placeholder="wsa_..." type="password" value={wavespeedKey} onChange={(e) => setWavespeedKey(e.target.value)} />
             <div className="flex items-center gap-2">
               <Btn onClick={handleSaveWavespeed} disabled={loading || !wavespeedKey.trim()}>

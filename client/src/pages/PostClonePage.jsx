@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { postClone as postCloneApi, postCloneHistory as historyApi, styleFocus as styleFocusApi, availability as availabilityApi, keys as keysApi, gallery as galleryApi } from '../services/api';
 import { useApp } from '../context/AppContext';
-import { useAsync } from '../hooks/useAsync';
-import { useStepTimer } from '../hooks/useStepTimer';
 import { cn } from '../lib/utils';
-import { Card, Btn, Input, Badge, Slider, Spinner, Empty, Toggle, StepProgress, Section } from '../components/UI';
+import { Card, Btn, Input, Badge, Slider, Spinner, Empty, Toggle, Section } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 import { IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
+import { createPersistentPageState, makePersistentJobId, PersistentJobCard } from '../lib/persistentPageState';
 
 const DNA_LABELS = {
   lighting: { label: 'Lighting', color: 'text-amber-400', dot: 'bg-amber-400' },
@@ -37,10 +36,31 @@ const _cache = {
   imageModel: DEFAULT_IMAGE_MODEL,
 };
 
+const POST_CLONE_STEPS = {
+  fetch: ['Checking availability', 'Fetching posts from Apify', 'Preparing post grid'],
+  single: ['Checking post availability', 'Downloading post images', 'Recreating with selected character'],
+  profile: ['Downloading selected post images', 'Analyzing post visuals with Gemini', 'Recreating with selected character'],
+};
+
+const POST_CLONE_THRESHOLDS = {
+  fetch: [8, 20],
+  single: [20, 45],
+  profile: [30, 60],
+};
+
+const postCloneStore = createPersistentPageState('post-clone', {
+  result: _cache.result,
+  fetchedPosts: _cache.fetchedPosts,
+  selected: _cache.selected,
+  history: _cache.history,
+  queueItems: [],
+});
+
 export default function PostClonePage() {
   const { notify, characters: chars } = useApp();
-  const { loading, run } = useAsync();
   const { openLightbox, LightboxComponent } = useImageLightbox();
+  const initialStoreState = postCloneStore.getSnapshot();
+  const [loading, setLoading] = useState(false);
 
   const [inputMode, setInputMode] = useState(_cache.inputMode);
   const [postUrl, setPostUrl] = useState(_cache.postUrl);
@@ -50,16 +70,17 @@ export default function PostClonePage() {
   const [mode, setMode] = useState(_cache.mode);
   const [cosplayMode, setCosplayMode] = useState(_cache.cosplayMode);
   const [imageModel, setImageModel] = useState(_cache.imageModel);
-  const [result, setResult] = useState(_cache.result);
+  const [result, setResult] = useState(initialStoreState.result);
   const [availability, setAvailability] = useState(_cache.availability);
   const [savingFocus, setSavingFocus] = useState(null);
   const [focusName, setFocusName] = useState('');
 
-  const [fetchedPosts, setFetchedPosts] = useState(_cache.fetchedPosts);
-  const [selected, setSelected] = useState(_cache.selected);
+  const [fetchedPosts, setFetchedPosts] = useState(initialStoreState.fetchedPosts);
+  const [selected, setSelected] = useState(initialStoreState.selected);
   const [fetching, setFetching] = useState(false);
+  const [queueItems, setQueueItems] = useState(initialStoreState.queueItems);
 
-  const [history, setHistory] = useState(_cache.history);
+  const [history, setHistory] = useState(initialStoreState.history);
   const loadHistory = async () => {
     try {
       const data = await historyApi.list();
@@ -81,6 +102,13 @@ export default function PostClonePage() {
   useEffect(() => { _cache.postLimit = postLimit; }, [postLimit]);
   useEffect(() => { _cache.availability = availability; }, [availability]);
   useEffect(() => { _cache.imageModel = imageModel; }, [imageModel]);
+  useEffect(() => postCloneStore.subscribe((snapshot) => {
+    setResult(snapshot.result);
+    setFetchedPosts(snapshot.fetchedPosts);
+    setSelected(snapshot.selected);
+    setHistory(snapshot.history);
+    setQueueItems(snapshot.queueItems);
+  }), []);
 
   const [showSession, setShowSession] = useState(false);
   const [sessionInput, setSessionInput] = useState('');
@@ -150,23 +178,6 @@ export default function PostClonePage() {
     }
   };
 
-  const LIVE_STEPS = useMemo(() => [
-    'Fetching post from Apify',
-    'Downloading post images',
-    'Analyzing visual structure with Gemini',
-    'Recreating with selected character',
-  ], []);
-  const RECREATE_STEPS = useMemo(() => [
-    'Downloading original images',
-    'Analyzing post visuals with Gemini',
-    'Recreating with selected character',
-  ], []);
-  const activeSteps = inputMode === 'profile' && fetchedPosts.length > 0 ? RECREATE_STEPS : LIVE_STEPS;
-  const POST_THRESHOLDS = useMemo(() =>
-    inputMode === 'profile' ? [30, 60, 90] : [35, 45, 65],
-  [inputMode]);
-  const { elapsedSec, stepIndex: liveStepIndex } = useStepTimer(loading, POST_THRESHOLDS);
-
   const canRunSingle = useMemo(() => {
     return !!charId && !!postUrl.trim();
   }, [charId, postUrl]);
@@ -196,16 +207,33 @@ export default function PostClonePage() {
     setSelected(new Set());
   }, []);
 
+  const dismissQueueItem = (queueId) => {
+    postCloneStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
+  };
+
+  const activeQueueCount = queueItems.filter((job) => job.status === 'running').length;
+
   const handleFetch = async () => {
-    if (fetching) return;
+    if (fetching || activeQueueCount > 0) return;
     setFetching(true);
-    setFetchedPosts([]);
-    setSelected(new Set());
-    setResult([]);
+    postCloneStore.patch({ fetchedPosts: [], selected: new Set(), result: [] });
+    const queueId = makePersistentJobId('post-clone-fetch');
+    postCloneStore.setValue('queueItems', (prev) => [
+      {
+        id: queueId,
+        kind: 'fetch',
+        status: 'running',
+        label: 'Fetching Posts',
+        summary: profileUrl.trim(),
+        badges: [{ label: `${postLimit} posts`, color: 'zinc' }],
+      },
+      ...prev.slice(0, 5),
+    ]);
     try {
       const check = await availabilityApi.check(profileUrl.trim());
       setAvailability(check);
       if (!check?.allowed) {
+        postCloneStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
         notify(check?.label || 'Profile not available for scraping', 'error');
         return;
       }
@@ -214,62 +242,118 @@ export default function PostClonePage() {
         postLimit: Math.max(1, Math.min(30, Math.round(postLimit))),
       });
       const posts = Array.isArray(data) ? data : [];
-      setFetchedPosts(posts);
-      setSelected(new Set(posts.map((_, i) => i)));
+      postCloneStore.patch({ fetchedPosts: posts, selected: new Set(posts.map((_, i) => i)), result: [] });
+      postCloneStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
       if (posts.length === 0) {
         notify('No posts found for this profile', 'error');
       } else {
         notify(`Found ${posts.length} post(s)`, 'success');
       }
     } catch (err) {
+      postCloneStore.setValue('queueItems', (prev) => prev.map((job) => (
+        job.id === queueId ? { ...job, status: 'error', errorMessage: err?.message || 'Failed to fetch profile' } : job
+      )));
       notify(err.message || 'Failed to fetch profile', 'error');
     } finally {
       setFetching(false);
     }
   };
 
-  const handleRecreate = () => run(async () => {
+  const handleRecreate = async () => {
     if (!canRecreate) return;
     const postsToClone = fetchedPosts.filter((_, i) => selected.has(i));
-    const data = await postCloneApi.recreateSelected({
-      posts: postsToClone,
-      characterId: charId,
-      mode,
-      cosplayMode,
-      imageModel,
-    });
-    setResult(Array.isArray(data) ? data : []);
-    notify('Post Clone completed', 'success');
-    loadHistory();
-  });
-
-  const handleRunSingle = () => run(async () => {
-    if (!canRunSingle) return;
-    const check = await availabilityApi.check(postUrl.trim());
-    setAvailability(check);
-    if (!check?.allowed) {
-      notify(check?.label || 'Post not available for scraping', 'error');
-      return;
+    const queueId = makePersistentJobId('post-clone-profile');
+    setLoading(true);
+    postCloneStore.setValue('queueItems', (prev) => [
+      {
+        id: queueId,
+        kind: 'profile',
+        status: 'running',
+        label: 'Post Clone',
+        summary: `${postsToClone.length} selected post${postsToClone.length === 1 ? '' : 's'}`,
+        badges: [
+          charId ? { label: chars.find((c) => c.id === charId)?.name || 'Character', color: 'zinc' } : null,
+          { label: imageModel, color: 'zinc' },
+        ].filter(Boolean),
+      },
+      ...prev.slice(0, 5),
+    ]);
+    try {
+      const data = await postCloneApi.recreateSelected({
+        posts: postsToClone,
+        characterId: charId,
+        mode,
+        cosplayMode,
+        imageModel,
+      });
+      postCloneStore.setValue('result', Array.isArray(data) ? data : []);
+      postCloneStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
+      notify('Post Clone completed', 'success');
+      const historyData = await historyApi.list().catch(() => null);
+      if (Array.isArray(historyData)) postCloneStore.setValue('history', historyData);
+    } catch (err) {
+      postCloneStore.setValue('queueItems', (prev) => prev.map((job) => (
+        job.id === queueId ? { ...job, status: 'error', errorMessage: err?.message || 'Post Clone failed' } : job
+      )));
+      notify(err.message || 'Post Clone failed', 'error');
+    } finally {
+      setLoading(false);
     }
-    const data = await postCloneApi.clonePost({
-      postUrl: postUrl.trim(),
-      characterId: charId,
-      mode,
-      cosplayMode,
-      imageModel,
-    });
-    setResult(Array.isArray(data) ? data : []);
-    notify('Post Clone completed', 'success');
-    loadHistory();
-  });
-
-  const handleBack = () => {
-    setFetchedPosts([]);
-    setSelected(new Set());
-    setResult([]);
   };
 
-  const isProfileSelecting = inputMode === 'profile' && fetchedPosts.length > 0 && result.length === 0 && !loading;
+  const handleRunSingle = async () => {
+    if (!canRunSingle) return;
+    const queueId = makePersistentJobId('post-clone-single');
+    setLoading(true);
+    postCloneStore.setValue('queueItems', (prev) => [
+      {
+        id: queueId,
+        kind: 'single',
+        status: 'running',
+        label: 'Post Clone',
+        summary: postUrl.trim(),
+        badges: [
+          charId ? { label: chars.find((c) => c.id === charId)?.name || 'Character', color: 'zinc' } : null,
+          { label: imageModel, color: 'zinc' },
+        ].filter(Boolean),
+      },
+      ...prev.slice(0, 5),
+    ]);
+    try {
+      const check = await availabilityApi.check(postUrl.trim());
+      setAvailability(check);
+      if (!check?.allowed) {
+        postCloneStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
+        notify(check?.label || 'Post not available for scraping', 'error');
+        return;
+      }
+      const data = await postCloneApi.clonePost({
+        postUrl: postUrl.trim(),
+        characterId: charId,
+        mode,
+        cosplayMode,
+        imageModel,
+      });
+      postCloneStore.setValue('result', Array.isArray(data) ? data : []);
+      postCloneStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
+      notify('Post Clone completed', 'success');
+      const historyData = await historyApi.list().catch(() => null);
+      if (Array.isArray(historyData)) postCloneStore.setValue('history', historyData);
+    } catch (err) {
+      postCloneStore.setValue('queueItems', (prev) => prev.map((job) => (
+        job.id === queueId ? { ...job, status: 'error', errorMessage: err?.message || 'Post Clone failed' } : job
+      )));
+      notify(err.message || 'Post Clone failed', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBack = () => {
+    postCloneStore.patch({ fetchedPosts: [], selected: new Set(), result: [] });
+  };
+
+  const isProfileSelecting = inputMode === 'profile' && fetchedPosts.length > 0 && result.length === 0 && activeQueueCount === 0;
 
   return (
     <div className="space-y-6 animate-in">
@@ -280,7 +364,7 @@ export default function PostClonePage() {
               <span className="text-xs text-zinc-400 font-medium block">Input Mode</span>
               <div className="grid grid-cols-2 gap-2">
                 <Btn type="button" variant={inputMode === 'single' ? 'primary' : 'secondary'} onClick={() => { setInputMode('single'); handleBack(); }}>Single/Carousel</Btn>
-                <Btn type="button" variant={inputMode === 'profile' ? 'primary' : 'secondary'} onClick={() => { setInputMode('profile'); setResult([]); }}>Profile Scrape</Btn>
+                <Btn type="button" variant={inputMode === 'profile' ? 'primary' : 'secondary'} onClick={() => { setInputMode('profile'); postCloneStore.setValue('result', []); }}>Profile Scrape</Btn>
               </div>
             </div>
 
@@ -332,8 +416,8 @@ export default function PostClonePage() {
                     ))}
                   </select>
                 </div>
-                <Btn onClick={handleRunSingle} disabled={loading || !canRunSingle} className="w-full">
-                  {loading ? <><Spinner size={16} /> Cloning... {elapsedSec}s</> : 'Fetch + Recreate'}
+                <Btn onClick={handleRunSingle} disabled={!canRunSingle} className="w-full">
+                  {activeQueueCount > 0 ? `Queue Another · ${activeQueueCount} running` : 'Fetch + Recreate'}
                 </Btn>
               </>
             ) : fetchedPosts.length === 0 ? (
@@ -401,10 +485,10 @@ export default function PostClonePage() {
                     ))}
                   </select>
                 </div>
-                <Btn onClick={handleRecreate} disabled={loading || !canRecreate} className="w-full">
-                  {loading ? <><Spinner size={16} /> Recreating... {elapsedSec}s</> : `Recreate Selected (${selected.size})`}
+                <Btn onClick={handleRecreate} disabled={!canRecreate} className="w-full">
+                  {activeQueueCount > 0 ? `Queue Another · ${activeQueueCount} running` : `Recreate Selected (${selected.size})`}
                 </Btn>
-                <Btn variant="secondary" onClick={handleBack} disabled={loading} className="w-full">
+                <Btn variant="secondary" onClick={handleBack} className="w-full">
                   Back
                 </Btn>
               </>
@@ -522,6 +606,28 @@ export default function PostClonePage() {
         </div>
 
         <div className="lg:col-span-2 space-y-4">
+          {queueItems.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-zinc-400">Post Clone Queue</h3>
+                <Badge color={activeQueueCount > 0 ? 'blue' : 'zinc'}>
+                  {activeQueueCount > 0 ? `${activeQueueCount} running` : `${queueItems.length} update${queueItems.length === 1 ? '' : 's'}`}
+                </Badge>
+              </div>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                {queueItems.map((job) => (
+                  <PersistentJobCard
+                    key={job.id}
+                    job={job}
+                    steps={POST_CLONE_STEPS[job.kind] || POST_CLONE_STEPS.single}
+                    thresholds={POST_CLONE_THRESHOLDS[job.kind] || POST_CLONE_THRESHOLDS.single}
+                    onDismiss={dismissQueueItem}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
           {isProfileSelecting && (
             <Card className="space-y-3">
               <div className="flex items-center justify-between">
@@ -600,17 +706,13 @@ export default function PostClonePage() {
             </Card>
           )}
 
-          {!loading && !fetching && !isProfileSelecting && (!Array.isArray(result) || result.length === 0) && (
+          {activeQueueCount === 0 && !fetching && !isProfileSelecting && (!Array.isArray(result) || result.length === 0) && (
             <Card className="min-h-[360px] flex items-center justify-center">
               <Empty icon="clone" title="No clone results yet" subtitle={inputMode === 'profile' ? 'Fetch posts from a profile, select which ones to recreate.' : 'Run a post clone and results will appear here.'} />
             </Card>
           )}
 
-          {loading && (
-            <StepProgress steps={activeSteps} currentIndex={liveStepIndex} elapsedSec={elapsedSec} className="min-h-[360px]" />
-          )}
-
-          {!loading && Array.isArray(result) && result.length > 0 && result.map((post, idx) => {
+          {Array.isArray(result) && result.length > 0 && result.map((post, idx) => {
             const firstStructured = (post.recreatedImages || [])[0]?.structured;
             const hasDna = firstStructured && Object.values(DNA_LABELS).some((_, i) => firstStructured[Object.keys(DNA_LABELS)[i]]);
 

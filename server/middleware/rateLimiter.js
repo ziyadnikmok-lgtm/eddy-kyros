@@ -41,4 +41,22 @@ const cloneLimiter = rateLimit({
   message: { success: false, error: { code: 'RATE_LIMIT', message: 'Too many clone requests — try again shortly' } },
 });
 
-module.exports = { authLimiter, readLimiter, generateLimiter, batchLimiter, cloneLimiter };
+// Key mutation limiter — only applies to state-changing methods (POST/PUT/DELETE)
+// Prevents brute-force key injection or rapid key cycling attacks
+const _keyMutateRateLimiter = rateLimit({
+  windowMs: 15 * 60_000, // 15 minutes
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: { code: 'RATE_LIMIT', message: 'Too many key changes — please wait 15 minutes' } },
+});
+
+function keyMutateLimiter(req, res, next) {
+  const mutatingMethods = ['POST', 'PUT', 'PATCH', 'DELETE'];
+  if (mutatingMethods.includes(req.method)) {
+    return _keyMutateRateLimiter(req, res, next);
+  }
+  return next();
+}
+
+module.exports = { authLimiter, readLimiter, generateLimiter, batchLimiter, cloneLimiter, keyMutateLimiter };

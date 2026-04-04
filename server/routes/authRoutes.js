@@ -2,16 +2,15 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
-const nodemailer = require('nodemailer');
 const db = require('../db');
 const { logUsageEvent } = require('../services/eventLogger');
+const log = require('../utils/logger');
 
 const router = express.Router();
 
-// Account lockout: max 5 failed attempts per email, locked 15 min
+// Account lockout: max 5 failed attempts per login, locked 15 min — persisted in DB
 const LOCKOUT_MAX = 5;
 const LOCKOUT_MS = 15 * 60 * 1000;
-const loginAttempts = new Map(); // email -> { count, lockedUntil }
 
 function normalizeLogin(value) {
   return String(value || '').trim().toLowerCase();
@@ -26,57 +25,44 @@ function getUserByLogin(login) {
   `).get(login, login);
 }
 
-function checkLockout(email) {
-  const entry = loginAttempts.get(email);
-  if (!entry) return null;
-  if (entry.lockedUntil && Date.now() < entry.lockedUntil) {
-    const mins = Math.ceil((entry.lockedUntil - Date.now()) / 60000);
+function checkLockout(login) {
+  const row = db.prepare('SELECT fail_count, locked_until FROM login_lockouts WHERE login = ?').get(login);
+  if (!row) return null;
+  if (row.locked_until && new Date(row.locked_until) > new Date()) {
+    const mins = Math.ceil((new Date(row.locked_until) - Date.now()) / 60000);
     return `Too many failed attempts. Try again in ${mins} minute${mins > 1 ? 's' : ''}.`;
   }
   return null;
 }
 
-function recordFailedLogin(email) {
-  const entry = loginAttempts.get(email) || { count: 0, lockedUntil: null };
-  entry.count += 1;
-  if (entry.count >= LOCKOUT_MAX) {
-    entry.lockedUntil = Date.now() + LOCKOUT_MS;
-    entry.count = 0;
-  }
-  loginAttempts.set(email, entry);
+function recordFailedLogin(login) {
+  const row = db.prepare('SELECT fail_count FROM login_lockouts WHERE login = ?').get(login);
+  const count = (row?.fail_count || 0) + 1;
+  const lockedUntil = count >= LOCKOUT_MAX
+    ? new Date(Date.now() + LOCKOUT_MS).toISOString()
+    : null;
+  const newCount = count >= LOCKOUT_MAX ? 0 : count;
+  db.prepare(`
+    INSERT INTO login_lockouts (login, fail_count, locked_until, updated_at)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(login) DO UPDATE SET
+      fail_count   = excluded.fail_count,
+      locked_until = excluded.locked_until,
+      updated_at   = excluded.updated_at
+  `).run(login, newCount, lockedUntil);
 }
 
-function clearLoginAttempts(email) {
-  loginAttempts.delete(email);
+function clearLoginAttempts(login) {
+  db.prepare('DELETE FROM login_lockouts WHERE login = ?').run(login);
 }
 
-// Clean up old lockouts every 30 min
+// Clean up expired lockouts once per hour
 setInterval(() => {
-  const now = Date.now();
-  for (const [email, entry] of loginAttempts) {
-    if (!entry.lockedUntil || now > entry.lockedUntil) loginAttempts.delete(email);
-  }
-}, 30 * 60 * 1000);
+  db.prepare("DELETE FROM login_lockouts WHERE locked_until IS NOT NULL AND locked_until < datetime('now') AND fail_count = 0").run();
+  db.prepare("DELETE FROM login_lockouts WHERE locked_until IS NULL AND updated_at < datetime('now', '-1 hour')").run();
+}, 60 * 60 * 1000).unref();
 
-function getTransport() {
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: false,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
-}
-
-async function sendMail(to, subject, html) {
-  try {
-    const t = getTransport();
-    await t.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to, subject, html });
-    return true;
-  } catch (e) {
-    console.error('[MAIL] Failed to send email:', e.message);
-    return false;
-  }
-}
+const { sendMail } = require('../utils/mailer');
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
@@ -101,7 +87,7 @@ router.post('/register', async (req, res) => {
     });
     return res.status(201).json({ success: true, message: 'Registration successful. You can now log in.' });
   } catch (err) {
-    console.error('[register]', err.message);
+    log.error('register_failed', { message: err.message });
     return res.status(500).json({ error: 'Registration failed. Please try again.' });
   }
 });
@@ -144,7 +130,7 @@ router.post('/login', async (req, res) => {
     // Regenerate session ID to prevent session fixation attacks
     req.session.regenerate((err) => {
       if (err) {
-        console.error('[login] session regenerate failed:', err.message);
+        log.error('login_session_regenerate_failed', { message: err.message });
         return res.status(500).json({ error: 'Login failed. Please try again.' });
       }
       req.session.userId = user.id;
@@ -164,7 +150,7 @@ router.post('/login', async (req, res) => {
       return res.json({ success: true, id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan: sub?.plan || 'free' });
     });
   } catch (err) {
-    console.error('[login]', err.message);
+    log.error('login_failed', { message: err.message });
     return res.status(500).json({ error: 'Login failed. Please try again.' });
   }
 });
@@ -182,7 +168,7 @@ router.post('/logout', (req, res) => {
     });
   }
   req.session.destroy((err) => {
-    if (err) console.error('[logout] session destroy failed:', err.message);
+    if (err) log.error('logout_session_destroy_failed', { message: err.message });
     res.clearCookie('connect.sid');
     res.json({ message: 'Logged out' });
   });
@@ -194,7 +180,18 @@ router.get('/me', (req, res) => {
   const user = db.prepare('SELECT id, email, name, is_admin FROM users WHERE id = ?').get(req.session.userId);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const sub = db.prepare('SELECT plan, status FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(user.id);
-  res.json({ id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan: sub?.plan || 'free' });
+  const plan = sub?.plan || 'free';
+
+  // Include usage info when running in hosted mode
+  let usageInfo = null;
+  if (process.env.HOSTED) {
+    const { getUsageLast24h, PLAN_LIMITS } = require('../middleware/planLimits');
+    const used = getUsageLast24h(user.id);
+    const limit = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
+    usageInfo = { used, limit: isFinite(limit) ? limit : null, plan };
+  }
+
+  res.json({ id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan, usageInfo });
 });
 
 // GET /api/auth/status  (legacy compat)
@@ -244,9 +241,9 @@ router.post('/change-password', async (req, res) => {
     const hash = await bcrypt.hash(newPassword, 12);
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
     res.json({ message: 'Password changed. Please log in again.' });
-    req.session.destroy((err) => { if (err) console.error('[change-password] session destroy:', err.message); });
+    req.session.destroy((err) => { if (err) log.error('change_password_session_destroy_failed', { message: err.message }); });
   } catch (err) {
-    console.error('[change-password]', err.message);
+    log.error('change_password_failed', { message: err.message });
     res.status(500).json({ error: 'Failed to change password. Please try again.' });
   }
 });
@@ -264,9 +261,9 @@ router.delete('/account', async (req, res) => {
     if (!ok) return res.status(401).json({ error: 'Incorrect password' });
     db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
     res.json({ message: 'Account deleted.' });
-    req.session.destroy((err) => { if (err) console.error('[delete-account] session destroy:', err.message); });
+    req.session.destroy((err) => { if (err) log.error('delete_account_session_destroy_failed', { message: err.message }); });
   } catch (err) {
-    console.error('[delete-account]', err.message);
+    log.error('delete_account_failed', { message: err.message });
     res.status(500).json({ error: 'Failed to delete account. Please try again.' });
   }
 });

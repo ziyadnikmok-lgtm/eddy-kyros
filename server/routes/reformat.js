@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const sharp = require('sharp');
 const apiKeyManager = require('../services/apiKeyManager');
 const geminiService = require('../services/geminiService');
+const log = require('../utils/logger');
 const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
 const { AppError } = require('../middleware/errorHandler');
@@ -98,7 +99,7 @@ router.post('/', async (req, res, next) => {
       finalBase64 = pngBuf.toString('base64');
       finalMime = 'image/png';
     } catch (e) {
-      console.error('PNG conversion failed, using original:', e.message);
+      log.warn('reformat_png_conversion_failed', { message: e.message });
     }
 
     // Save to gallery
@@ -114,7 +115,7 @@ router.post('/', async (req, res, next) => {
         tags: ['reformat', targetRatio.replace(':', 'x')],
       });
     } catch (e) {
-      console.error('Gallery save failed:', e.message);
+      log.error('reformat_gallery_save_failed', { message: e.message });
     }
 
     res.status(201).json({

@@ -179,7 +179,7 @@ const APP_VERSION = '8.1.0';
 function SidebarHeader() {
   return (
     <header className="flex h-14 items-center gap-2 border-b border-zinc-800/40 px-4">
-      <span className="text-sm font-semibold text-zinc-100 tracking-tight">Content Studio</span>
+      <span className="text-sm font-semibold text-zinc-100 tracking-tight">Kyros Studio</span>
       <span className="inline-flex items-center rounded-full border border-zinc-700/50 bg-zinc-800/60 px-1.5 py-px text-[9px] text-zinc-500 font-mono">
         v{APP_VERSION}
       </span>
@@ -425,6 +425,8 @@ const AuthSuspense = ({ children }) => (
 
 // Auth states: 'loading' | 'authenticated' | 'unauthenticated'
 export default function App() {
+  const isPublicPreviewHost =
+    typeof window !== 'undefined' && window.location.hostname.endsWith('trycloudflare.com');
   const [authState, setAuthState] = useState('loading');
   const [authPage, setAuthPage] = useState(() => {
     if (typeof window === 'undefined') return 'landing';
@@ -436,6 +438,13 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
 
   useEffect(() => {
+    if (isPublicPreviewHost) {
+      setAuthState('unauthenticated');
+      setAuthPage('landing');
+      setCurrentUser(null);
+      return;
+    }
+
     fetch('/api/auth/status', { credentials: 'include' })
       .then((r) => r.json())
       .then((data) => {
@@ -446,9 +455,10 @@ export default function App() {
         setAuthState('unauthenticated');
         setCurrentUser(null);
       });
-  }, []);
+  }, [isPublicPreviewHost]);
 
   useEffect(() => {
+    if (isPublicPreviewHost) return;
     if (authState !== 'authenticated') return;
     let cancelled = false;
     fetch('/api/auth/me', { credentials: 'include' })
@@ -471,7 +481,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [authState]);
+  }, [authState, isPublicPreviewHost]);
 
   if (authState === 'loading') {
     return (
@@ -512,4 +522,3 @@ export default function App() {
 
   return <MainApp currentUser={currentUser} onLogout={() => { setCurrentUser(null); setAuthState('unauthenticated'); setAuthPage('landing'); }} />;
 }
-

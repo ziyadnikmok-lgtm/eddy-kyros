@@ -12,6 +12,42 @@ const { TEMP_DIR } = require('../paths');
 const router = express.Router();
 const parseMultipart = createMultipartParser({ maxBytes: 500 * 1024 * 1024 });
 
+function escapeAssText(text = '') {
+  return String(text)
+    .replace(/\\/g, '\\\\')
+    .replace(/\{/g, '\\{')
+    .replace(/\}/g, '\\}')
+    .replace(/\r?\n/g, '\\N');
+}
+
+function assAlignmentFor(position = 'bottom') {
+  if (position === 'top') return 8;
+  if (position === 'center') return 5;
+  return 2;
+}
+
+function buildAssSubtitle({ text, textPosition, fontSize }) {
+  const alignment = assAlignmentFor(textPosition);
+  const safeText = escapeAssText(text);
+  const marginV = textPosition === 'top' ? 48 : textPosition === 'center' ? 0 : 48;
+
+  return `[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,1,0,0,0,100,100,0,0,1,3,0,${alignment},48,48,${marginV},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,9:59:59.00,Default,,0,0,0,,${safeText}
+`;
+}
+
 // POST /api/video-compose
 // multipart: video (file), audio (file, optional), text (string), textPosition (top|center|bottom), fontSize (number)
 router.post('/', parseMultipart, async (req, res, next) => {
@@ -25,6 +61,8 @@ router.post('/', parseMultipart, async (req, res, next) => {
     const text = (req.body?.text || '').trim();
     const textPosition = req.body?.textPosition || 'bottom';
     const fontSize = Math.min(Math.max(parseInt(req.body?.fontSize || '48', 10), 16), 120);
+
+    fs.mkdirSync(TEMP_DIR, { recursive: true });
 
     // Write buffers to temp files for ffmpeg
     const videoPath = path.join(TEMP_DIR, `vc_video_${Date.now()}.mp4`);
@@ -45,73 +83,10 @@ router.post('/', parseMultipart, async (req, res, next) => {
 
     // Video filter: text overlay
     if (text) {
-      // Arial Bold first (matches social caption style), then fallbacks
-      const FONT_CANDIDATES = [
-        '/System/Library/Fonts/Supplemental/Arial Bold.ttf',
-        '/System/Library/Fonts/Supplemental/Arial.ttf',
-        '/System/Library/Fonts/Arial.ttf',
-        '/Library/Fonts/Arial Bold.ttf',
-        '/usr/share/fonts/truetype/msttcorefonts/Arial_Bold.ttf',
-        '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-        '/usr/share/fonts/TTF/DejaVuSans-Bold.ttf',
-        '/System/Library/Fonts/Helvetica.ttc',
-      ];
-      const fontfile = FONT_CANDIDATES.find(f => fs.existsSync(f)) || '';
-      const fontfileParam = fontfile ? `fontfile='${fontfile}':` : '';
-
-      // Word-wrap: respect explicit newlines first, then wrap long segments
-      // maxChars based on video width (~1080px) — bigger font = fewer chars per line
-      const maxChars = Math.max(16, Math.min(40, Math.round(1400 / fontSize)));
-
-      function wrapSegment(segment, max) {
-        const words = segment.trim().split(/\s+/);
-        const lines = [];
-        let cur = '';
-        for (const word of words) {
-          if (cur.length > 0 && cur.length + 1 + word.length > max) {
-            lines.push(cur);
-            cur = word;
-          } else {
-            cur = cur ? `${cur} ${word}` : word;
-          }
-        }
-        if (cur) lines.push(cur);
-        return lines;
-      }
-
-      // Split on hard newlines first, then word-wrap each segment
-      const lines = text
-        .split(/\r?\n/)
-        .flatMap(seg => seg.trim() ? wrapSegment(seg, maxChars) : []);
-
-      function escapeDrawtext(s) {
-        return s
-          .replace(/\\/g, '\\\\')
-          .replace(/:/g, '\\:')
-          .replace(/'/g, "\\'")
-          .replace(/\[/g, '\\[')
-          .replace(/\]/g, '\\]');
-      }
-
-      // Line height ≈ fontSize * 1.25; total block height used to anchor position
-      const lineH = Math.round(fontSize * 1.25);
-      const totalH = lineH * lines.length;
-
-      // Base Y for each position so the whole block sits in the right zone
-      const baseYExpr = {
-        top:    `60`,
-        center: `(h-${totalH})/2`,
-        bottom: `h-${totalH}-60`,
-      }[textPosition] || `h-${totalH}-60`;
-
-      // Build one drawtext filter per line, chained with comma
-      const drawtextFilters = lines.map((line, i) => {
-        const safe = escapeDrawtext(line);
-        const yExpr = i === 0 ? baseYExpr : `${baseYExpr}+${i * lineH}`;
-        return `drawtext=${fontfileParam}text='${safe}':fontsize=${fontSize}:fontcolor=white:bordercolor=black:borderw=4:x=(w-text_w)/2:y=${yExpr}`;
-      });
-
-      ffmpegArgs.push('-vf', drawtextFilters.join(','));
+      const subtitlePath = path.join(TEMP_DIR, `vc_subs_${Date.now()}.ass`);
+      tmpFiles.push(subtitlePath);
+      fs.writeFileSync(subtitlePath, buildAssSubtitle({ text, textPosition, fontSize }), 'utf8');
+      ffmpegArgs.push('-vf', `subtitles=${subtitlePath}`);
     }
 
     if (audioPath) {

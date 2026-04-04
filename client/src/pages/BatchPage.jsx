@@ -311,6 +311,10 @@ function formReducer(state, action) {
   return { ...state, ...action };
 }
 
+function shouldAutofillBatchPrompt(mode) {
+  return mode === 'variation' || mode === 'override';
+}
+
 const _cache = {
   formState: null,
   job: null,
@@ -365,6 +369,7 @@ export default function BatchPage() {
   const { notify, characters: chars, sceneMemories, outfits, consumePageParams } = useApp();
   const { loading, run } = useAsync();
   const busyRef = useRef(false);
+  const lastAutofilledBatchCharIdRef = useRef('');
   const { openLightbox, LightboxComponent } = useImageLightbox();
   const [state, update] = useReducer(formReducer, _cache.formState || INITIAL_STATE);
   const {
@@ -488,9 +493,47 @@ export default function BatchPage() {
   };
 
   useEffect(() => {
-    if (charId) charApi.get(charId).then((d) => update({ charDetail: d })).catch(() => update({ charDetail: null }));
-    else update({ charDetail: null });
-  }, [charId]);
+    let cancelled = false;
+    if (!charId) {
+      lastAutofilledBatchCharIdRef.current = '';
+      update({ charDetail: null });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const cachedCharacter = chars.find((entry) => entry.id === charId) || null;
+    if (cachedCharacter) {
+      update((prev) => {
+        const next = { charDetail: cachedCharacter };
+        const masterPrompt = String(cachedCharacter.masterPrompt || '').trim();
+        if (shouldAutofillBatchPrompt(prev.mode) && !String(prev.prompt || '').trim() && lastAutofilledBatchCharIdRef.current !== charId && masterPrompt) {
+          next.prompt = masterPrompt;
+          lastAutofilledBatchCharIdRef.current = charId;
+        }
+        return next;
+      });
+    }
+
+    charApi.get(charId).then((d) => {
+      if (cancelled) return;
+      update((prev) => {
+        const next = { charDetail: d };
+        const masterPrompt = String(d?.masterPrompt || '').trim();
+        if (shouldAutofillBatchPrompt(prev.mode) && !String(prev.prompt || '').trim() && lastAutofilledBatchCharIdRef.current !== charId && masterPrompt) {
+          next.prompt = masterPrompt;
+          lastAutofilledBatchCharIdRef.current = charId;
+        }
+        return next;
+      });
+    }).catch(() => {
+      if (!cancelled) update({ charDetail: null });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [charId, chars, mode]);
   useEffect(() => {
     if (characterId) charApi.get(characterId).then((d) => update({ editCharacterDetail: d })).catch(() => update({ editCharacterDetail: null }));
     else update({ editCharacterDetail: null });
@@ -557,6 +600,24 @@ export default function BatchPage() {
     } finally {
       event.target.value = '';
     }
+  };
+
+  const handleBatchCharacterChange = (nextCharId) => {
+    update((prev) => {
+      const cachedCharacter = chars.find((entry) => entry.id === nextCharId) || null;
+      const next = {
+        charId: nextCharId,
+        charDetail: cachedCharacter,
+      };
+      const masterPrompt = String(cachedCharacter?.masterPrompt || '').trim();
+      if (nextCharId && shouldAutofillBatchPrompt(prev.mode) && masterPrompt) {
+        next.prompt = masterPrompt;
+        lastAutofilledBatchCharIdRef.current = nextCharId;
+      } else if (!nextCharId && prev.charId) {
+        lastAutofilledBatchCharIdRef.current = '';
+      }
+      return next;
+    });
   };
 
   const startBatch = () => {
@@ -809,7 +870,7 @@ export default function BatchPage() {
         {(mode === 'variation' || mode === 'override') && (
           <div>
             <span className="text-xs text-zinc-400 font-medium block mb-1.5">Character (optional for variation)</span>
-            <select value={charId} onChange={(e) => update({ charId: e.target.value })}
+            <select value={charId} onChange={(e) => handleBatchCharacterChange(e.target.value)}
               className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer">
               <option value="">{mode === 'override' ? 'Select character...' : 'No character'}</option>
               {chars.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -995,7 +1056,7 @@ export default function BatchPage() {
           <>
             <div>
               <span className="text-xs text-zinc-400 font-medium block mb-1.5">Character (optional)</span>
-              <select value={charId} onChange={(e) => { update({ charId: e.target.value, charDetail: null }); if (e.target.value) charApi.get(e.target.value).then(d => update({ charDetail: d })).catch(() => {}); }}
+              <select value={charId} onChange={(e) => handleBatchCharacterChange(e.target.value)}
                 className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer">
                 <option value="">No character</option>
                 {chars.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}

@@ -1,15 +1,7 @@
 import React, { useState } from 'react';
-
-const styles = {
-  container: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0a0a0f' },
-  box: { background: '#111', border: '1px solid #222', borderRadius: '12px', padding: '2rem', width: '100%', maxWidth: '400px' },
-  title: { color: '#e0e0ff', fontSize: '24px', fontWeight: 700, marginBottom: '1.5rem', textAlign: 'center' },
-  input: { width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #333', background: '#1a1a2e', color: '#e0e0ff', fontSize: '14px', marginBottom: '1rem', boxSizing: 'border-box' },
-  button: { width: '100%', padding: '0.75rem', background: '#6366f1', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: 600, cursor: 'pointer', marginBottom: '1rem' },
-  error: { color: '#f87171', fontSize: '14px', marginBottom: '1rem', textAlign: 'center' },
-  link: { color: '#818cf8', cursor: 'pointer', background: 'none', border: 'none', fontSize: '14px', textDecoration: 'underline' },
-  linkRow: { textAlign: 'center', color: '#a0a0c0', fontSize: '14px', marginTop: '0.5rem' }
-};
+import { motion } from 'framer-motion';
+import { ArrowRight } from 'lucide-react';
+import { AuthShell } from '../components/ui/sign-in-flow-1';
 
 export default function LoginPage({ onLogin, onNavigate }) {
   const [email, setEmail] = useState('');
@@ -36,26 +28,70 @@ export default function LoginPage({ onLogin, onNavigate }) {
   };
 
   return (
-    <div style={styles.container}>
-      <div style={styles.box}>
-        <h2 style={styles.title}>AI Content Studio</h2>
-        <form onSubmit={handleSubmit}>
-          {error && <div style={styles.error}>{error}</div>}
-          <input type="text" placeholder="Email or username" value={email} onChange={e => setEmail(e.target.value)} required style={styles.input} />
-          <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={styles.input} />
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a0a0c0', fontSize: '14px', marginBottom: '1rem', cursor: 'pointer' }}>
-            <input type="checkbox" checked={keepSignedIn} onChange={e => setKeepSignedIn(e.target.checked)} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
-            Keep me signed in for 30 days
-          </label>
-          <button type="submit" style={styles.button} disabled={loading}>{loading ? 'Signing in...' : 'Sign In'}</button>
-        </form>
-        <div style={styles.linkRow}>
-          <button onClick={() => onNavigate && onNavigate('forgot-password')} style={styles.link}>Forgot password?</button>
+    <AuthShell
+      onNavigate={onNavigate}
+      compact
+      title="Sign in and jump straight back into production."
+      subtitle="Get back to your characters, prompts, image queue, Nano Bypass edits, and saved outputs without losing your flow."
+    >
+      <motion.div
+        initial={{ opacity: 0, x: 30 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.45, ease: 'easeOut' }}
+        className="rounded-[2rem] border border-white/10 bg-white/[0.05] p-5 backdrop-blur-xl"
+      >
+        <div className="rounded-[1.6rem] border border-white/10 bg-black/35 p-6">
+          <div className="text-[11px] uppercase tracking-[0.3em] text-zinc-500">Login</div>
+          <h2 className="mt-3 text-3xl font-semibold tracking-[-0.05em] text-white">Welcome back.</h2>
+          <p className="mt-3 text-sm leading-7 text-zinc-400">Use your email or username to continue into Kyros Studio.</p>
+
+          <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+            {error ? <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</div> : null}
+            <input
+              type="text"
+              placeholder="Email or username"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="h-12 w-full rounded-full border border-white/10 bg-white/[0.04] px-4 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:border-white/25 focus:bg-white/[0.06]"
+            />
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              className="h-12 w-full rounded-full border border-white/10 bg-white/[0.04] px-4 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:border-white/25 focus:bg-white/[0.06]"
+            />
+            <label className="flex items-center gap-3 px-1 text-sm text-zinc-400">
+              <input
+                type="checkbox"
+                checked={keepSignedIn}
+                onChange={(e) => setKeepSignedIn(e.target.checked)}
+                className="h-4 w-4 rounded border-white/20 bg-black"
+              />
+              Keep me signed in for 30 days
+            </label>
+            <button
+              type="submit"
+              disabled={loading}
+              className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-white text-sm font-medium text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loading ? 'Signing in...' : 'Sign In'}
+              {!loading ? <ArrowRight className="h-4 w-4" /> : null}
+            </button>
+          </form>
+
+          <div className="mt-5 flex items-center justify-between gap-4 text-sm">
+            <button type="button" onClick={() => onNavigate?.('forgot-password')} className="text-zinc-400 transition hover:text-white">
+              Forgot password?
+            </button>
+            <button type="button" onClick={() => onNavigate?.('register')} className="text-cyan-300 transition hover:text-cyan-200">
+              Create account
+            </button>
+          </div>
         </div>
-        <div style={styles.linkRow}>
-          No account? <button onClick={() => onNavigate && onNavigate('register')} style={styles.link}>Register</button>
-        </div>
-      </div>
-    </div>
+      </motion.div>
+    </AuthShell>
   );
 }

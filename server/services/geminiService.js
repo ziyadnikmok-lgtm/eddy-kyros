@@ -27,6 +27,34 @@ const TEXT_TIMEOUT_MS = cfg.GEMINI_TEXT_TIMEOUT_MS;
 const TRANSIENT_RETRY_COUNT = cfg.GEMINI_TRANSIENT_RETRIES;
 const TRANSIENT_RETRY_BASE_MS = cfg.GEMINI_TRANSIENT_BASE_MS;
 
+function _buildInlineDataSignature(inlineData) {
+  if (!inlineData || typeof inlineData.data !== 'string') return '';
+  const data = inlineData.data;
+  return [
+    inlineData.mimeType || '',
+    data.length,
+    data.slice(0, 64),
+    data.slice(-64),
+  ].join(':');
+}
+
+function _buildGenerationInputSignature(options = {}) {
+  const parts = Array.isArray(options.parts) ? options.parts : null;
+  if (parts && parts.length > 0) {
+    const summary = parts.map((part) => {
+      if (part?.inlineData) return `i:${_buildInlineDataSignature(part.inlineData)}`;
+      if (typeof part?.text === 'string') return `t:${part.text.length}:${part.text.slice(0, 120)}`;
+      return 'x';
+    }).join('|');
+    return `:parts:${crypto.createHash('sha256').update(summary).digest('hex')}`;
+  }
+
+  const refs = Array.isArray(options.referenceImages) ? options.referenceImages : [];
+  if (refs.length === 0) return ':noref';
+  const summary = refs.map((ref) => `r:${_buildInlineDataSignature({ mimeType: ref?.mimeType, data: ref?.base64Data || '' })}`).join('|');
+  return `:refs:${crypto.createHash('sha256').update(summary).digest('hex')}`;
+}
+
 function isTransientError(err) {
   const msg = (err && err.message) ? err.message : '';
   return (
@@ -110,10 +138,8 @@ class GeminiService {
     throw new AppError(`Prompt must be ${cfg.PROMPT_MAX_LENGTH.toLocaleString()} characters or fewer`, 400, 'VALIDATION_ERROR');
   }
 
-  const refSig = Array.isArray(options.referenceImages) && options.referenceImages.length > 0
-    ? `:refs${options.referenceImages.length}:${(options.referenceImages[0]?.base64Data || '').length}`
-    : ':noref';
-  const dedupKey = `img:${crypto.createHash('sha256').update(prompt.trim() + (options.aspectRatio || '') + (options.imageSize || '') + refSig).digest('hex')}`;
+  const inputSig = _buildGenerationInputSignature(options);
+  const dedupKey = `img:${crypto.createHash('sha256').update(prompt.trim() + (options.aspectRatio || '') + (options.imageSize || '') + inputSig).digest('hex')}`;
   return dedupRequest(dedupKey, () => this._generateImageInner(apiKey, prompt, options));
   }
 

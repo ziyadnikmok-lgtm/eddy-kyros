@@ -1,11 +1,10 @@
 import { useEffect, useState, useMemo } from 'react';
 import { characters as charApi, reel as reelApi, availability as availabilityApi } from '../services/api';
 import { useApp } from '../context/AppContext';
-import { useAsync } from '../hooks/useAsync';
-import { useStepTimer } from '../hooks/useStepTimer';
-import { Card, Btn, Input, Badge, Spinner, ImageCard, Empty, StepProgress } from '../components/UI';
+import { Card, Btn, Input, Badge, Spinner, ImageCard, Empty } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 import { IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
+import { createPersistentPageState, makePersistentJobId, PersistentJobCard } from '../lib/persistentPageState';
 import { IconVideo } from 'nucleo-glass';
 
 const _cache = {
@@ -23,17 +22,24 @@ const _cache = {
   imageModel: DEFAULT_IMAGE_MODEL,
 };
 
+const reelPageStore = createPersistentPageState('reel-recreate', {
+  result: _cache.result,
+  recreationHistory: _cache.recreationHistory,
+  queueItems: [],
+});
+
 export default function ReelRecreatePage() {
   const { notify, characters: chars } = useApp();
-  const { loading, run } = useAsync();
   const { openLightbox, LightboxComponent } = useImageLightbox();
+  const initialStoreState = reelPageStore.getSnapshot();
 
   const [reelUrl, setReelUrl] = useState(_cache.reelUrl);
   const [localVideoFile, setLocalVideoFile] = useState(null);
   const [charId, setCharId] = useState(_cache.charId);
   const [charDetail, setCharDetail] = useState(null);
-  const [result, setResult] = useState(_cache.result);
-  const [recreationHistory, setRecreationHistory] = useState(_cache.recreationHistory);
+  const [result, setResult] = useState(initialStoreState.result);
+  const [recreationHistory, setRecreationHistory] = useState(initialStoreState.recreationHistory);
+  const [queueItems, setQueueItems] = useState(initialStoreState.queueItems);
   const [runSourceType, setRunSourceType] = useState(_cache.runSourceType);
   const [imageModel, setImageModel] = useState(_cache.imageModel);
   const [poseMatchStrength, setPoseMatchStrength] = useState(_cache.poseMatchStrength);
@@ -54,8 +60,6 @@ export default function ReelRecreatePage() {
 
   useEffect(() => { _cache.reelUrl = reelUrl; }, [reelUrl]);
   useEffect(() => { _cache.charId = charId; }, [charId]);
-  useEffect(() => { _cache.result = result; }, [result]);
-  useEffect(() => { _cache.recreationHistory = recreationHistory; }, [recreationHistory]);
   useEffect(() => { _cache.poseMatchStrength = poseMatchStrength; }, [poseMatchStrength]);
   useEffect(() => { _cache.environmentMatchStrength = environmentMatchStrength; }, [environmentMatchStrength]);
   useEffect(() => { _cache.poseMatchEnabled = poseMatchEnabled; }, [poseMatchEnabled]);
@@ -64,6 +68,11 @@ export default function ReelRecreatePage() {
   useEffect(() => { _cache.outfitTransition = outfitTransition; }, [outfitTransition]);
   useEffect(() => { _cache.runSourceType = runSourceType; }, [runSourceType]);
   useEffect(() => { _cache.imageModel = imageModel; }, [imageModel]);
+  useEffect(() => reelPageStore.subscribe((snapshot) => {
+    setResult(snapshot.result);
+    setRecreationHistory(snapshot.recreationHistory);
+    setQueueItems(snapshot.queueItems);
+  }), []);
 
   const LIVE_STEPS = useMemo(() => runSourceType === 'cached'
     ? ['Reusing cached source frames', 'Analyzing scenes with Gemini', 'Recreating first frame', 'Recreating follow-up frame']
@@ -75,7 +84,6 @@ export default function ReelRecreatePage() {
     ],
   [runSourceType]);
   const REEL_THRESHOLDS = useMemo(() => runSourceType === 'cached' ? [2, 8, 25] : [35, 45, 65], [runSourceType]);
-  const { elapsedSec, stepIndex: liveStepIndex } = useStepTimer(loading, REEL_THRESHOLDS);
 
   useEffect(() => {
     if (charId) charApi.get(charId).then(setCharDetail).catch(() => setCharDetail(null));
@@ -88,37 +96,125 @@ export default function ReelRecreatePage() {
     }
   }, [hasLocalVideo]);
 
-  const handleRun = () => run(async () => {
+  const dismissQueueItem = (queueId) => {
+    reelPageStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
+  };
+
+  const activeQueueCount = queueItems.filter((job) => job.status === 'running').length;
+
+  const handleRun = async () => {
     if (!reelUrl.trim() && !localVideoFile) { notify('Reel URL or local video is required', 'error'); return; }
     if (!charId) { notify('Select a character', 'error'); return; }
     setRunSourceType(localVideoFile ? 'upload' : 'apify');
+    let queueId = null;
 
-    if (!localVideoFile && reelUrl.trim()) {
-      const check = await availabilityApi.check(reelUrl.trim());
-      setAvailability(check);
-      if (!check?.allowed) {
-        notify(check?.label || 'Reel is not available for scraping', 'error');
-        return;
+    try {
+      if (!localVideoFile && reelUrl.trim()) {
+        const check = await availabilityApi.check(reelUrl.trim());
+        setAvailability(check);
+        if (!check?.allowed) {
+          notify(check?.label || 'Reel is not available for scraping', 'error');
+          return;
+        }
       }
-    }
 
-    const activeRefIds = charDetail?.references?.filter((r) => r.isActive).map((r) => r.id) || [];
-    let payload;
-    if (localVideoFile) {
-      payload = new FormData();
-      payload.append('video', localVideoFile);
-      payload.append('characterId', charId);
-      if (activeRefIds.length) payload.append('activeReferenceIds', JSON.stringify(activeRefIds));
-      payload.append('poseMatchStrength', poseMatchStrength);
-      payload.append('environmentMatchStrength', environmentMatchStrength);
-      payload.append('poseMatchEnabled', String(poseMatchEnabled));
-      payload.append('environmentMatchEnabled', String(environmentMatchEnabled));
-      payload.append('useSourceFrameReference', String(useSourceFrameReference));
-      payload.append('outfitTransition', String(outfitTransition));
-      payload.append('imageModel', imageModel);
-    } else {
-      payload = {
-        reelUrl: reelUrl.trim(),
+      queueId = makePersistentJobId('reel-recreate');
+      reelPageStore.setValue('queueItems', (prev) => [
+        {
+          id: queueId,
+          kind: localVideoFile ? 'upload' : 'apify',
+          status: 'running',
+          label: 'Reel Recreate',
+          summary: localVideoFile ? localVideoFile.name : reelUrl.trim(),
+          meta: localVideoFile ? 'Local upload' : 'Instagram',
+          badges: [
+            charDetail?.name ? { label: charDetail.name, color: 'zinc' } : null,
+            { label: imageModel, color: 'zinc' },
+          ].filter(Boolean),
+        },
+        ...prev.slice(0, 5),
+      ]);
+
+      const activeRefIds = charDetail?.references?.filter((r) => r.isActive).map((r) => r.id) || [];
+      let payload;
+      if (localVideoFile) {
+        payload = new FormData();
+        payload.append('video', localVideoFile);
+        payload.append('characterId', charId);
+        if (activeRefIds.length) payload.append('activeReferenceIds', JSON.stringify(activeRefIds));
+        payload.append('poseMatchStrength', poseMatchStrength);
+        payload.append('environmentMatchStrength', environmentMatchStrength);
+        payload.append('poseMatchEnabled', String(poseMatchEnabled));
+        payload.append('environmentMatchEnabled', String(environmentMatchEnabled));
+        payload.append('useSourceFrameReference', String(useSourceFrameReference));
+        payload.append('outfitTransition', String(outfitTransition));
+        payload.append('imageModel', imageModel);
+      } else {
+        payload = {
+          reelUrl: reelUrl.trim(),
+          characterId: charId,
+          activeReferenceIds: activeRefIds.length ? activeRefIds : undefined,
+          poseMatchStrength,
+          environmentMatchStrength,
+          poseMatchEnabled,
+          environmentMatchEnabled,
+          useSourceFrameReference,
+          outfitTransition,
+          imageModel,
+        };
+      }
+
+      const data = await reelApi.recreate(payload);
+      reelPageStore.setValue('result', data);
+      if (data?.recreations) {
+        reelPageStore.setValue('recreationHistory', (prev) => [data.recreations, ...prev].slice(0, 10));
+      }
+      reelPageStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
+      notify('Reel frames recreated with character', 'success');
+    } catch (err) {
+      if (queueId) {
+        reelPageStore.setValue('queueItems', (prev) => prev.map((job) => (
+          job.id === queueId
+            ? { ...job, status: 'error', errorMessage: err?.message || 'Failed to recreate reel' }
+            : job
+        )));
+      }
+      notify(err?.message || 'Failed to recreate reel', 'error');
+    }
+  };
+
+  const handleRerunFromFrames = async () => {
+    if (!result?.frames?.first?.base64Data || !result?.frames?.last?.base64Data) {
+      notify('No cached source frames available', 'error');
+      return;
+    }
+    if (!charId) {
+      notify('Select a character', 'error');
+      return;
+    }
+    setRunSourceType('cached');
+    reelPageStore.setValue('result', (prev) => prev ? { ...prev, recreations: null } : prev);
+
+    const queueId = makePersistentJobId('reel-rerun');
+    reelPageStore.setValue('queueItems', (prev) => [
+      {
+        id: queueId,
+        kind: 'cached',
+        status: 'running',
+        label: 'Recreate Again',
+        summary: 'Using cached source frames',
+        meta: 'Cached',
+        badges: [
+          charDetail?.name ? { label: charDetail.name, color: 'zinc' } : null,
+          { label: imageModel, color: 'zinc' },
+        ].filter(Boolean),
+      },
+      ...prev.slice(0, 5),
+    ]);
+
+    try {
+      const activeRefIds = charDetail?.references?.filter((r) => r.isActive).map((r) => r.id) || [];
+      const data = await reelApi.recreate({
         characterId: charId,
         activeReferenceIds: activeRefIds.length ? activeRefIds : undefined,
         poseMatchStrength,
@@ -128,46 +224,22 @@ export default function ReelRecreatePage() {
         useSourceFrameReference,
         outfitTransition,
         imageModel,
-      };
+        sourceFrames: result.frames,
+        sourceAnalysis: result.sourceAnalysis || undefined,
+      });
+      reelPageStore.setValue('result', data);
+      if (data?.recreations) {
+        reelPageStore.setValue('recreationHistory', (prev) => [data.recreations, ...prev].slice(0, 10));
+      }
+      reelPageStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
+      notify('Recreated again using cached source frames', 'success');
+    } catch (err) {
+      reelPageStore.setValue('queueItems', (prev) => prev.map((job) => (
+        job.id === queueId ? { ...job, status: 'error', errorMessage: err?.message || 'Failed to rerun from cached frames' } : job
+      )));
+      notify(err?.message || 'Failed to rerun from cached frames', 'error');
     }
-
-    const data = await reelApi.recreate(payload);
-    setResult(data);
-    if (data?.recreations) setRecreationHistory((h) => [data.recreations, ...h].slice(0, 10));
-    notify('Reel frames recreated with character', 'success');
-  });
-
-  const handleRerunFromFrames = () => run(async () => {
-    if (!result?.frames?.first?.base64Data || !result?.frames?.last?.base64Data) {
-      notify('No cached source frames available', 'error');
-      return;
-    }
-    if (!charId) {
-      notify('Select a character', 'error');
-      return;
-    }
-
-    setRunSourceType('cached');
-    setResult((prev) => prev ? { ...prev, recreations: null } : prev);
-
-    const activeRefIds = charDetail?.references?.filter((r) => r.isActive).map((r) => r.id) || [];
-    const data = await reelApi.recreate({
-      characterId: charId,
-      activeReferenceIds: activeRefIds.length ? activeRefIds : undefined,
-      poseMatchStrength,
-      environmentMatchStrength,
-      poseMatchEnabled,
-      environmentMatchEnabled,
-      useSourceFrameReference,
-      outfitTransition,
-      imageModel,
-      sourceFrames: result.frames,
-      sourceAnalysis: result.sourceAnalysis || undefined,
-    });
-    setResult(data);
-    if (data?.recreations) setRecreationHistory((h) => [data.recreations, ...h].slice(0, 10));
-    notify('Recreated again using cached source frames', 'success');
-  });
+  };
 
   const firstFrameSrc = result?.frames?.first?.base64Data
     ? `data:${result.frames.first.mimeType || 'image/jpeg'};base64,${result.frames.first.base64Data}`
@@ -347,22 +419,48 @@ export default function ReelRecreatePage() {
               />
             </label>
 
-            <Btn onClick={handleRun} disabled={loading || (!reelUrl.trim() && !localVideoFile) || !charId} className="w-full">
-              {loading ? <><Spinner size={16} /> Processing... {elapsedSec}s</> : (hasLocalVideo ? 'Use Local Video + Recreate Frames' : 'Fetch + Recreate Frames')}
+            <Btn onClick={handleRun} disabled={(!reelUrl.trim() && !localVideoFile) || !charId} className="w-full">
+              {activeQueueCount > 0 ? `Queue Another · ${activeQueueCount} running` : (hasLocalVideo ? 'Use Local Video + Recreate Frames' : 'Fetch + Recreate Frames')}
             </Btn>
             <Btn
               onClick={handleRerunFromFrames}
-              disabled={loading || !charId || !result?.frames?.first?.base64Data || !result?.frames?.last?.base64Data}
+              disabled={!charId || !result?.frames?.first?.base64Data || !result?.frames?.last?.base64Data}
               variant="secondary"
               className="w-full"
             >
-              Recreate Again (Current Frames)
+              {activeQueueCount > 0 ? `Queue Rerun · ${activeQueueCount} running` : 'Recreate Again (Current Frames)'}
             </Btn>
           </Card>
         </div>
 
         <div className="lg:col-span-2 space-y-4">
-          {!loading && !result && (
+          {queueItems.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-zinc-400">Reel Queue</h3>
+                <Badge color={activeQueueCount > 0 ? 'blue' : 'zinc'}>
+                  {activeQueueCount > 0 ? `${activeQueueCount} running` : `${queueItems.length} update${queueItems.length === 1 ? '' : 's'}`}
+                </Badge>
+              </div>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                {queueItems.map((job) => (
+                  <PersistentJobCard
+                    key={job.id}
+                    job={job}
+                    steps={job.kind === 'cached'
+                      ? ['Reusing cached source frames', 'Analyzing scenes with Gemini', 'Recreating source frames']
+                      : job.kind === 'upload'
+                        ? ['Using local uploaded video', 'Extracting source frames', 'Recreating with selected character']
+                        : ['Getting reel video from Apify', 'Extracting source frames', 'Recreating with selected character']}
+                    thresholds={job.kind === 'cached' ? [2, 8] : [35, 45]}
+                    onDismiss={dismissQueueItem}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!result && activeQueueCount === 0 && (
             <Card className="min-h-[360px] flex items-center justify-center">
               <Empty icon={<IconVideo uniqueId="empty-reel" size={40} aria-hidden />} title="No reel processed yet" subtitle="Paste a reel URL or upload a local video to start" />
             </Card>
@@ -388,11 +486,7 @@ export default function ReelRecreatePage() {
             </Card>
           )}
 
-          {loading && (
-            <StepProgress steps={LIVE_STEPS} currentIndex={liveStepIndex} elapsedSec={elapsedSec} className="min-h-[360px]" />
-          )}
-
-          {!loading && result?.recreations && (
+          {result?.recreations && (
             <Card className="space-y-3">
               <h3 className="text-sm font-semibold text-zinc-300">Recreated with Character</h3>
               <div className="grid grid-cols-2 gap-3">

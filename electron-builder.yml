@@ -1,5 +1,5 @@
 appId: com.aistudio.app
-productName: AI Content Studio
+productName: Kyros Studio
 directories:
   output: "dist-electron"
 files:

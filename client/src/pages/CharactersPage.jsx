@@ -37,7 +37,20 @@ export default function CharactersPage() {
       </div>
 
       {chars.length === 0 ? (
-        <Empty icon={<IconUsers uniqueId="empty-characters" size={40} aria-hidden />} title="No characters yet" subtitle="Create your first identity-locked character" />
+        <div className="space-y-4">
+          <Empty icon={<IconUsers uniqueId="empty-characters" size={40} aria-hidden />} title="No characters yet" subtitle="Create your first identity-locked character" />
+          <Card className="flex flex-col items-start gap-3 border-blue-500/20 bg-blue-500/[0.06]">
+            <div>
+              <h3 className="text-sm font-semibold text-zinc-100">Don't have a character yet?</h3>
+              <p className="mt-1 text-sm text-zinc-400">Get a ready-made AI character and start creating faster.</p>
+            </div>
+            <Btn
+              onClick={() => window.open('https://aicreatormarketplace.com?ref=ZiyadAiOFM', '_blank', 'noopener,noreferrer')}
+            >
+              Get a Character
+            </Btn>
+          </Card>
+        </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
           {chars.map((c) => (

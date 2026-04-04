@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
 const { asText } = require('../utils/helpers');
+const log = require('../utils/logger');
 const apiKeyManager = require('../services/apiKeyManager');
 const referenceManager = require('../services/referenceManager');
 const galleryManager = require('../services/galleryManager');
@@ -76,7 +77,7 @@ router.post('/fetch', async (req, res, next) => {
       };
     });
 
-    console.log(`[profile-clone/fetch] ${previews.length} post(s), ${thumbFilenames.filter(Boolean).length} thumbnails cached`);
+    log.info('profile_clone_fetch_done', { posts: previews.length, thumbnails: thumbFilenames.filter(Boolean).length });
     res.json({ success: true, data: previews });
   } catch (err) {
     next(err);
@@ -148,7 +149,7 @@ router.post('/recreate', async (req, res, next) => {
             imageModel,
           }).then((processed) => ({ ok: true, idx, processed }))
             .catch((err) => {
-              console.warn(`[profile-clone/recreate] post ${idx + 1}/${selected.length} failed: ${err.message}`);
+              log.warn('profile_clone_post_failed', { index: idx + 1, total: selected.length, message: err.message });
               return { ok: false, idx, error: err.message };
             });
         });
@@ -186,11 +187,11 @@ router.post('/recreate', async (req, res, next) => {
           galleryIds: processed.galleryIds || [],
         });
       } catch (histErr) {
-        console.warn('[profile-clone/recreate] history save failed:', histErr.message);
+        log.warn('profile_clone_history_save_failed', { message: histErr.message });
       }
     }
 
-    console.log(`[profile-clone/recreate] done: ${results.length} succeeded, ${errors.length} failed`);
+    log.info('profile_clone_recreate_done', { succeeded: results.length, failed: errors.length });
     res.json({ success: true, data: results });
   } catch (err) {
     next(err);

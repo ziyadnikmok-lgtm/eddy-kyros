@@ -4,6 +4,7 @@ const apiKeyManager = require('../services/apiKeyManager');
 const geminiService = require('../services/geminiService');
 const { AppError } = require('../middleware/errorHandler');
 const { sharedHttpsAgent } = require('../utils/httpAgent');
+const { requireAdmin } = require('../middleware/requireAuth');
 
 const router = express.Router();
 const HEALTH_TIMEOUT_MS = Number.parseInt(process.env.KEY_HEALTH_TIMEOUT_MS, 10) || 12000;
@@ -479,6 +480,16 @@ router.post('/ig-auto-refresh', async (req, res, next) => {
   }
 });
 
+router.patch('/:id/budget', (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { budgetUsd } = req.body || {};
+    if (typeof budgetUsd !== 'number') throw new AppError('"budgetUsd" must be a number', 400, 'VALIDATION_ERROR');
+    const result = apiKeyManager.setBudget(id, budgetUsd);
+    res.json({ success: true, data: result });
+  } catch (err) { next(err); }
+});
+
 router.delete('/:id', (req, res, next) => {
   try {
     const { id } = req.params;
@@ -501,6 +512,16 @@ router.get('/spend', (_req, res, next) => {
 router.post('/spend/reset', (_req, res, next) => {
   try {
     res.json({ success: true, data: apiKeyManager.resetSpend() });
+  } catch (err) { next(err); }
+});
+
+// --- Key access audit log (admin only) ---
+
+router.get('/access-log', requireAdmin, (_req, res, next) => {
+  try {
+    const n = 100;
+    const entries = apiKeyManager.getKeyAccessLog(n);
+    res.json({ success: true, data: entries });
   } catch (err) { next(err); }
 });
 

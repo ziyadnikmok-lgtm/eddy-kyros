@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { photoMatch as photoMatchApi, characters as charApi } from '../services/api';
 import { useApp } from '../context/AppContext';
-import { useAsync } from '../hooks/useAsync';
-import { useStepTimer } from '../hooks/useStepTimer';
-import { Card, Btn, Badge, Spinner, ImageCard, Empty, StepProgress } from '../components/UI';
+import { Card, Btn, Badge, ImageCard, Empty } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
-import { ASPECT_RATIOS, RESOLUTION_TIERS, IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
+import { ASPECT_RATIOS, RESOLUTION_TIERS, IMAGE_MODEL_OPTIONS } from '../config/photoModes';
+import { createPersistentPageState, makePersistentJobId, PersistentJobCard } from '../lib/persistentPageState';
 import { IconImage } from 'nucleo-glass';
+
+const PHOTO_MATCH_HANDOFF_KEY = 'kyros.photoMatch.handoff';
 
 function fileToBase64(file) {
   return new Promise((res, rej) => {
@@ -17,7 +18,30 @@ function fileToBase64(file) {
   });
 }
 
-function StrengthSlider({ label, sublabel, value, onChange, color = '#6366f1' }) {
+function dataUrlToFile(dataUrl, filename = 'photo-match-source.png') {
+  const match = dataUrl?.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return null;
+  const [, mimeType, base64] = match;
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  const extension = mimeType.split('/')[1] || 'png';
+  return new File([bytes], filename.includes('.') ? filename : `${filename}.${extension}`, { type: mimeType });
+}
+
+function readPhotoMatchHandoff() {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.sessionStorage.getItem(PHOTO_MATCH_HANDOFF_KEY);
+    if (!raw) return null;
+    window.sessionStorage.removeItem(PHOTO_MATCH_HANDOFF_KEY);
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function StrengthSlider({ label, sublabel, value, onChange, color = '#6366f1', disabled = false }) {
   const low = value < 35;
   const mid = value >= 35 && value < 70;
   const levelLabel = low ? 'Loose' : mid ? 'Close' : value >= 85 ? 'Exact' : 'Strong';
@@ -40,7 +64,8 @@ function StrengthSlider({ label, sublabel, value, onChange, color = '#6366f1' })
         <input
           type="range" min="0" max="100" step="5" value={value}
           onChange={e => onChange(Number(e.target.value))}
-          className="absolute inset-x-0 w-full opacity-0 cursor-pointer h-7"
+          disabled={disabled}
+          className={`absolute inset-x-0 w-full opacity-0 h-7 ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
           style={{ zIndex: 2 }}
         />
         <div className="absolute h-4 w-4 rounded-full shadow-lg border-2 border-white/20 pointer-events-none transition-all"
@@ -64,18 +89,25 @@ const _cache = {
   charId: '',
   bgStrength: 80,
   poseStrength: 80,
+  exactRecreate: false,
   aspectRatio: '4:5',
-  resolutionTier: '2K',
-  imageModel: DEFAULT_IMAGE_MODEL,
+  resolutionTier: '1K',
+  imageModel: 'gemini-3.1-flash-image-preview',
   result: null,
   history: [],
 };
 
+const photoMatchStore = createPersistentPageState('photo-match', {
+  result: _cache.result,
+  history: _cache.history,
+  queueItems: [],
+});
+
 export default function PhotoMatchPage() {
-  const { notify, characters: chars } = useApp();
-  const { loading: generating, run: runGenerate } = useAsync();
+  const { notify, characters: chars, consumePageParams } = useApp();
   const { openLightbox, LightboxComponent } = useImageLightbox();
   const dropRef = useRef(null);
+  const initialStoreState = photoMatchStore.getSnapshot();
 
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -84,22 +116,26 @@ export default function PhotoMatchPage() {
   const [charDetail, setCharDetail] = useState(null);
   const [bgStrength, setBgStrength] = useState(_cache.bgStrength);
   const [poseStrength, setPoseStrength] = useState(_cache.poseStrength);
+  const [exactRecreate, setExactRecreate] = useState(_cache.exactRecreate);
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [resolutionTier, setResolutionTier] = useState(_cache.resolutionTier);
   const [imageModel, setImageModel] = useState(_cache.imageModel);
-  const [result, setResult] = useState(_cache.result);
-  const [history, setHistory] = useState(_cache.history);
+  const [result, setResult] = useState(initialStoreState.result);
+  const [history, setHistory] = useState(initialStoreState.history);
+  const [queueItems, setQueueItems] = useState(initialStoreState.queueItems);
 
   useEffect(() => { _cache.charId = charId; }, [charId]);
   useEffect(() => { _cache.bgStrength = bgStrength; }, [bgStrength]);
   useEffect(() => { _cache.poseStrength = poseStrength; }, [poseStrength]);
+  useEffect(() => { _cache.exactRecreate = exactRecreate; }, [exactRecreate]);
   useEffect(() => { _cache.aspectRatio = aspectRatio; }, [aspectRatio]);
   useEffect(() => { _cache.resolutionTier = resolutionTier; }, [resolutionTier]);
   useEffect(() => { _cache.imageModel = imageModel; }, [imageModel]);
-  useEffect(() => { _cache.result = result; }, [result]);
-  useEffect(() => { _cache.history = history; }, [history]);
-
-  const { elapsedSec, stepIndex } = useStepTimer(generating, RECREATE_THRESHOLDS);
+  useEffect(() => photoMatchStore.subscribe((snapshot) => {
+    setResult(snapshot.result);
+    setHistory(snapshot.history);
+    setQueueItems(snapshot.queueItems);
+  }), []);
 
   useEffect(() => {
     if (charId) charApi.get(charId).then(setCharDetail).catch(() => setCharDetail(null));
@@ -118,8 +154,35 @@ export default function PhotoMatchPage() {
     setFile(f);
     const url = URL.createObjectURL(f);
     setPreview(prev => { if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev); return url; });
-    setResult(null);
+    photoMatchStore.setValue('result', null);
   }, [notify]);
+
+  useEffect(() => {
+    const params = consumePageParams();
+    const handoff = params?.sourceImageBase64 ? params : readPhotoMatchHandoff();
+    if (!handoff?.sourceImageBase64) return;
+    const mimeType = handoff.sourceImageMimeType || 'image/png';
+    const filename = handoff.sourceImageName || 'nsfw-generate';
+    const sourceFile = dataUrlToFile(`data:${mimeType};base64,${handoff.sourceImageBase64}`, filename);
+    if (!sourceFile) {
+      notify('Could not load source image into Photo Match', 'error');
+      return;
+    }
+    applyFile(sourceFile);
+    if (handoff.characterId) setCharId(handoff.characterId);
+    if (handoff.exactRecreate === true) {
+      setExactRecreate(true);
+      setBgStrength(100);
+      setPoseStrength(100);
+    }
+    if (typeof handoff.aspectRatio === 'string' && ASPECT_RATIOS.includes(handoff.aspectRatio)) {
+      setAspectRatio(handoff.aspectRatio);
+    }
+    if (typeof handoff.resolutionTier === 'string' && RESOLUTION_TIERS.includes(handoff.resolutionTier)) {
+      setResolutionTier(handoff.resolutionTier);
+    }
+    notify('Loaded image from NSFW Generate', 'success');
+  }, [applyFile, consumePageParams, notify]);
 
   // Paste from clipboard (Ctrl+V)
   useEffect(() => {
@@ -149,30 +212,63 @@ export default function PhotoMatchPage() {
     if (f) applyFile(f);
   };
 
-  const handleGenerate = () => runGenerate(async () => {
+  const dismissQueueItem = (queueId) => {
+    photoMatchStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
+  };
+
+  const activeQueueCount = queueItems.filter((job) => job.status === 'running').length;
+
+  const handleGenerate = async () => {
     if (!file) { notify('Upload or paste an image first', 'error'); return; }
     if (!charId) { notify('Select a character', 'error'); return; }
 
-    const dataUri = await fileToBase64(file);
-    const base64 = dataUri.split(',')[1];
-    const activeRefIds = charDetail?.references?.filter(r => r.isActive).map(r => r.id) || [];
+    const queueId = makePersistentJobId('photo-match');
+    photoMatchStore.setValue('queueItems', (prev) => [
+      {
+        id: queueId,
+        kind: 'match',
+        status: 'running',
+        label: exactRecreate ? 'Exact Recreate' : 'Photo Match',
+        summary: file.name || 'Reference photo match',
+        meta: `${aspectRatio} · ${resolutionTier}`,
+        badges: [
+          charDetail?.name ? { label: charDetail.name, color: 'zinc' } : null,
+          exactRecreate ? { label: 'Exact', color: 'blue' } : null,
+          { label: `${bgStrength}/${poseStrength}`, color: 'zinc' },
+        ].filter(Boolean),
+      },
+      ...prev.slice(0, 5),
+    ]);
 
-    const data = await photoMatchApi.recreate({
-      image: base64,
-      mimeType: file.type,
-      characterId: charId,
-      activeReferenceIds: activeRefIds.length > 0 ? activeRefIds : undefined,
-      bgStrength,
-      poseStrength,
-      aspectRatio,
-      resolutionTier,
-      imageModel,
-    });
+    try {
+      const dataUri = await fileToBase64(file);
+      const base64 = dataUri.split(',')[1];
+      const activeRefIds = charDetail?.references?.filter(r => r.isActive).map(r => r.id) || [];
 
-    setResult(data);
-    setHistory(h => [data, ...h].slice(0, 12));
-    notify('Photo matched!', 'success');
-  });
+      const data = await photoMatchApi.recreate({
+        image: base64,
+        mimeType: file.type,
+        characterId: charId,
+        activeReferenceIds: activeRefIds.length > 0 ? activeRefIds : undefined,
+        bgStrength,
+        poseStrength,
+        matchMode: exactRecreate ? 'exact' : 'match',
+        aspectRatio,
+        resolutionTier,
+        imageModel,
+      });
+
+      photoMatchStore.setValue('result', data);
+      photoMatchStore.setValue('history', (prev) => [data, ...prev].slice(0, 12));
+      photoMatchStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
+      notify(exactRecreate ? 'Exact recreate finished!' : 'Photo matched!', 'success');
+    } catch (err) {
+      photoMatchStore.setValue('queueItems', (prev) => prev.map((job) => (
+        job.id === queueId ? { ...job, status: 'error', errorMessage: err?.message || 'Photo match failed' } : job
+      )));
+      notify(err?.message || 'Photo match failed', 'error');
+    }
+  };
 
   return (
     <div className="space-y-6 animate-in">
@@ -218,13 +314,52 @@ export default function PhotoMatchPage() {
 
           {/* Strength sliders */}
           <Card className="space-y-5">
-            <h3 className="text-base font-medium text-zinc-200">Match Strength</h3>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-base font-medium text-zinc-200">Match Mode</h3>
+                {exactRecreate ? <Badge color="blue">Same Outfit • Same Pose • Same Background</Badge> : null}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setExactRecreate(false)}
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition cursor-pointer ${
+                    !exactRecreate
+                      ? 'border-blue-500/60 bg-blue-500/15 text-blue-100'
+                      : 'border-zinc-700/70 bg-zinc-900/50 text-zinc-400 hover:border-zinc-600'
+                  }`}
+                >
+                  Flexible Match
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExactRecreate(true);
+                    setBgStrength(100);
+                    setPoseStrength(100);
+                  }}
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition cursor-pointer ${
+                    exactRecreate
+                      ? 'border-blue-500/60 bg-blue-500/15 text-blue-100'
+                      : 'border-zinc-700/70 bg-zinc-900/50 text-zinc-400 hover:border-zinc-600'
+                  }`}
+                >
+                  Exact Recreate
+                </button>
+              </div>
+              <p className="text-[11px] leading-relaxed text-zinc-500">
+                {exactRecreate
+                  ? 'Locks the source image much harder: same outfit, same framing, same expression, same pose, same background.'
+                  : 'Use sliders to decide how closely the new image follows the source image.'}
+              </p>
+            </div>
             <StrengthSlider
               label="Background Match"
               sublabel="environment & lighting"
               value={bgStrength}
               onChange={setBgStrength}
               color="#3b82f6"
+              disabled={exactRecreate}
             />
             <StrengthSlider
               label="Pose Match"
@@ -232,6 +367,7 @@ export default function PhotoMatchPage() {
               value={poseStrength}
               onChange={setPoseStrength}
               color="#8b5cf6"
+              disabled={exactRecreate}
             />
           </Card>
 
@@ -286,9 +422,9 @@ export default function PhotoMatchPage() {
               </div>
             </div>
 
-            <Btn onClick={handleGenerate} disabled={generating || !file || !charId} className="w-full">
-              {generating
-                ? <><Spinner size={16} /> Matching... {elapsedSec}s</>
+            <Btn onClick={handleGenerate} disabled={!file || !charId} className="w-full">
+              {activeQueueCount > 0
+                ? <>Queue Another · {activeQueueCount} running</>
                 : <>Photo Match</>
               }
             </Btn>
@@ -297,21 +433,39 @@ export default function PhotoMatchPage() {
 
         {/* RIGHT PANEL */}
         <div className="lg:col-span-2 space-y-4">
-          {!generating && !result && (
+          {queueItems.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-zinc-400">Photo Match Queue</h3>
+                <Badge color={activeQueueCount > 0 ? 'blue' : 'zinc'}>
+                  {activeQueueCount > 0 ? `${activeQueueCount} running` : `${queueItems.length} update${queueItems.length === 1 ? '' : 's'}`}
+                </Badge>
+              </div>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                {queueItems.map((job) => (
+                  <PersistentJobCard
+                    key={job.id}
+                    job={job}
+                    steps={RECREATE_STEPS}
+                    thresholds={RECREATE_THRESHOLDS}
+                    onDismiss={dismissQueueItem}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!result && activeQueueCount === 0 && (
             <Card className="flex items-center justify-center py-24">
               <Empty
                 icon={<IconImage uniqueId="empty-pm" size={40} aria-hidden />}
                 title="No result yet"
-                subtitle="Paste or upload a reference image, set your match strengths, choose a character and hit Photo Match"
+                subtitle="Paste or upload a reference image, choose a character, then use Flexible Match or Exact Recreate"
               />
             </Card>
           )}
 
-          {generating && (
-            <StepProgress steps={RECREATE_STEPS} currentIndex={stepIndex} elapsedSec={elapsedSec} className="min-h-[360px]" />
-          )}
-
-          {result && !generating && (
+          {result && (
             <Card className="animate-in !p-3">
               <ImageCard
                 base64={result.image?.base64Data}
@@ -322,7 +476,7 @@ export default function PhotoMatchPage() {
             </Card>
           )}
 
-          {result && preview && !generating && (
+          {result && preview && (
             <div className="grid grid-cols-2 gap-4">
               <Card className="!p-2">
                 <p className="text-xs text-zinc-500 mb-2 text-center font-medium">Reference</p>
@@ -346,7 +500,7 @@ export default function PhotoMatchPage() {
             </div>
           )}
 
-          {result?.sceneData && !generating && (
+          {result?.sceneData && (
             <Card className="animate-in">
               <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">Detected Scene</h4>
               <div className="flex flex-wrap gap-1.5">

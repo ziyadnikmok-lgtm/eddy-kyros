@@ -84,6 +84,43 @@ function toAspectRatioValue(aspectRatio = '1:1') {
   return `${w} / ${h}`;
 }
 
+function buildCharacterReferencePreviewItems(characterId, character) {
+  if (!characterId || !character) return [];
+
+  const previews = [];
+  const primaryCount = Math.max(0, Number(character.primaryImageCount || 0));
+  for (let index = 0; index < primaryCount; index += 1) {
+    previews.push({
+      key: `primary-${index}`,
+      label: index === 0 ? 'Primary' : `Primary ${index + 1}`,
+      src: charApi.primaryImageUrl(characterId, index),
+    });
+  }
+
+  for (const ref of character.references || []) {
+    if (!ref?.isActive) continue;
+    previews.push({
+      key: `ref-${ref.id}`,
+      label: ref.category || 'Reference',
+      src: charApi.refImageUrl(characterId, ref.id),
+    });
+  }
+
+  return previews;
+}
+
+function matchesQuickDefaults(state, defaults) {
+  if (!defaults) return false;
+  return (
+    (state.cameraProfileId || '') === (defaults.cameraProfileId || '') &&
+    (state.poseMode || 'none') === (defaults.poseMode || 'none') &&
+    Boolean(state.useExpressionMode) === (defaults.expressionMode !== 'none') &&
+    (state.expressionMode || 'none') === (defaults.expressionMode || 'none') &&
+    Boolean(state.useSceneMode) === (defaults.sceneMode !== 'none') &&
+    (state.sceneMode || 'none') === (defaults.sceneMode || 'none')
+  );
+}
+
 function GenerationQueueCard({ job, onDismiss }) {
   const { elapsedSec, stepIndex } = useStepTimer(job.status === 'running', GENERATE_THRESHOLDS);
   const currentStep = GENERATE_STEPS[Math.min(stepIndex, GENERATE_STEPS.length - 1)];
@@ -165,17 +202,101 @@ const _cache = {
   formState: null,
   result: null,
   history: [],
+  queueItems: [],
   styleAtomIds: [],
   styleAtomDetails: [],
   activeMods: new Set(),
   contentTab: 'lifestyle',
   selectedFocusId: '',
+  enhancedPreview: null,
+  suggestedCaptions: [],
   captionDraft: { title: '', body: '', category: 'general', hashtags: '', cta: '' },
 };
 
+const GENERATE_QUEUE_STORAGE_KEY = 'kyros.generate.queueItems';
+
+function readStoredQueueItems() {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.sessionStorage.getItem(GENERATE_QUEUE_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredQueueItems(items) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (!items || items.length === 0) {
+      window.sessionStorage.removeItem(GENERATE_QUEUE_STORAGE_KEY);
+      return;
+    }
+    window.sessionStorage.setItem(GENERATE_QUEUE_STORAGE_KEY, JSON.stringify(items));
+  } catch {
+    // Ignore storage failures (quota/private mode) and keep in-memory behavior.
+  }
+}
+
+_cache.queueItems = readStoredQueueItems();
+
+const storeListeners = new Set();
+
+function getStoreSnapshot() {
+  return {
+    result: _cache.result,
+    history: _cache.history,
+    queueItems: _cache.queueItems,
+    enhancedPreview: _cache.enhancedPreview,
+    suggestedCaptions: _cache.suggestedCaptions,
+  };
+}
+
+function emitStoreChange() {
+  const snapshot = getStoreSnapshot();
+  for (const listener of storeListeners) listener(snapshot);
+}
+
+function subscribeToStore(listener) {
+  storeListeners.add(listener);
+  listener(getStoreSnapshot());
+  return () => {
+    storeListeners.delete(listener);
+  };
+}
+
+function setCachedResult(next) {
+  _cache.result = typeof next === 'function' ? next(_cache.result) : next;
+  emitStoreChange();
+}
+
+function setCachedHistory(next) {
+  _cache.history = typeof next === 'function' ? next(_cache.history) : next;
+  emitStoreChange();
+}
+
+function setCachedQueueItems(next) {
+  _cache.queueItems = typeof next === 'function' ? next(_cache.queueItems) : next;
+  writeStoredQueueItems(_cache.queueItems);
+  emitStoreChange();
+}
+
+function setCachedEnhancedPreview(next) {
+  _cache.enhancedPreview = typeof next === 'function' ? next(_cache.enhancedPreview) : next;
+  emitStoreChange();
+}
+
+function setCachedSuggestedCaptions(next) {
+  _cache.suggestedCaptions = typeof next === 'function' ? next(_cache.suggestedCaptions) : next;
+  emitStoreChange();
+}
+
 export default function GeneratePage() {
   const { notify, activeKey, characters: chars, sceneMemories, outfits, consumePageParams } = useApp();
-  const mountedRef = useRef(true);
+  const autofillCharacterPromptRef = useRef(false);
+  const lastAutofilledCharacterIdRef = useRef('');
   const { openLightbox, LightboxComponent } = useImageLightbox();
   const [state, update] = useReducer(formReducer, _cache.formState || INITIAL_STATE);
   const {
@@ -189,7 +310,7 @@ export default function GeneratePage() {
   } = state;
   const [result, setResult] = useState(_cache.result);
   const [history, setHistory] = useState(_cache.history);
-  const [queueItems, setQueueItems] = useState([]);
+  const [queueItems, setQueueItems] = useState(_cache.queueItems);
   const recentHistory = history.slice(1, 9).filter((h) => h?.imageId);
 
   const [tplList, setTplList] = useState([]);
@@ -211,15 +332,19 @@ export default function GeneratePage() {
 
   const [activeMods, setActiveMods] = useState(_cache.activeMods);
   const [enhanceEnabled, setEnhanceEnabled] = useState(false);
-  const [enhancedPreview, setEnhancedPreview] = useState(null); // { original, enhanced, changed }
+  const [enhancedPreview, setEnhancedPreview] = useState(_cache.enhancedPreview); // { original, enhanced, changed }
 
   const [contentPresets, setContentPresets] = useState([]);
   const [contentTab, setContentTab] = useState(_cache.contentTab);
 
   const [captionList, setCaptionList] = useState([]);
-  const [suggestedCaptions, setSuggestedCaptions] = useState([]);
+  const [suggestedCaptions, setSuggestedCaptions] = useState(_cache.suggestedCaptions);
   const [showCaptionComposer, setShowCaptionComposer] = useState(false);
   const [captionDraft, setCaptionDraft] = useState(_cache.captionDraft);
+  const characterReferencePreviewItems = useMemo(
+    () => buildCharacterReferencePreviewItems(selectedCharId, selectedChar),
+    [selectedCharId, selectedChar],
+  );
 
   useEffect(() => { _cache.formState = state; }, [state]);
   useEffect(() => { _cache.result = result; }, [result]);
@@ -229,14 +354,18 @@ export default function GeneratePage() {
   useEffect(() => { _cache.activeMods = activeMods; }, [activeMods]);
   useEffect(() => { _cache.contentTab = contentTab; }, [contentTab]);
   useEffect(() => { _cache.selectedFocusId = selectedFocusId; }, [selectedFocusId]);
+  useEffect(() => { _cache.queueItems = queueItems; }, [queueItems]);
+  useEffect(() => { _cache.enhancedPreview = enhancedPreview; }, [enhancedPreview]);
+  useEffect(() => { _cache.suggestedCaptions = suggestedCaptions; }, [suggestedCaptions]);
   useEffect(() => { _cache.captionDraft = captionDraft; }, [captionDraft]);
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  useEffect(() => subscribeToStore((snapshot) => {
+    setResult(snapshot.result);
+    setHistory(snapshot.history);
+    setQueueItems(snapshot.queueItems);
+    setEnhancedPreview(snapshot.enhancedPreview);
+    setSuggestedCaptions(snapshot.suggestedCaptions);
+  }), []);
 
   useEffect(() => { templatesApi.list('generate').then(setTplList).catch(() => {}); }, []);
   useEffect(() => { styleFocusApi.list().then(setStyleFocusList).catch(() => {}); }, []);
@@ -307,9 +436,58 @@ export default function GeneratePage() {
   }, []);
 
   useEffect(() => {
-    if (selectedCharId) charApi.get(selectedCharId).then((d) => update({ selectedChar: d })).catch(() => update({ selectedChar: null }));
-    else update({ selectedChar: null });
-  }, [selectedCharId]);
+    let cancelled = false;
+    if (!selectedCharId) {
+      autofillCharacterPromptRef.current = false;
+      lastAutofilledCharacterIdRef.current = '';
+      update({ selectedChar: null });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const cachedCharacter = chars.find((entry) => entry.id === selectedCharId) || null;
+    if (cachedCharacter) {
+      update((prev) => {
+        const masterPrompt = String(cachedCharacter.masterPrompt || '').trim();
+        const shouldAutofill = autofillCharacterPromptRef.current
+          || (!String(prev.prompt || '').trim() && lastAutofilledCharacterIdRef.current !== selectedCharId);
+        const next = { selectedChar: cachedCharacter };
+        if (shouldAutofill && masterPrompt) {
+          next.prompt = masterPrompt;
+          lastAutofilledCharacterIdRef.current = selectedCharId;
+        }
+        return next;
+      });
+      autofillCharacterPromptRef.current = false;
+    }
+
+    charApi.get(selectedCharId)
+      .then((d) => {
+        if (cancelled) return;
+        update((prev) => {
+          const next = { selectedChar: d };
+          const masterPrompt = String(d?.masterPrompt || '').trim();
+          const shouldAutofill = autofillCharacterPromptRef.current
+            || (!String(prev.prompt || '').trim() && lastAutofilledCharacterIdRef.current !== selectedCharId);
+          if (shouldAutofill && masterPrompt) {
+            next.prompt = masterPrompt;
+            lastAutofilledCharacterIdRef.current = selectedCharId;
+          }
+          return next;
+        });
+        autofillCharacterPromptRef.current = false;
+      })
+      .catch(() => {
+        if (cancelled) return;
+        autofillCharacterPromptRef.current = false;
+        update({ selectedChar: null });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCharId, chars]);
   useEffect(() => {
     if (!useCharacter) {
       update({ useExtraReference: false, extraReference: null, extraReferencePreview: '' });
@@ -351,17 +529,67 @@ export default function GeneratePage() {
   };
 
   const dismissQueueItem = (queueId) => {
-    setQueueItems((prev) => prev.filter((job) => job.id !== queueId));
+    setCachedQueueItems((prev) => prev.filter((job) => job.id !== queueId));
+  };
+
+  const handleCharacterSelect = (nextCharId) => {
+    autofillCharacterPromptRef.current = Boolean(nextCharId);
+    update((prev) => {
+      const cachedCharacter = chars.find((entry) => entry.id === nextCharId) || null;
+      const next = {
+        selectedCharId: nextCharId,
+        selectedChar: cachedCharacter,
+      };
+      const masterPrompt = String(cachedCharacter?.masterPrompt || '').trim();
+      if (nextCharId && masterPrompt) {
+        next.prompt = masterPrompt;
+        lastAutofilledCharacterIdRef.current = nextCharId;
+      } else if (!nextCharId && prev.selectedCharId) {
+        lastAutofilledCharacterIdRef.current = '';
+      }
+      return next;
+    });
+  };
+
+  const handleQuickContentTypeToggle = (contentTypeKey) => {
+    update((prev) => {
+      if (prev.quickContentType === contentTypeKey) {
+        const defaults = SMART_DEFAULTS[contentTypeKey];
+        const next = { quickContentType: '' };
+        if (matchesQuickDefaults(prev, defaults)) {
+          next.cameraProfileId = '';
+          next.poseMode = 'none';
+          next.useExpressionMode = false;
+          next.expressionMode = 'none';
+          next.useSceneMode = false;
+          next.sceneMode = 'none';
+        }
+        return next;
+      }
+
+      const defaults = SMART_DEFAULTS[contentTypeKey];
+      return {
+        quickContentType: contentTypeKey,
+        ...(defaults ? {
+          cameraProfileId: defaults.cameraProfileId,
+          poseMode: defaults.poseMode,
+          useExpressionMode: defaults.expressionMode !== 'none',
+          expressionMode: defaults.expressionMode,
+          useSceneMode: defaults.sceneMode !== 'none',
+          sceneMode: defaults.sceneMode,
+        } : {}),
+      };
+    });
   };
 
   const handleGenerate = async () => {
-    setEnhancedPreview(null);
+    setCachedEnhancedPreview(null);
     if (!prompt.trim() && !selectedCharId) { notify('Enter a prompt or select a character', 'error'); return; }
     const queueId = globalThis.crypto?.randomUUID?.() || `generate-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const imageModelLabel = IMAGE_MODEL_OPTIONS.find((opt) => opt.value === imageModel)?.label || imageModel;
     const promptPreview = prompt.trim() || (selectedChar?.name ? `Generate ${selectedChar.name}` : 'Character generation');
 
-    setQueueItems((prev) => [
+    setCachedQueueItems((prev) => [
       {
         id: queueId,
         status: 'running',
@@ -388,8 +616,8 @@ export default function GeneratePage() {
           characterId: selectedCharId || null,
           hasReferences: !!(selectedChar?.references?.some((r) => r.isActive)),
         });
-        if (mountedRef.current && enhanceResult?.changed && enhanceResult.enhanced) {
-          setEnhancedPreview(enhanceResult);
+        if (enhanceResult?.changed && enhanceResult.enhanced) {
+          setCachedEnhancedPreview(enhanceResult);
           finalPrompt = enhanceResult.enhanced;
         }
       } catch {
@@ -440,11 +668,10 @@ export default function GeneratePage() {
     }
     try {
       const data = await genApi.image(body);
-      if (!mountedRef.current) return;
-      setQueueItems((prev) => prev.filter((job) => job.id !== queueId));
-      setResult(data);
+      setCachedQueueItems((prev) => prev.filter((job) => job.id !== queueId));
+      setCachedResult(data);
       setRecreateSourceId(null);
-      setHistory((h) => [{
+      setCachedHistory((h) => [{
         imageId: data.imageId,
         galleryId: data.galleryId || data.imageId,
         mimeType: data.image?.mimeType,
@@ -452,11 +679,10 @@ export default function GeneratePage() {
       }, ...h].slice(0, 9));
       notify('Image generated!', 'success');
       captionApi.suggest(contentTab || 'lifestyle', 3).then((items) => {
-        if (mountedRef.current) setSuggestedCaptions(items);
+        setCachedSuggestedCaptions(items);
       }).catch(() => {});
     } catch (err) {
-      if (!mountedRef.current) return;
-      setQueueItems((prev) => prev.map((job) => (
+      setCachedQueueItems((prev) => prev.map((job) => (
         job.id === queueId
           ? { ...job, status: 'error', errorMessage: err?.message || 'Failed to generate image' }
           : job
@@ -569,7 +795,7 @@ export default function GeneratePage() {
 
             {useCharacter && (
               <div className="space-y-3 pl-3 border-l-2 border-blue-500/30">
-                <select value={selectedCharId} onChange={(e) => update({ selectedCharId: e.target.value })}
+                <select value={selectedCharId} onChange={(e) => handleCharacterSelect(e.target.value)}
                   className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer">
                   <option value="">Select character...</option>
                   {chars.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -579,6 +805,30 @@ export default function GeneratePage() {
                     {selectedChar.references.map((r) => (
                       <Badge key={r.id} color={r.isActive ? 'blue' : 'zinc'}>{r.category}</Badge>
                     ))}
+                  </div>
+                )}
+                {characterReferencePreviewItems.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-zinc-400 font-medium">Auto-loaded Character Refs</span>
+                      <span className="text-[10px] text-zinc-500">Used automatically in generation</span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                      {characterReferencePreviewItems.map((item, index) => (
+                        <button
+                          key={item.key}
+                          type="button"
+                          onClick={() => openLightbox(characterReferencePreviewItems.map((entry) => entry.src), index)}
+                          className="relative aspect-square overflow-hidden rounded-lg border border-zinc-700/70 bg-zinc-900/60 transition hover:border-zinc-500 cursor-pointer"
+                          title={item.label}
+                        >
+                          <img src={item.src} alt={item.label} className="h-full w-full object-cover" loading="lazy" />
+                          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4">
+                            <span className="block truncate text-[10px] text-zinc-200">{item.label}</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
 
@@ -663,20 +913,7 @@ export default function GeneratePage() {
                 <span className="text-xs text-zinc-400 font-medium block mb-2">Content Type</span>
                 <div className="grid grid-cols-2 gap-1.5">
                   {CONTENT_TYPES.map(ct => (
-                    <button key={ct.key} onClick={() => {
-                      update({ quickContentType: ct.key });
-                      const defaults = SMART_DEFAULTS[ct.key];
-                      if (defaults) {
-                        update({
-                          cameraProfileId: defaults.cameraProfileId,
-                          poseMode: defaults.poseMode,
-                          useExpressionMode: defaults.expressionMode !== 'none',
-                          expressionMode: defaults.expressionMode,
-                          useSceneMode: defaults.sceneMode !== 'none',
-                          sceneMode: defaults.sceneMode,
-                        });
-                      }
-                    }}
+                    <button key={ct.key} onClick={() => handleQuickContentTypeToggle(ct.key)}
                       className={`rounded-lg px-2.5 py-2 text-left transition cursor-pointer border ${
                         state.quickContentType === ct.key
                           ? 'border-blue-500/40 bg-blue-500/10'

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   gallery as galleryApi,
   characters as charApi,
@@ -66,6 +66,7 @@ const _cache = {
 export default function CarouselPage() {
   const { notify, characters: chars, consumePageParams } = useApp();
   const { openLightbox, LightboxComponent } = useImageLightbox();
+  const lastAutofilledCarouselCharIdRef = useRef('');
 
   const [selectedImageId, setSelectedImageId] = useState(_cache.selectedImageId);
   const [galleryImages, setGalleryImages] = useState([]);
@@ -125,9 +126,60 @@ export default function CarouselPage() {
   const isAnyJobRunning = executeJobs.some((job) => job?.status === 'running');
 
   useEffect(() => {
-    if (characterId) charApi.get(characterId).then(setCharacterDetail).catch(() => setCharacterDetail(null));
-    else setCharacterDetail(null);
-  }, [characterId]);
+    let cancelled = false;
+    if (!characterId) {
+      lastAutofilledCarouselCharIdRef.current = '';
+      setCharacterDetail(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const cachedCharacter = chars.find((entry) => entry.id === characterId) || null;
+    if (cachedCharacter) {
+      setCharacterDetail(cachedCharacter);
+      const masterPrompt = String(cachedCharacter.masterPrompt || '').trim();
+      if (carouselMode === 'follow-up' && !String(followUpDirection || '').trim() && lastAutofilledCarouselCharIdRef.current !== characterId && masterPrompt) {
+        setFollowUpDirection(masterPrompt);
+        lastAutofilledCarouselCharIdRef.current = characterId;
+      }
+    }
+
+    charApi.get(characterId).then((detail) => {
+      if (cancelled) return;
+      setCharacterDetail(detail);
+      const masterPrompt = String(detail?.masterPrompt || '').trim();
+      if (carouselMode === 'follow-up' && !String(followUpDirection || '').trim() && lastAutofilledCarouselCharIdRef.current !== characterId && masterPrompt) {
+        setFollowUpDirection(masterPrompt);
+        lastAutofilledCarouselCharIdRef.current = characterId;
+      }
+    }).catch(() => {
+      if (!cancelled) setCharacterDetail(null);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [characterId, chars, carouselMode, followUpDirection]);
+
+  const handleCarouselCharacterChange = (nextCharId) => {
+    const cachedCharacter = chars.find((entry) => entry.id === nextCharId) || null;
+    setCharacterId(nextCharId);
+    setCharacterDetail(cachedCharacter);
+
+    if (!nextCharId) {
+      lastAutofilledCarouselCharIdRef.current = '';
+      return;
+    }
+
+    if (carouselMode === 'follow-up') {
+      const masterPrompt = String(cachedCharacter?.masterPrompt || '').trim();
+      if (masterPrompt) {
+        setFollowUpDirection(masterPrompt);
+        lastAutofilledCarouselCharIdRef.current = nextCharId;
+      }
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -366,7 +418,7 @@ export default function CarouselPage() {
               <span className="text-xs text-zinc-400 font-medium block mb-1.5">Character</span>
               <select
                 value={characterId}
-                onChange={(e) => setCharacterId(e.target.value)}
+                onChange={(e) => handleCarouselCharacterChange(e.target.value)}
                 className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
               >
                 <option value="">Select character...</option>
@@ -626,7 +678,7 @@ export default function CarouselPage() {
             <h3 className="text-sm font-semibold text-zinc-300">Poll Settings</h3>
             <div>
               <span className="text-xs text-zinc-400 font-medium block mb-1.5">Character (optional)</span>
-              <select value={characterId} onChange={(e) => setCharacterId(e.target.value)}
+              <select value={characterId} onChange={(e) => handleCarouselCharacterChange(e.target.value)}
                 className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer">
                 <option value="">No character</option>
                 {chars.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}

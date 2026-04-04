@@ -83,10 +83,12 @@ db.exec(`
     user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     plan       TEXT NOT NULL DEFAULT 'free',
     status     TEXT NOT NULL DEFAULT 'active',
-    heleket_order_id TEXT,
+    heleket_order_id TEXT UNIQUE,
     expires_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON subscriptions(user_id);
 
   CREATE TABLE IF NOT EXISTS user_api_keys (
     id           TEXT PRIMARY KEY,
@@ -170,7 +172,22 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_support_notes_user_created
     ON support_notes(user_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS login_lockouts (
+    login       TEXT NOT NULL PRIMARY KEY,
+    fail_count  INTEGER NOT NULL DEFAULT 0,
+    locked_until TEXT,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
+
+// Best-effort unique index on heleket_order_id — skipped silently if duplicates exist in old data
+try {
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_heleket_order_id
+    ON subscriptions(heleket_order_id) WHERE heleket_order_id IS NOT NULL`);
+} catch (e) {
+  console.warn('[db] Could not create heleket_order_id unique index (duplicate data?):', e.message);
+}
 
 // Seed or create an admin user when explicit bootstrap env vars are present.
 if (process.env.SEED_ADMIN_EMAIL) {

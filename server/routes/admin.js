@@ -1,6 +1,7 @@
 'use strict';
 const express = require('express');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { requireAdmin } = require('../middleware/requireAuth');
@@ -8,7 +9,9 @@ const { logAdminAction } = require('../services/adminAuditLogger');
 const apiKeyManager = require('../services/apiKeyManager');
 const galleryManager = require('../services/galleryManager');
 const videoHistory = require('../services/videoHistoryStore');
+const batchGenerator = require('../services/batchGenerator');
 const { runWithUser } = require('../userContext');
+const log = require('../utils/logger');
 
 const router = express.Router();
 const PLAN_PRICES = {
@@ -207,10 +210,10 @@ function performAdminAction({ adminUserId, targetId, type, plan, note }) {
   return { user: after };
 }
 
-// GET /api/admin/bootstrap?secret=XXX
-router.get('/bootstrap', (req, res) => {
+// POST /api/admin/bootstrap  — secret in body, not query param (query params appear in logs/history)
+router.post('/bootstrap', (req, res) => {
   const secret = process.env.BOOTSTRAP_SECRET;
-  if (!secret || req.query.secret !== secret) return res.status(403).json({ error: 'Forbidden' });
+  if (!secret || req.body?.secret !== secret) return res.status(403).json({ error: 'Forbidden' });
   const email = process.env.SEED_ADMIN_EMAIL;
   if (!email) return res.status(400).json({ error: 'SEED_ADMIN_EMAIL not set' });
   const result = db.prepare('UPDATE users SET is_admin=1, verified=1 WHERE email=?').run(email.toLowerCase());
@@ -726,6 +729,146 @@ router.patch('/users/:id', requireAdmin, (req, res) => {
     return res.json({ ok: true, user: result.user });
   }
   return res.status(400).json({ error: 'No supported fields supplied' });
+});
+
+// GET /api/admin/system  — live server health snapshot
+router.get('/system', requireAdmin, (req, res) => {
+  const mem = process.memoryUsage();
+  const queue = (() => { try { return batchGenerator.queueStatus(); } catch { return null; } })();
+  const runningJobs = (() => { try { return batchGenerator.listJobs('running').length; } catch { return 0; } })();
+  const pendingJobs = (() => { try { return batchGenerator.listJobs('pending').length; } catch { return 0; } })();
+  const failedJobs24h = db.prepare(`SELECT COUNT(*) AS c FROM generation_runs WHERE status='failed' AND datetime(started_at) >= datetime('now','-1 day')`).get()?.c || 0;
+  const totalJobsToday = db.prepare(`SELECT COUNT(*) AS c FROM generation_runs WHERE datetime(started_at) >= datetime('now','-1 day')`).get()?.c || 0;
+  const activeSessions = db.prepare(`SELECT COUNT(*) AS c FROM sessions WHERE datetime(expire) > datetime('now')`).get()?.c || 0;
+  const newUsersToday = db.prepare(`SELECT COUNT(*) AS c FROM users WHERE date(created_at) = date('now')`).get()?.c || 0;
+  const lockedAccounts = db.prepare(`SELECT COUNT(*) AS c FROM login_lockouts WHERE locked_until > datetime('now')`).get()?.c || 0;
+  res.json({
+    uptime: process.uptime(),
+    memory: { heapUsedMb: Math.round(mem.heapUsed / 1024 / 1024), heapTotalMb: Math.round(mem.heapTotal / 1024 / 1024), rssMb: Math.round(mem.rss / 1024 / 1024) },
+    queue: queue || { queueDepth: 0, activeWorkers: 0 },
+    jobs: { running: runningJobs, pending: pendingJobs, failedLast24h: failedJobs24h, totalToday: totalJobsToday },
+    sessions: { active: activeSessions },
+    accounts: { newToday: newUsersToday, lockedOut: lockedAccounts },
+    nodeVersion: process.version,
+    env: process.env.NODE_ENV || 'production',
+  });
+});
+
+// GET /api/admin/analytics/retention  — 8-week user retention cohort grid
+router.get('/analytics/retention', requireAdmin, (req, res) => {
+  // For each of the last 8 signup-weeks, count how many users were active in each subsequent week
+  const cohorts = db.prepare(`
+    WITH cohort_weeks AS (
+      SELECT
+        strftime('%Y-W%W', created_at) AS cohort_week,
+        id AS user_id,
+        created_at
+      FROM users
+      WHERE datetime(created_at) >= datetime('now', '-56 days')
+    ),
+    activity AS (
+      SELECT DISTINCT
+        user_id,
+        strftime('%Y-W%W', created_at) AS active_week
+      FROM usage_events
+      WHERE user_id IS NOT NULL AND datetime(created_at) >= datetime('now', '-56 days')
+    )
+    SELECT
+      c.cohort_week,
+      COUNT(DISTINCT c.user_id) AS cohort_size,
+      COUNT(DISTINCT CASE WHEN a.active_week = c.cohort_week THEN c.user_id END) AS w0,
+      COUNT(DISTINCT CASE WHEN a.active_week = strftime('%Y-W%W', datetime(c.created_at, '+7 days')) THEN c.user_id END) AS w1,
+      COUNT(DISTINCT CASE WHEN a.active_week = strftime('%Y-W%W', datetime(c.created_at, '+14 days')) THEN c.user_id END) AS w2,
+      COUNT(DISTINCT CASE WHEN a.active_week = strftime('%Y-W%W', datetime(c.created_at, '+21 days')) THEN c.user_id END) AS w3,
+      COUNT(DISTINCT CASE WHEN a.active_week = strftime('%Y-W%W', datetime(c.created_at, '+28 days')) THEN c.user_id END) AS w4
+    FROM cohort_weeks c
+    LEFT JOIN activity a ON a.user_id = c.user_id
+    GROUP BY c.cohort_week
+    ORDER BY c.cohort_week DESC
+    LIMIT 8
+  `).all();
+  res.json({ cohorts });
+});
+
+// GET /api/admin/analytics/feature-trend — per-feature daily counts for last 14d
+router.get('/analytics/feature-trend', requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT
+      date(started_at) AS day,
+      feature,
+      COUNT(*) AS runs,
+      SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failures
+    FROM generation_runs
+    WHERE datetime(started_at) >= datetime('now', '-14 days')
+    GROUP BY date(started_at), feature
+    ORDER BY day ASC, runs DESC
+  `).all();
+  res.json({ rows });
+});
+
+// GET /api/admin/analytics/signups-by-day — 30-day signup trend with source breakdown
+router.get('/analytics/signups-by-day', requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT date(created_at) AS day, COUNT(*) AS signups, SUM(CASE WHEN verified=1 THEN 1 ELSE 0 END) AS verified
+    FROM users
+    WHERE datetime(created_at) >= datetime('now', '-30 days')
+    GROUP BY date(created_at)
+    ORDER BY day ASC
+  `).all();
+  res.json({ rows });
+});
+
+// GET /api/admin/users/export.csv — download all users as CSV
+router.get('/users/export.csv', requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    WITH ls AS (
+      SELECT s1.user_id, s1.plan, s1.status
+      FROM subscriptions s1
+      INNER JOIN (SELECT user_id, MAX(datetime(created_at)) AS mc FROM subscriptions GROUP BY user_id) x
+        ON x.user_id = s1.user_id AND datetime(s1.created_at) = x.mc
+    )
+    SELECT u.id, u.email, u.name, u.verified, u.is_admin, u.is_banned, u.created_at,
+      COALESCE(ls.plan,'free') AS plan, COALESCE(ls.status,'active') AS sub_status,
+      (SELECT COUNT(*) FROM generation_runs gr WHERE gr.user_id=u.id) AS total_runs,
+      (SELECT MAX(started_at) FROM generation_runs gr WHERE gr.user_id=u.id) AS last_run_at,
+      (SELECT MAX(created_at) FROM usage_events ue WHERE ue.user_id=u.id) AS last_active_at
+    FROM users u
+    LEFT JOIN ls ON ls.user_id = u.id
+    ORDER BY datetime(u.created_at) DESC
+  `).all();
+
+  const header = 'id,email,name,verified,is_admin,is_banned,created_at,plan,sub_status,total_runs,last_run_at,last_active_at\n';
+  const csvRows = rows.map((r) => [r.id, r.email, r.name || '', r.verified, r.is_admin, r.is_banned, r.created_at, r.plan, r.sub_status, r.total_runs, r.last_run_at || '', r.last_active_at || '']
+    .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+    .join(','));
+
+  log.info('admin_users_exported', { adminId: req.session?.userId, count: rows.length });
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="users-${new Date().toISOString().slice(0,10)}.csv"`);
+  res.send(header + csvRows.join('\n'));
+});
+
+// POST /api/admin/users/:id/force-reset  — generate a password reset token and return the link
+router.post('/users/:id/force-reset', requireAdmin, (req, res) => {
+  const user = getUserSummaryById(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiry = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(); // 2h
+  db.prepare('UPDATE users SET reset_token=?, reset_token_expiry=? WHERE id=?').run(token, expiry, req.params.id);
+  logAdminAction({ adminUserId: req.session?.userId, targetUserId: req.params.id, actionType: 'force_reset', before: null, after: { token: token.slice(0, 8) + '...' }, note: 'Admin-initiated password reset' });
+  const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+  res.json({ ok: true, resetToken: token, resetLink: `${appUrl}/reset-password?token=${token}`, expiresAt: expiry });
+});
+
+// GET /api/admin/users/:id/delete — hard delete a user account and all their data
+router.delete('/users/:id', requireAdmin, (req, res) => {
+  const user = getUserSummaryById(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (user.is_admin) return res.status(400).json({ error: 'Cannot delete admin accounts' });
+  logAdminAction({ adminUserId: req.session?.userId, targetUserId: req.params.id, actionType: 'delete_user', before: { email: user.email }, after: null, note: req.body?.note || null });
+  db.prepare('DELETE FROM users WHERE id=?').run(req.params.id);
+  log.warn('admin_user_deleted', { adminId: req.session?.userId, targetId: req.params.id, email: user.email });
+  res.json({ ok: true, deleted: req.params.id });
 });
 
 module.exports = router;

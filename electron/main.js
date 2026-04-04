@@ -40,6 +40,8 @@ let userDataPath = null;
 // ── Paths ───────────────────────────────────────────────────────────────
 
 const serverEntry = path.join(__dirname, '..', 'server', 'index.js');
+console.log(`[electron] main loaded. packaged=${app.isPackaged} execPath=${process.execPath}`);
+console.log(`[electron] server entry=${serverEntry}`);
 
 // Directories that must exist in userData for the server to work
 const requiredDirs = ['data', 'uploads/generated', 'characters', 'temp'];
@@ -47,6 +49,7 @@ const requiredDirs = ['data', 'uploads/generated', 'characters', 'temp'];
 // ── Seed data on first launch ───────────────────────────────────────────
 
 function ensureUserData() {
+  console.log(`[electron] ensureUserData userDataPath=${userDataPath}`);
   for (const dir of requiredDirs) {
     const full = path.join(userDataPath, dir);
     if (!fs.existsSync(full)) {
@@ -178,7 +181,7 @@ ipcMain.handle('downloads:choose-directory', async (_event, options = {}) => {
   });
   if (result.canceled || !result.filePaths?.[0]) return null;
 
-  const folderName = sanitizeFileName(options.folderName || `AI Content Studio Library ${timestampForFolder()}`);
+  const folderName = sanitizeFileName(options.folderName || `Kyros Studio Library ${timestampForFolder()}`);
   const targetDir = ensureUniqueDirectory(path.join(result.filePaths[0], folderName));
   fs.mkdirSync(targetDir, { recursive: true });
   return targetDir;
@@ -254,13 +257,17 @@ function waitForServer(port, timeoutMs = 30_000) {
 
 async function startBackend() {
   serverPort = await findFreePort();
+  console.log(`[electron] startBackend port=${serverPort}`);
 
   const envPath = path.join(userDataPath, '.env');
   const envExists = fs.existsSync(envPath);
+  console.log(`[electron] envPath=${envPath} exists=${envExists}`);
 
   serverProcess = fork(serverEntry, [], {
+    execPath: process.execPath,
     env: {
       ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
       PORT: String(serverPort),
       HOST: '127.0.0.1',
       ELECTRON_USER_DATA: userDataPath,
@@ -269,6 +276,7 @@ async function startBackend() {
     },
     stdio: 'pipe',
   });
+  console.log('[electron] forked backend process');
 
   serverProcess.stdout?.on('data', (d) => { process.stdout.write(d); writeLog('[server] ' + d.toString().trim()); });
   serverProcess.stderr?.on('data', (d) => { process.stderr.write(d); writeLog('[server:err] ' + d.toString().trim()); });
@@ -290,12 +298,13 @@ async function startBackend() {
 // ── Create window ───────────────────────────────────────────────────────
 
 function createWindow() {
+  console.log(`[electron] createWindow for port ${serverPort}`);
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1024,
     minHeight: 700,
-    title: 'AI Content Studio',
+    title: 'Kyros Studio',
     backgroundColor: '#09090b', // zinc-950 to match the dark theme
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -305,8 +314,11 @@ function createWindow() {
   });
 
   mainWindow.loadURL(`http://127.0.0.1:${serverPort}`);
+  mainWindow.webContents.on('did-finish-load', () => console.log('[electron] window finished load'));
+  mainWindow.webContents.on('did-fail-load', (_event, code, desc) => console.error(`[electron] window failed load code=${code} desc=${desc}`));
 
   mainWindow.on('closed', () => {
+    console.log('[electron] window closed');
     mainWindow = null;
   });
 }
@@ -314,7 +326,35 @@ function createWindow() {
 // ── App lifecycle ───────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
+  console.log('[electron] app.whenReady');
   userDataPath = app.getPath('userData');
+
+  // REMOTE_URL mode: skip local backend, open the hosted website directly.
+  // Set REMOTE_URL in the userData .env or as an env var to enable.
+  // Example:  REMOTE_URL=https://kyros.yourdomain.com
+  const envPath = path.join(userDataPath, '.env');
+  let remoteUrl = process.env.REMOTE_URL;
+  if (!remoteUrl && fs.existsSync(envPath)) {
+    const envContent = fs.readFileSync(envPath, 'utf8');
+    const match = envContent.match(/^REMOTE_URL=(.+)$/m);
+    if (match) remoteUrl = match[1].trim();
+  }
+
+  if (remoteUrl) {
+    console.log(`[electron] REMOTE_URL mode — loading ${remoteUrl}`);
+    serverPort = null;
+    mainWindow = new BrowserWindow({
+      width: 1400, height: 900, minWidth: 1024, minHeight: 700,
+      title: 'Kyros Studio',
+      backgroundColor: '#09090b',
+      webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+    });
+    mainWindow.loadURL(remoteUrl);
+    mainWindow.webContents.on('did-finish-load', () => console.log('[electron] remote window loaded'));
+    mainWindow.on('closed', () => { mainWindow = null; });
+    return;
+  }
+
   ensureUserData();
   await startBackend();
   createWindow();

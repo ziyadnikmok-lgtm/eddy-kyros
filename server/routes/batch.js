@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const batchGenerator = require('../services/batchGenerator');
 const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
+const log = require('../utils/logger');
 const { AppError } = require('../middleware/errorHandler');
 const { createMultipartParser } = require('../middleware/multipartParser');
 const { initSSE } = require('../utils/sse');
@@ -305,7 +306,7 @@ router.post('/:jobId/score-picks', async (req, res, next) => {
 
             return { galleryId: result.galleryId, ...scoreResult };
           } catch (err) {
-            console.warn(`[score] Failed to score ${result.galleryId}:`, err.message);
+            log.warn('batch_score_failed', { galleryId: result.galleryId, message: err.message });
             return { galleryId: result.galleryId, score: null, reasons: [], error: err.message };
           }
         })
@@ -317,6 +318,93 @@ router.post('/:jobId/score-picks', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// ── In-app notification system ─────────────────────────────────────────────────
+// Per-user in-memory notification list (last 50). Cleared when user dismisses all.
+const _userNotifications = new Map(); // userId -> Notification[]
+const _sseClients = new Map();        // userId -> Set<sendFn>
+const MAX_NOTIFICATIONS = 50;
+
+function getUserId(req) { return req.session?.userId || null; }
+
+function pushNotification(userId, notification) {
+  if (!userId || userId === '__anon__') return;
+  if (!_userNotifications.has(userId)) _userNotifications.set(userId, []);
+  const list = _userNotifications.get(userId);
+  list.unshift({ ...notification, id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, readAt: null, createdAt: new Date().toISOString() });
+  if (list.length > MAX_NOTIFICATIONS) list.length = MAX_NOTIFICATIONS;
+  // Push to any open SSE connections for this user
+  const clients = _sseClients.get(userId);
+  if (clients) {
+    for (const send of clients) {
+      try { send('notification', notification); } catch {}
+    }
+  }
+}
+
+// Wire batchGenerator done events into notifications
+batchGenerator.on('done', ({ jobId, status, completed, failed, total, _userId }) => {
+  if (!_userId || _userId === '__anon__') return;
+  const emoji = status === 'completed' ? '✅' : status === 'partial' ? '⚠️' : '❌';
+  pushNotification(_userId, {
+    type: 'batch_done',
+    jobId,
+    status,
+    completed,
+    failed,
+    total,
+    message: `${emoji} Batch done — ${completed}/${total} images generated`,
+  });
+});
+
+// GET /api/batch/notifications  — SSE stream of live notifications
+router.get('/notifications', (req, res) => {
+  const userId = getUserId(req);
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  const send = initSSE(res);
+
+  // Register client
+  if (!_sseClients.has(userId)) _sseClients.set(userId, new Set());
+  _sseClients.get(userId).add(send);
+
+  // Send any unread notifications immediately
+  const existing = (_userNotifications.get(userId) || []).filter((n) => !n.readAt);
+  if (existing.length) send('backlog', existing);
+
+  // Keepalive
+  const keepalive = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 25000);
+
+  req.on('close', () => {
+    clearInterval(keepalive);
+    _sseClients.get(userId)?.delete(send);
+  });
+});
+
+// GET /api/batch/notifications/list  — get all notifications (for bell dropdown)
+router.get('/notifications/list', (req, res) => {
+  const userId = getUserId(req);
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  const list = _userNotifications.get(userId) || [];
+  res.json({ success: true, data: list, unread: list.filter((n) => !n.readAt).length });
+});
+
+// POST /api/batch/notifications/read-all  — mark all as read
+router.post('/notifications/read-all', (req, res) => {
+  const userId = getUserId(req);
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  const list = _userNotifications.get(userId) || [];
+  const now = new Date().toISOString();
+  for (const n of list) { if (!n.readAt) n.readAt = now; }
+  res.json({ success: true });
+});
+
+// DELETE /api/batch/notifications  — clear all
+router.delete('/notifications', (req, res) => {
+  const userId = getUserId(req);
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  _userNotifications.set(userId, []);
+  res.json({ success: true });
 });
 
 module.exports = router;

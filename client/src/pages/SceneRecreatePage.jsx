@@ -1,11 +1,10 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { scene as sceneApi, characters as charApi } from '../services/api';
 import { useApp } from '../context/AppContext';
-import { useAsync } from '../hooks/useAsync';
-import { useStepTimer } from '../hooks/useStepTimer';
-import { Card, Btn, Textarea, Badge, Spinner, ImageCard, Empty, StepProgress } from '../components/UI';
+import { Card, Btn, Textarea, Badge, ImageCard, Empty } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 import { ASPECT_RATIOS, RESOLUTION_TIERS, IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
+import { createPersistentPageState, makePersistentJobId } from '../lib/persistentPageState';
 import { IconCamera } from 'nucleo-glass';
 
 function fileToBase64(file) {
@@ -30,15 +29,79 @@ const _cache = {
   history: [],
 };
 
+const ANALYZE_STEPS = [
+  'Reading scene image',
+  'Analyzing scene with Gemini',
+  'Preparing editable scene data',
+];
+const ANALYZE_THRESHOLDS = [2, 5];
+const RECREATE_STEPS = [
+  'Analyzing scene with Gemini',
+  'Building identity-locked prompt',
+  'Generating recreated image',
+];
+const RECREATE_THRESHOLDS = [3, 8];
+
+const scenePageStore = createPersistentPageState('scene-recreate', {
+  sceneData: _cache.sceneData,
+  editableScene: _cache.editableScene,
+  result: _cache.result,
+  history: _cache.history,
+  queueItems: [],
+});
+
+function CompactSceneJob({ job, onDismiss }) {
+  const isRunning = job?.status === 'running';
+  return (
+    <div
+      className={`rounded-lg border px-3 py-2.5 ${
+        isRunning
+          ? 'border-blue-500/20 bg-blue-500/5'
+          : 'border-red-500/20 bg-red-500/8'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Badge color={isRunning ? 'blue' : 'red'}>{isRunning ? (job?.label || 'Running') : 'Failed'}</Badge>
+            {job?.meta ? <span className="text-[10px] text-zinc-500">{job.meta}</span> : null}
+          </div>
+          <div className="mt-2 text-sm text-zinc-200">{job?.summary || 'Scene request'}</div>
+          {job?.badges?.length ? (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {job.badges.map((badge, index) => (
+                <Badge key={`${badge?.label || badge}-${index}`} color={badge?.color || 'zinc'}>
+                  {badge?.label || badge}
+                </Badge>
+              ))}
+            </div>
+          ) : null}
+          <div className="mt-2 text-[11px] text-zinc-500">
+            {isRunning ? 'Still running in background. You can keep working.' : (job?.errorMessage || 'Something went wrong')}
+          </div>
+        </div>
+        {!isRunning ? (
+          <button
+            type="button"
+            onClick={() => onDismiss?.(job?.id)}
+            className="text-[11px] text-zinc-500 hover:text-zinc-300 cursor-pointer shrink-0"
+          >
+            Dismiss
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export default function SceneRecreatePage() {
   const { notify, characters: chars } = useApp();
-  const { loading: analyzing, run: runAnalyze } = useAsync();
-  const { loading: recreating, run: runRecreate } = useAsync();
   const { openLightbox, LightboxComponent } = useImageLightbox();
+  const initialStoreState = scenePageStore.getSnapshot();
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
-  const [sceneData, setSceneData] = useState(_cache.sceneData);
-  const [editableScene, setEditableScene] = useState(_cache.editableScene);
+  const [sceneData, setSceneData] = useState(initialStoreState.sceneData);
+  const [editableScene, setEditableScene] = useState(initialStoreState.editableScene);
   const [charId, setCharId] = useState(_cache.charId);
   const [charDetail, setCharDetail] = useState(null);
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
@@ -46,8 +109,9 @@ export default function SceneRecreatePage() {
   const [imageModel, setImageModel] = useState(_cache.imageModel);
   const [sameBackground, setSameBackground] = useState(_cache.sameBackground);
   const [samePose, setSamePose] = useState(_cache.samePose);
-  const [result, setResult] = useState(_cache.result);
-  const [history, setHistory] = useState(_cache.history);
+  const [result, setResult] = useState(initialStoreState.result);
+  const [history, setHistory] = useState(initialStoreState.history);
+  const [queueItems, setQueueItems] = useState(initialStoreState.queueItems);
 
   useEffect(() => { _cache.sceneData = sceneData; }, [sceneData]);
   useEffect(() => { _cache.editableScene = editableScene; }, [editableScene]);
@@ -57,18 +121,13 @@ export default function SceneRecreatePage() {
   useEffect(() => { _cache.imageModel = imageModel; }, [imageModel]);
   useEffect(() => { _cache.sameBackground = sameBackground; }, [sameBackground]);
   useEffect(() => { _cache.samePose = samePose; }, [samePose]);
-  useEffect(() => { _cache.result = result; }, [result]);
-  useEffect(() => { _cache.history = history; }, [history]);
-
-  const ANALYZE_THRESHOLDS = useMemo(() => [2, 5], []);
-  const RECREATE_STEPS = useMemo(() => [
-    'Analyzing scene with Gemini',
-    'Building identity-locked prompt',
-    'Generating recreated image',
-  ], []);
-  const RECREATE_THRESHOLDS = useMemo(() => [3, 8], []);
-  const { elapsedSec: analyzeElapsedSec } = useStepTimer(analyzing, ANALYZE_THRESHOLDS);
-  const { elapsedSec: recreateElapsedSec, stepIndex: recreateStepIndex } = useStepTimer(recreating, RECREATE_THRESHOLDS);
+  useEffect(() => scenePageStore.subscribe((snapshot) => {
+    setSceneData(snapshot.sceneData);
+    setEditableScene(snapshot.editableScene);
+    setResult(snapshot.result);
+    setHistory(snapshot.history);
+    setQueueItems(snapshot.queueItems);
+  }), []);
 
   useEffect(() => {
     if (charId) charApi.get(charId).then(setCharDetail).catch(() => setCharDetail(null));
@@ -90,9 +149,7 @@ export default function SceneRecreatePage() {
         if (prev?.startsWith?.('blob:')) URL.revokeObjectURL(prev);
         return URL.createObjectURL(f);
       });
-      setSceneData(null);
-      setEditableScene('');
-      setResult(null);
+      scenePageStore.patch({ sceneData: null, editableScene: '', result: null });
     }
   }, [notify]);
 
@@ -116,7 +173,7 @@ export default function SceneRecreatePage() {
     if (f) applyFile(f);
   };
 
-  const handlePasteFromClipboard = () => runAnalyze(async () => {
+  const handlePasteFromClipboard = async () => {
     if (!navigator.clipboard?.read) {
       notify('Clipboard image paste is not supported in this browser. Try Ctrl+V instead.', 'error');
       return;
@@ -134,20 +191,47 @@ export default function SceneRecreatePage() {
     const pastedFile = new File([blob], `scene-paste-${Date.now()}.${imageType.split('/')[1] || 'png'}`, { type: imageType });
     applyFile(pastedFile);
     notify('Pasted scene image from clipboard', 'success');
-  });
+  };
 
-  const handleAnalyze = () => runAnalyze(async () => {
+  const dismissQueueItem = (queueId) => {
+    scenePageStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
+  };
+
+  const activeQueueCount = queueItems.filter((job) => job.status === 'running').length;
+
+  const handleAnalyze = async () => {
     if (!file) { notify('Upload an image first', 'error'); return; }
-    const dataUri = await fileToBase64(file);
-    const base64 = dataUri.split(',')[1];
-    const data = await sceneApi.analyze(base64, file.type);
-    setSceneData(data);
-    const text = Object.entries(data).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join('\n');
-    setEditableScene(text);
-    notify('Scene analyzed!', 'success');
-  });
 
-  const handleRecreate = () => runRecreate(async () => {
+    const queueId = makePersistentJobId('scene-analyze');
+    scenePageStore.setValue('queueItems', (prev) => [
+      {
+        id: queueId,
+        kind: 'analyze',
+        status: 'running',
+        label: 'Analyzing Scene',
+        summary: file.name || 'Scene image',
+        badges: [{ label: file.type || 'image', color: 'zinc' }],
+      },
+      ...prev.slice(0, 5),
+    ]);
+
+    try {
+      const dataUri = await fileToBase64(file);
+      const base64 = dataUri.split(',')[1];
+      const data = await sceneApi.analyze(base64, file.type);
+      const text = Object.entries(data).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join('\n');
+      scenePageStore.patch({ sceneData: data, editableScene: text });
+      scenePageStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
+      notify('Scene analyzed!', 'success');
+    } catch (err) {
+      scenePageStore.setValue('queueItems', (prev) => prev.map((job) => (
+        job.id === queueId ? { ...job, status: 'error', errorMessage: err?.message || 'Failed to analyze scene' } : job
+      )));
+      notify(err?.message || 'Failed to analyze scene', 'error');
+    }
+  };
+
+  const handleRecreate = async () => {
     if (!sceneData) { notify('Analyze a scene first', 'error'); return; }
     if (!charId) { notify('Select a character', 'error'); return; }
 
@@ -158,21 +242,45 @@ export default function SceneRecreatePage() {
     });
 
     const activeRefIds = charDetail?.references?.filter((r) => r.isActive).map((r) => r.id) || [];
+    const queueId = makePersistentJobId('scene-recreate');
+    scenePageStore.setValue('queueItems', (prev) => [
+      {
+        id: queueId,
+        kind: 'recreate',
+        status: 'running',
+        label: 'Recreating Scene',
+        summary: editableScene || 'Recreate scene with selected character',
+        meta: `${aspectRatio} · ${resolutionTier}`,
+        badges: [
+          charDetail?.name ? { label: charDetail.name, color: 'zinc' } : null,
+          { label: imageModel, color: 'zinc' },
+        ].filter(Boolean),
+      },
+      ...prev.slice(0, 5),
+    ]);
 
-    const data = await sceneApi.recreate({
-      sceneData: { ...sceneData, ...parsed },
-      characterId: charId,
-      activeReferenceIds: activeRefIds.length > 0 ? activeRefIds : undefined,
-      aspectRatio,
-      resolutionTier,
-      imageModel,
-      sameBackground,
-      samePose,
-    });
-    setResult(data);
-    setHistory((h) => [data, ...h].slice(0, 10));
-    notify('Scene recreated!', 'success');
-  });
+    try {
+      const data = await sceneApi.recreate({
+        sceneData: { ...sceneData, ...parsed },
+        characterId: charId,
+        activeReferenceIds: activeRefIds.length > 0 ? activeRefIds : undefined,
+        aspectRatio,
+        resolutionTier,
+        imageModel,
+        sameBackground,
+        samePose,
+      });
+      scenePageStore.setValue('result', data);
+      scenePageStore.setValue('history', (prev) => [data, ...prev].slice(0, 10));
+      scenePageStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
+      notify('Scene recreated!', 'success');
+    } catch (err) {
+      scenePageStore.setValue('queueItems', (prev) => prev.map((job) => (
+        job.id === queueId ? { ...job, status: 'error', errorMessage: err?.message || 'Failed to recreate scene' } : job
+      )));
+      notify(err?.message || 'Failed to recreate scene', 'error');
+    }
+  };
 
   const sceneFields = sceneData ? Object.entries(sceneData).filter(([, v]) => v) : [];
 
@@ -198,14 +306,30 @@ export default function SceneRecreatePage() {
               <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile} />
             </label>
             <div className="flex gap-2">
-              <Btn variant="secondary" onClick={handlePasteFromClipboard} disabled={analyzing} className="flex-1">
+              <Btn variant="secondary" onClick={handlePasteFromClipboard} className="flex-1">
                 Paste
               </Btn>
-              <Btn onClick={handleAnalyze} disabled={analyzing || !file} className="flex-1">
-              {analyzing ? <><Spinner size={16} /> Analyzing... {analyzeElapsedSec}s</> : <>Analyze Scene</>}
+              <Btn onClick={handleAnalyze} disabled={!file} className="flex-1">
+              {activeQueueCount > 0 ? <>Analyze Again · {activeQueueCount} running</> : <>Analyze Scene</>}
               </Btn>
             </div>
           </Card>
+
+          {queueItems.length > 0 && (
+            <Card className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-zinc-300">Background Jobs</h3>
+                <Badge color={activeQueueCount > 0 ? 'blue' : 'zinc'}>
+                  {activeQueueCount > 0 ? `${activeQueueCount} running` : `${queueItems.length} update${queueItems.length === 1 ? '' : 's'}`}
+                </Badge>
+              </div>
+              <div className="space-y-2">
+                {queueItems.map((job) => (
+                  <CompactSceneJob key={job.id} job={job} onDismiss={dismissQueueItem} />
+                ))}
+              </div>
+            </Card>
+          )}
 
           {sceneData && (
             <Card className="space-y-3 animate-in">
@@ -218,7 +342,7 @@ export default function SceneRecreatePage() {
                   </div>
                 ))}
               </div>
-              <Textarea label="Edit Scene Description (optional)" value={editableScene} onChange={(e) => setEditableScene(e.target.value)} className="!min-h-[80px] !text-xs" />
+              <Textarea label="Edit Scene Description (optional)" value={editableScene} onChange={(e) => scenePageStore.setValue('editableScene', e.target.value)} className="!min-h-[80px] !text-xs" />
             </Card>
           )}
 
@@ -307,22 +431,24 @@ export default function SceneRecreatePage() {
                 </div>
               </div>
 
-              <Btn onClick={handleRecreate} disabled={recreating || !charId} className="w-full">
-                {recreating ? <><Spinner size={16} /> Recreating... {recreateElapsedSec}s</> : <>Recreate Scene</>}
+              <Btn onClick={handleRecreate} disabled={!charId} className="w-full">
+                {activeQueueCount > 0 ? <>Queue Another · {activeQueueCount} running</> : <>Recreate Scene</>}
               </Btn>
             </Card>
           )}
         </div>
 
         <div className="lg:col-span-2 space-y-4">
-          {!recreating && !result && (
+          {!result && (
             <Card className="flex items-center justify-center py-24">
-              <Empty icon={<IconCamera uniqueId="empty-scene" size={40} aria-hidden />} title="No recreation yet" subtitle="Upload an image, analyze its scene, then recreate with a character" />
+              <Empty
+                icon={<IconCamera uniqueId="empty-scene" size={40} aria-hidden />}
+                title={activeQueueCount > 0 ? 'Scene job is running' : 'No recreation yet'}
+                subtitle={activeQueueCount > 0
+                  ? 'Your scene request is still processing in the background. You can keep editing on the left.'
+                  : 'Upload an image, analyze its scene, then recreate with a character'}
+              />
             </Card>
-          )}
-
-          {recreating && (
-            <StepProgress steps={RECREATE_STEPS} currentIndex={recreateStepIndex} elapsedSec={recreateElapsedSec} className="min-h-[360px]" />
           )}
 
           {result && (

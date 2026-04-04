@@ -96,7 +96,7 @@ function buildBulkDownloadName(item, { spoofEnabled = false } = {}) {
 }
 
 function bulkFolderName() {
-  return `AI Content Studio Library ${new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)}`;
+  return `Kyros Studio Library ${new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)}`;
 }
 
 function PromptSnippet({ prompt, notify }) {
@@ -848,4 +848,3 @@ function VideoLibraryCard({ item, bulkMode, selected, onSelect, expanded, onTogg
     </div>
   );
 }
-

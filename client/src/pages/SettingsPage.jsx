@@ -145,7 +145,7 @@ export default function SettingsPage() {
             Need help with your account, billing, or generation issues? Join the support group and share screenshots or error details.
           </p>
           <a
-            href="https://t.me/contentstudioaiQ"
+            href="https://t.me/Kyros_Studio"
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-500 transition"

@@ -645,7 +645,7 @@ class BatchGenerator extends EventEmitter {
       }
       job._completedAt = Date.now();
       _persistJobs();
-      this.emit('done', { jobId: job.jobId, status: job.status, completed: job.completed, failed: job.failed, total: job.total });
+      this.emit('done', { jobId: job.jobId, status: job.status, completed: job.completed, failed: job.failed, total: job.total, _userId: job._userId });
       return;
     }
 

@@ -14,6 +14,10 @@ const DERIVED_KEY_CACHE_MAX = 20;
 const { getDataDir } = require('../paths');
 const { getUserId } = require('../userContext');
 
+// In-memory ring buffer for key access audit log (max 200 entries)
+const KEY_ACCESS_LOG_MAX = 200;
+const _keyAccessLog = [];
+
 class ApiKeyManager {
   constructor() {
     this._userStores = new Map(); // userId -> store object (lazy-loaded)
@@ -121,10 +125,25 @@ class ApiKeyManager {
       throw new AppError('Active key entry missing. Re-add the key.', 500, 'KEY_CORRUPTED');
     }
 
+    // Enforce spend budget before handing out the key
+    this.checkBudget();
+
+    // Audit log — record every decryption event
+    const { getUserId } = require('../userContext');
+    const auditEntry = {
+      at: new Date().toISOString(),
+      userId: getUserId() || '__anon__',
+      keyId: entry.id,
+      maskedKey: entry.maskedKey,
+    };
+    _keyAccessLog.push(auditEntry);
+    if (_keyAccessLog.length > KEY_ACCESS_LOG_MAX) _keyAccessLog.shift();
+
     return this._decrypt(entry.encryptedKey);
   }
 
   listKeys() {
+    // SECURITY: explicitly allowlist fields — encryptedKey must NEVER be returned
     return this._store.keys.map((k) => ({
       id: k.id,
       name: k.name,
@@ -135,7 +154,15 @@ class ApiKeyManager {
       spendBudgetUsd: k.spendBudgetUsd || 300,
       textCallCount: k.textCallCount || 0,
       imageCallCount: k.imageCallCount || 0,
+      // encryptedKey intentionally omitted — never expose ciphertext to clients
     }));
+  }
+
+  /** Returns the last N key-access audit log entries (decryption events). */
+  getKeyAccessLog(n = 100) {
+    const entries = _keyAccessLog.slice(-Math.min(n, KEY_ACCESS_LOG_MAX));
+    // Return newest first
+    return entries.slice().reverse();
   }
 
   removeKey(keyId) {
@@ -476,6 +503,16 @@ class ApiKeyManager {
   _getActiveEntry() {
     if (!this._store.activeKeyId) return null;
     return this._store.keys.find((k) => k.id === this._store.activeKeyId) || null;
+  }
+
+  setBudget(keyId, budgetUsd) {
+    if (!keyId || typeof keyId !== 'string') throw new AppError('Key ID is required', 400, 'VALIDATION_ERROR');
+    if (typeof budgetUsd !== 'number' || budgetUsd < 0) throw new AppError('"budgetUsd" must be a non-negative number', 400, 'VALIDATION_ERROR');
+    const entry = this._store.keys.find((k) => k.id === keyId);
+    if (!entry) throw new AppError('Key not found', 404, 'KEY_NOT_FOUND');
+    entry.spendBudgetUsd = budgetUsd;
+    this._saveStore();
+    return { id: entry.id, name: entry.name, spendBudgetUsd: entry.spendBudgetUsd, totalSpendUsd: entry.totalSpendUsd || 0 };
   }
 
   checkBudget() {

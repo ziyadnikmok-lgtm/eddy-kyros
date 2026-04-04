@@ -217,6 +217,10 @@ export const batch = {
   stats: () => request('/batch/stats'),
   progress: (jobId) => new EventSource(`${BASE}/batch/${jobId}/progress`),
   scorePicks: (jobId) => request(`/batch/${jobId}/score-picks`, { method: 'POST' }),
+  notifications: () => request('/batch/notifications/list'),
+  markNotificationsRead: () => request('/batch/notifications/read-all', { method: 'POST' }),
+  clearNotifications: () => request('/batch/notifications', { method: 'DELETE' }),
+  notificationStream: () => new EventSource(`${BASE}/batch/notifications`),
 };
 
 export const tweak = {
@@ -441,5 +445,12 @@ export const admin = {
   addUserSupportNote: (id, body) => request(`/admin/users/${id}/support-notes`, { method: 'POST', body: { body } }),
   auditLogs: (limit = 50) => request(`/admin/audit-logs?limit=${limit}`),
   actOnUser: (id, body) => request(`/admin/users/${id}/action`, { method: 'POST', body }),
+  system: () => request('/admin/system'),
+  retention: () => request('/admin/analytics/retention'),
+  featureTrend: () => request('/admin/analytics/feature-trend'),
+  signupsByDay: () => request('/admin/analytics/signups-by-day'),
+  exportUsersUrl: () => '/api/admin/users/export.csv',
+  forceReset: (id) => request(`/admin/users/${id}/force-reset`, { method: 'POST' }),
+  deleteUser: (id, note) => request(`/admin/users/${id}`, { method: 'DELETE', body: { note } }),
 };
 

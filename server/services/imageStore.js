@@ -69,7 +69,7 @@ class ImageStore {
       throw new AppError('basePrompt is required to store image metadata', 500, 'STORE_ERROR');
     }
 
-    const validSources = ['generate', 'batch', 'carousel', 'tweak', 'reel-copy', 'reel-recreate', 'nsfw-generate'];
+    const validSources = ['generate', 'batch', 'carousel', 'tweak', 'reel-copy', 'reel-recreate', 'nsfw-generate', 'photo-match'];
     if (source && !validSources.includes(source)) {
       throw new AppError(`source must be one of: ${validSources.join(', ')}`, 500, 'STORE_ERROR');
     }

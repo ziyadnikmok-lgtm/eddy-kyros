@@ -3,29 +3,60 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { AppError } = require('../middleware/errorHandler');
+const { getDataDir } = require('../paths');
+const { getUserId } = require('../userContext');
 
 const router = express.Router();
-const DATA_FILE = path.join(__dirname, '..', 'data', 'loraPresets.json');
+
+function isLocalAppRuntime() {
+  return !!process.env.ELECTRON_USER_DATA;
+}
+
+function getDataFile() {
+  return path.join(getDataDir(), 'loraPresets.json');
+}
+
+function ensureStoreDir() {
+  const dir = path.dirname(getDataFile());
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
 
 function readPresets() {
   try {
-    if (fs.existsSync(DATA_FILE)) return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    ensureStoreDir();
+    const dataFile = getDataFile();
+    if (fs.existsSync(dataFile)) return JSON.parse(fs.readFileSync(dataFile, 'utf8'));
   } catch {}
   return [];
 }
 
 function writePresets(presets) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(presets, null, 2));
+  ensureStoreDir();
+  fs.writeFileSync(getDataFile(), JSON.stringify(presets, null, 2));
+}
+
+function listVisiblePresets(presets, userId) {
+  if (isLocalAppRuntime()) return presets;
+  return presets.filter((preset) => preset.userId === userId);
+}
+
+function findPresetIndex(presets, presetId, userId) {
+  if (isLocalAppRuntime()) {
+    return presets.findIndex((preset) => preset.id === presetId);
+  }
+  return presets.findIndex((preset) => preset.id === presetId && preset.userId === userId);
 }
 
 // List all presets
 router.get('/', (_req, res) => {
-  res.json({ success: true, data: readPresets() });
+  const userId = getUserId() || '__anon__';
+  res.json({ success: true, data: listVisiblePresets(readPresets(), userId) });
 });
 
 // Create preset
 router.post('/', (req, res, next) => {
   try {
+    const userId = getUserId() || '__anon__';
     const { name, path: loraPath, scale } = req.body;
     if (!name || typeof name !== 'string' || !name.trim()) {
       throw new AppError('Name is required', 400, 'VALIDATION_ERROR');
@@ -36,6 +67,7 @@ router.post('/', (req, res, next) => {
     const presets = readPresets();
     const preset = {
       id: crypto.randomUUID(),
+      userId,
       name: name.trim(),
       path: loraPath.trim(),
       scale: typeof scale === 'number' ? scale : 1.0,
@@ -50,8 +82,9 @@ router.post('/', (req, res, next) => {
 // Update preset
 router.patch('/:id', (req, res, next) => {
   try {
+    const userId = getUserId() || '__anon__';
     const presets = readPresets();
-    const idx = presets.findIndex((p) => p.id === req.params.id);
+    const idx = findPresetIndex(presets, req.params.id, userId);
     if (idx === -1) throw new AppError('Preset not found', 404, 'NOT_FOUND');
     const { name, path: loraPath, scale } = req.body;
     if (name !== undefined) presets[idx].name = String(name).trim();
@@ -65,8 +98,9 @@ router.patch('/:id', (req, res, next) => {
 // Delete preset
 router.delete('/:id', (req, res, next) => {
   try {
+    const userId = getUserId() || '__anon__';
     const presets = readPresets();
-    const idx = presets.findIndex((p) => p.id === req.params.id);
+    const idx = findPresetIndex(presets, req.params.id, userId);
     if (idx === -1) throw new AppError('Preset not found', 404, 'NOT_FOUND');
     presets.splice(idx, 1);
     writePresets(presets);
