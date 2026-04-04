@@ -290,15 +290,24 @@ function AuthModal({ mode, onClose, onSuccess }) {
                         className="h-12 w-full rounded-full border border-white/10 bg-white/[0.04] px-4 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:border-white/25 focus:bg-white/[0.06]"
                       />
 
-                      <label className="flex items-center gap-3 px-1 text-sm text-zinc-400">
-                        <input
-                          type="checkbox"
-                          checked={keepSignedIn}
-                          onChange={(e) => setKeepSignedIn(e.target.checked)}
-                          className="h-4 w-4 rounded border-white/20 bg-black"
-                        />
-                        Keep me signed in
-                      </label>
+                      <div className="flex items-center justify-between px-1">
+                        <label className="flex items-center gap-3 text-sm text-zinc-400">
+                          <input
+                            type="checkbox"
+                            checked={keepSignedIn}
+                            onChange={(e) => setKeepSignedIn(e.target.checked)}
+                            className="h-4 w-4 rounded border-white/20 bg-black"
+                          />
+                          Keep me signed in
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => onNavigate?.('forgot-password')}
+                          className="text-sm text-zinc-400 hover:text-white transition-colors"
+                        >
+                          Forgot password?
+                        </button>
+                      </div>
 
                       <button
                         type="submit"
