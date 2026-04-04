@@ -113,7 +113,6 @@ batchGenerator.on('done', handleJobDone);
 const log = require('./utils/logger');
 const cfg = require('./config');
 const { authLimiter, readLimiter, generateLimiter, batchLimiter, cloneLimiter } = require('./middleware/rateLimiter');
-const { requirePlanCapacity } = require('./middleware/planLimits');
 
 // ── Startup security checks ─────────────────────────────────────────────
 // If the known-publicly-leaked secret is still in use, warn loudly.
@@ -270,8 +269,8 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api/keys', readLimiter, keysRouter);
 app.use('/api/characters', readLimiter, charactersRouter);
-app.use('/api/batch', batchLimiter, requirePlanCapacity(), batchRouter);
-app.use('/api/tweak', generateLimiter, requirePlanCapacity(), tweakRouter);
+app.use('/api/batch', batchLimiter, batchRouter);
+app.use('/api/tweak', generateLimiter, tweakRouter);
 app.use('/api/reformat', generateLimiter, reformatRouter);
 app.use('/api/images', imagesRouter);
 app.use('/api/niches', nichesRouter);
@@ -282,13 +281,13 @@ app.use('/api/library', libraryRouter);
 app.use('/api/scene', generateLimiter, sceneRouter);
 app.use('/api/scene-memory', sceneMemoryRouter);
 app.use('/api/outfits', outfitsRouter);
-app.use('/api/generate', generateLimiter, requirePlanCapacity(), generateRouter);
-app.use('/api/auto', batchLimiter, requirePlanCapacity(), autoRoute);
-app.use('/api/carousel', batchLimiter, requirePlanCapacity(), carouselRoute);
-app.use('/api/reel', generateLimiter, requirePlanCapacity(), reelRoute);
-app.use('/api/reel-copy', cloneLimiter, requirePlanCapacity(), reelCopyRoute);
-app.use('/api/post-clone', cloneLimiter, requirePlanCapacity(), postCloneRoute);
-app.use('/api/profile-clone', cloneLimiter, requirePlanCapacity(), profileCloneRoute);
+app.use('/api/generate', generateLimiter, generateRouter);
+app.use('/api/auto', batchLimiter, autoRoute);
+app.use('/api/carousel', batchLimiter, carouselRoute);
+app.use('/api/reel', generateLimiter, reelRoute);
+app.use('/api/reel-copy', cloneLimiter, reelCopyRoute);
+app.use('/api/post-clone', cloneLimiter, postCloneRoute);
+app.use('/api/profile-clone', cloneLimiter, profileCloneRoute);
 app.use('/api/prompt-knowledge', promptKnowledgeRoute);
 app.use('/api/availability', availabilityRoute);
 app.use('/api/templates', templatesRouter);
@@ -296,7 +295,7 @@ app.use('/api/style-library', styleLibraryRouter);
 app.use('/api/profile-analyzer', profileAnalyzerRouter);
 app.use('/api/caption-templates', captionTemplatesRouter);
 app.use('/api/video', generateLimiter, videoRouter);
-app.use('/api/nsfw-generate', generateLimiter, requirePlanCapacity(), nsfwGenerateRouter);
+app.use('/api/nsfw-generate', generateLimiter, nsfwGenerateRouter);
 app.use('/api/lora-presets', loraPresetsRouter);
 app.use('/api/lora-datasets', generateLimiter, loraDatasetsRouter);
 app.use('/api/backgrounds', backgroundsRouter);
