@@ -1,8 +1,8 @@
 [phases.install]
-cmds = ['cd ai-content-studio-saas-main && npm install', 'cd ai-content-studio-saas-main/client && npm install']
+cmds = ['cd ai-content-studio-saas-main && npm install']
 
 [phases.build]
-cmds = ['cd ai-content-studio-saas-main/client && npm run build']
+cmds = ['echo "Skipping client build; using tracked ai-content-studio-saas-main/client/dist"']
 dependsOn = ['install']
 
 [variables]
