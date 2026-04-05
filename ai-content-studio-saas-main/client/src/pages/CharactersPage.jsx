@@ -1,0 +1,609 @@
+import { useState, useEffect } from 'react';
+import { characters as charApi, outfits as outfitApi } from '../services/api';
+import { useApp } from '../context/AppContext';
+import { useAsync } from '../hooks/useAsync';
+import { Card, Btn, Input, Textarea, Modal, Badge, Spinner, Empty, ConfirmDialog } from '../components/UI';
+import { IconUsers, IconCamera, IconImage } from 'nucleo-glass';
+
+const CATEGORIES = ['Clothing', 'Hairstyle', 'Pose', 'Accessory', 'Expression', 'Lighting', 'Custom'];
+
+function fileToBase64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+
+export default function CharactersPage() {
+  const { notify, characters: chars, refreshCharacters } = useApp();
+  const [selected, setSelected] = useState(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [showAddRef, setShowAddRef] = useState(false);
+  const { loading, run } = useAsync();
+
+  const load = refreshCharacters;
+
+  const selectChar = async (id) => {
+    const data = await run(() => charApi.get(id));
+    if (data) setSelected(data);
+  };
+
+  return (
+    <div className="space-y-6 animate-in">
+      {chars.length === 0 ? (
+        <div className="space-y-4">
+          {/* Big new character CTA when empty */}
+          <button
+            onClick={() => setShowCreate(true)}
+            className="w-full rounded-2xl border-2 border-dashed border-blue-500/40 bg-blue-500/5 hover:bg-blue-500/10 hover:border-blue-500/60 transition-all py-12 flex flex-col items-center gap-3 cursor-pointer group"
+          >
+            <div className="w-14 h-14 rounded-2xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center group-hover:bg-blue-600/30 transition-all">
+              <span className="text-2xl text-blue-400 font-light">+</span>
+            </div>
+            <div className="text-center">
+              <p className="text-base font-semibold text-zinc-200">New Character</p>
+              <p className="text-sm text-zinc-500 mt-0.5">Create your first identity-locked character</p>
+            </div>
+          </button>
+          <Card className="flex flex-col items-start gap-3 border-blue-500/20 bg-blue-500/[0.06]">
+            <div>
+              <h3 className="text-sm font-semibold text-zinc-100">Don't have a character yet?</h3>
+              <p className="mt-1 text-sm text-zinc-400">Get a ready-made AI character and start creating faster.</p>
+            </div>
+            <Btn onClick={() => window.open('https://aicreatormarketplace.com?ref=ZiyadAiOFM', '_blank', 'noopener,noreferrer')}>
+              Get a Character
+            </Btn>
+          </Card>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+          {/* Big + New Character card first */}
+          <button
+            onClick={() => setShowCreate(true)}
+            className="rounded-xl border-2 border-dashed border-blue-500/30 bg-blue-500/5 hover:bg-blue-500/10 hover:border-blue-500/50 transition-all flex flex-col items-center justify-center gap-2.5 cursor-pointer group aspect-square p-4"
+          >
+            <div className="w-12 h-12 rounded-xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center group-hover:bg-blue-600/30 transition-all">
+              <span className="text-2xl text-blue-400 font-light leading-none">+</span>
+            </div>
+            <span className="text-sm font-semibold text-zinc-300 group-hover:text-zinc-100 transition-colors text-center">New Character</span>
+          </button>
+
+          {chars.map((c) => (
+            <Card key={c.id} className={`cursor-pointer hover:border-zinc-600 transition-all !p-3 ${selected?.id === c.id ? '!border-blue-500 ring-1 ring-blue-500/20' : ''}`}
+              onClick={() => selectChar(c.id)}>
+              {/* Reference badges at top */}
+              {c.references?.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {c.references.slice(0, 4).map((r, i) => (
+                    <span key={i} className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium border ${r.isActive !== false ? 'bg-blue-500/10 text-blue-400 border-blue-500/30' : 'bg-zinc-800 text-zinc-500 border-zinc-700/40'}`}>
+                      {r.category || r}
+                    </span>
+                  ))}
+                  {c.references.length > 4 && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-500 border border-zinc-700/40">+{c.references.length - 4}</span>
+                  )}
+                </div>
+              )}
+              <div className="aspect-square rounded-lg overflow-hidden bg-zinc-900 mb-2">
+                {c.hasPrimaryImage && <img src={charApi.imageUrl(c.id)} alt={c.name} className="w-full h-full object-cover" loading="lazy" />}
+              </div>
+              <div className="text-sm font-medium text-zinc-200 truncate">{c.name}</div>
+              <div className="text-xs text-zinc-500 mt-0.5">{c.references?.length || 0} ref{c.references?.length !== 1 ? 's' : ''}</div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {selected && (
+        <CharacterDetail char={selected} onUpdate={() => { load(); selectChar(selected.id); }} onDelete={() => { setSelected(null); load(); }}
+          onAddRef={() => setShowAddRef(true)} />
+      )}
+
+      {selected && <Wardrobe characterId={selected.id} characterName={selected.name} />}
+
+      <CreateCharacterModal open={showCreate} onClose={() => setShowCreate(false)} onCreated={() => { setShowCreate(false); load(); }} />
+      {selected && <AddReferenceModal open={showAddRef} onClose={() => setShowAddRef(false)} characterId={selected.id} onAdded={() => { setShowAddRef(false); selectChar(selected.id); }} />}
+    </div>
+  );
+}
+
+function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
+  const { notify } = useApp();
+  const { loading, run } = useAsync();
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [editingPrompt, setEditingPrompt] = useState(false);
+  const [promptDraft, setPromptDraft] = useState('');
+
+  const addPrimaryImage = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    run(async () => {
+      const dataUri = await fileToBase64(f);
+      await charApi.addPrimaryImage(char.id, { image: dataUri });
+      notify('Primary image added', 'success');
+      onUpdate();
+    });
+  };
+  const removePrimaryImage = (index) => run(async () => {
+    await charApi.removePrimaryImage(char.id, index);
+    notify('Primary image removed', 'success');
+    onUpdate();
+  });
+  const toggleRef = (refId) => run(async () => {
+    await charApi.toggleReference(char.id, refId);
+    onUpdate();
+  });
+  const deleteRef = (refId) => run(async () => {
+    await charApi.removeReference(char.id, refId);
+    notify('Reference removed', 'success');
+    onUpdate();
+  });
+  const deleteChar = () => run(async () => {
+    await charApi.remove(char.id);
+    notify('Character deleted', 'success');
+    onDelete();
+  });
+  const copyPrompt = () => {
+    navigator.clipboard.writeText(char.masterPrompt);
+    notify('Master prompt copied', 'success');
+  };
+  const savePrompt = () => run(async () => {
+    await charApi.update(char.id, { masterPrompt: promptDraft.trim() });
+    notify('Master prompt updated', 'success');
+    setEditingPrompt(false);
+    onUpdate();
+  });
+  const downloadImage = (url, name) => {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+  };
+
+  const imgCount = char.primaryImageCount || 1;
+
+  return (
+    <Card className="animate-in space-y-4">
+      <div className="flex items-start justify-between">
+        <div className="flex-1 min-w-0 mr-3">
+          <h2 className="text-lg font-semibold">{char.name}</h2>
+          <p className="text-xs text-zinc-500 mt-0.5 max-w-md line-clamp-2">{char.masterPrompt}</p>
+          <div className="flex gap-2 mt-2">
+            <button onClick={copyPrompt} className="text-xs text-zinc-400 hover:text-blue-400 transition cursor-pointer">Copy Prompt</button>
+            <button onClick={() => { setPromptDraft(char.masterPrompt); setEditingPrompt(true); }} className="text-xs text-zinc-400 hover:text-blue-400 transition cursor-pointer">Edit Prompt</button>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <Btn variant="secondary" className="!text-xs !py-1.5" onClick={onAddRef}>+ Reference</Btn>
+          <Btn variant="danger" className="!text-xs !py-1.5" onClick={() => setConfirmDelete({ type: 'character' })} disabled={loading}>Delete</Btn>
+        </div>
+      </div>
+
+      {editingPrompt && (
+        <div className="space-y-2 p-3 rounded-lg border border-blue-500/30 bg-blue-500/5">
+          <textarea value={promptDraft} onChange={(e) => setPromptDraft(e.target.value)}
+            className="w-full bg-zinc-900/80 border border-zinc-700/60 rounded-lg p-3 text-sm text-zinc-200 min-h-[120px] focus:outline-none focus:ring-1 focus:ring-blue-500/50 resize-y" />
+          <div className="flex gap-2 justify-end">
+            <Btn variant="ghost" className="!text-xs !py-1.5" onClick={() => setEditingPrompt(false)}>Cancel</Btn>
+            <Btn className="!text-xs !py-1.5" onClick={savePrompt} disabled={loading || !promptDraft.trim()}>
+              {loading ? <Spinner size={14} /> : null} Save
+            </Btn>
+          </div>
+        </div>
+      )}
+
+      <div>
+        <span className="text-sm text-zinc-400 font-medium block mb-2">Primary Images ({imgCount}/10)</span>
+        <div className="flex gap-3 flex-wrap">
+          {Array.from({ length: imgCount }, (_, i) => (
+            <div key={i} className="relative group w-20 h-20 rounded-lg overflow-hidden bg-zinc-900 border border-zinc-700/40">
+              <img src={charApi.primaryImageUrl(char.id, i)} alt={`Primary ${i + 1}`} className="w-full h-full object-cover" loading="lazy" />
+              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-1">
+                <button onClick={() => downloadImage(charApi.primaryImageUrl(char.id, i), `${char.name}-primary-${i + 1}.png`)}
+                  className="w-6 h-6 rounded-full bg-black/70 text-blue-400 text-xs flex items-center justify-center cursor-pointer" title="Download">
+                  ↓
+                </button>
+                {imgCount > 1 && (
+                  <button onClick={() => setConfirmDelete({ type: 'primary', index: i })}
+                    className="w-6 h-6 rounded-full bg-black/70 text-red-400 text-xs flex items-center justify-center cursor-pointer" title="Delete">
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+          {imgCount < 10 && (
+            <label className="w-20 h-20 rounded-lg border-2 border-dashed border-zinc-700/60 hover:border-blue-500/40 flex items-center justify-center cursor-pointer transition">
+              <span className="text-zinc-500 text-lg">+</span>
+              <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={addPrimaryImage} />
+            </label>
+          )}
+        </div>
+      </div>
+
+      {char.references?.length > 0 ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          {char.references.map((r) => (
+            <div key={r.id} className={`rounded-lg border p-2 transition ${r.isActive ? 'border-blue-500/50 bg-blue-500/5' : 'border-zinc-700/40'}`}>
+              <div className="flex items-center justify-between mb-1.5">
+                <Badge color={r.isActive ? 'blue' : 'zinc'}>{r.category}</Badge>
+                <div className="flex gap-1">
+                  <button onClick={() => downloadImage(charApi.refImageUrl(char.id, r.id), `${char.name}-${r.category}.png`)}
+                    className="text-xs text-zinc-500 hover:text-blue-400 cursor-pointer transition" title="Download image">↓</button>
+                  <button onClick={() => toggleRef(r.id)} className={`text-xs px-1.5 py-0.5 rounded cursor-pointer transition ${r.isActive ? 'text-blue-400' : 'text-zinc-500 hover:text-zinc-300'}`}>
+                    {r.isActive ? 'ON' : 'OFF'}
+                  </button>
+                  <button onClick={() => setConfirmDelete({ type: 'reference', id: r.id, label: r.category })} aria-label="Remove reference" className="text-xs text-zinc-600 hover:text-red-400 cursor-pointer transition">✕</button>
+                </div>
+              </div>
+              <p className="text-xs text-zinc-400 line-clamp-2">{r.overridePrompt}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-zinc-500">No references yet. Add one to enable style overrides.</p>
+      )}
+      <ConfirmDialog
+        open={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={() => {
+          if (confirmDelete?.type === 'character') deleteChar();
+          else if (confirmDelete?.type === 'primary') removePrimaryImage(confirmDelete.index);
+          else if (confirmDelete?.type === 'reference') deleteRef(confirmDelete.id);
+        }}
+        title={
+          confirmDelete?.type === 'character' ? `Delete "${char.name}"?`
+            : confirmDelete?.type === 'primary' ? 'Remove primary image?'
+              : `Remove ${confirmDelete?.label || ''} reference?`
+        }
+        message={
+          confirmDelete?.type === 'character'
+            ? 'This will permanently delete the character and all its references. This cannot be undone.'
+            : confirmDelete?.type === 'primary'
+              ? 'This will remove this primary reference image from the character.'
+              : 'This will remove the reference image from this character.'
+        }
+        confirmLabel={confirmDelete?.type === 'character' ? 'Delete Character' : 'Remove'}
+      />
+    </Card>
+  );
+}
+
+function CreateCharacterModal({ open, onClose, onCreated }) {
+  const { notify } = useApp();
+  const { loading, run } = useAsync();
+  const [name, setName] = useState('');
+  const [masterPrompt, setMasterPrompt] = useState('');
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+
+  const handleFile = (e) => {
+    const f = e.target.files?.[0];
+    if (f) {
+      if (preview) URL.revokeObjectURL(preview);
+      setFile(f);
+      setPreview(URL.createObjectURL(f));
+    }
+  };
+
+  const handleCreate = () => run(async () => {
+    if (!name.trim()) { notify('Character name is required', 'error'); return; }
+    if (!masterPrompt.trim()) { notify('Master prompt is required — describe face, body, and defining traits', 'error'); return; }
+    if (!file) { notify('Primary image is required — upload a clear reference photo', 'error'); return; }
+    const dataUri = await fileToBase64(file);
+    await charApi.create({ name: name.trim(), masterPrompt: masterPrompt.trim(), image: dataUri });
+    notify('Character created', 'success');
+    if (preview) URL.revokeObjectURL(preview);
+    setName(''); setMasterPrompt(''); setFile(null); setPreview(null);
+    onCreated();
+  });
+
+  return (
+    <Modal open={open} onClose={onClose} title="New Character">
+      <div className="space-y-4">
+        <Input label="Character Name" required placeholder="e.g. Aria the Warrior" value={name} onChange={(e) => setName(e.target.value)} />
+        <Textarea label="Master Prompt (Identity Lock)" required placeholder="Describe face, body, skin, defining traits..." value={masterPrompt} onChange={(e) => setMasterPrompt(e.target.value)} className="!min-h-[100px]" />
+        <div>
+          <span className="text-sm text-zinc-400 font-medium block mb-1.5">Primary Image<span className="text-red-400 ml-0.5">*</span></span>
+          <label className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-4 cursor-pointer transition h-32 ${preview ? 'border-blue-500/40 bg-blue-500/5' : 'border-zinc-700/80 hover:border-blue-500/30 bg-zinc-900/30'}`}>
+            {preview ? <img src={preview} alt="" className="max-h-full rounded" /> : (
+              <div className="text-center">
+                <div className="flex justify-center mb-1 [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]"><IconCamera uniqueId="char-primary-img" size={28} aria-hidden /></div>
+                <span className="text-zinc-400 text-sm">Click to upload a clear reference photo</span>
+              </div>
+            )}
+            <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile} />
+          </label>
+        </div>
+        <Btn onClick={handleCreate} disabled={loading || !name.trim() || !masterPrompt.trim() || !file} className="w-full">
+          {loading ? <Spinner size={16} /> : null} Create Character
+        </Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function AddReferenceModal({ open, onClose, characterId, onAdded }) {
+  const { notify } = useApp();
+  const { loading, run } = useAsync();
+  const [category, setCategory] = useState('Clothing');
+  const [overridePrompt, setOverridePrompt] = useState('');
+  const [file, setFile] = useState(null);
+
+  const handleAdd = () => run(async () => {
+    if (!file || !overridePrompt.trim()) { notify('Image and override prompt required', 'error'); return; }
+    const dataUri = await fileToBase64(file);
+    await charApi.addReference(characterId, { image: dataUri, mimeType: file.type, name: file.name, category, overridePrompt: overridePrompt.trim() });
+    notify('Reference added', 'success');
+    setOverridePrompt(''); setFile(null);
+    onAdded();
+  });
+
+  return (
+    <Modal open={open} onClose={onClose} title="Add Reference">
+      <div className="space-y-4">
+        <div>
+          <span className="text-sm text-zinc-400 font-medium block mb-1.5">Category</span>
+          <div className="flex flex-wrap gap-2">
+            {CATEGORIES.map((c) => (
+              <button key={c} onClick={() => setCategory(c)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition cursor-pointer ${category === c ? 'bg-blue-600 text-white' : 'bg-zinc-700/60 text-zinc-300 hover:bg-zinc-700'}`}>
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+        <Textarea label="Override Prompt" required placeholder="Describe this style override..." value={overridePrompt} onChange={(e) => setOverridePrompt(e.target.value)} />
+        <div>
+          <span className="text-sm text-zinc-400 font-medium block mb-1.5">Reference Image<span className="text-red-400 ml-0.5">*</span></span>
+        </div>
+        <label className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-4 cursor-pointer transition h-24 ${file ? 'border-blue-500/40 bg-blue-500/5' : 'border-zinc-700/80 hover:border-blue-500/30 bg-zinc-900/30'}`}>
+          {file ? (
+            <span className="text-blue-300 text-sm truncate max-w-full px-2">{file.name}</span>
+          ) : (
+            <div className="text-center">
+              <div className="flex justify-center mb-0.5 [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]"><IconImage uniqueId="char-ref-img" size={20} aria-hidden /></div>
+              <span className="text-zinc-400 text-sm">Click to upload reference image</span>
+            </div>
+          )}
+          <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => setFile(e.target.files?.[0])} />
+        </label>
+        <Btn onClick={handleAdd} disabled={loading || !file || !overridePrompt.trim()} className="w-full">
+          {loading ? <Spinner size={16} /> : null} Add Reference
+        </Btn>
+      </div>
+    </Modal>
+  );
+}
+
+const OUTFIT_FIELDS = [
+  { key: 'top', label: 'Top', placeholder: 'e.g. White cropped tank top' },
+  { key: 'bottom', label: 'Bottom', placeholder: 'e.g. High-waisted black jeans' },
+  { key: 'footwear', label: 'Footwear', placeholder: 'e.g. White sneakers' },
+  { key: 'accessories', label: 'Accessories', placeholder: 'e.g. Gold hoop earrings, thin chain necklace' },
+];
+
+const TAG_PRESETS = ['Casual', 'Formal', 'Sporty', 'Streetwear', 'Beach', 'Evening', 'Cozy', 'Bold'];
+
+function Wardrobe({ characterId, characterName }) {
+  const { notify, refreshOutfits } = useApp();
+  const { loading, run } = useAsync();
+  const [outfits, setOutfits] = useState([]);
+  const [editingOutfit, setEditingOutfit] = useState(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const load = () => {
+    outfitApi.list(characterId).then(setOutfits).catch(() => setOutfits([]));
+  };
+
+  useEffect(() => { load(); }, [characterId]);
+
+  const handleDelete = (id) => run(async () => {
+    await outfitApi.remove(id);
+    notify('Outfit deleted', 'success');
+    setConfirmDelete(null);
+    load();
+    refreshOutfits();
+  });
+
+  const charOutfits = outfits.filter((o) => o.characterId === characterId);
+  const sharedOutfits = outfits.filter((o) => !o.characterId);
+
+  return (
+    <Card className="animate-in space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-base font-semibold text-zinc-200">Wardrobe</h3>
+          <p className="text-xs text-zinc-500 mt-0.5">{charOutfits.length} outfit{charOutfits.length !== 1 ? 's' : ''} for {characterName}{sharedOutfits.length > 0 ? ` + ${sharedOutfits.length} shared` : ''}</p>
+        </div>
+        <Btn variant="secondary" className="!text-xs !py-1.5" onClick={() => setShowCreate(true)}>+ Outfit</Btn>
+      </div>
+
+      {outfits.length === 0 ? (
+        <p className="text-sm text-zinc-500 py-4 text-center">No outfits yet. Create one to use in generation.</p>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {outfits.map((outfit) => (
+            <OutfitCard key={outfit.id} outfit={outfit} isShared={!outfit.characterId}
+              onEdit={() => setEditingOutfit(outfit)}
+              onDelete={() => setConfirmDelete(outfit)} />
+          ))}
+        </div>
+      )}
+
+      <OutfitModal
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        characterId={characterId}
+        onSaved={() => { setShowCreate(false); load(); refreshOutfits(); }}
+      />
+      <OutfitModal
+        open={!!editingOutfit}
+        onClose={() => setEditingOutfit(null)}
+        outfit={editingOutfit}
+        characterId={characterId}
+        onSaved={() => { setEditingOutfit(null); load(); refreshOutfits(); }}
+      />
+      <ConfirmDialog
+        open={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={() => confirmDelete && handleDelete(confirmDelete.id)}
+        title={`Delete "${confirmDelete?.name}"?`}
+        message="This outfit will be permanently removed. This cannot be undone."
+        confirmLabel="Delete Outfit"
+      />
+    </Card>
+  );
+}
+
+function OutfitCard({ outfit, isShared, onEdit, onDelete }) {
+  const summary = [outfit.top, outfit.bottom, outfit.footwear].filter(Boolean).join(' / ');
+
+  return (
+    <div className="rounded-lg border border-zinc-700/40 bg-zinc-900/30 p-3 space-y-2 hover:border-zinc-600 transition group">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-zinc-200 truncate">{outfit.name}</span>
+            {isShared && <Badge color="zinc">Shared</Badge>}
+          </div>
+          <p className="text-xs text-zinc-500 mt-0.5 line-clamp-1">{summary}</p>
+        </div>
+        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition shrink-0">
+          <button onClick={onEdit} className="text-xs text-zinc-500 hover:text-blue-400 cursor-pointer transition px-1">Edit</button>
+          <button onClick={onDelete} className="text-xs text-zinc-500 hover:text-red-400 cursor-pointer transition px-1">Del</button>
+        </div>
+      </div>
+
+      {outfit.accessories && (
+        <p className="text-[11px] text-zinc-500"><span className="text-zinc-600">Acc:</span> {outfit.accessories}</p>
+      )}
+
+      {(outfit.hairstyleOverride || outfit.makeupOverride) && (
+        <div className="flex gap-2 flex-wrap">
+          {outfit.hairstyleOverride && <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">Hair: {outfit.hairstyleOverride}</span>}
+          {outfit.makeupOverride && <span className="text-[10px] px-1.5 py-0.5 rounded bg-pink-500/10 text-pink-400 border border-pink-500/20">Makeup: {outfit.makeupOverride}</span>}
+        </div>
+      )}
+
+      {outfit.tags?.length > 0 && (
+        <div className="flex gap-1 flex-wrap">
+          {outfit.tags.map((tag) => (
+            <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700/50">{tag}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OutfitModal({ open, onClose, outfit, characterId, onSaved }) {
+  const { notify } = useApp();
+  const { loading, run } = useAsync();
+  const isEdit = !!outfit;
+
+  const [name, setName] = useState('');
+  const [top, setTop] = useState('');
+  const [bottom, setBottom] = useState('');
+  const [footwear, setFootwear] = useState('');
+  const [accessories, setAccessories] = useState('');
+  const [hairstyleOverride, setHairstyleOverride] = useState('');
+  const [makeupOverride, setMakeupOverride] = useState('');
+  const [tags, setTags] = useState([]);
+  const [assignToChar, setAssignToChar] = useState(true);
+
+  useEffect(() => {
+    if (open) {
+      setName(outfit?.name || '');
+      setTop(outfit?.top || '');
+      setBottom(outfit?.bottom || '');
+      setFootwear(outfit?.footwear || '');
+      setAccessories(outfit?.accessories || '');
+      setHairstyleOverride(outfit?.hairstyleOverride || '');
+      setMakeupOverride(outfit?.makeupOverride || '');
+      setTags(outfit?.tags || []);
+      setAssignToChar(outfit ? !!outfit.characterId : true);
+    }
+  }, [open, outfit]);
+
+  const toggleTag = (tag) => {
+    setTags((prev) => prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]);
+  };
+
+  const handleSave = () => run(async () => {
+    if (!name.trim() || !top.trim() || !bottom.trim() || !accessories.trim() || !footwear.trim()) {
+      notify('Name, top, bottom, accessories, and footwear are required', 'error');
+      return;
+    }
+    const payload = {
+      name: name.trim(),
+      top: top.trim(),
+      bottom: bottom.trim(),
+      footwear: footwear.trim(),
+      accessories: accessories.trim(),
+      hairstyleOverride: hairstyleOverride.trim() || undefined,
+      makeupOverride: makeupOverride.trim() || undefined,
+      tags,
+      characterId: assignToChar ? characterId : null,
+    };
+
+    if (isEdit) {
+      await outfitApi.update(outfit.id, payload);
+      notify('Outfit updated', 'success');
+    } else {
+      await outfitApi.create(payload);
+      notify('Outfit created', 'success');
+    }
+    onSaved();
+  });
+
+  const canSave = name.trim() && top.trim() && bottom.trim() && accessories.trim() && footwear.trim();
+
+  return (
+    <Modal open={open} onClose={onClose} title={isEdit ? 'Edit Outfit' : 'New Outfit'}>
+      <div className="space-y-4">
+        <Input label="Outfit Name" required placeholder="e.g. Casual Summer" value={name} onChange={(e) => setName(e.target.value)} />
+
+        {OUTFIT_FIELDS.map((f) => {
+          const setters = { top: setTop, bottom: setBottom, footwear: setFootwear, accessories: setAccessories };
+          const values = { top, bottom, footwear, accessories };
+          return (
+            <Input key={f.key} label={f.label} required placeholder={f.placeholder}
+              value={values[f.key]} onChange={(e) => setters[f.key](e.target.value)} />
+          );
+        })}
+
+        <Input label="Hairstyle Override" placeholder="Leave empty to keep character default"
+          value={hairstyleOverride} onChange={(e) => setHairstyleOverride(e.target.value)} />
+
+        <Input label="Makeup Override" placeholder="Leave empty to keep character default"
+          value={makeupOverride} onChange={(e) => setMakeupOverride(e.target.value)} />
+
+        <div>
+          <span className="text-sm text-zinc-400 font-medium block mb-1.5">Tags</span>
+          <div className="flex flex-wrap gap-2">
+            {TAG_PRESETS.map((tag) => (
+              <button key={tag} type="button" onClick={() => toggleTag(tag)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition cursor-pointer ${tags.includes(tag) ? 'bg-blue-600 text-white' : 'bg-zinc-700/60 text-zinc-300 hover:bg-zinc-700'}`}>
+                {tag}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <label className="flex items-center gap-2.5 cursor-pointer select-none text-sm">
+          <input type="checkbox" checked={assignToChar} onChange={(e) => setAssignToChar(e.target.checked)}
+            className="rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-blue-500/30" />
+          <span className="text-zinc-400">Assign to this character</span>
+        </label>
+
+        <Btn onClick={handleSave} disabled={loading || !canSave} className="w-full">
+          {loading ? <Spinner size={16} /> : null} {isEdit ? 'Save Changes' : 'Create Outfit'}
+        </Btn>
+      </div>
+    </Modal>
+  );
+}
