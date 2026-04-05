@@ -240,7 +240,6 @@ export default function ApiKeysPage() {
   const [confirmAction, setConfirmAction] = useState(null);
   const [spend, setSpend] = useState(null);
   const [showGeminiGuide, setShowGeminiGuide] = useState(false);
-  const [showGeminiAddForm, setShowGeminiAddForm] = useState(false);
   const { loading, run } = useAsync();
   const { loading: loadingList, run: runList } = useAsync();
   const { loading: loadingHealth, run: runHealth } = useAsync();
@@ -280,8 +279,9 @@ export default function ApiKeysPage() {
   const hasActiveGeminiKey = keyList.some((k) => k.isActive);
 
   const handleAdd = () => run(async () => {
-    if (!name.trim() || !apiKey.trim()) { notify('Name and key are required', 'error'); return; }
-    await keysApi.add(name.trim(), apiKey.trim());
+    if (!apiKey.trim()) { notify('Please paste your Gemini API key', 'error'); return; }
+    const autoName = keyList.length === 0 ? 'Gemini Key' : `Gemini Key ${keyList.length + 1}`;
+    await keysApi.add(autoName, apiKey.trim());
     setName(''); setApiKey('');
     setShowGeminiAddForm(false);
     notify('Key added', 'success');
@@ -383,23 +383,11 @@ export default function ApiKeysPage() {
   };
 
   const geminiKeyForm = (
-    <div className="rounded-2xl border border-zinc-700/50 bg-zinc-950/50 p-4 space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-zinc-100">Paste your Gemini key here</p>
-          <p className="text-xs text-zinc-400 mt-1">Name it, paste it, save it.</p>
-        </div>
-        <Badge color="blue">Main Key</Badge>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Input label="Key Name" placeholder="e.g. Main Gemini" value={name} onChange={(e) => setName(e.target.value)} />
-        <Input label="Gemini API Key" placeholder="AIza..." type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <Btn onClick={handleAdd} disabled={loading || !name.trim() || !apiKey.trim()}>
-          {loading ? <Spinner size={16} /> : null} Add Key
-        </Btn>
-      </div>
+    <div className="rounded-xl border border-zinc-700/50 bg-zinc-950/50 p-4 space-y-3">
+      <Input label={hasGeminiKeys ? 'Paste a new key to replace the current one' : 'Paste your Gemini API key'} placeholder="AIza..." type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+      <Btn onClick={handleAdd} disabled={loading || !apiKey.trim()}>
+        {loading ? <Spinner size={16} /> : null} {hasGeminiKeys ? 'Add Key' : 'Save Key'}
+      </Btn>
     </div>
   );
 
@@ -411,298 +399,187 @@ export default function ApiKeysPage() {
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_380px]">
         <div className="space-y-6">
           {/* ── 1. Gemini ── */}
-          <Card className="space-y-5">
-            {!hasGeminiKeys ? (
-              <div className="space-y-4">
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div className="flex items-start gap-3">
-                    <span className="text-2xl leading-none mt-0.5">🧠</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold text-zinc-100 text-sm">Gemini API Key</span>
-                        <Badge color="red">Not set</Badge>
-                        <Badge color="blue">Tier 1 Required</Badge>
-                      </div>
-                      <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
-                        Unlocks image generation. Use a billing-enabled Gemini key.
-                      </p>
+          <Card className="space-y-4">
+            <div className="space-y-4">
+                {/* Header */}
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl leading-none mt-0.5">🧠</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-zinc-100 text-sm">Gemini API Key</span>
+                      <Badge color={hasGeminiKeys ? 'green' : 'red'}>{hasGeminiKeys ? 'Connected' : 'Not set'}</Badge>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700/50">Tier 1 Required</span>
                     </div>
+                    <p className="text-xs text-zinc-500 mt-1">Required for image generation. Must be Tier 1 (billing-enabled) — use the $300 Google Cloud free credit so you pay nothing until it runs out.</p>
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-amber-700/50 bg-amber-950/20 px-4 py-3 text-xs text-amber-300 leading-relaxed">
-                  Image generation needs billing enabled. Google&apos;s $300 free credit works.
+                {/* Warning */}
+                <div className="rounded-lg border border-amber-800/40 bg-amber-950/20 px-3 py-2.5 flex gap-2.5">
+                  <span className="text-amber-500 shrink-0 text-sm">⚠</span>
+                  <p className="text-xs text-amber-300/90 leading-relaxed">The free Gemini tier blocks image generation. You need a billing-enabled key — use the free $300 credit so it costs nothing.</p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <a
-                    href="https://aistudio.google.com/app/apikey"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 rounded-full border border-zinc-700/50 bg-zinc-900/50 px-3 py-1.5 text-[11px] text-blue-300 hover:bg-zinc-800/60 transition-colors"
-                  >
-                    aistudio.google.com/app/apikey ↗
-                  </a>
-                  <a
-                    href="https://cloud.google.com/free"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 rounded-full border border-zinc-700/50 bg-zinc-900/50 px-3 py-1.5 text-[11px] text-blue-300 hover:bg-zinc-800/60 transition-colors"
-                  >
-                    cloud.google.com/free ↗
-                  </a>
-                </div>
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+                  <div className="space-y-3">
+                    {/* Links */}
+                    <div className="flex flex-wrap gap-2">
+                      <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 rounded-full border border-zinc-700/50 bg-zinc-900/60 px-3 py-1.5 text-[11px] text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/60 transition-colors">
+                        AI Studio — get key ↗
+                      </a>
+                      <a href="https://cloud.google.com/free" target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 rounded-full border border-zinc-700/50 bg-zinc-900/60 px-3 py-1.5 text-[11px] text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/60 transition-colors">
+                        Google Cloud $300 credit ↗
+                      </a>
+                    </div>
 
-                <button
-                  type="button"
-                  onClick={() => setShowGeminiGuide((prev) => !prev)}
-                  className="flex w-full items-center justify-between rounded-xl border border-zinc-700/50 bg-zinc-900/40 px-4 py-3 text-left transition hover:border-zinc-600/60 hover:bg-zinc-900/60"
-                >
-                  <span className="text-sm font-medium text-zinc-100">Need a Tier 1 key?</span>
-                  <span className={`inline-block text-zinc-400 transition-transform duration-200 ${showGeminiGuide ? 'rotate-90' : ''}`}>▸</span>
-                </button>
+                    {/* Setup guide toggle */}
+                    <button type="button" onClick={() => setShowGeminiGuide(v => !v)}
+                      className="flex w-full items-center justify-between rounded-lg border border-zinc-700/50 bg-zinc-900/40 px-3 py-2.5 text-left hover:bg-zinc-900/60 transition-colors">
+                      <span className="text-xs font-medium text-zinc-300">How to get a Tier 1 key (step by step)</span>
+                      <span className="text-zinc-500 text-xs">{showGeminiGuide ? '▲' : '▼'}</span>
+                    </button>
 
-                <div className={`grid transition-all duration-300 ease-out ${showGeminiGuide ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
-                  <div className="overflow-hidden">
-                    <div className="pt-3 space-y-5">
-                      <div className="rounded-xl overflow-hidden border border-zinc-700/50">
-                        <div className="grid grid-cols-3 bg-zinc-900/80 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                          <span>Feature</span>
-                          <span className="text-center">Free Tier</span>
-                          <span className="text-center text-blue-400">Tier 1</span>
-                        </div>
+                    {showGeminiGuide && (
+                      <div className="space-y-1.5 rounded-lg border border-zinc-700/40 bg-zinc-950/40 p-3">
                         {[
-                          { feature: 'Text / chat', free: '✓', tier1: '✓', tier1Color: 'text-zinc-300' },
-                          { feature: 'Image generation', free: '✗', tier1: '✓', freeColor: 'text-red-400', tier1Color: 'text-emerald-400' },
-                          { feature: 'Rate limits', free: 'Low', tier1: 'High', freeColor: 'text-zinc-400', tier1Color: 'text-emerald-400' },
-                          { feature: 'Billing required', free: 'No', tier1: 'Yes', freeColor: 'text-zinc-300', tier1Color: 'text-blue-400' },
-                        ].map((row, i) => (
-                          <div key={row.feature} className={`grid grid-cols-3 px-3 py-2.5 text-xs border-t border-zinc-700/40 ${i % 2 === 0 ? 'bg-zinc-950/30' : ''}`}>
-                            <span className="text-zinc-400">{row.feature}</span>
-                            <span className={`text-center font-medium ${row.freeColor || 'text-zinc-300'}`}>{row.free}</span>
-                            <span className={`text-center font-semibold ${row.tier1Color}`}>{row.tier1}</span>
+                          { stage: 'Stage 1 — Get free credit', steps: ['Go to cloud.google.com, sign in, click "Get started for free".', 'Enter a card for identity — you won\'t be charged.', 'Google adds $300 credit valid for 90 days.'] },
+                          { stage: 'Stage 2 — Create Tier 1 key', steps: ['Open aistudio.google.com with the same Google account.', 'Click "Get API key" → create key in a project with billing enabled.', 'That key is now Tier 1 and unlocks image generation.'] },
+                          { stage: 'Stage 3 — Add to Kyros', steps: ['Copy the API key from AI Studio.', 'Paste it into the field below and click Save Key.'] },
+                        ].map((section) => (
+                          <div key={section.stage}>
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 px-1 pt-2 pb-1">{section.stage}</p>
+                            {section.steps.map((text, i) => (
+                              <div key={i} className="rounded border-l-2 border-zinc-600/50 bg-zinc-900/50 px-3 py-2 mb-1">
+                                <span className="text-[10px] text-zinc-600 mr-1.5">Step {i + 1}</span>
+                                <span className="text-xs text-zinc-300">{text}</span>
+                              </div>
+                            ))}
                           </div>
                         ))}
                       </div>
+                    )}
 
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white shrink-0">1</span>
-                          <p className="text-xs font-semibold text-blue-300">Claim the Google Cloud credit</p>
-                        </div>
-                        <div className="space-y-1.5 pl-7">
-                          {[
-                            'Go to cloud.google.com and sign in with your Google account.',
-                            'Click "Get started for free" and enter a card — identity check only, not charged.',
-                            'Google adds $300 credit valid for 90 days.',
-                          ].map((text, i) => (
-                            <div key={i} className="rounded-lg border-l-2 border-blue-600/60 bg-zinc-900/50 px-3 py-2">
-                              <span className="text-[10px] font-semibold text-blue-500 mr-1.5">Step {i + 1}</span>
-                              <span className="text-xs text-zinc-300">{text}</span>
-                            </div>
-                          ))}
-                        </div>
+                    {/* Success state */}
+                    {hasGeminiKeys && (
+                      <div className="rounded-lg border border-emerald-800/40 bg-emerald-950/20 px-3 py-2.5 flex gap-2.5">
+                        <span className="text-emerald-400 shrink-0">✓</span>
+                        <p className="text-xs text-emerald-300 leading-relaxed">Key saved. Image generation is unlocked — head to <strong>Generate</strong> to start creating.</p>
                       </div>
+                    )}
 
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-teal-600 text-[10px] font-bold text-white shrink-0">2</span>
-                          <p className="text-xs font-semibold text-teal-300">Create the right Gemini key</p>
-                        </div>
-                        <div className="space-y-1.5 pl-7">
-                          {[
-                            'Open AI Studio with the same Google account.',
-                            'Create the API key in a Google Cloud project with billing enabled.',
-                            'That key becomes Tier 1 and can generate images.',
-                          ].map((text, i) => (
-                            <div key={i} className="rounded-lg border-l-2 border-teal-600/60 bg-zinc-900/50 px-3 py-2">
-                              <span className="text-[10px] font-semibold text-teal-500 mr-1.5">Step {i + 4}</span>
-                              <span className="text-xs text-zinc-300">{text}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
+                    {/* Input form — always visible so they can paste a replacement */}
+                    {geminiKeyForm}
+                  </div>
 
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-purple-600 text-[10px] font-bold text-white shrink-0">3</span>
-                          <p className="text-xs font-semibold text-purple-300">Add it to Kyros</p>
-                        </div>
-                        <div className="space-y-1.5 pl-7">
-                          {[
-                            'Copy the API key from AI Studio.',
-                            'Paste it into the fields below.',
-                            'Click Add Key to enable image generation.',
-                          ].map((text, i) => (
-                            <div key={i} className="rounded-lg border-l-2 border-purple-600/60 bg-zinc-900/50 px-3 py-2">
-                              <span className="text-[10px] font-semibold text-purple-500 mr-1.5">Step {i + 7}</span>
-                              <span className="text-xs text-zinc-300">{text}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
+                  {/* Saved keys */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Saved Keys</h3>
+                      <span className="text-[11px] text-zinc-600">{keyList.length} total</span>
                     </div>
-                  </div>
-                </div>
-
-                {geminiKeyForm}
-              </div>
-            ) : (
-              <div className="grid gap-6 lg:grid-cols-[minmax(0,0.95fr)_minmax(320px,1.05fr)]">
-                <div className="space-y-4">
-                  <div className="flex items-start justify-between gap-4 flex-wrap">
-                    <div className="flex items-start gap-3">
-                      <span className="text-2xl leading-none mt-0.5">🧠</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-semibold text-zinc-100 text-sm">Gemini API Key</span>
-                          <Badge color="green">Connected</Badge>
-                          <Badge color="blue">Tier 1</Badge>
-                        </div>
-                        <p className="text-xs text-zinc-400 mt-1">Image generation enabled.</p>
+                    {loadingList ? (
+                      <div className="flex justify-center py-6"><Spinner /></div>
+                    ) : keyList.length === 0 ? (
+                      <div className="rounded-lg border border-zinc-800/50 bg-zinc-900/20 px-3 py-4 text-center">
+                        <p className="text-xs text-zinc-600">No keys yet — paste yours below</p>
                       </div>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowGeminiAddForm((prev) => !prev)}
-                    className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                  >
-                    Add another key
-                    <span className={`inline-block transition-transform duration-200 ${showGeminiAddForm ? 'rotate-90' : ''}`}>▸</span>
-                  </button>
-
-                  <div className={`grid transition-all duration-300 ease-out ${showGeminiAddForm ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
-                    <div className="overflow-hidden">
-                      <div className="pt-2">
-                        {geminiKeyForm}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Saved Keys</h3>
-                    <span className="text-[11px] text-zinc-500">{keyList.length} total</span>
-                  </div>
-                  {loadingList ? (
-                    <div className="flex justify-center py-8"><Spinner /></div>
-                  ) : (
-                    <div className="space-y-2">
-                      {keyList.map((k) => (
-                        <div key={k.id} className={`rounded-xl border px-3 py-3 transition ${k.isActive ? 'border-blue-500/50 bg-blue-500/5' : 'border-zinc-700/50 bg-zinc-900/40'}`}>
-                          <div className="flex items-center gap-3">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-medium text-sm text-zinc-200">{k.name}</span>
-                                {k.isActive && <Badge color="green">Active</Badge>}
+                    ) : (
+                      <div className="space-y-2">
+                        {keyList.map((k) => (
+                          <div key={k.id} className={`rounded-xl border px-3 py-3 transition ${k.isActive ? 'border-zinc-600/60 bg-zinc-800/30' : 'border-zinc-700/40 bg-zinc-900/30'}`}>
+                            <div className="flex items-center gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="font-medium text-sm text-zinc-200">{k.name}</span>
+                                  {k.isActive && <Badge color="green">Active</Badge>}
+                                </div>
+                                <div className="text-[11px] font-mono text-zinc-600 mt-0.5">{k.maskedKey}</div>
                               </div>
-                              <div className="text-[11px] font-mono text-zinc-500 mt-0.5">{k.maskedKey}</div>
+                              <div className="flex gap-1.5">
+                                {!k.isActive && (
+                                  <Btn variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={() => handleActivate(k.id)} disabled={loading}>Use</Btn>
+                                )}
+                                <Btn variant="danger" className="!py-1 !px-2.5 !text-xs" onClick={() => setConfirmAction({ title: 'Delete this key?', message: 'The key will be removed. If it was your only active key, image generation will stop working until you add a new one.', onConfirm: () => handleDelete(k.id) })} disabled={loading}>Delete</Btn>
+                              </div>
                             </div>
-                            <div className="flex gap-1.5">
-                              {!k.isActive && (
-                                <Btn variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={() => handleActivate(k.id)} disabled={loading}>Use</Btn>
-                              )}
-                              <Btn variant="danger" className="!py-1 !px-2.5 !text-xs" onClick={() => setConfirmAction({ title: `Delete "${k.name}"?`, message: 'This will permanently remove this API key.', onConfirm: () => handleDelete(k.id) })} disabled={loading}>✕</Btn>
+                            <div className="mt-2 pt-1.5 border-t border-zinc-700/40 flex items-center gap-3 text-[11px]">
+                              <span className={`font-mono font-semibold ${(k.totalSpendUsd || 0) >= (k.spendBudgetUsd || 300) ? 'text-red-400' : 'text-zinc-400'}`}>
+                                ${(k.totalSpendUsd || 0).toFixed(2)} / ${(k.spendBudgetUsd || 300).toFixed(0)}
+                              </span>
+                              <SpendBar spent={k.totalSpendUsd || 0} budget={k.spendBudgetUsd || 300} className="flex-1" />
+                              <span className="text-zinc-600">{k.imageCallCount || 0} imgs</span>
                             </div>
                           </div>
-                          <div className="mt-2 pt-1.5 border-t border-zinc-700/40 flex items-center gap-3 text-[11px]">
-                            <span className={`font-mono font-semibold ${(k.totalSpendUsd || 0) >= (k.spendBudgetUsd || 300) ? 'text-red-400' : 'text-zinc-300'}`}>
-                              ${(k.totalSpendUsd || 0).toFixed(2)} / ${(k.spendBudgetUsd || 300).toFixed(0)}
-                            </span>
-                            <SpendBar spent={k.totalSpendUsd || 0} budget={k.spendBudgetUsd || 300} className="flex-1" />
-                            <span className="text-zinc-500">{k.imageCallCount || 0} imgs</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+            </div>
           </Card>
 
           {/* ── 2. Apify ── */}
-          <Card className="space-y-5">
-            <div className="flex items-start justify-between gap-4">
-              <KeyHeader infoKey="apify" isConnected={apifyInfo?.hasApifyKey} />
-              <div className="shrink-0 hidden sm:flex items-center gap-2">
-                <Btn variant="secondary" className="!py-1.5 !px-3 !text-xs" onClick={() => handleCopyLink(QUICK_START_LINKS.apify, 'Apify')}>
-                  Copy Apify Link
-                </Btn>
-                <Badge color="blue">Recommended</Badge>
+          <Card className="space-y-4">
+            <div className="flex items-start gap-3">
+              <span className="text-2xl leading-none mt-0.5">📸</span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-zinc-100 text-sm">Apify Key</span>
+                  <Badge color={apifyInfo?.hasApifyKey ? 'green' : 'zinc'}>{apifyInfo?.hasApifyKey ? 'Connected' : 'Not set'}</Badge>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700/50">Optional</span>
+                </div>
+                <p className="text-xs text-zinc-500 mt-1">Only needed for Post Clone, Profile Analyzer, and Reel Copy — tools that scrape Instagram. If you just want to generate images, skip this.</p>
               </div>
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.8fr)]">
-              <div className="space-y-4">
-                <div className="grid gap-2 sm:grid-cols-3">
-                  {[
-                    'Open Apify Console.',
-                    'Copy your API key from Integrations.',
-                    'Paste it into the field below.',
-                  ].map((step, index) => (
-                    <div key={step} className="rounded-xl border border-zinc-700/40 bg-zinc-950/50 px-3 py-2.5">
-                      <div className="text-[10px] font-semibold uppercase tracking-wider text-blue-400">Step {index + 1}</div>
-                      <div className="mt-1 text-xs text-zinc-300 leading-relaxed">{step}</div>
-                    </div>
-                  ))}
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  <a href="https://console.apify.com/account/integrations" target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 rounded-full border border-zinc-700/50 bg-zinc-900/60 px-3 py-1.5 text-[11px] text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/60 transition-colors">
+                    Apify Console — get key ↗
+                  </a>
                 </div>
-
-                <div className="rounded-2xl border border-zinc-700/50 bg-zinc-950/50 p-4 space-y-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-zinc-100">Paste your Apify key here</p>
-                      <p className="text-xs text-zinc-400 mt-1">Paste it once to unlock clone tools.</p>
-                    </div>
-                    <Badge color="zinc">Optional</Badge>
-                  </div>
-                  <Input label="Apify API Key" placeholder="apify_api_..." type="password" value={apifyKey} onChange={(e) => setApifyKey(e.target.value)} />
+                <p className="text-[11px] text-zinc-600 leading-relaxed">Go to Apify Console → Account → Integrations → copy your API token. Free plan includes ~$5 of credits per month which is plenty for most users.</p>
+                <div className="rounded-xl border border-zinc-700/50 bg-zinc-950/50 p-4 space-y-3">
+                  <Input label="Paste your Apify API key" placeholder="apify_api_..." type="password" value={apifyKey} onChange={(e) => setApifyKey(e.target.value)} />
                   <div className="flex flex-wrap items-center gap-2">
                     <Btn onClick={handleSaveApify} disabled={loading || !apifyKey.trim()}>
-                      {loading ? <Spinner size={16} /> : null} Save Apify Key
+                      {loading ? <Spinner size={16} /> : null} Save Key
                     </Btn>
-                    <Btn variant="secondary" onClick={() => setConfirmAction({ title: 'Remove Apify key?', message: 'Profile Analyzer and Post Clone will stop working.', onConfirm: handleClearApify, label: 'Remove' })} disabled={loading || !apifyInfo?.hasApifyKey}>
-                      Clear
-                    </Btn>
-                    <a
-                      href={QUICK_START_LINKS.apify}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-blue-400 hover:text-blue-300 underline underline-offset-2"
-                    >
-                      Open Apify Console ↗
-                    </a>
+                    {apifyInfo?.hasApifyKey && (
+                      <Btn variant="secondary" onClick={() => setConfirmAction({ title: 'Remove Apify key?', message: 'Post Clone, Profile Analyzer and Reel Copy will stop working.', onConfirm: handleClearApify, label: 'Remove' })} disabled={loading}>
+                        Remove
+                      </Btn>
+                    )}
                   </div>
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-zinc-700/50 bg-zinc-950/50 p-4 space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-zinc-100">Current Apify Status</p>
-                  <Badge color={apifyInfo?.hasApifyKey ? 'green' : 'zinc'}>
-                    {apifyInfo?.hasApifyKey ? 'Saved' : 'Missing'}
-                  </Badge>
+              <div className="rounded-xl border border-zinc-700/40 bg-zinc-900/30 p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-zinc-300">Status</p>
+                  <Badge color={apifyInfo?.hasApifyKey ? 'green' : 'zinc'}>{apifyInfo?.hasApifyKey ? 'Saved' : 'Not set'}</Badge>
                 </div>
-                <p className="text-xs text-zinc-400 leading-relaxed">
-                  Kyros uses this key for Post Clone, Reel Copy, and profile-based scraping tools.
-                </p>
                 {apifyInfo?.hasApifyKey ? (
-                  <div className="rounded-xl border border-emerald-800/30 bg-emerald-950/10 px-3 py-3 space-y-1">
-                    <p className="text-xs font-medium text-emerald-300">Stored key</p>
-                    <p className="text-[11px] font-mono text-zinc-300">{apifyInfo.maskedKey}</p>
-                  </div>
+                  <>
+                    <div className="rounded-lg border border-zinc-700/40 bg-zinc-950/50 px-3 py-2.5">
+                      <p className="text-[10px] text-zinc-500 mb-1">Stored key</p>
+                      <p className="text-[11px] font-mono text-zinc-300">{apifyInfo.maskedKey}</p>
+                    </div>
+                    <p className="text-[11px] text-zinc-500 leading-relaxed">Post Clone, Profile Analyzer, and Reel Copy are unlocked and ready to use.</p>
+                  </>
                 ) : (
-                  <div className="rounded-xl border border-zinc-700/40 bg-zinc-900/40 px-3 py-3 text-xs text-zinc-500">
-                    No Apify key saved yet.
-                  </div>
+                  <>
+                    <p className="text-[11px] text-zinc-600 leading-relaxed">Without this key, scrape-based tools will show an error. Everything else in the app works fine without it.</p>
+                    <div className="rounded-lg border border-zinc-800/50 bg-zinc-950/30 px-3 py-2.5 space-y-1">
+                      <p className="text-[10px] font-semibold text-zinc-500">Tools that need Apify</p>
+                      <p className="text-[11px] text-zinc-600">Post Clone · Profile Analyzer · Reel Copy</p>
+                    </div>
+                  </>
                 )}
-                <div className="rounded-xl border border-zinc-700/40 bg-zinc-900/40 px-3 py-3 space-y-1">
-                  <p className="text-xs font-medium text-zinc-300">After this</p>
-                  <p className="text-[11px] text-zinc-500">Clone tools will be ready.</p>
-                </div>
               </div>
             </div>
           </Card>
@@ -712,7 +589,10 @@ export default function ApiKeysPage() {
           {/* ── Live Health ── */}
           <Card className="space-y-3">
             <div className="flex items-center justify-between gap-3">
-              <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Connection Status</h3>
+              <div>
+                <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Connection Status</h3>
+                <p className="text-[10px] text-zinc-600 mt-0.5">"ok" means the key works and the API responded</p>
+              </div>
               <Btn variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={refreshHealth} disabled={loadingHealth}>
                 {loadingHealth ? <Spinner size={12} /> : '↻'} Check
               </Btn>
@@ -752,7 +632,10 @@ export default function ApiKeysPage() {
           {spend && (
             <Card className="space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">💸 API Spending</h3>
+                <div>
+                  <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">💸 API Spending</h3>
+                  <p className="text-[10px] text-zinc-600 mt-0.5">Local estimate only — check Google Cloud for actual charges</p>
+                </div>
                 <Btn variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={() => {
                   if (window.confirm('Reset spend counter to $0? This does not affect your actual Google billing.')) {
                     keysApi.resetSpend().then((data) => { setSpend(data); notify('Spend counter reset', 'success'); }).catch(() => notify('Reset failed', 'error'));
