@@ -18,7 +18,7 @@
 ### Kyros Studio App
 - Launch: `/Users/admin/Kyros Studio Local.command`
 - Electron runs on: `http://127.0.0.1:18421`
-- Login: `rekyx2@gmail.com` / `Orly123$`
+- Login: see `.env` → `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (never commit credentials here)
 - Client source: `client/src/` — must build after every change
 - Built output served from: `client/dist/`
 
