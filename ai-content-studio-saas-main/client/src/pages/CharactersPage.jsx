@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { characters as charApi, outfits as outfitApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
@@ -11,6 +11,31 @@ const MAX_CHARACTER_IMAGE_BYTES = 10 * 1024 * 1024;
 
 function formatFileSize(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
+
+function getImageValidationError(file) {
+  if (!file) return 'Please choose an image file';
+  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    return 'Unsupported image format. Use PNG, JPG, or WEBP. HEIC is not supported.';
+  }
+  if (file.size > MAX_CHARACTER_IMAGE_BYTES) {
+    return `Image is too large (${formatFileSize(file.size)}). Use a file under 10MB.`;
+  }
+  return null;
+}
+
+function validateCharacterImageFile(file, notify) {
+  const error = getImageValidationError(file);
+  if (error) {
+    notify(error, 'error');
+    return false;
+  }
+  return true;
+}
+
+function getPastedImageFile(event) {
+  const item = [...(event.clipboardData?.items || [])].find((entry) => entry.type.startsWith('image/'));
+  return item?.getAsFile() || null;
 }
 
 function fileToBase64(file) {
@@ -27,6 +52,8 @@ export default function CharactersPage() {
   const [selected, setSelected] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showAddRef, setShowAddRef] = useState(false);
+  const [createSeedFile, setCreateSeedFile] = useState(null);
+  const [isCreateCardDragging, setIsCreateCardDragging] = useState(false);
   const { loading, run } = useAsync();
 
   const load = refreshCharacters;
@@ -36,14 +63,47 @@ export default function CharactersPage() {
     if (data) setSelected(data);
   };
 
+  const openCreate = useCallback((file = null) => {
+    setCreateSeedFile(file);
+    setShowCreate(true);
+  }, []);
+
+  const handleCreateSeedFile = useCallback((file) => {
+    if (!validateCharacterImageFile(file, notify)) return;
+    openCreate(file);
+  }, [notify, openCreate]);
+
+  const handleCreateCardPaste = useCallback((event) => {
+    const file = getPastedImageFile(event);
+    if (!file) return;
+    event.preventDefault();
+    setIsCreateCardDragging(false);
+    handleCreateSeedFile(file);
+  }, [handleCreateSeedFile]);
+
+  const handleCreateCardDrop = useCallback((event) => {
+    event.preventDefault();
+    setIsCreateCardDragging(false);
+    const file = event.dataTransfer?.files?.[0];
+    if (file) handleCreateSeedFile(file);
+  }, [handleCreateSeedFile]);
+
   return (
     <div className="space-y-6 animate-in">
       {chars.length === 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 min-h-[400px]">
           {/* 1 — New Character (main, bigger) */}
           <button
-            onClick={() => setShowCreate(true)}
-            className="group relative rounded-2xl border border-zinc-700/50 bg-zinc-900/40 hover:bg-zinc-900/70 hover:border-blue-500/40 transition-all duration-300 flex flex-col items-center justify-center gap-6 cursor-pointer overflow-hidden py-16 px-8"
+            onClick={() => openCreate()}
+            onDragOver={(event) => { event.preventDefault(); setIsCreateCardDragging(true); }}
+            onDragLeave={() => setIsCreateCardDragging(false)}
+            onDrop={handleCreateCardDrop}
+            onPaste={handleCreateCardPaste}
+            className={`group relative rounded-2xl border transition-all duration-300 flex flex-col items-center justify-center gap-6 cursor-pointer overflow-hidden py-16 px-8 ${
+              isCreateCardDragging
+                ? 'border-blue-500/70 bg-blue-500/10'
+                : 'border-zinc-700/50 bg-zinc-900/40 hover:bg-zinc-900/70 hover:border-blue-500/40'
+            }`}
           >
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(59,130,246,0.07)_0%,transparent_70%)] opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(59,130,246,0.04)_0%,transparent_60%)]" />
@@ -61,7 +121,7 @@ export default function CharactersPage() {
 
             <div className="relative flex items-center gap-2 text-xs text-zinc-600 group-hover:text-zinc-500 transition-colors">
               <span className="w-6 h-px bg-zinc-700/60" />
-              Click to create
+              Drop or paste image to start
               <span className="w-6 h-px bg-zinc-700/60" />
             </div>
           </button>
@@ -93,13 +153,22 @@ export default function CharactersPage() {
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
           {/* Big + New Character card first */}
           <button
-            onClick={() => setShowCreate(true)}
-            className="rounded-xl border-2 border-dashed border-blue-500/30 bg-blue-500/5 hover:bg-blue-500/10 hover:border-blue-500/50 transition-all flex flex-col items-center justify-center gap-2.5 cursor-pointer group aspect-square p-4"
+            onClick={() => openCreate()}
+            onDragOver={(event) => { event.preventDefault(); setIsCreateCardDragging(true); }}
+            onDragLeave={() => setIsCreateCardDragging(false)}
+            onDrop={handleCreateCardDrop}
+            onPaste={handleCreateCardPaste}
+            className={`rounded-xl border-2 border-dashed transition-all flex flex-col items-center justify-center gap-2.5 cursor-pointer group aspect-square p-4 ${
+              isCreateCardDragging
+                ? 'border-blue-500/70 bg-blue-500/12'
+                : 'border-blue-500/30 bg-blue-500/5 hover:bg-blue-500/10 hover:border-blue-500/50'
+            }`}
           >
             <div className="w-12 h-12 rounded-xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center group-hover:bg-blue-600/30 transition-all">
               <span className="text-2xl text-blue-400 font-light leading-none">+</span>
             </div>
             <span className="text-sm font-semibold text-zinc-300 group-hover:text-zinc-100 transition-colors text-center">New Character</span>
+            <span className="text-[11px] text-zinc-500 text-center">Drop or paste image</span>
           </button>
 
           {chars.map((c) => (
@@ -135,7 +204,12 @@ export default function CharactersPage() {
 
       {selected && <Wardrobe characterId={selected.id} characterName={selected.name} />}
 
-      <CreateCharacterModal open={showCreate} onClose={() => setShowCreate(false)} onCreated={() => { setShowCreate(false); load(); }} />
+      <CreateCharacterModal
+        open={showCreate}
+        seedFile={createSeedFile}
+        onClose={() => { setShowCreate(false); setCreateSeedFile(null); }}
+        onCreated={() => { setShowCreate(false); setCreateSeedFile(null); load(); }}
+      />
       {selected && <AddReferenceModal open={showAddRef} onClose={() => setShowAddRef(false)} characterId={selected.id} onAdded={() => { setShowAddRef(false); selectChar(selected.id); }} />}
     </div>
   );
@@ -147,16 +221,24 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [editingPrompt, setEditingPrompt] = useState(false);
   const [promptDraft, setPromptDraft] = useState('');
+  const [isPrimaryDragging, setIsPrimaryDragging] = useState(false);
+  const primaryInputRef = useRef(null);
 
-  const addPrimaryImage = (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
+  const addPrimaryImageFile = useCallback((file) => {
+    if (!validateCharacterImageFile(file, notify)) return;
     run(async () => {
-      const dataUri = await fileToBase64(f);
+      const dataUri = await fileToBase64(file);
       await charApi.addPrimaryImage(char.id, { image: dataUri });
       notify('Primary image added', 'success');
       onUpdate();
     });
+  }, [char.id, notify, onUpdate, run]);
+
+  const addPrimaryImage = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    addPrimaryImageFile(file);
+    e.target.value = '';
   };
   const removePrimaryImage = (index) => run(async () => {
     await charApi.removePrimaryImage(char.id, index);
@@ -247,10 +329,39 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
             </div>
           ))}
           {imgCount < 10 && (
-            <label className="w-20 h-20 rounded-lg border-2 border-dashed border-zinc-700/60 hover:border-blue-500/40 flex items-center justify-center cursor-pointer transition">
-              <span className="text-zinc-500 text-lg">+</span>
-              <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={addPrimaryImage} />
-            </label>
+            <div
+              tabIndex={0}
+              onClick={() => primaryInputRef.current?.click()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  primaryInputRef.current?.click();
+                }
+              }}
+              onPaste={(event) => {
+                const file = getPastedImageFile(event);
+                if (!file) return;
+                event.preventDefault();
+                addPrimaryImageFile(file);
+              }}
+              onDragOver={(event) => { event.preventDefault(); setIsPrimaryDragging(true); }}
+              onDragLeave={() => setIsPrimaryDragging(false)}
+              onDrop={(event) => {
+                event.preventDefault();
+                setIsPrimaryDragging(false);
+                const file = event.dataTransfer?.files?.[0];
+                if (file) addPrimaryImageFile(file);
+              }}
+              className={`w-20 h-20 rounded-lg border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition outline-none ${
+                isPrimaryDragging
+                  ? 'border-blue-500/70 bg-blue-500/10'
+                  : 'border-zinc-700/60 hover:border-blue-500/40'
+              }`}
+            >
+              <span className="text-zinc-500 text-lg leading-none">+</span>
+              <span className="mt-1 text-[9px] text-zinc-500">Drop / Paste</span>
+              <input ref={primaryInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={addPrimaryImage} />
+            </div>
           )}
         </div>
       </div>
@@ -303,34 +414,47 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
   );
 }
 
-function CreateCharacterModal({ open, onClose, onCreated }) {
+function CreateCharacterModal({ open, onClose, onCreated, seedFile }) {
   const { notify } = useApp();
   const { loading, run } = useAsync();
   const [name, setName] = useState('');
   const [masterPrompt, setMasterPrompt] = useState('');
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const applyFile = useCallback((nextFile) => {
+    if (!validateCharacterImageFile(nextFile, notify)) return;
+    setFile(nextFile);
+    const nextUrl = URL.createObjectURL(nextFile);
+    setPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return nextUrl;
+    });
+  }, [notify]);
 
   const handleFile = (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-
-    if (!ALLOWED_IMAGE_TYPES.includes(f.type)) {
-      notify('Unsupported image format. Use PNG, JPG, or WEBP. HEIC is not supported.', 'error');
-      e.target.value = '';
-      return;
-    }
-
-    if (f.size > MAX_CHARACTER_IMAGE_BYTES) {
-      notify(`Image is too large (${formatFileSize(f.size)}). Use a file under 10MB.`, 'error');
-      e.target.value = '';
-      return;
-    }
-
-    if (preview) URL.revokeObjectURL(preview);
-    setFile(f);
-    setPreview(URL.createObjectURL(f));
+    const nextFile = e.target.files?.[0];
+    if (!nextFile) return;
+    applyFile(nextFile);
+    e.target.value = '';
   };
+
+  useEffect(() => {
+    if (!open) return;
+    const onPaste = (event) => {
+      const pastedFile = getPastedImageFile(event);
+      if (!pastedFile) return;
+      event.preventDefault();
+      applyFile(pastedFile);
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [open, applyFile]);
+
+  useEffect(() => {
+    if (open && seedFile) applyFile(seedFile);
+  }, [open, seedFile, applyFile]);
 
   const handleCreate = () => run(async () => {
     if (!name.trim()) { notify('Character name is required', 'error'); return; }
@@ -350,12 +474,31 @@ function CreateCharacterModal({ open, onClose, onCreated }) {
         <Input label="Character Name" required placeholder="e.g. Aria the Warrior" value={name} onChange={(e) => setName(e.target.value)} />
         <Textarea label="Master Prompt (Identity Lock)" required placeholder="Describe face, body, skin, defining traits..." value={masterPrompt} onChange={(e) => setMasterPrompt(e.target.value)} className="!min-h-[100px]" />
         <div>
-          <span className="text-sm text-zinc-400 font-medium block mb-1.5">Primary Image<span className="text-red-400 ml-0.5">*</span></span>
-          <label className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-4 cursor-pointer transition h-32 ${preview ? 'border-blue-500/40 bg-blue-500/5' : 'border-zinc-700/80 hover:border-blue-500/30 bg-zinc-900/30'}`}>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-sm text-zinc-400 font-medium">Primary Image<span className="text-red-400 ml-0.5">*</span></span>
+            <Badge color="zinc">Ctrl+V to paste</Badge>
+          </div>
+          <label
+            onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              setIsDragging(false);
+              const droppedFile = event.dataTransfer?.files?.[0];
+              if (droppedFile) applyFile(droppedFile);
+            }}
+            className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-4 cursor-pointer transition h-32 ${
+              isDragging
+                ? 'border-blue-500/70 bg-blue-500/10'
+                : preview
+                  ? 'border-blue-500/40 bg-blue-500/5'
+                  : 'border-zinc-700/80 hover:border-blue-500/30 bg-zinc-900/30'
+            }`}
+          >
             {preview ? <img src={preview} alt="" className="max-h-full rounded" /> : (
               <div className="text-center">
                 <div className="flex justify-center mb-1 [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]"><IconCamera uniqueId="char-primary-img" size={28} aria-hidden /></div>
-                <span className="text-zinc-400 text-sm">Click to upload a clear reference photo</span>
+                <span className="text-zinc-400 text-sm">Drop, click or paste a clear reference photo</span>
               </div>
             )}
             <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile} />
@@ -377,6 +520,36 @@ function AddReferenceModal({ open, onClose, characterId, onAdded }) {
   const [category, setCategory] = useState('Clothing');
   const [overridePrompt, setOverridePrompt] = useState('');
   const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const applyFile = useCallback((nextFile) => {
+    if (!validateCharacterImageFile(nextFile, notify)) return;
+    setFile(nextFile);
+    const nextUrl = URL.createObjectURL(nextFile);
+    setPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return nextUrl;
+    });
+  }, [notify]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPaste = (event) => {
+      const pastedFile = getPastedImageFile(event);
+      if (!pastedFile) return;
+      event.preventDefault();
+      applyFile(pastedFile);
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [open, applyFile]);
+
+  useEffect(() => {
+    return () => {
+      if (preview) URL.revokeObjectURL(preview);
+    };
+  }, [preview]);
 
   const handleAdd = () => run(async () => {
     if (!file || !overridePrompt.trim()) { notify('Image and override prompt required', 'error'); return; }
@@ -384,6 +557,10 @@ function AddReferenceModal({ open, onClose, characterId, onAdded }) {
     await charApi.addReference(characterId, { image: dataUri, mimeType: file.type, name: file.name, category, overridePrompt: overridePrompt.trim() });
     notify('Reference added', 'success');
     setOverridePrompt(''); setFile(null);
+    setPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
     onAdded();
   });
 
@@ -403,19 +580,48 @@ function AddReferenceModal({ open, onClose, characterId, onAdded }) {
         </div>
         <Textarea label="Override Prompt" required placeholder="Describe this style override..." value={overridePrompt} onChange={(e) => setOverridePrompt(e.target.value)} />
         <div>
-          <span className="text-sm text-zinc-400 font-medium block mb-1.5">Reference Image<span className="text-red-400 ml-0.5">*</span></span>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-sm text-zinc-400 font-medium">Reference Image<span className="text-red-400 ml-0.5">*</span></span>
+            <Badge color="zinc">Ctrl+V to paste</Badge>
+          </div>
         </div>
-        <label className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-4 cursor-pointer transition h-24 ${file ? 'border-blue-500/40 bg-blue-500/5' : 'border-zinc-700/80 hover:border-blue-500/30 bg-zinc-900/30'}`}>
-          {file ? (
-            <span className="text-blue-300 text-sm truncate max-w-full px-2">{file.name}</span>
+        <label
+          onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setIsDragging(false);
+            const droppedFile = event.dataTransfer?.files?.[0];
+            if (droppedFile) applyFile(droppedFile);
+          }}
+          className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-4 cursor-pointer transition h-28 ${
+            isDragging
+              ? 'border-blue-500/70 bg-blue-500/10'
+              : file
+                ? 'border-blue-500/40 bg-blue-500/5'
+                : 'border-zinc-700/80 hover:border-blue-500/30 bg-zinc-900/30'
+          }`}
+        >
+          {preview ? (
+            <img src={preview} alt="" className="max-h-full rounded object-contain" />
           ) : (
             <div className="text-center">
               <div className="flex justify-center mb-0.5 [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]"><IconImage uniqueId="char-ref-img" size={20} aria-hidden /></div>
-              <span className="text-zinc-400 text-sm">Click to upload reference image</span>
+              <span className="text-zinc-400 text-sm">Drop, click or paste reference image</span>
             </div>
           )}
-          <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => setFile(e.target.files?.[0])} />
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="hidden"
+            onChange={(e) => {
+              const nextFile = e.target.files?.[0];
+              if (nextFile) applyFile(nextFile);
+              e.target.value = '';
+            }}
+          />
         </label>
+        {file ? <p className="text-[11px] text-zinc-400 mt-2">{file.name} · {formatFileSize(file.size)}</p> : null}
         <Btn onClick={handleAdd} disabled={loading || !file || !overridePrompt.trim()} className="w-full">
           {loading ? <Spinner size={16} /> : null} Add Reference
         </Btn>
