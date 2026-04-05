@@ -33,29 +33,53 @@ export default function CharactersPage() {
   return (
     <div className="space-y-6 animate-in">
       {chars.length === 0 ? (
-        <div className="space-y-4">
-          {/* Big new character CTA when empty */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6 min-h-[420px]">
+          {/* CENTER — big beautiful New Character */}
           <button
             onClick={() => setShowCreate(true)}
-            className="w-full rounded-2xl border-2 border-dashed border-blue-500/40 bg-blue-500/5 hover:bg-blue-500/10 hover:border-blue-500/60 transition-all py-12 flex flex-col items-center gap-3 cursor-pointer group"
+            className="group relative rounded-2xl border border-zinc-700/50 bg-zinc-900/40 hover:bg-zinc-900/70 hover:border-blue-500/40 transition-all duration-300 flex flex-col items-center justify-center gap-5 cursor-pointer overflow-hidden py-16 px-8"
           >
-            <div className="w-14 h-14 rounded-2xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center group-hover:bg-blue-600/30 transition-all">
-              <span className="text-2xl text-blue-400 font-light">+</span>
+            {/* Glow background */}
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(59,130,246,0.06)_0%,transparent_70%)] group-hover:opacity-100 opacity-0 transition-opacity duration-500" />
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(59,130,246,0.04)_0%,transparent_60%)]" />
+
+            {/* Icon */}
+            <div className="relative w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-600/30 to-blue-800/20 border border-blue-500/30 flex items-center justify-center shadow-[0_0_40px_rgba(59,130,246,0.15)] group-hover:shadow-[0_0_60px_rgba(59,130,246,0.25)] transition-all duration-300">
+              <span className="text-4xl text-blue-400 font-extralight leading-none group-hover:scale-110 transition-transform duration-200 inline-block">+</span>
             </div>
-            <div className="text-center">
-              <p className="text-base font-semibold text-zinc-200">New Character</p>
-              <p className="text-sm text-zinc-500 mt-0.5">Create your first identity-locked character</p>
+
+            {/* Text */}
+            <div className="relative text-center space-y-1.5">
+              <p className="text-xl font-semibold text-zinc-100 group-hover:text-white transition-colors">New Character</p>
+              <p className="text-sm text-zinc-500 group-hover:text-zinc-400 transition-colors max-w-xs">
+                Create an identity-locked character to use across all your generations
+              </p>
+            </div>
+
+            {/* Bottom hint */}
+            <div className="relative flex items-center gap-2 text-xs text-zinc-600 group-hover:text-zinc-500 transition-colors">
+              <span className="w-4 h-px bg-zinc-700" />
+              Click to get started
+              <span className="w-4 h-px bg-zinc-700" />
             </div>
           </button>
-          <Card className="flex flex-col items-start gap-3 border-blue-500/20 bg-blue-500/[0.06]">
+
+          {/* SIDE — Get a Character */}
+          <div className="rounded-2xl border border-blue-500/20 bg-blue-500/[0.04] flex flex-col justify-center gap-5 p-6">
+            <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+              <IconUsers uniqueId="get-char-icon" size={20} className="text-blue-400" aria-hidden />
+            </div>
             <div>
               <h3 className="text-sm font-semibold text-zinc-100">Don't have a character yet?</h3>
-              <p className="mt-1 text-sm text-zinc-400">Get a ready-made AI character and start creating faster.</p>
+              <p className="mt-1.5 text-sm text-zinc-500 leading-relaxed">Get a ready-made AI character and start creating right away.</p>
             </div>
-            <Btn onClick={() => window.open('https://aicreatormarketplace.com?ref=ZiyadAiOFM', '_blank', 'noopener,noreferrer')}>
+            <Btn
+              onClick={() => window.open('https://aicreatormarketplace.com?ref=ZiyadAiOFM', '_blank', 'noopener,noreferrer')}
+              className="w-full"
+            >
               Get a Character
             </Btn>
-          </Card>
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
