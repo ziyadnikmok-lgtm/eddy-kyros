@@ -4,7 +4,7 @@ import { useApp } from '../context/AppContext';
 import { Card, Btn, Textarea, Badge, ImageCard, Empty } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 import { ASPECT_RATIOS, RESOLUTION_TIERS, IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
-import { createPersistentPageState, makePersistentJobId } from '../lib/persistentPageState';
+import { createPersistentPageState, makePersistentJobId, PersistentJobCard } from '../lib/persistentPageState';
 import { IconCamera } from 'nucleo-glass';
 
 function fileToBase64(file) {
@@ -36,6 +36,21 @@ const scenePageStore = createPersistentPageState('scene-recreate', {
   history: _cache.history,
   queueItems: [],
 });
+
+const SCENE_ANALYZE_STEPS = [
+  'Reading source image',
+  'Detecting visual scene details',
+  'Saving editable scene notes',
+];
+
+const SCENE_RECREATE_STEPS = [
+  'Locking scene description',
+  'Applying character references',
+  'Generating recreated scene',
+];
+
+const SCENE_ANALYZE_THRESHOLDS = [2, 5];
+const SCENE_RECREATE_THRESHOLDS = [4, 9];
 
 function StepIndicator({ number, title, active, done }) {
   return (
@@ -260,7 +275,6 @@ export default function SceneRecreatePage() {
 
   const sceneFields = sceneData ? Object.entries(sceneData).filter(([, v]) => v) : [];
   const step = !file ? 1 : !sceneData ? 2 : 3;
-  const failedJobs = queueItems.filter((job) => job.status === 'error');
 
   return (
     <div className="space-y-6 animate-in">
@@ -467,56 +481,33 @@ export default function SceneRecreatePage() {
             </Card>
           )}
 
-          {/* Failed jobs */}
-          {failedJobs.length > 0 && (
-            <div className="space-y-2">
-              {failedJobs.map((job) => (
-                <div key={job.id} className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <Badge color="red">Failed</Badge>
-                        {job.meta && <span className="text-[10px] text-zinc-500">{job.meta}</span>}
-                      </div>
-                      <p className="text-xs text-zinc-400 mt-1.5">{job.errorMessage || 'Something went wrong'}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => dismissQueueItem(job.id)}
-                      className="text-[11px] text-zinc-500 hover:text-zinc-300 cursor-pointer shrink-0"
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
         {/* ── RIGHT PANEL ── */}
         <div className="space-y-4">
 
-          {/* Running jobs */}
-          {isRecreating && (
+          {queueItems.length > 0 && (
             <div className="space-y-2">
-              {queueItems.filter((j) => j.status === 'running' && j.kind === 'recreate').map((job) => (
-                <div key={job.id} className="rounded-xl border border-blue-500/20 bg-blue-500/5 px-4 py-3 flex items-center gap-3">
-                  <div className="w-5 h-5 rounded-full border-2 border-t-blue-400 border-blue-400/20 animate-spin shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-medium text-blue-300">Generating…</span>
-                      {job.meta && <span className="text-[10px] text-zinc-500">{job.meta}</span>}
-                    </div>
-                    <p className="text-[11px] text-zinc-500 mt-0.5 truncate">{job.badges?.map((b) => b?.label).filter(Boolean).join(' · ')}</p>
-                  </div>
-                  <div className="flex gap-1">
-                    {[0, 1, 2].map((i) => (
-                      <div key={i} className="w-1 h-1 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
-                    ))}
-                  </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-zinc-300">Scene Queue</h3>
+                  <p className="mt-1 text-xs text-zinc-500">Running and failed scene actions stay here until you dismiss them.</p>
                 </div>
-              ))}
+                <Badge color={activeQueueCount > 0 ? 'blue' : 'zinc'}>
+                  {activeQueueCount > 0 ? `${activeQueueCount} running` : `${queueItems.length} update${queueItems.length === 1 ? '' : 's'}`}
+                </Badge>
+              </div>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                {queueItems.map((job) => (
+                  <PersistentJobCard
+                    key={job.id}
+                    job={job}
+                    steps={job.kind === 'analyze' ? SCENE_ANALYZE_STEPS : SCENE_RECREATE_STEPS}
+                    thresholds={job.kind === 'analyze' ? SCENE_ANALYZE_THRESHOLDS : SCENE_RECREATE_THRESHOLDS}
+                    onDismiss={dismissQueueItem}
+                  />
+                ))}
+              </div>
             </div>
           )}
 
