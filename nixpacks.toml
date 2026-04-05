@@ -1,3 +1,6 @@
+[phases.setup]
+aptPkgs = ['python3', 'make', 'g++']
+
 [phases.install]
 cmds = ['cd ai-content-studio-saas-main && npm install']
 
@@ -11,3 +14,4 @@ HOST = '0.0.0.0'
 
 [start]
 cmd = 'node ai-content-studio-saas-main/server/index.js'
+
