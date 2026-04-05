@@ -155,7 +155,6 @@ function SetupGuide({ title, subtitle, url, steps, note, onCopyLink, badge = 'ST
 export default function ApiKeysPage() {
   const { activeKey, setActiveKey, refreshIntegrationStatus, notify } = useApp();
   const [keyList, setKeyList] = useState([]);
-  const [name, setName] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [apifyKey, setApifyKey] = useState('');
   const [apifyInfo, setApifyInfo] = useState({ hasApifyKey: false, maskedKey: '', updatedAt: null });
@@ -214,8 +213,7 @@ export default function ApiKeysPage() {
     if (!apiKey.trim()) { notify('Please paste your Gemini API key', 'error'); return; }
     const autoName = keyList.length === 0 ? 'Gemini Key' : `Gemini Key ${keyList.length + 1}`;
     await keysApi.add(autoName, apiKey.trim());
-    setName(''); setApiKey('');
-    setShowGeminiAddForm(false);
+    setApiKey('');
     notify('Key added', 'success');
     await load();
   });
