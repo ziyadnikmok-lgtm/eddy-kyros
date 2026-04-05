@@ -6,6 +6,12 @@ import { Card, Btn, Input, Textarea, Modal, Badge, Spinner, Empty, ConfirmDialog
 import { IconUsers, IconCamera, IconImage } from 'nucleo-glass';
 
 const CATEGORIES = ['Clothing', 'Hairstyle', 'Pose', 'Accessory', 'Expression', 'Lighting', 'Custom'];
+const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+const MAX_CHARACTER_IMAGE_BYTES = 10 * 1024 * 1024;
+
+function formatFileSize(bytes) {
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
 
 function fileToBase64(file) {
   return new Promise((res, rej) => {
@@ -307,11 +313,23 @@ function CreateCharacterModal({ open, onClose, onCreated }) {
 
   const handleFile = (e) => {
     const f = e.target.files?.[0];
-    if (f) {
-      if (preview) URL.revokeObjectURL(preview);
-      setFile(f);
-      setPreview(URL.createObjectURL(f));
+    if (!f) return;
+
+    if (!ALLOWED_IMAGE_TYPES.includes(f.type)) {
+      notify('Unsupported image format. Use PNG, JPG, or WEBP. HEIC is not supported.', 'error');
+      e.target.value = '';
+      return;
     }
+
+    if (f.size > MAX_CHARACTER_IMAGE_BYTES) {
+      notify(`Image is too large (${formatFileSize(f.size)}). Use a file under 10MB.`, 'error');
+      e.target.value = '';
+      return;
+    }
+
+    if (preview) URL.revokeObjectURL(preview);
+    setFile(f);
+    setPreview(URL.createObjectURL(f));
   };
 
   const handleCreate = () => run(async () => {
@@ -342,6 +360,8 @@ function CreateCharacterModal({ open, onClose, onCreated }) {
             )}
             <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile} />
           </label>
+          <p className="text-xs text-zinc-500 mt-2">Use PNG, JPG, or WEBP under 10MB. HEIC is not supported.</p>
+          {file ? <p className="text-[11px] text-zinc-400 mt-1">{file.name} · {formatFileSize(file.size)}</p> : null}
         </div>
         <Btn onClick={handleCreate} disabled={loading || !name.trim() || !masterPrompt.trim() || !file} className="w-full">
           {loading ? <Spinner size={16} /> : null} Create Character

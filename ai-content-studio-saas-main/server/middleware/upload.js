@@ -2,6 +2,8 @@ const { AppError } = require('./errorHandler');
 
 const ALLOWED_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 const MAX_SIZE = 10 * 1024 * 1024;
+const MAX_SIZE_MB = MAX_SIZE / 1024 / 1024;
+const SUPPORTED_FORMATS_TEXT = 'PNG, JPG, or WEBP';
 
 function parseImageUpload(req, _res, next) {
   try {
@@ -33,7 +35,7 @@ function parseImageUpload(req, _res, next) {
 
     if (!ALLOWED_MIME_TYPES.includes(detectedMime)) {
       throw new AppError(
-        `Image type "${detectedMime}" not allowed. Use: ${ALLOWED_MIME_TYPES.join(', ')}`,
+        `Unsupported image format. Use ${SUPPORTED_FORMATS_TEXT}. HEIC/HEIF is not supported yet.`,
         400,
         'INVALID_FILE_TYPE'
       );
@@ -45,7 +47,7 @@ function parseImageUpload(req, _res, next) {
 
     if (buffer.length > MAX_SIZE) {
       throw new AppError(
-        `Image exceeds max size of ${MAX_SIZE / 1024 / 1024}MB`,
+        `Image is too large. Use a ${SUPPORTED_FORMATS_TEXT} file under ${MAX_SIZE_MB}MB.`,
         400,
         'FILE_TOO_LARGE'
       );
@@ -60,7 +62,7 @@ function parseImageUpload(req, _res, next) {
     next();
   } catch (err) {
     if (err instanceof AppError) return next(err);
-    next(new AppError('Failed to parse image upload', 400, 'UPLOAD_PARSE_ERROR'));
+    next(new AppError(`Could not read that image. Re-export it as ${SUPPORTED_FORMATS_TEXT} and try again.`, 400, 'UPLOAD_PARSE_ERROR'));
   }
 }
 
