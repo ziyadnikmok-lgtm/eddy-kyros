@@ -1,0 +1,13 @@
+[phases.install]
+cmds = ['npm install', 'cd client && npm install']
+
+[phases.build]
+cmds = ['cd client && npm run build']
+dependsOn = ['install']
+
+[variables]
+NODE_ENV = 'production'
+HOST = '0.0.0.0'
+
+[start]
+cmd = 'node server/index.js'
