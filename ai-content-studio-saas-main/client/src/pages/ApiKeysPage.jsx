@@ -150,74 +150,6 @@ function SetupGuide({ title, subtitle, url, steps, note, onCopyLink, badge = 'ST
   );
 }
 
-function QuickStartGuide({ onCopyLink }) {
-  return (
-    <div className="rounded-2xl border border-blue-800/40 bg-blue-950/20 p-4 space-y-4">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="space-y-1">
-          <p className="text-sm font-semibold text-blue-300">🚀 Start Here</p>
-          <p className="text-xs text-blue-400/80 leading-relaxed">
-            Add Gemini first. Add Apify only if you want clone and scrape tools.
-          </p>
-        </div>
-        <Badge color="blue">Quick Setup</Badge>
-      </div>
-
-      <div className="grid gap-2 sm:grid-cols-5">
-        {[
-          { num: '1', title: 'Gemini', text: 'Add your main key first.' },
-          { num: '2', title: 'Characters', text: 'Create your first character.' },
-          { num: '3', title: 'Generate', text: 'Create your first image.' },
-          { num: '4', title: 'Library', text: 'Find everything here.' },
-          { num: '5', title: 'Apify (opt.)', text: 'Only for clone tools.' },
-        ].map((item) => (
-          <div key={item.num} className="rounded-xl border border-zinc-700/50 bg-zinc-950/40 p-3 space-y-1.5">
-            <div className="flex items-center gap-2">
-              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-600 px-1.5 text-[10px] font-semibold text-white">
-                {item.num}
-              </span>
-              <span className="text-xs font-semibold text-zinc-100">{item.title}</span>
-            </div>
-            <p className="text-[11px] leading-relaxed text-zinc-500">{item.text}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        {[
-          {
-            title: '🧠 Gemini Key',
-            url: QUICK_START_LINKS.gemini,
-            copyLabel: 'Gemini',
-            highlight: true,
-          },
-          {
-            title: '📸 Apify Key',
-            subtitle: 'Optional · Only for Post Clone & Profile Analyzer',
-            url: QUICK_START_LINKS.apify,
-            copyLabel: 'Apify',
-            highlight: false,
-          },
-        ].map((item) => (
-          <div key={item.title} className={`rounded-xl border p-3 space-y-2.5 ${item.highlight ? 'border-blue-600/40 bg-blue-950/20' : 'border-zinc-700/50 bg-zinc-950/40'}`}>
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <p className="text-sm font-semibold text-zinc-100">{item.title}</p>
-                {item.subtitle ? <p className="text-[11px] text-zinc-500">{item.subtitle}</p> : null}
-              </div>
-              <Btn variant="secondary" className="!py-1 !px-2.5 !text-[11px]" onClick={() => onCopyLink?.(item.url, item.copyLabel)}>
-                Copy Link
-              </Btn>
-            </div>
-            <a href={item.url} target="_blank" rel="noopener noreferrer" className="block break-all text-xs text-blue-400 hover:text-blue-300 underline underline-offset-2">
-              {item.url}
-            </a>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function ApiKeysPage() {
@@ -394,9 +326,7 @@ export default function ApiKeysPage() {
   return (
     <div className="space-y-6 animate-in max-w-7xl">
 
-      <QuickStartGuide onCopyLink={handleCopyLink} />
-
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_380px]">
+<div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_380px]">
         <div className="space-y-6">
           {/* ── 1. Gemini ── */}
           <Card className="space-y-4">
@@ -423,14 +353,14 @@ export default function ApiKeysPage() {
                 <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
                   <div className="space-y-3">
                     {/* Links */}
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-3">
                       <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 rounded-full border border-zinc-700/50 bg-zinc-900/60 px-3 py-1.5 text-[11px] text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/60 transition-colors">
-                        AI Studio — get key ↗
+                        className="inline-flex items-center gap-2 rounded-lg border border-blue-600/60 bg-blue-600/20 px-4 py-2.5 text-sm font-semibold text-blue-300 hover:bg-blue-600/30 hover:text-blue-200 transition-colors">
+                        🧠 Get Gemini API Key ↗
                       </a>
                       <a href="https://cloud.google.com/free" target="_blank" rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 rounded-full border border-zinc-700/50 bg-zinc-900/60 px-3 py-1.5 text-[11px] text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/60 transition-colors">
-                        Google Cloud $300 credit ↗
+                        className="inline-flex items-center gap-2 rounded-lg border border-blue-700/40 bg-blue-900/20 px-4 py-2.5 text-sm font-semibold text-blue-400 hover:bg-blue-900/35 hover:text-blue-300 transition-colors">
+                        ☁️ Claim $300 Free Credit ↗
                       </a>
                     </div>
 

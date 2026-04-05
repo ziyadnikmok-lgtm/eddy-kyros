@@ -87,6 +87,78 @@ function getSupportNotes(userId, limit = 20) {
 }
 
 function getUserContentSnapshot(userId, limit = 12) {
+  const recentRunRows = db.prepare(`
+    SELECT
+      id,
+      feature,
+      provider,
+      model,
+      status,
+      error_code,
+      error_message,
+      output_count,
+      COALESCE(finished_at, started_at) AS created_at
+    FROM generation_runs
+    WHERE user_id = ?
+    ORDER BY datetime(COALESCE(finished_at, started_at)) DESC
+    LIMIT ?
+  `);
+
+  const recentRunTotal = db.prepare(`
+    SELECT COUNT(*) AS total
+    FROM generation_runs
+    WHERE user_id = ?
+  `);
+
+  const recentRunByFeature = db.prepare(`
+    SELECT feature, COUNT(*) AS count
+    FROM generation_runs
+    WHERE user_id = ?
+    GROUP BY feature
+    ORDER BY count DESC, feature ASC
+  `);
+
+  const recentRunCount30d = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM generation_runs
+    WHERE user_id = ? AND datetime(started_at) >= datetime('now', '-30 days')
+  `);
+
+  function buildRunFallback() {
+    const runs = recentRunRows.all(userId, limit);
+    return {
+      mode: 'runs-fallback',
+      note: 'Showing the selected user run history from the shared database backup.',
+      items: runs.map((run) => ({
+        id: run.id,
+        mediaType: run.feature === 'video' ? 'video' : 'image',
+        createdAt: run.created_at,
+        prompt: [run.feature, run.model].filter(Boolean).join(' · ') || 'Generation run',
+        source: run.feature || run.provider || 'generate',
+        aspectRatio: null,
+        status: run.status || 'completed',
+        previewUrl: null,
+        metadata: {
+          model: run.model || null,
+          provider: run.provider || null,
+          outputCount: run.output_count || 0,
+          error: run.error_message || run.error_code || null,
+          isRunFallback: true,
+        },
+      })),
+      total: recentRunTotal.get(userId)?.total || 0,
+      count30d: recentRunCount30d.get(userId)?.count || 0,
+      byFeature: recentRunByFeature.all(userId).map((item) => ({ feature: item.feature, count: item.count })),
+    };
+  }
+
+  // In Electron/local mode the gallery and video history live in one shared app-data folder.
+  // When an admin opens another user's profile there, showing that shared media would leak
+  // the current admin's own library. Fall back to the selected user's run history instead.
+  if (process.env.ELECTRON_USER_DATA && getUserId() && getUserId() !== userId) {
+    return buildRunFallback();
+  }
+
   return runWithUser(userId, () => {
     const images = (galleryManager.list().images || []).map((image) => ({
       id: image.id,
@@ -136,6 +208,8 @@ function getUserContentSnapshot(userId, limit = 12) {
     }).length;
 
     return {
+      mode: 'library',
+      note: null,
       items: allItems.slice(0, limit),
       total: allItems.length,
       count30d,
@@ -580,6 +654,8 @@ router.get('/users/:id', requireAdmin, (req, res) => {
       billingHistory,
       supportNotes: getSupportNotes(req.params.id, 25),
       recentLibraryItems: content.items,
+      recentLibraryMode: content.mode || 'library',
+      recentLibraryNote: content.note || null,
     },
   });
 });
