@@ -40,7 +40,7 @@ export default function ResetPasswordPage({ onNavigate }) {
             <button type="submit" style={s.btn} disabled={loading}>{loading ? 'Resetting...' : 'Reset Password'}</button>
           </form>
         )}
-        <div style={s.row}><button onClick={() => onNavigate && onNavigate('login')} style={s.link}>Back to Login</button></div>
+        <div style={s.row}><button onClick={() => onNavigate && onNavigate('landing')} style={s.link}>Back to Login</button></div>
       </div>
     </div>
   );

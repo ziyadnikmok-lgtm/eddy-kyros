@@ -34,7 +34,7 @@ export default function ForgotPasswordPage({ onNavigate }) {
             <button type="submit" style={s.btn} disabled={loading}>{loading ? 'Sending...' : 'Send Reset Link'}</button>
           </form>
         )}
-        <div style={s.row}><button onClick={() => onNavigate && onNavigate('login')} style={s.link}>Back to Login</button></div>
+        <div style={s.row}><button onClick={() => onNavigate && onNavigate('landing')} style={s.link}>Back to Login</button></div>
       </div>
     </div>
   );

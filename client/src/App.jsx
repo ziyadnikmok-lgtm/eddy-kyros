@@ -1,6 +1,4 @@
 import { lazy, Suspense, useState, useEffect, useCallback } from 'react';
-const LoginPage = lazy(() => import('./pages/LoginPage'));
-const RegisterPage = lazy(() => import('./pages/RegisterPage'));
 const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
@@ -493,12 +491,6 @@ export default function App() {
 
   if (authState === 'unauthenticated') {
     const navigate = (page) => setAuthPage(page);
-    if (authPage === 'login') {
-      return <AuthSuspense><LoginPage onLogin={() => setAuthState('authenticated')} onNavigate={navigate} /></AuthSuspense>;
-    }
-    if (authPage === 'register') {
-      return <AuthSuspense><RegisterPage onNavigate={navigate} /></AuthSuspense>;
-    }
     if (authPage === 'forgot-password') {
       return <AuthSuspense><ForgotPasswordPage onNavigate={navigate} /></AuthSuspense>;
     }

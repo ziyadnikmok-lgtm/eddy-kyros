@@ -249,13 +249,19 @@ function CreateCharacterModal({ open, onClose, onCreated }) {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
 
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
   const handleFile = (e) => {
     const f = e.target.files?.[0];
-    if (f) {
-      if (preview) URL.revokeObjectURL(preview);
-      setFile(f);
-      setPreview(URL.createObjectURL(f));
+    if (!f) return;
+    if (f.size > MAX_FILE_SIZE) {
+      notify(`Image is too large (${(f.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 10MB — please resize or compress your image.`, 'error');
+      e.target.value = '';
+      return;
     }
+    if (preview) URL.revokeObjectURL(preview);
+    setFile(f);
+    setPreview(URL.createObjectURL(f));
   };
 
   const handleCreate = () => run(async () => {
@@ -286,6 +292,13 @@ function CreateCharacterModal({ open, onClose, onCreated }) {
             )}
             <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile} />
           </label>
+          <div className="mt-2 flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/25 px-3 py-2">
+            <span className="text-amber-400 text-sm leading-none mt-0.5">⚠</span>
+            <p className="text-xs text-amber-300/90">
+              <span className="font-semibold text-amber-300">Max file size: 10MB.</span>{' '}
+              Use PNG, JPG, or WEBP. HEIC is not supported. Images over 10MB will be rejected.
+            </p>
+          </div>
         </div>
         <Btn onClick={handleCreate} disabled={loading || !name.trim() || !masterPrompt.trim() || !file} className="w-full">
           {loading ? <Spinner size={16} /> : null} Create Character
@@ -301,6 +314,19 @@ function AddReferenceModal({ open, onClose, characterId, onAdded }) {
   const [category, setCategory] = useState('Clothing');
   const [overridePrompt, setOverridePrompt] = useState('');
   const [file, setFile] = useState(null);
+
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
+  const handleRefFile = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.size > MAX_FILE_SIZE) {
+      notify(`Image is too large (${(f.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 10MB — please resize or compress your image.`, 'error');
+      e.target.value = '';
+      return;
+    }
+    setFile(f);
+  };
 
   const handleAdd = () => run(async () => {
     if (!file || !overridePrompt.trim()) { notify('Image and override prompt required', 'error'); return; }
@@ -328,18 +354,25 @@ function AddReferenceModal({ open, onClose, characterId, onAdded }) {
         <Textarea label="Override Prompt" required placeholder="Describe this style override..." value={overridePrompt} onChange={(e) => setOverridePrompt(e.target.value)} />
         <div>
           <span className="text-sm text-zinc-400 font-medium block mb-1.5">Reference Image<span className="text-red-400 ml-0.5">*</span></span>
+          <label className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-4 cursor-pointer transition h-24 ${file ? 'border-blue-500/40 bg-blue-500/5' : 'border-zinc-700/80 hover:border-blue-500/30 bg-zinc-900/30'}`}>
+            {file ? (
+              <span className="text-blue-300 text-sm truncate max-w-full px-2">{file.name}</span>
+            ) : (
+              <div className="text-center">
+                <div className="flex justify-center mb-0.5 [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]"><IconImage uniqueId="char-ref-img" size={20} aria-hidden /></div>
+                <span className="text-zinc-400 text-sm">Click to upload reference image</span>
+              </div>
+            )}
+            <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleRefFile} />
+          </label>
+          <div className="mt-2 flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/25 px-3 py-2">
+            <span className="text-amber-400 text-sm leading-none mt-0.5">⚠</span>
+            <p className="text-xs text-amber-300/90">
+              <span className="font-semibold text-amber-300">Max file size: 10MB.</span>{' '}
+              Use PNG, JPG, or WEBP. HEIC is not supported.
+            </p>
+          </div>
         </div>
-        <label className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-4 cursor-pointer transition h-24 ${file ? 'border-blue-500/40 bg-blue-500/5' : 'border-zinc-700/80 hover:border-blue-500/30 bg-zinc-900/30'}`}>
-          {file ? (
-            <span className="text-blue-300 text-sm truncate max-w-full px-2">{file.name}</span>
-          ) : (
-            <div className="text-center">
-              <div className="flex justify-center mb-0.5 [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]"><IconImage uniqueId="char-ref-img" size={20} aria-hidden /></div>
-              <span className="text-zinc-400 text-sm">Click to upload reference image</span>
-            </div>
-          )}
-          <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => setFile(e.target.files?.[0])} />
-        </label>
         <Btn onClick={handleAdd} disabled={loading || !file || !overridePrompt.trim()} className="w-full">
           {loading ? <Spinner size={16} /> : null} Add Reference
         </Btn>

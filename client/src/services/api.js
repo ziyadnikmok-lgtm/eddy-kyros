@@ -132,6 +132,7 @@ export const video = {
   status: (taskId) => request(`/video/${taskId}/status?_=${Date.now()}`, { cache: 'no-store' }),
   history: () => request('/video/history'),
   removeHistory: (id) => request(`/video/history/${id}`, { method: 'DELETE' }),
+  clearHistory: () => request('/video/history', { method: 'DELETE' }),
   fileUrl: (filename) => `${BASE}/video/file/${filename}`,
   bulkDownload: async (ids) => {
     const res = await fetch(`${BASE}/video/bulk-download`, {
@@ -151,6 +152,10 @@ export const video = {
     a.click();
     URL.revokeObjectURL(url);
   },
+};
+
+export const videoCompose = {
+  compose: (formData) => request('/video-compose', { method: 'POST', body: formData, timeoutMs: LONG_TIMEOUT_MS }),
 };
 
 export const characters = {

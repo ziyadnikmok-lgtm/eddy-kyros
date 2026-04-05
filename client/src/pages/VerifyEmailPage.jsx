@@ -29,7 +29,7 @@ export default function VerifyEmailPage({ onNavigate }) {
         {status === 'loading' && <div style={{ color: '#a0a0c0' }}>Verifying...</div>}
         {status === 'success' && <div style={s.ok}>{msg}</div>}
         {status === 'error' && <div style={s.err}>{msg}</div>}
-        <button onClick={() => onNavigate && onNavigate('login')} style={s.link}>Go to Login</button>
+        <button onClick={() => onNavigate && onNavigate('landing')} style={s.link}>Go to Login</button>
       </div>
     </div>
   );
