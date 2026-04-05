@@ -33,53 +33,55 @@ export default function CharactersPage() {
   return (
     <div className="space-y-6 animate-in">
       {chars.length === 0 ? (
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6 min-h-[420px]">
-          {/* CENTER — big beautiful New Character */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 min-h-[400px]">
+          {/* 1 — New Character (main, bigger) */}
           <button
             onClick={() => setShowCreate(true)}
-            className="group relative rounded-2xl border border-zinc-700/50 bg-zinc-900/40 hover:bg-zinc-900/70 hover:border-blue-500/40 transition-all duration-300 flex flex-col items-center justify-center gap-5 cursor-pointer overflow-hidden py-16 px-8"
+            className="group relative rounded-2xl border border-zinc-700/50 bg-zinc-900/40 hover:bg-zinc-900/70 hover:border-blue-500/40 transition-all duration-300 flex flex-col items-center justify-center gap-6 cursor-pointer overflow-hidden py-16 px-8"
           >
-            {/* Glow background */}
-            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(59,130,246,0.06)_0%,transparent_70%)] group-hover:opacity-100 opacity-0 transition-opacity duration-500" />
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(59,130,246,0.07)_0%,transparent_70%)] opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(59,130,246,0.04)_0%,transparent_60%)]" />
 
-            {/* Icon */}
-            <div className="relative w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-600/30 to-blue-800/20 border border-blue-500/30 flex items-center justify-center shadow-[0_0_40px_rgba(59,130,246,0.15)] group-hover:shadow-[0_0_60px_rgba(59,130,246,0.25)] transition-all duration-300">
-              <span className="text-4xl text-blue-400 font-extralight leading-none group-hover:scale-110 transition-transform duration-200 inline-block">+</span>
+            <div className="relative w-24 h-24 rounded-2xl bg-gradient-to-br from-blue-600/30 to-blue-800/20 border border-blue-500/30 flex items-center justify-center shadow-[0_0_40px_rgba(59,130,246,0.15)] group-hover:shadow-[0_0_70px_rgba(59,130,246,0.3)] transition-all duration-300">
+              <span className="text-5xl text-blue-400 font-extralight leading-none group-hover:scale-110 transition-transform duration-200 inline-block">+</span>
             </div>
 
-            {/* Text */}
-            <div className="relative text-center space-y-1.5">
-              <p className="text-xl font-semibold text-zinc-100 group-hover:text-white transition-colors">New Character</p>
-              <p className="text-sm text-zinc-500 group-hover:text-zinc-400 transition-colors max-w-xs">
-                Create an identity-locked character to use across all your generations
+            <div className="relative text-center space-y-2">
+              <p className="text-2xl font-semibold text-zinc-100 group-hover:text-white transition-colors">New Character</p>
+              <p className="text-sm text-zinc-500 group-hover:text-zinc-400 transition-colors max-w-xs leading-relaxed">
+                Create your own identity-locked character and use it across all your generations
               </p>
             </div>
 
-            {/* Bottom hint */}
             <div className="relative flex items-center gap-2 text-xs text-zinc-600 group-hover:text-zinc-500 transition-colors">
-              <span className="w-4 h-px bg-zinc-700" />
-              Click to get started
-              <span className="w-4 h-px bg-zinc-700" />
+              <span className="w-6 h-px bg-zinc-700/60" />
+              Click to create
+              <span className="w-6 h-px bg-zinc-700/60" />
             </div>
           </button>
 
-          {/* SIDE — Get a Character */}
-          <div className="rounded-2xl border border-blue-500/20 bg-blue-500/[0.04] flex flex-col justify-center gap-5 p-6">
-            <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-              <IconUsers uniqueId="get-char-icon" size={20} className="text-blue-400" aria-hidden />
+          {/* 2 — Get a Character */}
+          <button
+            onClick={() => window.open('https://aicreatormarketplace.com?ref=ZiyadAiOFM', '_blank', 'noopener,noreferrer')}
+            className="group relative rounded-2xl border border-zinc-700/40 bg-zinc-900/20 hover:bg-zinc-900/50 hover:border-zinc-600/60 transition-all duration-300 flex flex-col items-center justify-center gap-6 cursor-pointer overflow-hidden py-16 px-8"
+          >
+            <div className="relative w-24 h-24 rounded-2xl bg-zinc-800/60 border border-zinc-700/40 flex items-center justify-center group-hover:border-zinc-600 transition-all duration-300">
+              <IconUsers uniqueId="get-char-icon" size={36} className="text-zinc-500 group-hover:text-zinc-400 transition-colors" aria-hidden />
             </div>
-            <div>
-              <h3 className="text-sm font-semibold text-zinc-100">Don't have a character yet?</h3>
-              <p className="mt-1.5 text-sm text-zinc-500 leading-relaxed">Get a ready-made AI character and start creating right away.</p>
+
+            <div className="relative text-center space-y-2">
+              <p className="text-2xl font-semibold text-zinc-300 group-hover:text-zinc-100 transition-colors">Get a Character</p>
+              <p className="text-sm text-zinc-600 group-hover:text-zinc-500 transition-colors max-w-xs leading-relaxed">
+                Don't have one yet? Browse ready-made AI characters and start creating right away
+              </p>
             </div>
-            <Btn
-              onClick={() => window.open('https://aicreatormarketplace.com?ref=ZiyadAiOFM', '_blank', 'noopener,noreferrer')}
-              className="w-full"
-            >
-              Get a Character
-            </Btn>
-          </div>
+
+            <div className="relative flex items-center gap-2 text-xs text-zinc-600 group-hover:text-zinc-500 transition-colors">
+              <span className="w-6 h-px bg-zinc-700/60" />
+              Browse marketplace
+              <span className="w-6 h-px bg-zinc-700/60" />
+            </div>
+          </button>
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
