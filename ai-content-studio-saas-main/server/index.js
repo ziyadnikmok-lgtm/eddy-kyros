@@ -105,6 +105,7 @@ const { router: userKeysRouter } = require('./routes/userKeys');
 const billingRouter = require('./routes/billing');
 const adminRouter = require('./routes/admin');
 const libraryRouter = require('./routes/library');
+const notificationsRouter = require('./routes/notifications');
 const { requireAuth } = require('./middleware/requireAuth');
 const imageStore = require('./services/imageStore');
 const batchGenerator = require('./services/batchGenerator');
@@ -228,6 +229,7 @@ app.use(requireAuth);
 app.use('/api/user/keys', userKeysRouter);
 app.use('/api/billing', billingRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/notifications', notificationsRouter);
 
 app.use((req, res, next) => {
   if (req.path === '/api/health') return next();

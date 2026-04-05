@@ -179,6 +179,19 @@ db.exec(`
     locked_until TEXT,
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS admin_messages (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    admin_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    subject       TEXT NOT NULL DEFAULT '',
+    body          TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    read_at       TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_admin_messages_user_created
+    ON admin_messages(user_id, created_at);
 `);
 
 // Best-effort unique index on heleket_order_id — skipped silently if duplicates exist in old data

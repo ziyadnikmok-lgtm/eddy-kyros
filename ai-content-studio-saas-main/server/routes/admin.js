@@ -967,4 +967,39 @@ router.delete('/users/:id', requireAdmin, (req, res) => {
   res.json({ ok: true, deleted: req.params.id });
 });
 
+// GET /api/admin/users/:id/library/all — full library (no limit)
+router.get('/users/:id/library/all', requireAdmin, (req, res) => {
+  const content = getUserContentSnapshot(req.params.id, 10000);
+  res.json({ ok: true, items: content.items, total: content.total || content.items.length, mode: content.mode });
+});
+
+// POST /api/admin/users/:id/messages — send admin message to user
+router.post('/users/:id/messages', requireAdmin, (req, res) => {
+  const { subject = '', body } = req.body || {};
+  if (!body || !body.trim()) return res.status(400).json({ error: 'body is required' });
+  const user = getUserSummaryById(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const id = uuidv4();
+  db.prepare(`
+    INSERT INTO admin_messages (id, user_id, admin_user_id, subject, body)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(id, req.params.id, req.session?.userId || null, subject.trim(), body.trim());
+  logAdminAction({ adminUserId: req.session?.userId, targetUserId: req.params.id, actionType: 'send_message', after: { subject, body }, note: null });
+  log.info('admin_message_sent', { adminId: req.session?.userId, targetId: req.params.id });
+  res.json({ ok: true, id });
+});
+
+// GET /api/admin/users/:id/messages — list messages sent to a user (admin view)
+router.get('/users/:id/messages', requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT m.id, m.subject, m.body, m.created_at, m.read_at, u.email AS admin_email
+    FROM admin_messages m
+    LEFT JOIN users u ON u.id = m.admin_user_id
+    WHERE m.user_id = ?
+    ORDER BY datetime(m.created_at) DESC
+    LIMIT 50
+  `).all(req.params.id);
+  res.json({ ok: true, messages: rows });
+});
+
 module.exports = router;
