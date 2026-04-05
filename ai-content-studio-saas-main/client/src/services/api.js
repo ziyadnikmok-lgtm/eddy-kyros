@@ -457,5 +457,14 @@ export const admin = {
   exportUsersUrl: () => '/api/admin/users/export.csv',
   forceReset: (id) => request(`/admin/users/${id}/force-reset`, { method: 'POST' }),
   deleteUser: (id, note) => request(`/admin/users/${id}`, { method: 'DELETE', body: { note } }),
+  userLibraryAll: (id) => request(`/admin/users/${id}/library/all`),
+  sendMessage: (id, subject, body) => request(`/admin/users/${id}/messages`, { method: 'POST', body: { subject, body } }),
+  getUserMessages: (id) => request(`/admin/users/${id}/messages`),
+};
+
+export const notifications = {
+  list: () => request('/notifications'),
+  readAll: () => request('/notifications/read-all', { method: 'POST' }),
+  readOne: (id) => request(`/notifications/${id}/read`, { method: 'POST' }),
 };
 
