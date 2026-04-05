@@ -1,8 +1,8 @@
 [phases.install]
-cmds = ['npm install', 'cd client && npm install']
+cmds = ['cd ai-content-studio-saas-main && npm install', 'cd ai-content-studio-saas-main/client && npm install']
 
 [phases.build]
-cmds = ['cd client && npm run build']
+cmds = ['cd ai-content-studio-saas-main/client && npm run build']
 dependsOn = ['install']
 
 [variables]
@@ -10,4 +10,4 @@ NODE_ENV = 'production'
 HOST = '0.0.0.0'
 
 [start]
-cmd = 'node server/index.js'
+cmd = 'node ai-content-studio-saas-main/server/index.js'
