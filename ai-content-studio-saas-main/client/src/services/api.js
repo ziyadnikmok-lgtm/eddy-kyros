@@ -132,6 +132,7 @@ export const video = {
   status: (taskId) => request(`/video/${taskId}/status?_=${Date.now()}`, { cache: 'no-store' }),
   history: () => request('/video/history'),
   removeHistory: (id) => request(`/video/history/${id}`, { method: 'DELETE' }),
+  clearHistory: () => request('/video/history', { method: 'DELETE' }),
   fileUrl: (filename) => `${BASE}/video/file/${filename}`,
   bulkDownload: async (ids) => {
     const res = await fetch(`${BASE}/video/bulk-download`, {
@@ -151,6 +152,10 @@ export const video = {
     a.click();
     URL.revokeObjectURL(url);
   },
+};
+
+export const videoCompose = {
+  compose: (formData) => request('/video-compose', { method: 'POST', body: formData, timeoutMs: LONG_TIMEOUT_MS }),
 };
 
 export const characters = {
@@ -452,14 +457,5 @@ export const admin = {
   exportUsersUrl: () => '/api/admin/users/export.csv',
   forceReset: (id) => request(`/admin/users/${id}/force-reset`, { method: 'POST' }),
   deleteUser: (id, note) => request(`/admin/users/${id}`, { method: 'DELETE', body: { note } }),
-  userLibraryAll: (id) => request(`/admin/users/${id}/library/all`),
-  sendMessage: (id, subject, body) => request(`/admin/users/${id}/messages`, { method: 'POST', body: { subject, body } }),
-  getUserMessages: (id) => request(`/admin/users/${id}/messages`),
-};
-
-export const notifications = {
-  list: () => request('/notifications'),
-  readAll: () => request('/notifications/read-all', { method: 'POST' }),
-  readOne: (id) => request(`/notifications/${id}/read`, { method: 'POST' }),
 };
 

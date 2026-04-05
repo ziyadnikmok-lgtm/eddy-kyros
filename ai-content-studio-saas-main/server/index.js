@@ -105,7 +105,6 @@ const { router: userKeysRouter } = require('./routes/userKeys');
 const billingRouter = require('./routes/billing');
 const adminRouter = require('./routes/admin');
 const libraryRouter = require('./routes/library');
-const notificationsRouter = require('./routes/notifications');
 const { requireAuth } = require('./middleware/requireAuth');
 const imageStore = require('./services/imageStore');
 const batchGenerator = require('./services/batchGenerator');
@@ -170,7 +169,7 @@ app.use(
       if (_allowedCorsOrigins.has(origin)) return callback(null, true);
       // Allow any localhost port during local dev
       if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return callback(null, true);
-return callback(new AppError('Not allowed by CORS', 403, 'CORS_ERROR'));
+      return callback(new AppError('Not allowed by CORS', 403, 'CORS_ERROR'));
     },
     credentials: true,
   })
@@ -188,7 +187,7 @@ try {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: !!process.env.APP_URL?.startsWith('https'), // secure on Railway/HTTPS, off for local
+      secure: !!process.env.APP_URL?.startsWith('https') && HOST !== 'localhost' && HOST !== '127.0.0.1',
       sameSite: 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000,
     },
@@ -213,23 +212,11 @@ app.post('/api/bootstrap-admin', (req, res) => {
   res.json({ ok: true, changes: result.changes, email });
 });
 
-// Serve static client files BEFORE auth so CSS/JS load for unauthenticated users
-const { CLIENT_DIST } = require('./paths');
-if (fs.existsSync(CLIENT_DIST)) {
-  app.use(express.static(CLIENT_DIST, { maxAge: '7d', etag: true, index: false }));
-  app.get('*splat', (_req, res, next) => {
-    if (_req.path.startsWith('/api/')) return next();
-    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
-    res.sendFile(path.join(CLIENT_DIST, 'index.html'));
-  });
-}
-
 // Auth always enforced (removed NODE_ENV gate)
 app.use(requireAuth);
 app.use('/api/user/keys', userKeysRouter);
 app.use('/api/billing', billingRouter);
 app.use('/api/admin', adminRouter);
-app.use('/api/notifications', notificationsRouter);
 
 app.use((req, res, next) => {
   if (req.path === '/api/health') return next();
@@ -315,6 +302,31 @@ app.use('/api/backgrounds', backgroundsRouter);
 app.use('/api/video-compose', generateLimiter, videoComposeRouter);
 app.use('/api/photo-match', generateLimiter, photoMatchRouter);
 app.use('/api/nano-bypass', generateLimiter, nanoBypassRouter);
+
+const { CLIENT_DIST } = require('./paths');
+if (fs.existsSync(CLIENT_DIST)) {
+  app.use(express.static(CLIENT_DIST, {
+    maxAge: '7d',
+    etag: true,
+    // Don't serve index.html via static — let catch-all handle it with no-cache headers
+    index: false,
+    setHeaders(res, filePath) {
+      // HTML files should not be cached aggressively
+      if (filePath.endsWith('.html')) {
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+        res.set('Pragma', 'no-cache');
+      }
+    },
+  }));
+  app.get('*splat', (_req, res) => {
+    // Prevent browser AND CDN edge caching of index.html
+    // Surrogate-Control is the Fastly/Railway CDN override
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Surrogate-Control', 'no-store');
+    res.sendFile(path.join(CLIENT_DIST, 'index.html'));
+  });
+}
 
 app.use((req, _res, next) => {
   next(new AppError(`Route not found: ${req.method} ${req.path}`, 404, 'NOT_FOUND'));
