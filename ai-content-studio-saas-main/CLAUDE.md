@@ -15,6 +15,15 @@
 - Pull rebase first if remote is ahead: `git pull --rebase origin main`
 - Only stage the specific files changed, never `git add .`
 
+### Repo & Deploy Structure — CRITICAL
+- Git root is `/Users/admin/Downloads/` — the repo root has an OLD unrelated app
+- The real SaaS app is in the subdirectory: `ai-content-studio-saas-main/`
+- All work happens inside `ai-content-studio-saas-main/` — never touch root-level files
+- Dokploy uses `nixpacks.toml` at the repo root (`/Users/admin/Downloads/nixpacks.toml`)
+- Deploy does NOT build the client on Dokploy — it uses pre-built `client/dist/` from git
+- When pushing UI changes: MUST commit updated `client/dist/` alongside source changes
+- Deploy workflow: build locally → commit dist → push → redeploy Dokploy
+
 ### Kyros Studio App
 - Launch: `/Users/admin/Kyros Studio Local.command`
 - Electron runs on: `http://127.0.0.1:18421`
