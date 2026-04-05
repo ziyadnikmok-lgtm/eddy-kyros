@@ -321,6 +321,50 @@ export default function ApiKeysPage() {
     </div>
   );
 
+  const geminiGuideSections = [
+    {
+      id: '01',
+      stage: 'Stage 1',
+      title: 'Get free credit',
+      subtitle: 'Start the Google Cloud free trial so billing is enabled and the first $300 is covered.',
+      tintClass: 'border-blue-700/40 bg-blue-950/10',
+      stageClass: 'text-blue-400',
+      stepClass: 'border-blue-500/30 bg-blue-950/10',
+      steps: [
+        'Go to cloud.google.com, sign in, and click "Get started for free."',
+        'Enter a card for identity verification only — you will not be charged.',
+        'Google adds $300 of free credit, usually valid for 90 days.',
+      ],
+    },
+    {
+      id: '02',
+      stage: 'Stage 2',
+      title: 'Create Tier 1 key',
+      subtitle: 'Make the Gemini key inside a billing-enabled Google Cloud project.',
+      tintClass: 'border-cyan-700/40 bg-cyan-950/10',
+      stageClass: 'text-cyan-400',
+      stepClass: 'border-cyan-500/30 bg-cyan-950/10',
+      steps: [
+        'Open aistudio.google.com using the same Google account.',
+        'Click "Get API key" and create the key in the project with billing enabled.',
+        'That new key is Tier 1 and unlocks image generation in Kyros.',
+      ],
+    },
+    {
+      id: '03',
+      stage: 'Stage 3',
+      title: 'Add it to Kyros',
+      subtitle: 'Paste the new Gemini key below and save it once.',
+      tintClass: 'border-emerald-700/40 bg-emerald-950/10',
+      stageClass: 'text-emerald-400',
+      stepClass: 'border-emerald-500/30 bg-emerald-950/10',
+      steps: [
+        'Copy the API key from AI Studio.',
+        'Paste it into the Gemini field below and click Save Key.',
+      ],
+    },
+  ];
+
   return (
     <div className="space-y-6 animate-in max-w-7xl">
 
@@ -370,20 +414,33 @@ export default function ApiKeysPage() {
                     </button>
 
                     {showGeminiGuide && (
-                      <div className="space-y-1.5 rounded-lg border border-zinc-700/40 bg-zinc-950/40 p-3">
-                        {[
-                          { stage: 'Stage 1 — Get free credit', steps: ['Go to cloud.google.com, sign in, click "Get started for free".', 'Enter a card for identity — you won\'t be charged.', 'Google adds $300 credit valid for 90 days.'] },
-                          { stage: 'Stage 2 — Create Tier 1 key', steps: ['Open aistudio.google.com with the same Google account.', 'Click "Get API key" → create key in a project with billing enabled.', 'That key is now Tier 1 and unlocks image generation.'] },
-                          { stage: 'Stage 3 — Add to Kyros', steps: ['Copy the API key from AI Studio.', 'Paste it into the field below and click Save Key.'] },
-                        ].map((section) => (
-                          <div key={section.stage}>
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 px-1 pt-2 pb-1">{section.stage}</p>
-                            {section.steps.map((text, i) => (
-                              <div key={i} className="rounded border-l-2 border-zinc-600/50 bg-zinc-900/50 px-3 py-2 mb-1">
-                                <span className="text-[10px] text-zinc-600 mr-1.5">Step {i + 1}</span>
-                                <span className="text-xs text-zinc-300">{text}</span>
+                      <div className="space-y-3 rounded-xl border border-zinc-700/40 bg-zinc-950/40 p-3.5">
+                        {geminiGuideSections.map((section) => (
+                          <div
+                            key={section.id}
+                            className={`rounded-xl border p-3 ${section.tintClass}`}
+                          >
+                            <div className="space-y-1.5 px-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${section.stageClass}`}>{section.stage}</span>
+                                <span className="text-sm font-semibold text-zinc-100">{section.title}</span>
                               </div>
-                            ))}
+                              <p className="text-xs leading-relaxed text-zinc-400">{section.subtitle}</p>
+                            </div>
+
+                            <div className="mt-3 space-y-2">
+                              {section.steps.map((text, i) => (
+                                <div
+                                  key={i}
+                                  className={`rounded-lg border-l-2 px-3.5 py-3 ${section.stepClass}`}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[11px] font-semibold text-zinc-500">Step {i + 1}</span>
+                                  </div>
+                                  <p className="text-sm leading-relaxed text-zinc-200">{text}</p>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         ))}
                       </div>
