@@ -45,7 +45,16 @@ router.post('/analyze', async (req, res, next) => {
 
 router.post('/recreate', async (req, res, next) => {
   try {
-    const { sceneData, characterId, activeReferenceIds, imageModel, sameBackground, samePose } = req.body;
+    const {
+      sceneData,
+      characterId,
+      activeReferenceIds,
+      imageModel,
+      sameBackground,
+      samePose,
+      sameHair,
+      sameTattoos,
+    } = req.body;
     const { aspectRatio, resolutionTier, width, height } = resolveDimensions(req.body);
 
     if (!sceneData || typeof sceneData !== 'object') {
@@ -61,6 +70,8 @@ router.post('/recreate', async (req, res, next) => {
       activeReferenceIds,
       sameBackground: !!sameBackground,
       samePose: !!samePose,
+      sameHair: !!sameHair,
+      sameTattoos: !!sameTattoos,
     });
 
     const apiKey = apiKeyManager.getActiveKey();

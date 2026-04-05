@@ -25,6 +25,8 @@ const _cache = {
   imageModel: DEFAULT_IMAGE_MODEL,
   sameBackground: false,
   samePose: false,
+  sameHair: false,
+  sameTattoos: false,
   result: null,
   history: [],
 };
@@ -121,6 +123,8 @@ export default function SceneRecreatePage() {
   const [imageModel, setImageModel] = useState(_cache.imageModel);
   const [sameBackground, setSameBackground] = useState(_cache.sameBackground);
   const [samePose, setSamePose] = useState(_cache.samePose);
+  const [sameHair, setSameHair] = useState(_cache.sameHair);
+  const [sameTattoos, setSameTattoos] = useState(_cache.sameTattoos);
   const [result, setResult] = useState(initialStoreState.result);
   const [history, setHistory] = useState(initialStoreState.history);
   const [queueItems, setQueueItems] = useState(initialStoreState.queueItems);
@@ -134,6 +138,8 @@ export default function SceneRecreatePage() {
   useEffect(() => { _cache.imageModel = imageModel; }, [imageModel]);
   useEffect(() => { _cache.sameBackground = sameBackground; }, [sameBackground]);
   useEffect(() => { _cache.samePose = samePose; }, [samePose]);
+  useEffect(() => { _cache.sameHair = sameHair; }, [sameHair]);
+  useEffect(() => { _cache.sameTattoos = sameTattoos; }, [sameTattoos]);
   useEffect(() => scenePageStore.subscribe((snapshot) => {
     setSceneData(snapshot.sceneData);
     setEditableScene(snapshot.editableScene);
@@ -260,6 +266,7 @@ export default function SceneRecreatePage() {
         characterId: charId,
         activeReferenceIds: activeRefIds.length > 0 ? activeRefIds : undefined,
         aspectRatio, resolutionTier, imageModel, sameBackground, samePose,
+        sameHair, sameTattoos,
       });
       scenePageStore.setValue('result', data);
       scenePageStore.setValue('history', (prev) => [data, ...prev].slice(0, 10));
@@ -435,7 +442,7 @@ export default function SceneRecreatePage() {
               {/* Lock options */}
               <div>
                 <span className="text-xs text-zinc-400 font-medium block mb-1.5">Lock</span>
-                <div className="flex gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setSameBackground(v => !v)}
@@ -458,7 +465,32 @@ export default function SceneRecreatePage() {
                   >
                     {samePose ? '🔒' : '🔓'} Pose
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setSameHair(v => !v)}
+                    className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition cursor-pointer border ${
+                      sameHair
+                        ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/60'
+                        : 'bg-zinc-800/60 text-zinc-500 border-zinc-700/60 hover:bg-zinc-700/60 hover:text-zinc-300'
+                    }`}
+                  >
+                    {sameHair ? '🔒' : '🔓'} Hair
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSameTattoos(v => !v)}
+                    className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition cursor-pointer border ${
+                      sameTattoos
+                        ? 'bg-amber-600/20 text-amber-300 border-amber-500/60'
+                        : 'bg-zinc-800/60 text-zinc-500 border-zinc-700/60 hover:bg-zinc-700/60 hover:text-zinc-300'
+                    }`}
+                  >
+                    {sameTattoos ? '🔒' : '🔓'} Tattoos
+                  </button>
                 </div>
+                <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
+                  Hair and tattoos stay off by default. Turn them on only when you want to copy those details from the source scene.
+                </p>
               </div>
 
               {/* Generate button */}

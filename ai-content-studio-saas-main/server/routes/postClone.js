@@ -38,7 +38,7 @@ const PROFILE_ROUTE_TIMEOUT_MS = 15 * 60_000;
 
 async function processOneSlide({
   post, i, apiKey, character, activeRefs, mode, cosplayMode = false, baseReferenceImages,
-  characterId, tempFiles, firstSlideOriginal, firstSlideRecreated, imageModel,
+  characterId, tempFiles, firstSlideOriginal, firstSlideRecreated, imageModel, aspectRatio = '4:5', resolutionTier = '2K',
 }) {
   const rawUrl = post.imageUrls[i];
   const imageUrl = await resolveDownloadableImageUrl(rawUrl);
@@ -97,14 +97,19 @@ async function processOneSlide({
     generationPrompt = buildGenerationPrompt({ character, activeRefs, mode, cosplayMode, structured, isDelta: false });
   }
 
-  const generated = await geminiService.generateImage(apiKey, generationPrompt, { aspectRatio: '4:5', imageSize: '2K', referenceImages, model: imageModel });
+  const generated = await geminiService.generateImage(apiKey, generationPrompt, {
+    aspectRatio,
+    imageSize: resolutionTier,
+    referenceImages,
+    model: imageModel,
+  });
   const galleryEntry = galleryManager.save({
     base64Data: generated.image.base64Data,
     mimeType: generated.image.mimeType,
     prompt: structured.full_prompt || 'Post Clone recreation',
     source: 'post-clone',
     characterId,
-    aspectRatio: '4:5',
+    aspectRatio: aspectRatio || null,
     seed: null,
   });
 
@@ -117,12 +122,12 @@ async function processOneSlide({
   };
 }
 
-async function processPostClone({ post, characterId, mode, cosplayMode = false, apiKey, character, activeRefs, baseReferenceImages, tempFiles, imageModel }) {
+async function processPostClone({ post, characterId, mode, cosplayMode = false, apiKey, character, activeRefs, baseReferenceImages, tempFiles, imageModel, aspectRatio = '4:5', resolutionTier = '2K' }) {
   const recreatedImages = [];
   const originalImages = [];
   const galleryIds = [];
   const isCarousel = post.type === 'carousel' && post.imageUrls.length > 1;
-  const slideArgs = { post, apiKey, character, activeRefs, mode, cosplayMode, baseReferenceImages, characterId, tempFiles, imageModel };
+  const slideArgs = { post, apiKey, character, activeRefs, mode, cosplayMode, baseReferenceImages, characterId, tempFiles, imageModel, aspectRatio, resolutionTier };
 
   let firstSlideOriginal = null;
   let firstSlideRecreated = null;
@@ -172,7 +177,7 @@ async function processPostClone({ post, characterId, mode, cosplayMode = false, 
 
 // ── Main handler ───────────────────────────────────────────────────────────────
 
-async function handleClone({ url, characterId, mode, cosplayMode = false, postLimit = 1, apifyApiKey, profileMode = false, imageModel }) {
+async function handleClone({ url, characterId, mode, cosplayMode = false, postLimit = 1, apifyApiKey, profileMode = false, imageModel, aspectRatio = '4:5', resolutionTier = '2K' }) {
   const deadline = Date.now() + (profileMode ? PROFILE_ROUTE_TIMEOUT_MS : ROUTE_TIMEOUT_MS);
   const cleanUrl = asText(url);
   if (!cleanUrl || !isHttpUrl(cleanUrl)) throw new AppError('A valid Instagram URL is required', 400, 'VALIDATION_ERROR');
@@ -257,7 +262,7 @@ async function handleClone({ url, characterId, mode, cosplayMode = false, postLi
       const settled = await Promise.all(
         batch.map((post, bi) => {
           const idx = batchStart + bi;
-          return processPostClone({ post, characterId, mode, cosplayMode, apiKey, character, activeRefs, baseReferenceImages, tempFiles, imageModel })
+          return processPostClone({ post, characterId, mode, cosplayMode, apiKey, character, activeRefs, baseReferenceImages, tempFiles, imageModel, aspectRatio, resolutionTier })
             .then((processed) => ({ ok: true, idx, processed }))
             .catch((postErr) => {
               log.warn('post_clone_post_failed', { index: idx + 1, total: selected.length, message: postErr.message });
@@ -300,8 +305,22 @@ async function handleClone({ url, characterId, mode, cosplayMode = false, postLi
 
 router.post('/', async (req, res, next) => {
   try {
-    const { postUrl, characterId, mode = 'exact', cosplayMode = false, apifyApiKey, imageModel } = req.body || {};
-    const data = await handleClone({ url: postUrl, characterId, mode: asText(mode).toLowerCase() || 'exact', cosplayMode: !!cosplayMode, apifyApiKey, imageModel, postLimit: 1, profileMode: false });
+    const {
+      postUrl, characterId, mode = 'exact', cosplayMode = false, apifyApiKey, imageModel,
+      aspectRatio = '4:5', resolutionTier = '2K',
+    } = req.body || {};
+    const data = await handleClone({
+      url: postUrl,
+      characterId,
+      mode: asText(mode).toLowerCase() || 'exact',
+      cosplayMode: !!cosplayMode,
+      apifyApiKey,
+      imageModel,
+      aspectRatio,
+      resolutionTier,
+      postLimit: 1,
+      profileMode: false,
+    });
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });
