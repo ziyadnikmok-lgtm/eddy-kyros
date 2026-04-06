@@ -9,6 +9,7 @@ import { useApp } from './context/AppContext';
 import { Toasts, Spinner } from './components/UI';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { PageErrorBoundary } from './components/ErrorBoundary';
+import GenerationFeedPanel from './components/GenerationFeedPanel';
 import { keys as keysApi } from './services/api';
 import {
   IconBadgeSparkle,
@@ -179,6 +180,18 @@ const ALL_NAV_ITEMS = NAV_SECTIONS.flatMap((s) => s.items);
 
 const APP_VERSION = '8.1.0';
 
+const FEED_HIDDEN_PAGES = new Set([
+  'library',
+  'gallery',
+  'videoGallery',
+  'imageEditor',
+  'characters',
+  'keys',
+  'billing',
+  'settings',
+  'logs',
+]);
+
 function SidebarHeader() {
   return (
     <header className="flex h-14 items-center gap-2 border-b border-zinc-800/40 px-4">
@@ -317,6 +330,8 @@ function MainApp({ onLogout, currentUser }) {
   const { activeKey, setActiveKey, integrationRefreshToken, page, navigateTo } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [apifyConnected, setApifyConnected] = useState(false);
+  const isGenerateWorkspace = page === 'generate';
+  const showGenerationFeed = isGenerateWorkspace || !FEED_HIDDEN_PAGES.has(page);
 
   useEffect(() => {
     if (page === 'admin' && !currentUser?.isAdmin) {
@@ -455,15 +470,18 @@ function MainApp({ onLogout, currentUser }) {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 lg:p-6 safe-bottom ambient-glow">
-          <div className="relative mx-auto max-w-6xl">
-            <PageErrorBoundary pageKey={page}>
-              <Suspense fallback={<PageFallback />}>
-                <PageComponent key={page} />
-              </Suspense>
-            </PageErrorBoundary>
-          </div>
-        </main>
+        <div className={`flex flex-1 overflow-hidden ${isGenerateWorkspace ? 'bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.08),transparent_28%)]' : ''}`}>
+          <main className={`${isGenerateWorkspace ? 'w-[380px] xl:w-[430px] 2xl:w-[470px] shrink-0 overflow-y-auto overflow-x-hidden safe-bottom ambient-glow border-r border-zinc-800/30 p-3 lg:p-5' : `flex-1 overflow-y-auto overflow-x-hidden safe-bottom ambient-glow ${showGenerationFeed ? 'border-r border-zinc-800/30' : ''} p-3 sm:p-4 lg:p-6`}`}>
+            <div className={`relative ${isGenerateWorkspace ? 'max-w-none' : 'mx-auto max-w-6xl'}`}>
+              <PageErrorBoundary pageKey={page}>
+                <Suspense fallback={<PageFallback />}>
+                  <PageComponent key={page} />
+                </Suspense>
+              </PageErrorBoundary>
+            </div>
+          </main>
+          {showGenerationFeed && <GenerationFeedPanel mode={isGenerateWorkspace ? 'workspace' : 'rail'} />}
+        </div>
       </div>
 
       <Toasts />
