@@ -29,6 +29,7 @@ const {
   getItemShortcode, runPostActor, normalizePostsFromItems,
   resolveUsernameFromPostUrl,
 } = require('../services/postClone/apifyFetcher');
+const { runPinterestActor } = require('../services/postClone/pinterestFetcher');
 
 const router = express.Router();
 const ROUTE_TIMEOUT_MS = 5 * 60_000;
