@@ -3,7 +3,7 @@ import { scene as sceneApi, characters as charApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Textarea, Badge, ImageCard, Empty } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
-import { ASPECT_RATIOS, RESOLUTION_TIERS, IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
+import { ASPECT_RATIOS, RESOLUTION_TIERS, IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL, DEFAULT_RESOLUTION_TIER } from '../config/photoModes';
 import { createPersistentPageState, makePersistentJobId, PersistentJobCard } from '../lib/persistentPageState';
 import { IconCamera } from 'nucleo-glass';
 
@@ -21,7 +21,7 @@ const _cache = {
   editableScene: '',
   charId: '',
   aspectRatio: '4:5',
-  resolutionTier: '2K',
+  resolutionTier: DEFAULT_RESOLUTION_TIER,
   imageModel: DEFAULT_IMAGE_MODEL,
   sameBackground: false,
   samePose: false,
