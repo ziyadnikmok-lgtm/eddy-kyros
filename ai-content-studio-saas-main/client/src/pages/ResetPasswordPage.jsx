@@ -25,7 +25,10 @@ export default function ResetPasswordPage({ onNavigate }) {
     const res = await fetch(`/api/auth/reset-password/${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
     const data = await res.json();
     if (!res.ok) setError(data.error || 'Reset failed');
-    else setMsg(data.message);
+    else {
+      setMsg(data.message || 'Password reset successful. Redirecting...');
+      setTimeout(() => onNavigate && onNavigate('login', { replace: true }), 900);
+    }
     setLoading(false);
   };
 
@@ -40,7 +43,7 @@ export default function ResetPasswordPage({ onNavigate }) {
             <button type="submit" style={s.btn} disabled={loading}>{loading ? 'Resetting...' : 'Reset Password'}</button>
           </form>
         )}
-        <div style={s.row}><button onClick={() => onNavigate && onNavigate('login')} style={s.link}>Back to Login</button></div>
+        <div style={s.row}><button onClick={() => onNavigate && onNavigate('login', { replace: true })} style={s.link}>Back to Login</button></div>
       </div>
     </div>
   );

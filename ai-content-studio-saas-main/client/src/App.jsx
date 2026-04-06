@@ -478,19 +478,55 @@ const AuthSuspense = ({ children }) => (
   </Suspense>
 );
 
+const AUTH_PATHS = {
+  landing: '/',
+  login: '/login',
+  register: '/register',
+  'forgot-password': '/forgot-password',
+  'reset-password': '/reset-password',
+  'verify-email': '/verify-email',
+};
+
+function getAuthPageFromLocation() {
+  if (typeof window === 'undefined') return 'landing';
+  const params = new URLSearchParams(window.location.search);
+  const { pathname } = window.location;
+  if (pathname === AUTH_PATHS['verify-email'] && params.get('token')) return 'verify-email';
+  if (pathname === AUTH_PATHS['reset-password'] && params.get('token')) return 'reset-password';
+  if (pathname === AUTH_PATHS.login) return 'login';
+  if (pathname === AUTH_PATHS.register) return 'register';
+  if (pathname === AUTH_PATHS['forgot-password']) return 'forgot-password';
+  return 'landing';
+}
+
+function syncAuthLocation(page, { replace = false } = {}) {
+  if (typeof window === 'undefined') return;
+  const nextPath = AUTH_PATHS[page] || AUTH_PATHS.landing;
+  const nextUrl = new URL(window.location.href);
+  nextUrl.pathname = nextPath;
+  if (page !== 'reset-password' && page !== 'verify-email') {
+    nextUrl.search = '';
+  }
+  const nextHref = `${nextUrl.pathname}${nextUrl.search}`;
+  const currentHref = `${window.location.pathname}${window.location.search}`;
+  if (nextHref === currentHref) return;
+  window.history[replace ? 'replaceState' : 'pushState']({}, '', nextHref);
+}
+
 // Auth states: 'loading' | 'authenticated' | 'unauthenticated'
 export default function App() {
   const isPublicPreviewHost =
     typeof window !== 'undefined' && window.location.hostname.endsWith('trycloudflare.com');
   const [authState, setAuthState] = useState('loading');
-  const [authPage, setAuthPage] = useState(() => {
-    if (typeof window === 'undefined') return 'landing';
-    const params = new URLSearchParams(window.location.search);
-    if (window.location.pathname === '/verify-email' && params.get('token')) return 'verify-email';
-    if (window.location.pathname === '/reset-password' && params.get('token')) return 'reset-password';
-    return 'landing';
-  });
+  const [authPage, setAuthPage] = useState(getAuthPageFromLocation);
   const [currentUser, setCurrentUser] = useState(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const handlePopState = () => setAuthPage(getAuthPageFromLocation());
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   useEffect(() => {
     if (isPublicPreviewHost) {
@@ -547,7 +583,10 @@ export default function App() {
   }
 
   if (authState === 'unauthenticated') {
-    const navigate = (page) => setAuthPage(page);
+    const navigate = (page, options) => {
+      setAuthPage(page);
+      syncAuthLocation(page, options);
+    };
     if (authPage === 'login') {
       return <AuthSuspense><LoginPage onLogin={() => setAuthState('authenticated')} onNavigate={navigate} /></AuthSuspense>;
     }
@@ -575,5 +614,10 @@ export default function App() {
     );
   }
 
-  return <MainApp currentUser={currentUser} onLogout={() => { setCurrentUser(null); setAuthState('unauthenticated'); setAuthPage('landing'); }} />;
+  return <MainApp currentUser={currentUser} onLogout={() => {
+    setCurrentUser(null);
+    setAuthState('unauthenticated');
+    setAuthPage('landing');
+    syncAuthLocation('landing', { replace: true });
+  }} />;
 }
