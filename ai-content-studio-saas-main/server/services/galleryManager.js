@@ -57,7 +57,7 @@ class GalleryManager {
       id,
       filename,
       mimeType,
-      prompt: (prompt || '').slice(0, 500),
+      prompt: (prompt || '').slice(0, 4000),
       source: source || 'generate',
       characterId: characterId || null,
       aspectRatio: aspectRatio || null,

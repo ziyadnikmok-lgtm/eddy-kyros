@@ -1,0 +1,41 @@
+appId: com.aistudio.app
+productName: Kyros Studio
+directories:
+  output: "dist-electron"
+files:
+  - server/**/*
+  - "!server/data/**/*"
+  - electron/**/*
+  - client/dist/**/*
+  - package.json
+extraResources:
+  - from: server/data/styleLibrary.json
+    to: seed-data/styleLibrary.json
+  - from: server/data/contentTypePresets.json
+    to: seed-data/contentTypePresets.json
+  - from: server/data/niches.json
+    to: seed-data/niches.json
+  - from: server/data/promptKnowledge.json
+    to: seed-data/promptKnowledge.json
+  - from: build/seed-data
+    to: seed-data
+  - from: build/.env
+    to: .env
+asarUnpack:
+  - node_modules/ffmpeg-static/**
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  category: public.app-category.productivity
+  identity: null
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+  signAndEditExecutable: false
+portable:
+  artifactName: "${productName} ${version}.exe"

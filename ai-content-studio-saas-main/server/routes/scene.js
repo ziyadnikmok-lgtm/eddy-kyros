@@ -105,7 +105,7 @@ router.post('/recreate', async (req, res, next) => {
     galleryManager.save({
       base64Data: result.image.base64Data,
       mimeType: result.image.mimeType,
-      prompt: 'Scene recreation',
+      prompt: recreationPrompt,
       source: 'scene-recreate',
       characterId,
       aspectRatio: aspectRatio || null,

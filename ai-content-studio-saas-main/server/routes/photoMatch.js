@@ -260,7 +260,7 @@ router.post('/recreate', async (req, res, next) => {
     galleryManager.save({
       base64Data: result.image.base64Data,
       mimeType: result.image.mimeType,
-      prompt: 'Photo match',
+      prompt: prompt,
       source: 'photo-match',
       characterId,
       aspectRatio: aspectRatio || null,

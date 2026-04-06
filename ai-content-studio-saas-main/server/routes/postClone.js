@@ -106,7 +106,7 @@ async function processOneSlide({
   const galleryEntry = galleryManager.save({
     base64Data: generated.image.base64Data,
     mimeType: generated.image.mimeType,
-    prompt: structured.full_prompt || 'Post Clone recreation',
+    prompt: generationPrompt || structured.full_prompt || 'Post Clone recreation',
     source: 'post-clone',
     characterId,
     aspectRatio: aspectRatio || null,

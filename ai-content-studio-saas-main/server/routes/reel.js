@@ -53,7 +53,7 @@ async function analyzeAndRecreateFrame({ frame, characterId, activeReferenceIds,
   galleryManager.save({
     base64Data: result.image.base64Data,
     mimeType: result.image.mimeType,
-    prompt: 'Reel frame recreation',
+    prompt: finalPrompt,
     source: 'reel-recreate',
     characterId,
     aspectRatio: '9:16',

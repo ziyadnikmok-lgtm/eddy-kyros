@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { scene as sceneApi, characters as charApi } from '../services/api';
 import { useApp } from '../context/AppContext';
-import { Card, Btn, Textarea, Badge, ImageCard, Empty } from '../components/UI';
+import { Card, Btn, Textarea, Badge, ImageCard } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 import { ASPECT_RATIOS, RESOLUTION_TIERS, IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL, DEFAULT_RESOLUTION_TIER } from '../config/photoModes';
 import { createPersistentPageState, makePersistentJobId, PersistentJobCard } from '../lib/persistentPageState';
@@ -39,39 +39,13 @@ const scenePageStore = createPersistentPageState('scene-recreate', {
   queueItems: [],
 });
 
-const SCENE_ANALYZE_STEPS = [
-  'Reading source image',
-  'Detecting visual scene details',
-  'Saving editable scene notes',
-];
-
 const SCENE_RECREATE_STEPS = [
-  'Locking scene description',
+  'Analyzing scene image',
   'Applying character references',
   'Generating recreated scene',
 ];
 
-const SCENE_ANALYZE_THRESHOLDS = [2, 5];
-const SCENE_RECREATE_THRESHOLDS = [4, 9];
-
-function StepIndicator({ number, title, active, done }) {
-  return (
-    <div className="flex items-center gap-2.5">
-      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-all ${
-        done
-          ? 'bg-green-500/20 text-green-400 border border-green-500/40'
-          : active
-          ? 'bg-blue-600 text-white shadow-[0_0_12px_rgba(59,130,246,0.4)]'
-          : 'bg-zinc-800 text-zinc-500 border border-zinc-700/60'
-      }`}>
-        {done ? '✓' : number}
-      </div>
-      <span className={`text-sm font-medium ${active ? 'text-zinc-100' : done ? 'text-zinc-300' : 'text-zinc-500'}`}>
-        {title}
-      </span>
-    </div>
-  );
-}
+const SCENE_RECREATE_THRESHOLDS = [8, 18];
 
 function GeneratingOverlay({ label = 'Generating…' }) {
   return (
@@ -213,56 +187,38 @@ export default function SceneRecreatePage() {
 
   const activeQueueCount = queueItems.filter((job) => job.status === 'running').length;
   const isRecreating = queueItems.some((job) => job.status === 'running' && job.kind === 'recreate');
-  const isAnalyzing = analyzing || queueItems.some((job) => job.status === 'running' && job.kind === 'analyze');
 
-  const handleAnalyze = async () => {
+  const handleGenerate = async () => {
     if (!file) { notify('Upload an image first', 'error'); return; }
-    setAnalyzing(true);
-    const queueId = makePersistentJobId('scene-analyze');
-    scenePageStore.setValue('queueItems', (prev) => [
-      { id: queueId, kind: 'analyze', status: 'running', label: 'Analyzing Scene', summary: file.name || 'Scene image', badges: [{ label: file.type || 'image', color: 'zinc' }] },
-      ...prev.slice(0, 5),
-    ]);
-    try {
-      const dataUri = await fileToBase64(file);
-      const base64 = dataUri.split(',')[1];
-      const data = await sceneApi.analyze(base64, file.type);
-      const text = Object.entries(data).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join('\n');
-      scenePageStore.patch({ sceneData: data, editableScene: text });
-      scenePageStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
-      notify('Scene analyzed!', 'success');
-    } catch (err) {
-      scenePageStore.setValue('queueItems', (prev) => prev.map((job) => (
-        job.id === queueId ? { ...job, status: 'error', errorMessage: err?.message || 'Failed to analyze scene' } : job
-      )));
-      notify(err?.message || 'Failed to analyze scene', 'error');
-    } finally {
-      setAnalyzing(false);
-    }
-  };
-
-  const handleRecreate = async () => {
-    if (!sceneData) { notify('Analyze a scene first', 'error'); return; }
     if (!charId) { notify('Select a character', 'error'); return; }
-    const parsed = {};
-    editableScene.split('\n').forEach((line) => {
-      const idx = line.indexOf(':');
-      if (idx > 0) parsed[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
-    });
     const activeRefIds = charDetail?.references?.filter((r) => r.isActive).map((r) => r.id) || [];
     const queueId = makePersistentJobId('scene-recreate');
     scenePageStore.setValue('queueItems', (prev) => [
       {
         id: queueId, kind: 'recreate', status: 'running', label: 'Recreating Scene',
-        summary: editableScene || 'Recreate scene with selected character',
+        summary: file.name || 'Scene image',
         meta: `${aspectRatio} · ${resolutionTier}`,
         badges: [charDetail?.name ? { label: charDetail.name, color: 'zinc' } : null, { label: imageModel, color: 'zinc' }].filter(Boolean),
       },
       ...prev.slice(0, 5),
     ]);
     try {
+      // Step 1: analyze
+      setAnalyzing(true);
+      const dataUri = await fileToBase64(file);
+      const base64 = dataUri.split(',')[1];
+      const analyzed = await sceneApi.analyze(base64, file.type);
+      const text = Object.entries(analyzed).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join('\n');
+      scenePageStore.patch({ sceneData: analyzed, editableScene: text });
+      setAnalyzing(false);
+      // Step 2: recreate using editableScene overrides if any
+      const parsed = {};
+      (editableScene || text).split('\n').forEach((line) => {
+        const idx = line.indexOf(':');
+        if (idx > 0) parsed[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+      });
       const data = await sceneApi.recreate({
-        sceneData: { ...sceneData, ...parsed },
+        sceneData: { ...analyzed, ...parsed },
         characterId: charId,
         activeReferenceIds: activeRefIds.length > 0 ? activeRefIds : undefined,
         aspectRatio, resolutionTier, imageModel, sameBackground, samePose,
@@ -273,6 +229,7 @@ export default function SceneRecreatePage() {
       scenePageStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
       notify('Scene recreated!', 'success');
     } catch (err) {
+      setAnalyzing(false);
       scenePageStore.setValue('queueItems', (prev) => prev.map((job) => (
         job.id === queueId ? { ...job, status: 'error', errorMessage: err?.message || 'Failed to recreate scene' } : job
       )));
@@ -280,8 +237,7 @@ export default function SceneRecreatePage() {
     }
   };
 
-  const sceneFields = sceneData ? Object.entries(sceneData).filter(([, v]) => v) : [];
-  const step = !file ? 1 : !sceneData ? 2 : 3;
+  const isRunning = analyzing || isRecreating;
 
   return (
     <div className="space-y-6 animate-in">
@@ -289,15 +245,6 @@ export default function SceneRecreatePage() {
 
         {/* ── LEFT PANEL ── */}
         <div className="space-y-3">
-
-          {/* Step progress */}
-          <div className="flex items-center gap-2 px-1 py-2">
-            <StepIndicator number={1} title="Upload" active={step === 1} done={step > 1} />
-            <div className={`flex-1 h-px ${step > 1 ? 'bg-green-500/30' : 'bg-zinc-700/60'}`} />
-            <StepIndicator number={2} title="Analyze" active={step === 2} done={step > 2} />
-            <div className={`flex-1 h-px ${step > 2 ? 'bg-green-500/30' : 'bg-zinc-700/60'}`} />
-            <StepIndicator number={3} title="Generate" active={step === 3} done={false} />
-          </div>
 
           {/* Upload card */}
           <Card className="space-y-3">
@@ -325,26 +272,12 @@ export default function SceneRecreatePage() {
               )}
               <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile} />
             </label>
-            <div className="flex gap-2">
-              <Btn variant="secondary" onClick={handlePasteFromClipboard} className="flex-1 text-xs py-2">
-                Paste
-              </Btn>
-              <Btn
-                onClick={handleAnalyze}
-                disabled={!file || isAnalyzing}
-                className="flex-1 text-xs py-2"
-              >
-                {isAnalyzing ? (
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-3 h-3 rounded-full border border-t-white border-white/20 animate-spin" />
-                    Analyzing…
-                  </span>
-                ) : sceneData ? 'Re-analyze' : 'Analyze Scene'}
-              </Btn>
-            </div>
+            <Btn variant="secondary" onClick={handlePasteFromClipboard} className="w-full text-xs py-2">
+              Paste from Clipboard
+            </Btn>
           </Card>
 
-          {/* Scene analysis result */}
+          {/* Scene details — shown after first generate */}
           {sceneData && (
             <Card className="space-y-3 animate-in">
               <div className="flex items-center justify-between">
@@ -352,7 +285,7 @@ export default function SceneRecreatePage() {
                 <Badge color="green">Analyzed</Badge>
               </div>
               <div className="grid grid-cols-1 gap-1 max-h-44 overflow-y-auto pr-1">
-                {sceneFields.map(([key, val]) => (
+                {Object.entries(sceneData).filter(([, v]) => v).map(([key, val]) => (
                   <div key={key} className="flex gap-2 py-0.5">
                     <span className="text-[10px] text-zinc-500 uppercase tracking-wide shrink-0 w-20 pt-0.5">{key}</span>
                     <span className="text-xs text-zinc-300 leading-relaxed">{val}</span>
@@ -360,7 +293,7 @@ export default function SceneRecreatePage() {
                 ))}
               </div>
               <Textarea
-                label="Edit description"
+                label="Edit description (used on next generate)"
                 value={editableScene}
                 onChange={(e) => scenePageStore.setValue('editableScene', e.target.value)}
                 className="!min-h-[64px] !text-xs"
@@ -368,150 +301,112 @@ export default function SceneRecreatePage() {
             </Card>
           )}
 
-          {/* Recreate settings */}
-          {sceneData && (
-            <Card className="space-y-4 animate-in">
-              <span className="text-xs text-zinc-500 font-medium uppercase tracking-wider">Generate Settings</span>
+          {/* Settings card — always visible */}
+          <Card className="space-y-4">
+            <span className="text-xs text-zinc-500 font-medium uppercase tracking-wider">Settings</span>
 
-              {/* Character */}
-              <div>
-                <span className="text-xs text-zinc-400 font-medium block mb-1.5">Character</span>
-                <select
-                  value={charId}
-                  onChange={(e) => setCharId(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
-                >
-                  <option value="">Select character…</option>
-                  {chars.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-                {charDetail?.references?.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {charDetail.references.map((r) => (
-                      <Badge key={r.id} color={r.isActive ? 'blue' : 'zinc'}>{r.category}</Badge>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Model */}
-              <div>
-                <span className="text-xs text-zinc-400 font-medium block mb-1.5">Image Model</span>
-                <select
-                  value={imageModel}
-                  onChange={(e) => setImageModel(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
-                >
-                  {IMAGE_MODEL_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Aspect ratio + resolution in a row */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <span className="text-xs text-zinc-400 font-medium block mb-1.5">Aspect Ratio</span>
-                  <div className="flex flex-wrap gap-1">
-                    {ASPECT_RATIOS.map((ar) => (
-                      <button
-                        key={ar}
-                        onClick={() => setAspectRatio(ar)}
-                        className={`rounded-md px-2 py-1 text-[11px] font-medium transition cursor-pointer ${aspectRatio === ar ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
-                      >
-                        {ar}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <span className="text-xs text-zinc-400 font-medium block mb-1.5">Resolution</span>
-                  <div className="flex flex-wrap gap-1">
-                    {RESOLUTION_TIERS.map((tier) => (
-                      <button
-                        key={tier}
-                        onClick={() => setResolutionTier(tier)}
-                        className={`rounded-md px-2 py-1 text-[11px] font-medium transition cursor-pointer ${resolutionTier === tier ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
-                      >
-                        {tier}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Lock options */}
-              <div>
-                <span className="text-xs text-zinc-400 font-medium block mb-1.5">Lock</span>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setSameBackground(v => !v)}
-                    className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition cursor-pointer border ${
-                      sameBackground
-                        ? 'bg-blue-600/20 text-blue-300 border-blue-500/60'
-                        : 'bg-zinc-800/60 text-zinc-500 border-zinc-700/60 hover:bg-zinc-700/60 hover:text-zinc-300'
-                    }`}
-                  >
-                    {sameBackground ? '🔒' : '🔓'} Background
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSamePose(v => !v)}
-                    className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition cursor-pointer border ${
-                      samePose
-                        ? 'bg-purple-600/20 text-purple-300 border-purple-500/60'
-                        : 'bg-zinc-800/60 text-zinc-500 border-zinc-700/60 hover:bg-zinc-700/60 hover:text-zinc-300'
-                    }`}
-                  >
-                    {samePose ? '🔒' : '🔓'} Pose
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSameHair(v => !v)}
-                    className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition cursor-pointer border ${
-                      sameHair
-                        ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/60'
-                        : 'bg-zinc-800/60 text-zinc-500 border-zinc-700/60 hover:bg-zinc-700/60 hover:text-zinc-300'
-                    }`}
-                  >
-                    {sameHair ? '🔒' : '🔓'} Hair
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSameTattoos(v => !v)}
-                    className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition cursor-pointer border ${
-                      sameTattoos
-                        ? 'bg-amber-600/20 text-amber-300 border-amber-500/60'
-                        : 'bg-zinc-800/60 text-zinc-500 border-zinc-700/60 hover:bg-zinc-700/60 hover:text-zinc-300'
-                    }`}
-                  >
-                    {sameTattoos ? '🔒' : '🔓'} Tattoos
-                  </button>
-                </div>
-                <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
-                  Hair and tattoos stay off by default. Turn them on only when you want to copy those details from the source scene.
-                </p>
-              </div>
-
-              {/* Generate button */}
-              <Btn
-                onClick={handleRecreate}
-                disabled={!charId}
-                className="w-full py-3 text-sm font-semibold"
+            {/* Character */}
+            <div>
+              <span className="text-xs text-zinc-400 font-medium block mb-1.5">Character</span>
+              <select
+                value={charId}
+                onChange={(e) => setCharId(e.target.value)}
+                className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
               >
-                {isRecreating ? (
-                  <span className="flex items-center gap-2">
-                    <span className="w-3.5 h-3.5 rounded-full border border-t-white border-white/20 animate-spin" />
-                    Queue Another
-                  </span>
-                ) : result ? (
-                  'Generate Again'
-                ) : (
-                  'Generate Scene'
-                )}
-              </Btn>
-            </Card>
-          )}
+                <option value="">Select character…</option>
+                {chars.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              {charDetail?.references?.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {charDetail.references.map((r) => (
+                    <Badge key={r.id} color={r.isActive ? 'blue' : 'zinc'}>{r.category}</Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Model */}
+            <div>
+              <span className="text-xs text-zinc-400 font-medium block mb-1.5">Image Model</span>
+              <select
+                value={imageModel}
+                onChange={(e) => setImageModel(e.target.value)}
+                className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
+              >
+                {IMAGE_MODEL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Aspect ratio + resolution */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <span className="text-xs text-zinc-400 font-medium block mb-1.5">Aspect Ratio</span>
+                <div className="flex flex-wrap gap-1">
+                  {ASPECT_RATIOS.map((ar) => (
+                    <button
+                      key={ar}
+                      onClick={() => setAspectRatio(ar)}
+                      className={`rounded-md px-2 py-1 text-[11px] font-medium transition cursor-pointer ${aspectRatio === ar ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
+                    >
+                      {ar}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <span className="text-xs text-zinc-400 font-medium block mb-1.5">Resolution</span>
+                <div className="flex flex-wrap gap-1">
+                  {RESOLUTION_TIERS.map((tier) => (
+                    <button
+                      key={tier}
+                      onClick={() => setResolutionTier(tier)}
+                      className={`rounded-md px-2 py-1 text-[11px] font-medium transition cursor-pointer ${resolutionTier === tier ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
+                    >
+                      {tier}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Lock options */}
+            <div>
+              <span className="text-xs text-zinc-400 font-medium block mb-1.5">Lock</span>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setSameBackground(v => !v)} className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition cursor-pointer border ${sameBackground ? 'bg-blue-600/20 text-blue-300 border-blue-500/60' : 'bg-zinc-800/60 text-zinc-500 border-zinc-700/60 hover:bg-zinc-700/60 hover:text-zinc-300'}`}>
+                  {sameBackground ? '🔒' : '🔓'} Background
+                </button>
+                <button type="button" onClick={() => setSamePose(v => !v)} className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition cursor-pointer border ${samePose ? 'bg-purple-600/20 text-purple-300 border-purple-500/60' : 'bg-zinc-800/60 text-zinc-500 border-zinc-700/60 hover:bg-zinc-700/60 hover:text-zinc-300'}`}>
+                  {samePose ? '🔒' : '🔓'} Pose
+                </button>
+                <button type="button" onClick={() => setSameHair(v => !v)} className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition cursor-pointer border ${sameHair ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/60' : 'bg-zinc-800/60 text-zinc-500 border-zinc-700/60 hover:bg-zinc-700/60 hover:text-zinc-300'}`}>
+                  {sameHair ? '🔒' : '🔓'} Hair
+                </button>
+                <button type="button" onClick={() => setSameTattoos(v => !v)} className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition cursor-pointer border ${sameTattoos ? 'bg-amber-600/20 text-amber-300 border-amber-500/60' : 'bg-zinc-800/60 text-zinc-500 border-zinc-700/60 hover:bg-zinc-700/60 hover:text-zinc-300'}`}>
+                  {sameTattoos ? '🔒' : '🔓'} Tattoos
+                </button>
+              </div>
+              <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
+                Hair and tattoos stay off by default. Turn them on only when you want to copy those details from the source scene.
+              </p>
+            </div>
+
+            {/* Generate button */}
+            <Btn
+              onClick={handleGenerate}
+              disabled={!file || !charId || isRunning}
+              className="w-full py-3 text-sm font-semibold"
+            >
+              {isRunning ? (
+                <span className="flex items-center gap-2">
+                  <span className="w-3.5 h-3.5 rounded-full border border-t-white border-white/20 animate-spin" />
+                  {analyzing ? 'Analyzing…' : 'Generating…'}
+                </span>
+              ) : result ? 'Generate Again' : 'Generate Scene'}
+            </Btn>
+          </Card>
 
         </div>
 
@@ -534,8 +429,8 @@ export default function SceneRecreatePage() {
                   <PersistentJobCard
                     key={job.id}
                     job={job}
-                    steps={job.kind === 'analyze' ? SCENE_ANALYZE_STEPS : SCENE_RECREATE_STEPS}
-                    thresholds={job.kind === 'analyze' ? SCENE_ANALYZE_THRESHOLDS : SCENE_RECREATE_THRESHOLDS}
+                    steps={SCENE_RECREATE_STEPS}
+                    thresholds={SCENE_RECREATE_THRESHOLDS}
                     onDismiss={dismissQueueItem}
                   />
                 ))}
@@ -576,14 +471,10 @@ export default function SceneRecreatePage() {
                 </div>
                 <div className="text-center max-w-xs">
                   <p className="text-sm font-medium text-zinc-400">
-                    {step === 1 ? 'Upload a scene to get started' : step === 2 ? 'Analyze the scene to continue' : 'Select a character and generate'}
+                    {!file ? 'Upload a scene to get started' : 'Select a character and generate'}
                   </p>
                   <p className="text-xs text-zinc-600 mt-1">
-                    {step === 1
-                      ? 'Drop an image in the panel on the left'
-                      : step === 2
-                      ? 'Click Analyze Scene to extract scene details'
-                      : 'Your recreated scene will appear here'}
+                    {!file ? 'Drop an image in the panel on the left' : 'Your recreated scene will appear here'}
                   </p>
                 </div>
               </div>

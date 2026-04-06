@@ -672,7 +672,7 @@ useEffect(() => { _cache.postUrl = postUrl; }, [postUrl]);
                 </div>
               </div>
             )}
-          </Card>}
+          </Card>
 
         </div>
 

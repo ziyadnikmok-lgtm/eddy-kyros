@@ -450,7 +450,7 @@ async function recreateFrame({
   galleryManager.save({
     base64Data: generated.image.base64Data,
     mimeType: generated.image.mimeType,
-    prompt: 'Reel Copy Frame Recreation',
+    prompt: prompt,
     source: 'reel-copy',
     characterId,
     aspectRatio: '9:16',
