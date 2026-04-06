@@ -977,6 +977,8 @@ router.get('/users/:id/library/all', requireAdmin, (req, res) => {
 router.post('/users/:id/messages', requireAdmin, (req, res) => {
   const { subject = '', body } = req.body || {};
   if (!body || !body.trim()) return res.status(400).json({ error: 'body is required' });
+  if (typeof subject !== 'string' || subject.length > 200) return res.status(400).json({ error: 'Subject too long (max 200 chars)' });
+  if (typeof body !== 'string' || body.length > 5000) return res.status(400).json({ error: 'Message too long (max 5000 chars)' });
   const user = getUserSummaryById(req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const id = uuidv4();

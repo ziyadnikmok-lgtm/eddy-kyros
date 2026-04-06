@@ -69,6 +69,10 @@ router.post('/register', async (req, res) => {
   try {
     const { email, password, name } = req.body || {};
     if (!email || !password || !name) return res.status(400).json({ error: 'email, password and name are required' });
+    if (typeof email !== 'string' || email.length > 254) return res.status(400).json({ error: 'Invalid email' });
+    if (typeof name !== 'string' || name.length > 100) return res.status(400).json({ error: 'Name too long (max 100 chars)' });
+    if (typeof password !== 'string' || password.length > 256) return res.status(400).json({ error: 'Password too long' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return res.status(400).json({ error: 'Invalid email format' });
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
     const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase());
     if (existing) return res.status(409).json({ error: 'Email already registered' });
@@ -202,7 +206,7 @@ router.get('/status', (req, res) => {
 // POST /api/auth/forgot-password
 router.post('/forgot-password', async (req, res) => {
   const { email } = req.body || {};
-  if (!email) return res.status(400).json({ error: 'Email required' });
+  if (!email || typeof email !== 'string' || email.length > 254) return res.status(400).json({ error: 'Email required' });
   const user = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase());
   if (user) {
     const token = uuidv4().replace(/-/g, '');
