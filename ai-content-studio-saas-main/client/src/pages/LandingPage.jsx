@@ -325,9 +325,13 @@ const FAQS = [
 ];
 
 // ─── Main Component ────────────────────────────────────────────────────────────
-export default function LandingPage({ onNavigate }) {
+export default function LandingPage({ onNavigate, initialAuthModal = null }) {
   const [openFAQ, setOpenFAQ] = useState(0);
-  const [authModal, setAuthModal] = useState(null);
+  const [authModal, setAuthModal] = useState(initialAuthModal);
+
+  useEffect(() => {
+    setAuthModal(initialAuthModal || null);
+  }, [initialAuthModal]);
 
   const scrollTo = (id) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
@@ -355,7 +359,10 @@ export default function LandingPage({ onNavigate }) {
       {authModal && (
         <AuthModal
           mode={authModal}
-          onClose={() => setAuthModal(null)}
+          onClose={() => {
+            setAuthModal(null);
+            if (initialAuthModal) onNavigate?.('landing', { replace: true });
+          }}
           onSuccess={() => { setAuthModal(null); window.location.reload(); }}
           onNavigate={(page) => { setAuthModal(null); onNavigate?.(page); }}
         />

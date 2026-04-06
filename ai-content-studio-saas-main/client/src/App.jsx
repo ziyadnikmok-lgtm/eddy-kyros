@@ -588,10 +588,10 @@ export default function App() {
       syncAuthLocation(page, options);
     };
     if (authPage === 'login') {
-      return <AuthSuspense><LoginPage onLogin={() => setAuthState('authenticated')} onNavigate={navigate} /></AuthSuspense>;
+      return <AuthSuspense><LandingPage initialAuthModal="login" onNavigate={navigate} /></AuthSuspense>;
     }
     if (authPage === 'register') {
-      return <AuthSuspense><RegisterPage onNavigate={navigate} /></AuthSuspense>;
+      return <AuthSuspense><LandingPage initialAuthModal="register" onNavigate={navigate} /></AuthSuspense>;
     }
     if (authPage === 'forgot-password') {
       return <AuthSuspense><ForgotPasswordPage onNavigate={navigate} /></AuthSuspense>;
