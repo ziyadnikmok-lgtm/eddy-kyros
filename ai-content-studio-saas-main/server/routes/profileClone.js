@@ -9,7 +9,6 @@ const referenceManager = require('../services/referenceManager');
 const galleryManager = require('../services/galleryManager');
 const postCloneHistoryStore = require('../services/postCloneHistoryStore');
 const postCloneRoute = require('./postClone');
-const { runPinterestActor } = require('../services/postClone/pinterestFetcher');
 
 const router = express.Router();
 const { TEMP_DIR } = require('../paths');
@@ -40,41 +39,18 @@ router.post('/', async (req, res, next) => {
 
 router.post('/fetch', async (req, res, next) => {
   try {
-    const { profileUrl, postLimit = 9, apifyApiKey, platform = 'instagram' } = req.body || {};
+    const { profileUrl, postLimit = 9, apifyApiKey } = req.body || {};
     const cleanUrl = asText(profileUrl);
     if (!cleanUrl || !/^https?:\/\//i.test(cleanUrl)) {
-      throw new AppError('A valid profile or board URL is required', 400, 'VALIDATION_ERROR');
+      throw new AppError('A valid profile URL is required', 400, 'VALIDATION_ERROR');
     }
 
     const limit = Math.max(1, Math.min(30, Number(postLimit) || 9));
 
-    // Pinterest path
-    if (platform === 'pinterest' || /pinterest\.[a-z]+/i.test(cleanUrl)) {
-      const pinterestPosts = await runPinterestActor({ url: cleanUrl, limit, apifyToken: apifyApiKey });
-      postCloneRoute.ensureThumbDir();
-      const thumbPromises = pinterestPosts.map(async (p) => {
-        const url = p.images?.[0]?.url || p.thumbnailUrl || '';
-        if (!url) return '';
-        return postCloneRoute.cacheThumbnail(url);
-      });
-      const thumbFilenames = await Promise.all(thumbPromises);
-      const previews = pinterestPosts.map((p, i) => ({
-        type: 'single',
-        sourceUrl: p.sourceUrl || '',
-        imageUrls: p.images?.map((img) => img.url).filter(Boolean) || [],
-        slideCount: 1,
-        thumbnail: thumbFilenames[i] || '',
-        platform: 'pinterest',
-      }));
-      log.info('pinterest_fetch_done', { posts: previews.length });
-      return res.json({ success: true, data: previews });
-    }
-
-    // Instagram path
     const items = await postCloneRoute.runPostActor({
       url: cleanUrl,
       limit,
-      apifyToken: apifyApiKey,
+      apifyToken: apifyApiKey || apiKeyManager.getApifyKey(),
     });
 
     const posts = postCloneRoute.normalizePostsFromItems(items);

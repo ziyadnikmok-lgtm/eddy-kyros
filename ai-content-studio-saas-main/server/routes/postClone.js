@@ -29,7 +29,6 @@ const {
   getItemShortcode, runPostActor, normalizePostsFromItems,
   resolveUsernameFromPostUrl,
 } = require('../services/postClone/apifyFetcher');
-const { runPinterestActor } = require('../services/postClone/pinterestFetcher');
 
 const router = express.Router();
 const ROUTE_TIMEOUT_MS = 5 * 60_000;
@@ -310,12 +309,15 @@ router.post('/', async (req, res, next) => {
       postUrl, characterId, mode = 'exact', cosplayMode = false, apifyApiKey, imageModel,
       aspectRatio = '4:5', resolutionTier = '2K',
     } = req.body || {};
+
+    const cleanUrl = asText(postUrl);
+    const cleanMode = asText(mode).toLowerCase() || 'exact';
     const data = await handleClone({
-      url: postUrl,
+      url: cleanUrl,
       characterId,
-      mode: asText(mode).toLowerCase() || 'exact',
+      mode: cleanMode,
       cosplayMode: !!cosplayMode,
-      apifyApiKey,
+      apifyApiKey: apifyApiKey || apiKeyManager.getApifyKey(),
       imageModel,
       aspectRatio,
       resolutionTier,
