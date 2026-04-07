@@ -83,6 +83,7 @@ const reelRoute = require('./routes/reel');
 const reelCopyRoute = require('./routes/reelCopy');
 const postCloneRoute = require('./routes/postClone');
 const profileCloneRoute = require('./routes/profileClone');
+const pinterestRoute = require('./routes/pinterest');
 const promptKnowledgeRoute = require('./routes/promptKnowledge');
 const availabilityRoute = require('./routes/availability');
 const templatesRouter = require('./routes/templates');
@@ -305,6 +306,7 @@ app.use('/api/reel', generateLimiter, reelRoute);
 app.use('/api/reel-copy', cloneLimiter, reelCopyRoute);
 app.use('/api/post-clone', cloneLimiter, postCloneRoute);
 app.use('/api/profile-clone', cloneLimiter, profileCloneRoute);
+app.use('/api/pinterest', generateLimiter, pinterestRoute);
 app.use('/api/prompt-knowledge', promptKnowledgeRoute);
 app.use('/api/availability', availabilityRoute);
 app.use('/api/templates', templatesRouter);
@@ -446,4 +448,3 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 module.exports = app;
-
