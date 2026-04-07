@@ -32,6 +32,7 @@ class SceneAnalyzer {
     sceneData,
     characterId,
     activeReferenceIds,
+    masterPromptOverride = '',
     sameBackground = false,
     samePose = false,
     sameHair = false,
@@ -51,7 +52,7 @@ class SceneAnalyzer {
     const sceneParagraph = this._sceneToDescription(sceneData);
 
     const basePrompt = promptBuilder.buildPrompt({
-      masterPrompt: character.masterPrompt,
+      masterPrompt: String(masterPromptOverride || character.masterPrompt || '').trim(),
       activeReferences: activeRefs,
       userPrompt: sceneParagraph,
     });

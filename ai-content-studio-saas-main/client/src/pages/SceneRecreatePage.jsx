@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { pushPending, resolvePending, rejectPending } from '../lib/generationFeed';
 import { scene as sceneApi, characters as charApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Textarea, Badge, ImageCard } from '../components/UI';
@@ -103,6 +104,7 @@ export default function SceneRecreatePage() {
   const [history, setHistory] = useState(initialStoreState.history);
   const [queueItems, setQueueItems] = useState(initialStoreState.queueItems);
   const [analyzing, setAnalyzing] = useState(false);
+  const characterPromptPreview = String(charDetail?.masterPrompt || '').trim();
 
   useEffect(() => { _cache.sceneData = sceneData; }, [sceneData]);
   useEffect(() => { _cache.editableScene = editableScene; }, [editableScene]);
@@ -193,6 +195,7 @@ export default function SceneRecreatePage() {
     if (!charId) { notify('Select a character', 'error'); return; }
     const activeRefIds = charDetail?.references?.filter((r) => r.isActive).map((r) => r.id) || [];
     const queueId = makePersistentJobId('scene-recreate');
+    pushPending({ id: queueId, prompt: 'Scene Recreate', imageModel: imageModel || '', aspectRatio, resolutionTier });
     scenePageStore.setValue('queueItems', (prev) => [
       {
         id: queueId, kind: 'recreate', status: 'running', label: 'Recreating Scene',
@@ -221,15 +224,28 @@ export default function SceneRecreatePage() {
         sceneData: { ...analyzed, ...parsed },
         characterId: charId,
         activeReferenceIds: activeRefIds.length > 0 ? activeRefIds : undefined,
+        masterPromptOverride: characterPromptPreview || undefined,
         aspectRatio, resolutionTier, imageModel, sameBackground, samePose,
         sameHair, sameTattoos,
       });
       scenePageStore.setValue('result', data);
       scenePageStore.setValue('history', (prev) => [data, ...prev].slice(0, 10));
       scenePageStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
+      resolvePending(queueId, {
+        imageId: data.imageId,
+        galleryId: data.galleryId || data.imageId,
+        mimeType: data.image?.mimeType,
+        prompt: characterPromptPreview || 'Scene Recreate',
+        imageModel: imageModel || '',
+        aspectRatio,
+        resolutionTier,
+        generatedAt: Date.now(),
+        characterId: charId || null,
+      });
       notify('Scene recreated!', 'success');
     } catch (err) {
       setAnalyzing(false);
+      rejectPending(queueId);
       scenePageStore.setValue('queueItems', (prev) => prev.map((job) => (
         job.id === queueId ? { ...job, status: 'error', errorMessage: err?.message || 'Failed to recreate scene' } : job
       )));
@@ -323,6 +339,17 @@ export default function SceneRecreatePage() {
                   ))}
                 </div>
               )}
+              {characterPromptPreview && (
+                <div className="mt-3 rounded-xl border border-zinc-800/80 bg-zinc-950/60 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">Character Prompt</span>
+                    <Badge color="blue">Auto applied</Badge>
+                  </div>
+                  <p className="mt-2 line-clamp-4 text-xs leading-5 text-zinc-300">
+                    {characterPromptPreview}
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Model */}
@@ -396,15 +423,15 @@ export default function SceneRecreatePage() {
             {/* Generate button */}
             <Btn
               onClick={handleGenerate}
-              disabled={!file || !charId || isRunning}
+              disabled={!file || !charId}
               className="w-full py-3 text-sm font-semibold"
             >
-              {isRunning ? (
+              {analyzing ? (
                 <span className="flex items-center gap-2">
                   <span className="w-3.5 h-3.5 rounded-full border border-t-white border-white/20 animate-spin" />
-                  {analyzing ? 'Analyzing…' : 'Generating…'}
+                  Analyzing…
                 </span>
-              ) : result ? 'Generate Again' : 'Generate Scene'}
+              ) : activeQueueCount > 0 ? `Queue Another · ${activeQueueCount} running` : result ? 'Generate Again' : 'Generate Scene'}
             </Btn>
           </Card>
 

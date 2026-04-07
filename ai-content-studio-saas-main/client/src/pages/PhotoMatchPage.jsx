@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { pushPending, resolvePending, rejectPending } from '../lib/generationFeed';
 import { photoMatch as photoMatchApi, characters as charApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Badge, ImageCard, Empty } from '../components/UI';
@@ -223,6 +224,7 @@ export default function PhotoMatchPage() {
     if (!charId) { notify('Select a character', 'error'); return; }
 
     const queueId = makePersistentJobId('photo-match');
+    pushPending({ id: queueId, prompt: exactRecreate ? 'Exact Recreate' : 'Photo Match', imageModel: imageModel || '', aspectRatio, resolutionTier });
     photoMatchStore.setValue('queueItems', (prev) => [
       {
         id: queueId,
@@ -261,8 +263,20 @@ export default function PhotoMatchPage() {
       photoMatchStore.setValue('result', data);
       photoMatchStore.setValue('history', (prev) => [data, ...prev].slice(0, 12));
       photoMatchStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
+      resolvePending(queueId, {
+        imageId: data.imageId,
+        galleryId: data.galleryId || data.imageId,
+        mimeType: data.image?.mimeType,
+        prompt: exactRecreate ? 'Exact Recreate' : 'Photo Match',
+        imageModel: imageModel || '',
+        aspectRatio,
+        resolutionTier,
+        generatedAt: Date.now(),
+        characterId: charId || null,
+      });
       notify(exactRecreate ? 'Exact recreate finished!' : 'Photo matched!', 'success');
     } catch (err) {
+      rejectPending(queueId);
       photoMatchStore.setValue('queueItems', (prev) => prev.map((job) => (
         job.id === queueId ? { ...job, status: 'error', errorMessage: err?.message || 'Photo match failed' } : job
       )));

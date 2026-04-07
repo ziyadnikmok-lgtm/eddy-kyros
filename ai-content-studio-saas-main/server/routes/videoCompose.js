@@ -204,6 +204,11 @@ function buildVideoFilter({
   sharpness,
   vignette,
   subtitlePath,
+  sourceWidth,
+  sourceHeight,
+  zoom,
+  panX,
+  panY,
 }) {
   const preset = FILTER_PRESETS[presetId] || FILTER_PRESETS.none;
   const finalBrightness = Math.max(-1, Math.min(1, preset.brightness + brightness));
@@ -218,6 +223,9 @@ function buildVideoFilter({
   if (Math.abs(speed - 1) > 0.0001) {
     filters.push(`setpts=${(1 / speed).toFixed(6)}*PTS`);
   }
+
+  const framingChain = buildFramingChain(sourceWidth, sourceHeight, zoom, panX, panY);
+  if (framingChain) filters.push(framingChain);
 
   // Brightness — CSS brightness(factor) multiplies RGB values.  FFmpeg
   // eq=brightness is *additive* and washes highlights.  Using eq=gamma
@@ -297,6 +305,25 @@ function buildNormalizeVideoChain(width, height) {
   return `fps=30,scale=${safeWidth}:${safeHeight}:force_original_aspect_ratio=increase,crop=${safeWidth}:${safeHeight},setsar=1,format=yuv420p`;
 }
 
+function buildFramingChain(width, height, zoom, panX, panY) {
+  const safeWidth = Math.max(16, Math.round(width || 1080));
+  const safeHeight = Math.max(16, Math.round(height || 1920));
+  const safeZoom = clampNumber(zoom, 1, 2.5, 1);
+  const safePanX = clampNumber(panX, -1, 1, 0);
+  const safePanY = clampNumber(panY, -1, 1, 0);
+
+  if (Math.abs(safeZoom - 1) < 0.0001 && Math.abs(safePanX) < 0.0001 && Math.abs(safePanY) < 0.0001) {
+    return '';
+  }
+
+  const scaledWidth = Math.max(safeWidth, Math.round((safeWidth * safeZoom) / 2) * 2);
+  const scaledHeight = Math.max(safeHeight, Math.round((safeHeight * safeZoom) / 2) * 2);
+  const xRatio = ((safePanX + 1) / 2).toFixed(4);
+  const yRatio = ((safePanY + 1) / 2).toFixed(4);
+
+  return `scale=${scaledWidth}:${scaledHeight},crop=${safeWidth}:${safeHeight}:(iw-ow)*${xRatio}:(ih-oh)*${yRatio}`;
+}
+
 router.post('/', parseMultipart, async (req, res, next) => {
   const tmpFiles = [];
   let outputPath = null;
@@ -319,6 +346,12 @@ router.post('/', parseMultipart, async (req, res, next) => {
     const warmth = clampNumber(req.body?.warmth, -0.3, 0.3, 0);
     const sharpness = clampNumber(req.body?.sharpness, 0, 2, 0);
     const vignette = clampNumber(req.body?.vignette, 0, 1, 0);
+    const primaryZoom = clampNumber(req.body?.primaryZoom, 1, 2.5, 1);
+    const primaryPanX = clampNumber(req.body?.primaryPanX, -1, 1, 0);
+    const primaryPanY = clampNumber(req.body?.primaryPanY, -1, 1, 0);
+    const secondaryZoom = clampNumber(req.body?.secondaryZoom, 1, 2.5, 1);
+    const secondaryPanX = clampNumber(req.body?.secondaryPanX, -1, 1, 0);
+    const secondaryPanY = clampNumber(req.body?.secondaryPanY, -1, 1, 0);
     const musicVolume = clampNumber(req.body?.musicVolume, 0, 2, 1);
     const originalAudioVolume = clampNumber(req.body?.originalAudioVolume, 0, 2, 1);
     const replaceOriginalAudio = String(req.body?.replaceOriginalAudio || '').toLowerCase() === 'true';
@@ -407,6 +440,11 @@ router.post('/', parseMultipart, async (req, res, next) => {
       sharpness,
       vignette,
       subtitlePath,
+      sourceWidth: probe.width,
+      sourceHeight: probe.height,
+      zoom: primaryZoom,
+      panX: primaryPanX,
+      panY: primaryPanY,
     });
     const hasVideoFilter = Boolean(videoFilter);
 
@@ -416,7 +454,8 @@ router.post('/', parseMultipart, async (req, res, next) => {
     const hasSecondAudio = !!secondProbe?.hasAudio;
 
     if (hasSecondVideo) {
-      const normalizeChain = buildNormalizeVideoChain(probe.width, probe.height);
+      const normalizeChainPrimary = [buildNormalizeVideoChain(probe.width, probe.height), buildFramingChain(probe.width, probe.height, primaryZoom, primaryPanX, primaryPanY)].filter(Boolean).join(',');
+      const normalizeChainSecondary = [buildNormalizeVideoChain(probe.width, probe.height), buildFramingChain(probe.width, probe.height, secondaryZoom, secondaryPanX, secondaryPanY)].filter(Boolean).join(',');
       const normalizeAudioChain = 'aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo';
       const speedVideoFilter = Math.abs(speed - 1) > 0.0001 ? `setpts=${(1 / speed).toFixed(6)}*PTS,` : '';
       const postVideoFilter = buildVideoFilter({
@@ -430,15 +469,20 @@ router.post('/', parseMultipart, async (req, res, next) => {
         sharpness,
         vignette,
         subtitlePath,
+        sourceWidth: probe.width,
+        sourceHeight: probe.height,
+        zoom: 1,
+        panX: 0,
+        panY: 0,
       });
 
       const musicInputIndex = audioPath ? 2 : null;
       const complexParts = [
-        `[0:v]${normalizeChain}[v0]`,
+        `[0:v]${normalizeChainPrimary}[v0]`,
         hasOriginalAudio
           ? `[0:a]atrim=start=0:end=${trimmedDuration.toFixed(3)},asetpts=PTS-STARTPTS,${normalizeAudioChain}[a0]`
           : `anullsrc=channel_layout=stereo:sample_rate=44100,atrim=start=0:end=${trimmedDuration.toFixed(3)},${normalizeAudioChain}[a0]`,
-        `[1:v]${normalizeChain}[v1]`,
+        `[1:v]${normalizeChainSecondary}[v1]`,
         hasSecondAudio
           ? `[1:a]atrim=start=0:end=${secondTrimmedDuration.toFixed(3)},asetpts=PTS-STARTPTS,${normalizeAudioChain}[a1]`
           : `anullsrc=channel_layout=stereo:sample_rate=44100,atrim=start=0:end=${secondTrimmedDuration.toFixed(3)},${normalizeAudioChain}[a1]`,

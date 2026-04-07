@@ -166,6 +166,82 @@ function PromptSnippet({ prompt, notify }) {
   );
 }
 
+async function copyImageFromUrl(url, notify) {
+  try {
+    if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+      throw new Error('Copy image is not supported in this browser');
+    }
+    const response = await fetch(url, { credentials: 'include' });
+    if (!response.ok) throw new Error(`Failed to load image (${response.status})`);
+    const blob = await response.blob();
+    await navigator.clipboard.write([new ClipboardItem({ [blob.type || 'image/png']: blob })]);
+    notify?.('Image copied', 'success');
+  } catch (err) {
+    notify?.(err.message || 'Failed to copy image', 'error');
+  }
+}
+
+function CardActionButton({ tone = 'default', children, ...props }) {
+  const toneClass = tone === 'danger'
+    ? 'text-red-300 hover:bg-red-500/10 hover:text-red-200'
+    : 'text-zinc-200 hover:bg-zinc-800/90 hover:text-white';
+  return (
+    <button
+      type="button"
+      className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${toneClass}`}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ImageContextMenu({ menu, onClose, onAction }) {
+  useEffect(() => {
+    if (!menu) return undefined;
+    const handlePointerDown = () => onClose();
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleEscape);
+    window.addEventListener('scroll', handlePointerDown, true);
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleEscape);
+      window.removeEventListener('scroll', handlePointerDown, true);
+    };
+  }, [menu, onClose]);
+
+  if (!menu) return null;
+
+  return (
+    <div
+      className="fixed z-[80] w-64 rounded-xl border border-zinc-700/70 bg-zinc-950/98 p-2 shadow-2xl shadow-black/40 backdrop-blur-xl"
+      style={{
+        left: Math.min(menu.x, window.innerWidth - 280),
+        top: Math.min(menu.y, window.innerHeight - 360),
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <div className="mb-2 border-b border-zinc-800 px-2 pb-2">
+        <p className="truncate text-xs font-medium text-zinc-200">{menu.item.metadata?.filename || 'Image actions'}</p>
+        <p className="text-[11px] text-zinc-500">Open, copy, edit, or send this image somewhere else.</p>
+      </div>
+      <div className="space-y-1">
+        <CardActionButton onClick={() => onAction('open')}>Open preview</CardActionButton>
+        <CardActionButton onClick={() => onAction('copyPrompt')}>Copy prompt</CardActionButton>
+        <CardActionButton onClick={() => onAction('copyImage')}>Copy image</CardActionButton>
+        <CardActionButton onClick={() => onAction('imageEditor')}>Edit in Image Editor</CardActionButton>
+        <CardActionButton onClick={() => onAction('nanoBypass')}>More edit in Nano Bypass</CardActionButton>
+        <CardActionButton onClick={() => onAction('carousel')}>Go to Carousel</CardActionButton>
+        <CardActionButton onClick={() => onAction('download')}>Download</CardActionButton>
+        <CardActionButton tone="danger" onClick={() => onAction('delete')}>Delete</CardActionButton>
+      </div>
+    </div>
+  );
+}
+
 export default function LibraryPage() {
   const { notify, navigateTo, characters } = useApp();
   const { openLightbox, LightboxComponent } = useImageLightbox();
@@ -195,6 +271,7 @@ export default function LibraryPage() {
   const [visibleCount, setVisibleCount] = useState(24);
   const [editTarget, setEditTarget] = useState(null);
   const [editDestinationBusy, setEditDestinationBusy] = useState(false);
+  const [contextMenu, setContextMenu] = useState(null);
   const sentinelRef = useRef(null);
 
   const imageItems = useMemo(() => items.filter((item) => item.mediaType === 'image'), [items]);
@@ -427,6 +504,95 @@ export default function LibraryPage() {
     }
     anchor.click();
   }, [spoofAvailable, spoofEnabled]);
+
+  const handleContextAction = useCallback(async (action) => {
+    const item = contextMenu?.item;
+    if (!item) return;
+
+    if (action === 'open') {
+      openImage(item);
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'copyPrompt') {
+      try {
+        await navigator.clipboard.writeText(item.prompt || '');
+        notify('Prompt copied', 'success');
+      } catch (err) {
+        notify(err.message || 'Failed to copy prompt', 'error');
+      }
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'copyImage') {
+      await copyImageFromUrl(item.downloadUrl || `/api/gallery/${item.originalId}/image`, notify);
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'download') {
+      handleImageDownload(item);
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'delete') {
+      setDeleteTarget(item);
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'imageEditor') {
+      navigateTo('imageEditor', { editId: item.originalId });
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'carousel') {
+      navigateTo('carousel', {
+        recreate: true,
+        sourceImageId: item.originalId,
+        aspectRatio: item.aspectRatio || '',
+      });
+      setContextMenu(null);
+      return;
+    }
+
+    if (action !== 'nanoBypass') return;
+
+    setEditDestinationBusy(true);
+    try {
+      const response = await fetch(item.downloadUrl || `/api/gallery/${item.originalId}/image`, {
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error(`Failed to load image (${response.status})`);
+      const blob = await response.blob();
+      const dataUrl = await blobToDataUrl(blob);
+      const parsed = parseDataUrl(dataUrl);
+      if (!parsed) throw new Error('Could not prepare this image for Nano Bypass');
+      navigateTo('nanoBypass', {
+        sourceImageBase64: parsed.base64,
+        sourceImageMimeType: parsed.mimeType,
+        sourceImageName:
+          item.metadata?.filename
+          || filenameFromUrl(item.downloadUrl)
+          || `library-${item.originalId}${extensionFromMimeType(parsed.mimeType) || '.png'}`,
+        aspectRatio: item.aspectRatio || 'auto',
+      });
+    } catch (err) {
+      notify(err.message || 'Failed to open image in Nano Bypass', 'error');
+    } finally {
+      setEditDestinationBusy(false);
+      setContextMenu(null);
+    }
+  }, [contextMenu, handleImageDownload, navigateTo, notify, openImage]);
+
+  const openContextMenu = useCallback((event, item) => {
+    event.preventDefault();
+    setContextMenu({ item, x: event.clientX, y: event.clientY });
+  }, []);
   const clearFilters = () => {
     setSearchQuery('');
     setSourceFilter('');
@@ -750,6 +916,7 @@ export default function LibraryPage() {
                 notify={notify}
                 onSelect={() => toggleSelection(item.id)}
                 onOpen={() => openImage(item)}
+                onContextMenu={(event) => openContextMenu(event, item)}
                 onFavorite={() => handleImageFavorite(item)}
                 onDelete={() => setDeleteTarget(item)}
                 onDownload={() => handleImageDownload(item)}
@@ -836,15 +1003,18 @@ export default function LibraryPage() {
       </Modal>
 
       <LightboxComponent />
+      <ImageContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} onAction={handleContextAction} />
     </div>
   );
 }
 
-function ImageLibraryCard({ item, bulkMode, selected, onSelect, onOpen, onFavorite, onDelete, onDownload, onEdit, notify }) {
+function ImageLibraryCard({ item, bulkMode, selected, onSelect, onOpen, onFavorite, onDelete, onDownload, onEdit, onContextMenu, notify }) {
   return (
     <div className={`rounded-2xl overflow-hidden bg-zinc-900 border shadow-lg hover:shadow-xl transition-all duration-300 group ${
       selected ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-zinc-800/60'
-    }`}>
+    }`}
+    onContextMenu={bulkMode ? undefined : onContextMenu}
+    >
       <div className="relative bg-zinc-950 overflow-hidden">
         <img
           src={item.previewUrl}

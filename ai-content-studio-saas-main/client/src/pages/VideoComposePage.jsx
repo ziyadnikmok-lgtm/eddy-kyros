@@ -32,14 +32,71 @@ function stamp(s) {
 }
 function newId() { return `c-${Date.now()}-${Math.random().toString(36).slice(2,6)}`; }
 
+function fileMatchesAccept(file, accept = '') {
+  if (!file) return false;
+  const rules = String(accept || '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (rules.length === 0) return true;
+
+  const fileType = String(file.type || '').toLowerCase();
+  const fileName = String(file.name || '').toLowerCase();
+
+  return rules.some((rule) => {
+    if (rule.endsWith('/*')) return fileType.startsWith(rule.slice(0, -1));
+    if (rule.startsWith('.')) return fileName.endsWith(rule);
+    return fileType === rule;
+  });
+}
+
 function DropZone({ label, accept, file, onFile, showGalleryPicker }) {
   const ref = useRef(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const applyFile = (incomingFile) => {
+    if (!incomingFile) return;
+    if (!fileMatchesAccept(incomingFile, accept)) return;
+    onFile(incomingFile);
+  };
+
   return (
     <div className="flex min-w-0 gap-2">
-      <button type="button" onClick={() => ref.current?.click()}
-        className="flex-1 min-w-0 rounded-xl border-2 border-dashed border-zinc-700 bg-zinc-900/40 px-4 py-6 text-center transition hover:border-cyan-500/60 hover:bg-cyan-500/5">
+      <button
+        type="button"
+        onClick={() => ref.current?.click()}
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setIsDragging(true);
+        }}
+        onDragEnter={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setIsDragging(true);
+        }}
+        onDragLeave={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.currentTarget.contains(event.relatedTarget)) return;
+          setIsDragging(false);
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setIsDragging(false);
+          const droppedFile = event.dataTransfer?.files?.[0];
+          applyFile(droppedFile);
+        }}
+        className={`flex-1 min-w-0 rounded-xl border-2 border-dashed px-4 py-6 text-center transition ${
+          isDragging
+            ? 'border-cyan-400 bg-cyan-500/10 shadow-[0_0_0_1px_rgba(34,211,238,0.3)]'
+            : 'border-zinc-700 bg-zinc-900/40 hover:border-cyan-500/60 hover:bg-cyan-500/5'
+        }`}
+      >
         <input ref={ref} type="file" accept={accept} className="hidden"
-          onChange={e => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
+          onChange={e => { const f = e.target.files?.[0]; if (f) applyFile(f); }} />
         {file ? (
           <div className="mx-auto flex max-w-full flex-col items-center gap-1">
             <div className="max-w-full text-center text-sm font-medium leading-tight text-zinc-200 break-all">
@@ -51,7 +108,7 @@ function DropZone({ label, accept, file, onFile, showGalleryPicker }) {
           <>
             <div className="text-3xl mb-2 opacity-30">+</div>
             <div className="text-sm text-zinc-400">{label}</div>
-            <div className="text-[11px] text-zinc-600 mt-0.5">Click to browse</div>
+            <div className="text-[11px] text-zinc-600 mt-0.5">Drop or click to browse</div>
           </>
         )}
       </button>
@@ -345,6 +402,12 @@ function VideoComposePage() {
   const [warmth, setWarmth] = useState(0);
   const [sharpness, setSharpness] = useState(0);
   const [vignette, setVignette] = useState(0);
+  const [primaryZoom, setPrimaryZoom] = useState(1);
+  const [primaryPanX, setPrimaryPanX] = useState(0);
+  const [primaryPanY, setPrimaryPanY] = useState(0);
+  const [secondaryZoom, setSecondaryZoom] = useState(1);
+  const [secondaryPanX, setSecondaryPanX] = useState(0);
+  const [secondaryPanY, setSecondaryPanY] = useState(0);
   const [musicVolume, setMusicVolume] = useState(0.8);
   const [originalAudioVolume, setOriginalAudioVolume] = useState(1);
   const [replaceOriginalAudio, setReplaceOriginalAudio] = useState(false);
@@ -393,6 +456,9 @@ function VideoComposePage() {
     const finalSharpness = Math.max(0, Math.min(2.5, presetValues.sharpness + sharpness));
     const finalVignette = Math.max(0, Math.min(1, presetValues.vignette + vignette));
     return {
+      objectPosition: `${(50 + primaryPanX * 25).toFixed(1)}% ${(50 + primaryPanY * 25).toFixed(1)}%`,
+      transform: `scale(${primaryZoom.toFixed(3)})`,
+      transformOrigin: 'center center',
       filter: [
         `brightness(${(1 + finalBrightness).toFixed(3)})`,
         `contrast(${finalContrast.toFixed(3)})`,
@@ -403,7 +469,7 @@ function VideoComposePage() {
         finalBlur > 0.01 ? `blur(${finalBlur.toFixed(2)}px)` : '',
       ].filter(Boolean).join(' '),
     };
-  }, [preset, brightness, contrast, saturation, blur, warmth, sharpness, vignette]);
+  }, [preset, brightness, contrast, saturation, blur, warmth, sharpness, vignette, primaryPanX, primaryPanY, primaryZoom]);
 
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
   useEffect(() => () => { if (previewUrl2) URL.revokeObjectURL(previewUrl2); }, [previewUrl2]);
@@ -412,7 +478,15 @@ function VideoComposePage() {
   useEffect(() => {
     setClips([]); setSelectedClipId(null); setTrimStart(0); setTrimEnd(0);
     setTrimReady(false); setResult(null); setPlaying(false); setAudioDuration(0); setAudioStart(0); setAudioEnd(0); setAudioOffset(0);
+    setPrimaryZoom(1); setPrimaryPanX(0); setPrimaryPanY(0);
   }, [videoFile]);
+
+  useEffect(() => {
+    if (videoFile2) return;
+    setSecondaryZoom(1);
+    setSecondaryPanX(0);
+    setSecondaryPanY(0);
+  }, [videoFile2]);
 
   useEffect(() => {
     if (!previewUrl2) {
@@ -710,6 +784,12 @@ function VideoComposePage() {
     setWarmth(0);
     setSharpness(0);
     setVignette(0);
+    setPrimaryZoom(1);
+    setPrimaryPanX(0);
+    setPrimaryPanY(0);
+    setSecondaryZoom(1);
+    setSecondaryPanX(0);
+    setSecondaryPanY(0);
   }
 
   async function compose() {
@@ -728,6 +808,12 @@ function VideoComposePage() {
       fd.append('warmth', String(warmth));
       fd.append('sharpness', String(sharpness));
       fd.append('vignette', String(vignette));
+      fd.append('primaryZoom', String(primaryZoom));
+      fd.append('primaryPanX', String(primaryPanX));
+      fd.append('primaryPanY', String(primaryPanY));
+      fd.append('secondaryZoom', String(secondaryZoom));
+      fd.append('secondaryPanX', String(secondaryPanX));
+      fd.append('secondaryPanY', String(secondaryPanY));
       fd.append('musicVolume', String(musicVolume)); fd.append('originalAudioVolume', String(originalAudioVolume));
       fd.append('replaceOriginalAudio', String(replaceOriginalAudio));
       fd.append('audioStart', String(audioStart));
@@ -949,6 +1035,26 @@ function VideoComposePage() {
                 <FriendlySlider label="Sharpness" hint="detail" value={sharpness} onChange={setSharpness} min={0} max={2} step={0.05} formatter={(v) => `${Math.round(v * 100)}%`} onReset={() => setSharpness(0)} resetDisabled={Math.abs(sharpness) < 0.0001} />
                 <FriendlySlider label="Vignette" hint="edge focus" value={vignette} onChange={setVignette} min={0} max={1} step={0.01} formatter={(v) => `${Math.round(v * 100)}%`} onReset={() => setVignette(0)} resetDisabled={Math.abs(vignette) < 0.0001} />
                 <FriendlySlider label="Soft Focus" hint="glow" value={blur} onChange={setBlur} min={0} max={4} step={0.1} formatter={(v) => `${v.toFixed(1)}px`} onReset={() => setBlur(0)} resetDisabled={Math.abs(blur) < 0.0001} />
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3 space-y-3">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-zinc-600">Main Clip Framing</div>
+                    <div className="text-[11px] text-zinc-500">Zoom in and nudge the shot until the crop feels right.</div>
+                  </div>
+                  <FriendlySlider label="Zoom" hint="main clip" value={primaryZoom} onChange={setPrimaryZoom} min={1} max={2.5} step={0.01} formatter={(v) => `${v.toFixed(2)}x`} onReset={() => setPrimaryZoom(1)} resetDisabled={Math.abs(primaryZoom - 1) < 0.0001} />
+                  <FriendlySlider label="Horizontal" hint="left to right" value={primaryPanX} onChange={setPrimaryPanX} min={-1} max={1} step={0.01} formatter={(v) => `${v > 0 ? '+' : ''}${Math.round(v * 100)}`} onReset={() => setPrimaryPanX(0)} resetDisabled={Math.abs(primaryPanX) < 0.0001} />
+                  <FriendlySlider label="Vertical" hint="up to down" value={primaryPanY} onChange={setPrimaryPanY} min={-1} max={1} step={0.01} formatter={(v) => `${v > 0 ? '+' : ''}${Math.round(v * 100)}`} onReset={() => setPrimaryPanY(0)} resetDisabled={Math.abs(primaryPanY) < 0.0001} />
+                </div>
+                {videoFile2 ? (
+                  <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3 space-y-3">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-widest text-zinc-600">Second Clip Framing</div>
+                      <div className="text-[11px] text-zinc-500">Tune the appended clip so the export feels matched.</div>
+                    </div>
+                    <FriendlySlider label="Zoom" hint="second clip" value={secondaryZoom} onChange={setSecondaryZoom} min={1} max={2.5} step={0.01} formatter={(v) => `${v.toFixed(2)}x`} onReset={() => setSecondaryZoom(1)} resetDisabled={Math.abs(secondaryZoom - 1) < 0.0001} />
+                    <FriendlySlider label="Horizontal" hint="left to right" value={secondaryPanX} onChange={setSecondaryPanX} min={-1} max={1} step={0.01} formatter={(v) => `${v > 0 ? '+' : ''}${Math.round(v * 100)}`} onReset={() => setSecondaryPanX(0)} resetDisabled={Math.abs(secondaryPanX) < 0.0001} />
+                    <FriendlySlider label="Vertical" hint="up to down" value={secondaryPanY} onChange={setSecondaryPanY} min={-1} max={1} step={0.01} formatter={(v) => `${v > 0 ? '+' : ''}${Math.round(v * 100)}`} onReset={() => setSecondaryPanY(0)} resetDisabled={Math.abs(secondaryPanY) < 0.0001} />
+                  </div>
+                ) : null}
               </div>
             )}
 
@@ -964,6 +1070,7 @@ function VideoComposePage() {
                   <div className="flex justify-between text-zinc-500"><span>Captions</span><span className="text-zinc-200">{clips.length}</span></div>
                   <div className="flex justify-between text-zinc-500"><span>Preset</span><span className="text-zinc-200 capitalize">{preset}</span></div>
                   <div className="flex justify-between text-zinc-500"><span>Style Tweaks</span><span className="text-zinc-200">{[brightness, contrast - 1, saturation - 1, warmth, sharpness, vignette, blur].some(v => Math.abs(v) > 0.0001) ? 'Custom' : 'Default'}</span></div>
+                  <div className="flex justify-between text-zinc-500"><span>Framing</span><span className="text-zinc-200">{[primaryZoom - 1, primaryPanX, primaryPanY, secondaryZoom - 1, secondaryPanX, secondaryPanY].some(v => Math.abs(v) > 0.0001) ? 'Custom' : 'Default'}</span></div>
                   <div className="flex justify-between text-zinc-500"><span>Speed</span><span className="text-zinc-200">{speed.toFixed(2)}x</span></div>
                   <div className="flex justify-between text-zinc-500"><span>Audio</span><span className="text-zinc-200">{audioFile ? (replaceOriginalAudio ? 'Replace' : 'Mix') : 'Original'}</span></div>
                 </div>
@@ -1276,7 +1383,3 @@ export default function VideoComposePageRoot() {
     </CompositorErrorBoundary>
   );
 }
-
-
-
-

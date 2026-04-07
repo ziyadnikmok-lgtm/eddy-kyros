@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { pushPending, resolvePending, rejectPending } from '../lib/generationFeed';
 import { nanoBypass as api, gallery as galleryApi, characters as charApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Textarea, Spinner, Badge } from '../components/UI';
@@ -148,6 +149,8 @@ export default function NanoBypassPage() {
   const { notify, characters, consumePageParams } = useApp();
   const { openLightbox, LightboxComponent } = useImageLightbox();
   const initialStoreState = nanoPageStore.getSnapshot();
+  const autofillCharacterPromptRef = useRef(false);
+  const lastAutofilledCharacterIdRef = useRef('');
 
   const [images, setImages] = useState([null, null, null, null, null]);
   const [prompt, setPrompt] = useState(_cache.prompt);
@@ -171,6 +174,11 @@ export default function NanoBypassPage() {
     () => buildCharacterReferenceDescriptors(characterId, selectedCharacter),
     [characterId, selectedCharacter],
   );
+
+  const handleCharacterChange = useCallback((nextCharacterId) => {
+    autofillCharacterPromptRef.current = Boolean(nextCharacterId);
+    setCharacterId(nextCharacterId);
+  }, []);
 
   useEffect(() => nanoPageStore.subscribe((snapshot) => {
     setResult(snapshot.result);
@@ -203,12 +211,38 @@ export default function NanoBypassPage() {
       return next;
     });
 
-    if (handoff.characterId) setCharacterId(handoff.characterId);
+    if (handoff.characterId) {
+      autofillCharacterPromptRef.current = true;
+      setCharacterId(handoff.characterId);
+    }
     if (typeof handoff.aspectRatio === 'string' && ASPECT_RATIOS.includes(handoff.aspectRatio)) {
       setAspectRatio(handoff.aspectRatio);
     }
     notify('Loaded image into Nano Bypass', 'success');
   }, [consumePageParams, notify]);
+
+  useEffect(() => {
+    if (!characterId) {
+      autofillCharacterPromptRef.current = false;
+      lastAutofilledCharacterIdRef.current = '';
+      return;
+    }
+
+    const masterPrompt = String(selectedCharacter?.masterPrompt || '').trim();
+    if (!masterPrompt) {
+      autofillCharacterPromptRef.current = false;
+      return;
+    }
+
+    setPrompt((prev) => {
+      const shouldAutofill = autofillCharacterPromptRef.current
+        || (!String(prev || '').trim() && lastAutofilledCharacterIdRef.current !== characterId);
+      if (!shouldAutofill) return prev;
+      lastAutofilledCharacterIdRef.current = characterId;
+      return masterPrompt;
+    });
+    autofillCharacterPromptRef.current = false;
+  }, [characterId, selectedCharacter]);
 
   // Paste support
   useEffect(() => {
@@ -311,6 +345,7 @@ export default function NanoBypassPage() {
     if (!prompt.trim()) { notify('Enter a prompt describing the edit', 'error'); return; }
 
     const queueId = makePersistentJobId('nano-bypass');
+    pushPending({ id: queueId, prompt: prompt || '', imageModel: model || '', aspectRatio, resolutionTier: imageSize });
     nanoPageStore.patch({
       result: null,
       queueItems: [
@@ -353,8 +388,20 @@ export default function NanoBypassPage() {
       nanoPageStore.setValue('result', data);
       nanoPageStore.setValue('history', (prev) => [data, ...prev].slice(0, 12));
       nanoPageStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
+      resolvePending(queueId, {
+        imageId: data.imageId,
+        galleryId: data.galleryId || data.imageId,
+        mimeType: data.image?.mimeType,
+        prompt: prompt || '',
+        imageModel: model || '',
+        aspectRatio,
+        resolutionTier: imageSize,
+        generatedAt: Date.now(),
+        characterId: characterId || null,
+      });
       notify('Done!', 'success');
     } catch (err) {
+      rejectPending(queueId);
       nanoPageStore.setValue('queueItems', (prev) => prev.map((job) => (
         job.id === queueId ? { ...job, status: 'error', errorMessage: err.message || 'Generation failed' } : job
       )));
@@ -416,7 +463,7 @@ export default function NanoBypassPage() {
             <span className="text-xs text-zinc-400 font-medium block mb-1.5">Character</span>
             <select
               value={characterId}
-              onChange={(e) => setCharacterId(e.target.value)}
+              onChange={(e) => handleCharacterChange(e.target.value)}
               className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500"
             >
               <option value="">No character</option>
@@ -425,7 +472,7 @@ export default function NanoBypassPage() {
               ))}
             </select>
             <p className="mt-1 text-[10px] text-zinc-500">
-              Optional. Selecting a character auto-loads that character&apos;s primary/reference images into empty slots.
+              Optional. Selecting a character auto-loads that character&apos;s primary/reference images and master prompt.
             </p>
             {characterReferenceDescriptors.length > 0 && (
               <div className="mt-2 space-y-2">

@@ -1,4 +1,5 @@
 import { useState, useEffect, useReducer, useRef } from 'react';
+import { pushToFeed } from '../lib/generationFeed';
 import { batch as batchApi, characters as charApi, gallery as galleryApi, templates as templatesApi, reformat as reformatApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
@@ -464,8 +465,16 @@ export default function BatchPage() {
 
   useEffect(() => { fetchHistory(); }, []);
 
+  const pushedJobIds = useRef(new Set());
   useEffect(() => {
-    if (job && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')) {
+    if (job && (job.status === 'completed' || job.status === 'partial') && !pushedJobIds.current.has(job.jobId)) {
+      pushedJobIds.current.add(job.jobId);
+      const results = job.results || [];
+      results.filter((r) => r?.success && (r.galleryId || r.imageId)).forEach((r) => {
+        pushToFeed({ imageId: r.imageId, galleryId: r.galleryId || r.imageId, mimeType: r.image?.mimeType, prompt: r.prompt || job.config?.prompt || 'Batch', imageModel: job.config?.imageModel || '', aspectRatio: job.config?.aspectRatio || '', resolutionTier: job.config?.resolutionTier || '', generatedAt: Date.now() });
+      });
+      fetchHistory();
+    } else if (job && (job.status === 'failed' || job.status === 'cancelled')) {
       fetchHistory();
     }
   }, [job?.status]);

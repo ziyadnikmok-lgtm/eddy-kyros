@@ -4,6 +4,7 @@ import { useApp } from '../context/AppContext';
 import { usePoll } from '../hooks/usePoll';
 import { Card, Btn, Slider, Badge, Spinner, Empty, Section, StepProgress, ConfirmDialog } from '../components/UI';
 import { VIDEO_MODELS } from '../config/photoModes';
+import { pushPending, resolvePending, rejectPending } from '../lib/generationFeed';
 
 const MODEL_MAP = Object.fromEntries(VIDEO_MODELS.map((m) => [m.id, m]));
 const IS_MOTION = (id) => id === 'kling-v2.6-motion' || id === 'kling-v2.6-motion-pro';
@@ -69,6 +70,8 @@ export default function VideoPage() {
   const [result, setResult] = useState(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const startTimeRef = useRef(null);
+  const feedQueueIdRef = useRef(null);
+  const feedQueueMetaRef = useRef(null);
 
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -132,11 +135,30 @@ export default function VideoPage() {
       stopPolling();
       setLoading(false);
       setResult(pollData);
+      if (feedQueueIdRef.current) {
+        const feedMeta = feedQueueMetaRef.current || {};
+        resolvePending(feedQueueIdRef.current, {
+          isVideo: true,
+          videoUrl: pollData.localFilename ? videoApi.fileUrl(pollData.localFilename) : (pollData.outputs?.[0] || pollData.videoUrl || ''),
+          prompt: feedMeta.prompt || 'Video generation',
+          imageModel: feedMeta.imageModel || model,
+          aspectRatio: feedMeta.aspectRatio || '9:16',
+          resolutionTier: feedMeta.resolutionTier || `${duration}s`,
+          generatedAt: Date.now(),
+        });
+        feedQueueIdRef.current = null;
+        feedQueueMetaRef.current = null;
+      }
       fetchHistory();
       notify('Video generation complete!', 'success');
     } else if (pollData.status === 'failed') {
       stopPolling();
       setLoading(false);
+      if (feedQueueIdRef.current) {
+        rejectPending(feedQueueIdRef.current);
+        feedQueueIdRef.current = null;
+        feedQueueMetaRef.current = null;
+      }
       notify(pollData.error || 'Video generation failed', 'error');
       fetchHistory();
     }
@@ -145,6 +167,11 @@ export default function VideoPage() {
   useEffect(() => {
     if (!polling && loading && taskId && pollData?.status !== 'failed' && pollData?.status !== 'completed') {
       setLoading(false);
+      if (feedQueueIdRef.current) {
+        rejectPending(feedQueueIdRef.current);
+        feedQueueIdRef.current = null;
+        feedQueueMetaRef.current = null;
+      }
       notify('Lost connection to video task — check history later', 'error');
     }
   }, [polling, loading, taskId, notify, pollData]);
@@ -223,6 +250,22 @@ export default function VideoPage() {
     setLoading(true);
     setResult(null);
     setTaskId(null);
+    const feedQueueId = `video-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    feedQueueIdRef.current = feedQueueId;
+    feedQueueMetaRef.current = {
+      prompt: prompt.trim() || 'Video generation',
+      imageModel: modelInfo?.label || model,
+      aspectRatio: aspectRatio || '9:16',
+      resolutionTier: resolution || `${duration}s`,
+    };
+    pushPending({
+      id: feedQueueId,
+      prompt: feedQueueMetaRef.current.prompt,
+      imageModel: feedQueueMetaRef.current.imageModel,
+      aspectRatio: feedQueueMetaRef.current.aspectRatio,
+      resolutionTier: feedQueueMetaRef.current.resolutionTier,
+      isVideo: true,
+    });
 
     try {
       const body = { model };
@@ -277,6 +320,9 @@ export default function VideoPage() {
       const res = await videoApi.generate(body);
       if (res.status === 'failed') {
         setLoading(false);
+        rejectPending(feedQueueId);
+        feedQueueIdRef.current = null;
+        feedQueueMetaRef.current = null;
         notify(IS_VEO(model) ? 'Veo returned an error - try again or pick a different model' : 'WaveSpeed returned an error - try again or pick a different model', 'error');
         fetchHistory();
         return;
@@ -285,6 +331,9 @@ export default function VideoPage() {
       startPolling();
     } catch (err) {
       setLoading(false);
+      rejectPending(feedQueueId);
+      feedQueueIdRef.current = null;
+      feedQueueMetaRef.current = null;
       notify(err.message || 'Failed to start video generation', 'error');
     }
   };
