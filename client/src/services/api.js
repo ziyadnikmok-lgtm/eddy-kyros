@@ -2,13 +2,14 @@ const BASE = '/api';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const LONG_TIMEOUT_MS = 5 * 60_000;
+const VIDEO_ANALYZE_TIMEOUT_MS = 3 * 60_000;
 const PROFILE_TIMEOUT_MS = 15 * 60_000;
 
 const LONG_RUNNING_PATHS = [
   '/generate', '/batch', '/tweak',
   '/post-clone', '/reel-copy',
   '/carousel/execute', '/carousel/follow-up',
-  '/scene/recreate', '/story/generate',
+  '/scene/recreate', '/pinterest/recreate', '/story/generate',
   '/auto/plan', '/auto/execute',
   '/video/generate', '/reformat',
   '/nsfw-generate', '/photo-match', '/nano-bypass', '/lora-datasets/generate',
@@ -18,6 +19,7 @@ const EXTRA_LONG_PATHS = ['/profile-clone'];
 
 function getTimeoutForPath(path, method) {
   if (method === 'GET') return DEFAULT_TIMEOUT_MS;
+  if (path.startsWith('/pinterest/analyze-video')) return VIDEO_ANALYZE_TIMEOUT_MS;
   for (const prefix of EXTRA_LONG_PATHS) {
     if (path.startsWith(prefix)) return PROFILE_TIMEOUT_MS;
   }
@@ -285,6 +287,15 @@ export const scene = {
 
 export const photoMatch = {
   recreate: (body) => request('/photo-match/recreate', { method: 'POST', body }),
+};
+
+export const pinterest = {
+  fetch: (body) => request('/pinterest', { method: 'POST', body }),
+  proxyUrl: (url) => `${BASE}/pinterest/proxy?url=${encodeURIComponent(url)}`,
+  analyze: (image, mimeType) => request('/pinterest/analyze', { method: 'POST', body: { image, mimeType } }),
+  recreate: (body) => request('/pinterest/recreate', { method: 'POST', body }),
+  recreateVideoFrame: (body) => request('/pinterest/recreate-video-frame', { method: 'POST', body }),
+  analyzeVideo: (videoUrl) => request('/pinterest/analyze-video', { method: 'POST', body: { url: videoUrl } }),
 };
 
 export const nanoBypass = {

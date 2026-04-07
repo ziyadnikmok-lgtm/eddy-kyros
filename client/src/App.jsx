@@ -44,6 +44,7 @@ const LibraryPage = lazy(() => import('./pages/LibraryPage'));
 const SceneRecreatePage = lazy(() => import('./pages/SceneRecreatePage'));
 const ReelRecreatePage = lazy(() => import('./pages/ReelRecreatePage'));
 const PostClonePage = lazy(() => import('./pages/PostClonePage'));
+const PinterestPage = lazy(() => import('./pages/PinterestPage'));
 const StyleLibraryPage = lazy(() => import('./pages/StyleLibraryPage'));
 const ProfileAnalyzerPage = lazy(() => import('./pages/ProfileAnalyzerPage'));
 const PromptBuilderPage = lazy(() => import('./pages/PromptBuilderPage'));
@@ -73,6 +74,7 @@ const NAV_ICONS = {
   videoGallery: IconGrid2,
   reel: IconSwap,
   postClone: IconCopies,
+  pinterest: IconImage,
   styleLibrary: IconColorPalette,
   promptBuilder: IconMagicWandSparkle,
   loraDataset: IconLayers,
@@ -104,6 +106,7 @@ const NAV_COLORS = {
   videoGallery:   ['#5eead4', '#0d9488'],
   reel:           ['#fdba74', '#ea580c'],
   postClone:      ['#d8b4fe', '#9333ea'],
+  pinterest:      ['#fda4af', '#e11d48'],
   styleLibrary:   ['#6ee7b7', '#059669'],
   promptBuilder:  ['#a5b4fc', '#4f46e5'],
   profileAnalyzer:['#7dd3fc', '#0284c7'],
@@ -140,6 +143,7 @@ const NAV_SECTIONS = [
       { id: 'scene', label: 'Scene Recreate' },
       { id: 'reel', label: 'Reel Copy' },
       { id: 'postClone', label: 'Post Clone' },
+      { id: 'pinterest', label: 'Pinterest DL' },
       { id: 'videoCompose', label: 'Video Composer' },
       { id: 'photoMatch', label: 'Photo Match' },
       { id: 'nanoBypass', label: 'Nano Bypass' },
@@ -195,6 +199,7 @@ const PAGE_DESCRIPTIONS = {
   scene: 'Upload a scene and recreate it with your character',
   reel: 'Recreate Instagram reels with your character',
   postClone: 'Clone Instagram posts with your character',
+  pinterest: 'Fetch Pinterest pins and recreate them with your character',
   styleLibrary: 'Manage reusable style building blocks',
   promptBuilder: 'Visual prompt composition with Nano-Banana formula',
   loraDataset: 'Build captioned LoRA training datasets from characters',
@@ -222,6 +227,7 @@ const PAGES = {
   scene: SceneRecreatePage,
   reel: ReelRecreatePage,
   postClone: PostClonePage,
+  pinterest: PinterestPage,
   styleLibrary: StyleLibraryPage,
   promptBuilder: PromptBuilderPage,
   loraDataset: LoraDatasetPage,
