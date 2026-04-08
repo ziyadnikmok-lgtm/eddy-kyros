@@ -21,7 +21,7 @@ export default function LoginPage({ onLogin, onNavigate }) {
         body: JSON.stringify({ email, password, keepSignedIn })
       });
       const data = await res.json();
-      if (!res.ok) setError(data.error || 'Login failed');
+      if (!res.ok) setError(typeof data.error === 'string' ? data.error : (data.error?.message || data.message || 'Login failed'));
       else if (onLogin) onLogin(data.user);
     } catch { setError('Network error'); }
     setLoading(false);

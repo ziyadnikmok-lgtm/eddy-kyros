@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { pushToFeed, pushPending, resolvePending, rejectPending } from '../lib/generationFeed';
 import {
   gallery as galleryApi,
   characters as charApi,
@@ -147,7 +148,7 @@ export default function CarouselPage() {
   const [followUpCount, setFollowUpCount] = useState(_cache.followUpCount);
   const [followUpDirection, setFollowUpDirection] = useState(_cache.followUpDirection);
   const [followUpMode, setFollowUpMode] = useState(_cache.followUpMode);
-  const [strictContinuityLock, setStrictContinuityLock] = useState(true);
+  const [strictContinuityLock, setStrictContinuityLock] = useState(false);
   const [useCharacterRefsInFollowUp, setUseCharacterRefsInFollowUp] = useState(false);
 
   const [carouselMode, setCarouselMode] = useState(_cache.carouselMode);
@@ -207,6 +208,39 @@ export default function CarouselPage() {
         status = 'running';
       }
 
+      // Reject pending skeleton on error
+      if (status === 'error') {
+        const pendingId = `carousel-followup-${draft.id}`;
+        const rejectKey = `rejected-${pendingId}`;
+        if (!pushedToFeedRef.current.has(rejectKey)) {
+          pushedToFeedRef.current.add(rejectKey);
+          rejectPending(pendingId);
+        }
+      }
+
+      // Resolve pending skeleton when done
+      if (src && status === 'done') {
+        const pendingId = `carousel-followup-${draft.id}`;
+        const resolveKey = `resolved-${pendingId}`;
+        if (!pushedToFeedRef.current.has(resolveKey)) {
+          pushedToFeedRef.current.add(resolveKey);
+          const result2 = job?.results?.find((entry) => entry && entry.index === resultIndex);
+          const feedGalleryId = result2?.galleryId || result2?.imageId;
+          if (feedGalleryId) {
+            resolvePending(pendingId, {
+              imageId: feedGalleryId,
+              galleryId: feedGalleryId,
+              mimeType: result2?.image?.mimeType || 'image/png',
+              prompt: draft.prompt || draft.title || 'Carousel slide',
+              imageModel: imageModel || '',
+              aspectRatio,
+              resolutionTier,
+              generatedAt: Date.now(),
+            });
+          }
+        }
+      }
+
       return {
         ...draft,
         status,
@@ -214,7 +248,7 @@ export default function CarouselPage() {
         src,
       };
     });
-  }, [executeJobs, followUpDrafts, followUpLoading]);
+  }, [executeJobs, followUpDrafts, followUpLoading, imageModel, aspectRatio, resolutionTier]);
 
   useEffect(() => {
     let cancelled = false;
@@ -341,6 +375,8 @@ export default function CarouselPage() {
 
   const isPollJobRunning = pollJobs.some(j => j?.status === 'running');
 
+  const pushedToFeedRef = useRef(new Set());
+
   useEffect(() => {
     setCompletedSlides(prev => {
       const existing = new Set(prev.map(s => s._key));
@@ -356,11 +392,30 @@ export default function CarouselPage() {
           } else if (galleryId) {
             additions.push({ _key: key, index: r.index, galleryId });
           }
+          // Push to generation feed
+          if (!pushedToFeedRef.current.has(key)) {
+            pushedToFeedRef.current.add(key);
+            const feedGalleryId = r.galleryId || r.imageId;
+            if (feedGalleryId) {
+              pushToFeed({
+                id: key,
+                status: 'done',
+                imageId: feedGalleryId,
+                galleryId: feedGalleryId,
+                mimeType: r.image?.mimeType || 'image/png',
+                prompt: r.prompt || 'Carousel slide',
+                imageModel: imageModel || '',
+                aspectRatio,
+                resolutionTier,
+                generatedAt: Date.now(),
+              });
+            }
+          }
         }
       }
       return additions.length > 0 ? [...prev, ...additions] : prev;
     });
-  }, [executeJobs]);
+  }, [executeJobs, imageModel, aspectRatio, resolutionTier]);
 
   useEffect(() => {
     setCompletedPollSlides(prev => {
@@ -433,6 +488,16 @@ export default function CarouselPage() {
         jobId: null,
       })),
     );
+    // Push pending skeletons immediately so feed shows spinners while generating
+    Array.from({ length: countInt }, (_, index) => {
+      pushPending({
+        id: `carousel-followup-${draftSeed}-${index}`,
+        prompt: promptSummary,
+        imageModel: imageModel || '',
+        aspectRatio,
+        resolutionTier,
+      });
+    });
     setFollowUpLoading(true);
     try {
       const data = await carouselApi.followUp({
@@ -520,8 +585,8 @@ export default function CarouselPage() {
       </div>
 
       {carouselMode === 'follow-up' && (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
-        <div className="lg:col-span-1 space-y-4">
+      <div>
+        <div className="space-y-4">
           <Card className="space-y-3">
             <h3 className="text-sm font-semibold text-zinc-300">Generation Settings</h3>
             <div>
@@ -678,15 +743,31 @@ export default function CarouselPage() {
                 </select>
               </label>
             </div>
-            <label className="text-xs text-zinc-400 block">
-              Direction (optional)
+            <div className="space-y-1.5">
+              <span className="text-xs text-zinc-400 font-medium">Direction (optional)</span>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { label: 'Sexy', prompt: 'Change pose to sexy and facial expression to sexy, and hand placement to sexy' },
+                  { label: 'Playful', prompt: 'Change pose to playful and facial expression to playful, and hand placement to playful' },
+                  { label: 'Cute', prompt: 'Change pose to cute and facial expression to cute, and hand placement to cute' },
+                ].map(({ label, prompt }) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => setFollowUpDirection(prompt)}
+                    className={`rounded-full px-3 py-1 text-xs font-medium transition cursor-pointer border ${followUpDirection === prompt ? 'bg-blue-600 border-blue-500 text-white' : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <input
                 value={followUpDirection}
                 onChange={(e) => setFollowUpDirection(e.target.value)}
                 placeholder={followUpMode === 'ai' ? 'extra guidance for AI variants' : 'new framing + expression'}
-                className="mt-1 w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-500"
+                className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-500"
               />
-            </label>
+            </div>
             <label className="flex items-center gap-2 rounded-lg border border-zinc-700/80 bg-zinc-800/50 px-3 py-2 text-xs text-zinc-300">
               <input
                 type="checkbox"
@@ -694,7 +775,7 @@ export default function CarouselPage() {
                 onChange={(e) => setStrictContinuityLock(e.target.checked)}
                 className="h-4 w-4 accent-blue-500"
               />
-              <span>Strict Continuity Lock (recommended)</span>
+              <span>Strict Continuity Lock</span>
             </label>
             <div className="rounded-lg border border-zinc-700/80 bg-zinc-800/50 px-3 py-2">
               <Toggle
@@ -713,84 +794,12 @@ export default function CarouselPage() {
 
         </div>
 
-        <div className="lg:col-span-2 space-y-4">
-          {followUpLoading && (
-            <StepProgress steps={FOLLOW_STEPS} currentIndex={followStepIndex} elapsedSec={followUpElapsedSec} className="min-h-[360px]" />
-          )}
-
-          {followUpCards.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-semibold text-zinc-300">Follow-Up Queue</h3>
-                  <p className="mt-1 text-xs text-zinc-500">
-                    {followUpCards.length} slot{followUpCards.length === 1 ? '' : 's'} {isAnyJobRunning ? `· ${jobsElapsedSec}s elapsed` : '· ready as they finish'}
-                  </p>
-                </div>
-                <Badge color={isAnyJobRunning ? 'blue' : 'green'}>
-                  {isAnyJobRunning ? `${followUpCards.filter((card) => card.status === 'running' || card.status === 'pending').length} running` : 'Completed'}
-                </Badge>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-                {followUpCards.map((card) => (
-                  <CarouselResultCard
-                    key={card.id}
-                    title={card.title}
-                    prompt={card.prompt}
-                    status={card.status}
-                    error={card.error}
-                    src={card.src}
-                    onOpen={() => {
-                      const readyImages = followUpCards.filter((entry) => entry.src).map((entry) => entry.src);
-                      const lightboxIndex = readyImages.indexOf(card.src);
-                      if (card.src && lightboxIndex >= 0) openLightbox(readyImages, lightboxIndex);
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {followUpCards.length === 0 && completedSlides.length === 0 && !isAnyJobRunning ? (
-            <Card className="flex items-center justify-center py-20">
-              <Empty icon="carousel" title="No generated slides yet" subtitle="Use Execute or Follow-up to start jobs" />
-            </Card>
-          ) : followUpCards.length === 0 ? (
-            <div className="space-y-4">
-              {completedSlides.length > 0 && (
-                <h3 className="text-sm font-semibold text-zinc-400">Generated Slides ({completedSlides.length})</h3>
-              )}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {completedSlides.map((v, i) => {
-                  const imgSrc = v.image?.base64Data
-                    ? `data:${v.image.mimeType || 'image/png'};base64,${v.image.base64Data}`
-                    : v.galleryId ? `/api/gallery/${v.galleryId}/image` : null;
-                  return (
-                    <ImageCard
-                      key={v._key}
-                      src={imgSrc}
-                      meta={{ identityConfidence: v.image?.validation?.identity_match_score }}
-                      className="animate-in"
-                      onSelect={() => openLightbox(
-                        completedSlides.map((img) => img.image?.base64Data
-                          ? `data:${img.image.mimeType || 'image/png'};base64,${img.image.base64Data}`
-                          : `/api/gallery/${img.galleryId}/image`
-                        ),
-                        i
-                      )}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-        </div>
       </div>
       )}
 
       {carouselMode === 'polls' && (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
-        <div className="lg:col-span-1 space-y-4">
+      <div>
+        <div className="space-y-4">
           <Card className="space-y-3">
             <h3 className="text-sm font-semibold text-zinc-300">Poll Settings</h3>
             <div>
@@ -884,89 +893,6 @@ export default function CarouselPage() {
           )}
         </div>
 
-        <div className="lg:col-span-2 space-y-4">
-          {pollLoading && (
-            <StepProgress steps={POLL_STEPS} currentIndex={pollStepIndex} elapsedSec={pollElapsedSec} className="min-h-[360px]" />
-          )}
-
-          {pollJobs.length > 0 && (
-            <Card className="space-y-3">
-              <h3 className="text-sm font-semibold text-zinc-300">Poll Image Jobs</h3>
-              {isPollJobRunning && <p className="text-xs text-zinc-500 font-mono">{pollElapsedSec}s</p>}
-              <div className="space-y-2">
-                {pollJobs.map(job => (
-                  <div key={job.jobId} className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
-                    <div className="flex items-center justify-between text-xs text-zinc-400">
-                      <span className="font-mono">{job.jobId}</span>
-                      <span>{job.status} - {job.completed + job.failed}/{job.total}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
-
-          {pollResults?.polls?.length > 0 && completedPollSlides.length > 0 ? (
-            <div className="space-y-6">
-              <h3 className="text-sm font-semibold text-zinc-400">Poll Results ({pollResults.polls.length} questions)</h3>
-              {pollResults.polls.map((poll, pi) => {
-                const imgA = completedPollSlides[pi * 2];
-                const imgB = completedPollSlides[pi * 2 + 1];
-                return (
-                  <Card key={poll.question || pi} className="space-y-3 animate-in">
-                    <div className="text-center">
-                      <p className="text-sm font-semibold text-zinc-200">{poll.question}</p>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <div className="text-center">
-                          <Badge color="blue">{poll.optionA?.label || 'Option A'}</Badge>
-                        </div>
-                        {imgA ? (
-                          <ImageCard
-                            src={imgA.image?.base64Data ? `data:${imgA.image.mimeType || 'image/png'};base64,${imgA.image.base64Data}` : `/api/gallery/${imgA.galleryId}/image`}
-                            className="animate-in"
-                            onSelect={() => openLightbox(
-                              completedPollSlides.map(img => img.image?.base64Data ? `data:${img.image.mimeType || 'image/png'};base64,${img.image.base64Data}` : `/api/gallery/${img.galleryId}/image`),
-                              pi * 2
-                            )}
-                          />
-                        ) : (
-                          <div className="aspect-square rounded-lg bg-zinc-800/60 border border-zinc-700/40 flex items-center justify-center">
-                            <Spinner size={20} />
-                          </div>
-                        )}
-                      </div>
-                      <div className="space-y-2">
-                        <div className="text-center">
-                          <Badge color="purple">{poll.optionB?.label || 'Option B'}</Badge>
-                        </div>
-                        {imgB ? (
-                          <ImageCard
-                            src={imgB.image?.base64Data ? `data:${imgB.image.mimeType || 'image/png'};base64,${imgB.image.base64Data}` : `/api/gallery/${imgB.galleryId}/image`}
-                            className="animate-in"
-                            onSelect={() => openLightbox(
-                              completedPollSlides.map(img => img.image?.base64Data ? `data:${img.image.mimeType || 'image/png'};base64,${img.image.base64Data}` : `/api/gallery/${img.galleryId}/image`),
-                              pi * 2 + 1
-                            )}
-                          />
-                        ) : (
-                          <div className="aspect-square rounded-lg bg-zinc-800/60 border border-zinc-700/40 flex items-center justify-center">
-                            <Spinner size={20} />
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </Card>
-                );
-              })}
-            </div>
-          ) : !pollLoading && (
-            <Card className="flex items-center justify-center py-20">
-              <Empty icon="poll" title="No polls generated yet" subtitle="Enter a topic and generate your first poll carousel" />
-            </Card>
-          )}
-        </div>
       </div>
       )}
 

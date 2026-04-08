@@ -683,25 +683,16 @@ export default function GenerationFeedPanel({ mode = 'rail' }) {
         className={`flex flex-col overflow-hidden bg-[linear-gradient(180deg,rgba(16,18,22,0.98),rgba(11,12,16,0.98))] ${
           workspace
             ? 'hidden lg:flex min-w-0 flex-1'
-            : `${collapsed ? 'hidden lg:flex w-11 shrink-0' : 'hidden lg:flex w-[400px] shrink-0 xl:w-[440px] 2xl:w-[500px]'} transition-all duration-300`
+            : `${collapsed ? 'hidden lg:flex w-11 shrink-0' : 'hidden lg:flex w-[520px] shrink-0 xl:w-[600px] 2xl:w-[680px]'} transition-all duration-300`
         }`}
       >
-        <div className="border-b border-zinc-800/60 px-4 py-3">
+        <div className="border-b border-zinc-800/40 px-4 py-2.5">
           <div className="flex items-center gap-3">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <h3 className={`font-semibold text-zinc-100 ${workspace ? 'text-base' : 'text-sm'}`}>
-                  {workspace ? 'Generations' : 'Generation Feed'}
-                </h3>
-                {pendingItems.length > 0 ? <FeedChip tone="live">{pendingItems.length} live</FeedChip> : null}
-              </div>
-              {!collapsed || workspace ? (
-                <p className="mt-1 text-[11px] leading-5 text-zinc-500">
-                  {workspace
-                    ? 'Images and videos stay here while you keep queueing more from the left.'
-                    : 'Persistent results rail for images and videos across the whole app.'}
-                </p>
-              ) : null}
+            <div className="min-w-0 flex-1 flex items-center gap-2">
+              {pendingItems.length > 0 ? <FeedChip tone="live">{pendingItems.length} live</FeedChip> : (
+                <span className="text-[11px] text-zinc-600 font-medium">Generations</span>
+              )}
+              {doneItems.length > 0 && <span className="text-[11px] text-zinc-700">{doneItems.length} saved</span>}
             </div>
 
             {!workspace ? (

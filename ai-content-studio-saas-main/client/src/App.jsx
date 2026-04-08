@@ -196,6 +196,12 @@ const FEED_HIDDEN_PAGES = new Set([
   'logs',
 ]);
 
+// Pages where controls panel is narrow and feed takes the rest of the space
+const FEED_DOMINANT_PAGES = new Set([
+  'generate', 'nsfwGenerate', 'batch', 'video', 'auto',
+  'scene', 'postClone', 'reel', 'carousel', 'photoMatch', 'nanoBypass', 'pinterest',
+]);
+
 function SidebarHeader() {
   return (
     <header className="flex h-14 items-center gap-2 border-b border-zinc-800/40 px-4">
@@ -336,8 +342,8 @@ function MainApp({ onLogout, currentUser }) {
   const { activeKey, setActiveKey, integrationRefreshToken, page, navigateTo } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [apifyConnected, setApifyConnected] = useState(false);
-  const isGenerateWorkspace = page === 'generate';
-  const showGenerationFeed = isGenerateWorkspace || !FEED_HIDDEN_PAGES.has(page);
+  const isFeedDominant = FEED_DOMINANT_PAGES.has(page);
+  const showGenerationFeed = !FEED_HIDDEN_PAGES.has(page);
 
   useEffect(() => {
     if (page === 'admin' && !currentUser?.isAdmin) {
@@ -476,9 +482,9 @@ function MainApp({ onLogout, currentUser }) {
           </div>
         </header>
 
-        <div className={`flex flex-1 overflow-hidden ${isGenerateWorkspace ? 'bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.08),transparent_28%)]' : ''}`}>
-          <main className={`${isGenerateWorkspace ? 'w-[380px] xl:w-[430px] 2xl:w-[470px] shrink-0 overflow-y-auto overflow-x-hidden safe-bottom ambient-glow border-r border-zinc-800/30 p-3 lg:p-5' : `flex-1 overflow-y-auto overflow-x-hidden safe-bottom ambient-glow ${showGenerationFeed ? 'border-r border-zinc-800/30' : ''} p-3 sm:p-4 lg:p-6`}`}>
-            <div className={`relative ${isGenerateWorkspace ? 'max-w-none' : 'mx-auto max-w-6xl'}`}>
+        <div className="flex flex-1 overflow-hidden">
+          <main className={`${isFeedDominant ? 'w-[400px] xl:w-[440px] 2xl:w-[480px] shrink-0 overflow-y-auto overflow-x-hidden safe-bottom ambient-glow border-r border-zinc-800/30 p-3 lg:p-5' : `flex-1 overflow-y-auto overflow-x-hidden safe-bottom ambient-glow ${showGenerationFeed ? 'border-r border-zinc-800/30' : ''} p-3 sm:p-4 lg:p-6`}`}>
+            <div className={`relative ${isFeedDominant ? 'max-w-none' : 'mx-auto max-w-6xl'}`}>
               <PageErrorBoundary pageKey={page}>
                 <Suspense fallback={<PageFallback />}>
                   <PageComponent key={page} />
@@ -486,7 +492,7 @@ function MainApp({ onLogout, currentUser }) {
               </PageErrorBoundary>
             </div>
           </main>
-          {showGenerationFeed && <GenerationFeedPanel mode={isGenerateWorkspace ? 'workspace' : 'rail'} />}
+          {showGenerationFeed && <GenerationFeedPanel mode={isFeedDominant ? 'workspace' : 'rail'} />}
         </div>
       </div>
 

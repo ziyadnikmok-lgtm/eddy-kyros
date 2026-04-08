@@ -476,9 +476,8 @@ export default function NsfwGeneratePage() {
   const recentHistory = history.slice(1, 9).filter((h) => h?.imageId);
 
   return (
-    <div className="flex gap-6 h-full">
-      {/* Left panel — controls */}
-      <div className="w-80 shrink-0 space-y-4 overflow-y-auto pr-2 pb-8">
+    <div>
+      <div className="space-y-4 max-w-sm pb-8">
         <Card className="p-4 space-y-4">
           <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 space-y-2">
             <div className="flex items-center justify-between gap-2">
@@ -646,126 +645,6 @@ export default function NsfwGeneratePage() {
         )}
       </div>
 
-      {/* Right panel — result + variations */}
-      <div className="flex-1 min-w-0 overflow-y-auto pb-8">
-        {queueItems.length > 0 && (
-          <div className="space-y-3 mb-6">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium text-zinc-400">Generation Queue</h3>
-              <Badge color={activeQueueCount > 0 ? 'blue' : 'zinc'}>
-                {activeQueueCount > 0 ? `${activeQueueCount} running` : `${queueItems.length} update${queueItems.length === 1 ? '' : 's'}`}
-              </Badge>
-            </div>
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-              {queueItems.map((job) => (
-                <NsfwQueueCard key={job.id} job={job} onDismiss={dismissQueueItem} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {result?.image ? (
-          <div className="space-y-6">
-            {/* Main result */}
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-zinc-300">Base Image</span>
-              </div>
-              <img
-                src={`data:${result.image.mimeType};base64,${result.image.base64Data}`}
-                alt="Generated"
-                className="max-h-[60vh] w-auto mx-auto rounded-xl cursor-pointer border border-zinc-800/60"
-                onClick={() => openLightbox([`data:${result.image.mimeType};base64,${result.image.base64Data}`])}
-              />
-              <div className="flex items-center gap-2 justify-center">
-                <button type="button" onClick={() => downloadImg(result.image, 'wavespeed_base')} className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-700/60 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-600 transition cursor-pointer">
-                  Download PNG
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openInPhotoMatch(result.image, 'nsfw-base')}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600/90 px-3 py-1.5 text-xs text-white hover:bg-blue-500 transition cursor-pointer"
-                >
-                  Use In Photo Match
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openInNanoBypass(result.image, 'nsfw-base')}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600/90 px-3 py-1.5 text-xs text-white hover:bg-violet-500 transition cursor-pointer"
-                >
-                  Use In Nano
-                </button>
-              </div>
-            </div>
-
-            {/* Variations grid */}
-            {variations.length > 0 && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-purple-300">Variations ({variations.length})</span>
-                  <button type="button" onClick={() => variations.forEach((v, i) => setTimeout(() => downloadImg(v.image, `wavespeed_var${i + 1}`), i * 200))} className="text-xs text-purple-400 hover:text-purple-300 cursor-pointer">Download All</button>
-                </div>
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-                  {variations.map((v, i) => (
-                    <div key={v.imageId || i} className="group relative">
-                      <img
-                        src={`data:${v.image.mimeType};base64,${v.image.base64Data}`}
-                        alt={`Variation ${i + 1}`}
-                        className="w-full rounded-lg border border-zinc-800/60 cursor-pointer hover:border-purple-500/40 transition"
-                        onClick={() => openLightbox([`data:${v.image.mimeType};base64,${v.image.base64Data}`])}
-                      />
-                      <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition">
-                        <div className="flex gap-1">
-                          <button type="button" onClick={() => downloadImg(v.image, `wavespeed_var${i + 1}`)} className="rounded-md bg-black/70 px-2 py-1 text-[10px] text-white backdrop-blur-sm cursor-pointer">Save</button>
-                          <button
-                            type="button"
-                            onClick={() => openInPhotoMatch(v.image, `nsfw-variation-${i + 1}`)}
-                            className="rounded-md bg-blue-600/90 px-2 py-1 text-[10px] text-white backdrop-blur-sm hover:bg-blue-500 cursor-pointer"
-                          >
-                            Photo Match
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openInNanoBypass(v.image, `nsfw-variation-${i + 1}`)}
-                            className="rounded-md bg-violet-600/90 px-2 py-1 text-[10px] text-white backdrop-blur-sm hover:bg-violet-500 cursor-pointer"
-                          >
-                            Nano
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="flex items-center justify-center h-64 text-zinc-500 text-sm">
-            {activeQueueCount > 0 ? <Spinner size={24} /> : 'Enter a prompt and hit Generate'}
-          </div>
-        )}
-
-        {/* History strip */}
-        {recentHistory.length > 0 && (
-          <div className="mt-6">
-            <span className="text-xs text-zinc-400 font-medium block mb-2">Recent</span>
-            <div className="flex gap-2 flex-wrap">
-              {recentHistory.map((h) => (
-                <img
-                  key={h.imageId}
-                  src={h.base64 ? `data:${h.mimeType};base64,${h.base64}` : `/api/gallery/${h.galleryId}/thumbnail`}
-                  alt=""
-                  className="w-16 h-16 rounded-lg object-cover border border-zinc-700/60 cursor-pointer hover:border-zinc-500 transition"
-                  onClick={() => {
-                    const src = h.base64 ? `data:${h.mimeType};base64,${h.base64}` : `/api/gallery/${h.galleryId}/download`;
-                    openLightbox([src]);
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
 
       <LightboxComponent />
     </div>

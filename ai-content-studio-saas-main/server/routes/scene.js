@@ -104,7 +104,7 @@ router.post('/recreate', async (req, res, next) => {
       source: 'generate',
     });
 
-    galleryManager.save({
+    const galleryEntry = galleryManager.save({
       base64Data: result.image.base64Data,
       mimeType: result.image.mimeType,
       prompt: recreationPrompt,
@@ -117,6 +117,7 @@ router.post('/recreate', async (req, res, next) => {
       success: true,
       data: {
         imageId: stored.imageId,
+        galleryId: galleryEntry?.id || null,
         image: { mimeType: result.image.mimeType, base64Data: result.image.base64Data },
         text: result.text,
         dimensions: { aspectRatio, resolutionTier, width, height },

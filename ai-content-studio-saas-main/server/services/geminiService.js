@@ -218,7 +218,7 @@ class GeminiService {
       } catch (innerErr) {
         if (innerErr instanceof AppError) throw innerErr;
         if (isTransientError(innerErr) && attempt < maxAttempts) {
-          await this._sleep(TRANSIENT_RETRY_BASE_MS * attempt);
+          await this._sleep(Math.min(TRANSIENT_RETRY_BASE_MS * (2 ** (attempt - 1)), 30000));
           continue;
         }
         throw innerErr;
@@ -430,7 +430,7 @@ class GeminiService {
           if (innerErr instanceof AppError) throw innerErr;
           if (isTransientError(innerErr) && attempt <= TRANSIENT_RETRY_COUNT) {
             lastErr = innerErr;
-            await this._sleep(TRANSIENT_RETRY_BASE_MS * attempt);
+            await this._sleep(Math.min(TRANSIENT_RETRY_BASE_MS * (2 ** (attempt - 1)), 30000));
             continue;
           }
           throw innerErr;
@@ -501,10 +501,7 @@ class GeminiService {
       throw new AppError('Image data and mime type required', 400, 'VALIDATION_ERROR');
     }
 
-    try {
-      const genAI = getClient(apiKey);
-
-      const prompt = `Analyze this image and extract scene details as structured JSON. Be concise — no filler, no repetition across fields. Directive tone (NOT "she is"). Return ONLY valid JSON, no markdown fences.
+    const analyzePrompt = `Analyze this image and extract scene details as structured JSON. Be concise — no filler, no repetition across fields. Directive tone (NOT "she is"). Return ONLY valid JSON, no markdown fences.
 
 {
   "environment": "Setting, surfaces, furniture, and notable objects (jewelry, phone, drinks, decor) — all in one concise description. Don't repeat items across fields.",
@@ -518,48 +515,60 @@ class GeminiService {
   "format": "Always describe as iPhone photo. Note the vibe: casual selfie, candid, handheld snapshot, etc. Mention any visible grain, warm/cool tones, or filters. Do NOT say professional, studio, high-ISO, or DSLR."
 }`;
 
-      const response = await withTimeout(
-        genAI.models.generateContent({
-          model: TEXT_MODEL,
-          contents: [{
-            role: 'user',
-            parts: [
-              { inlineData: { mimeType, data: imageBase64 } },
-              { text: prompt },
-            ],
-          }],
-          config: { responseModalities: [Modality.TEXT] },
-        }),
-        TEXT_TIMEOUT_MS,
-        'Gemini image analysis'
-      );
-
-      const parts = response.candidates?.[0]?.content?.parts;
-      if (!parts || parts.length === 0) {
-        throw new AppError('No analysis returned', 502, 'GENERATION_EMPTY');
-      }
-
-      const text = parts.filter((p) => p.text).map((p) => p.text).join('');
-      this._trackTextSpend(response);
-      let cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-
-      let parsed;
+    const maxAttempts = TRANSIENT_RETRY_COUNT + 1;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        parsed = JSON.parse(cleaned);
-      } catch {
-        const match = cleaned.match(/\{[\s\S]*\}/);
-        if (match) {
-          parsed = JSON.parse(match[0]);
-        } else {
-          throw new AppError('Failed to parse scene analysis', 502, 'PARSE_ERROR');
-        }
-      }
+        const genAI = getClient(apiKey);
+        const response = await withTimeout(
+          genAI.models.generateContent({
+            model: TEXT_MODEL,
+            contents: [{
+              role: 'user',
+              parts: [
+                { inlineData: { mimeType, data: imageBase64 } },
+                { text: analyzePrompt },
+              ],
+            }],
+            config: { responseModalities: [Modality.TEXT] },
+          }),
+          TEXT_TIMEOUT_MS,
+          'Gemini image analysis'
+        );
 
-      return parsed;
-    } catch (err) {
-      if (err instanceof AppError) throw err;
-      this._handleApiError(err);
+        const parts = response.candidates?.[0]?.content?.parts;
+        if (!parts || parts.length === 0) {
+          throw new AppError('No analysis returned', 502, 'GENERATION_EMPTY');
+        }
+
+        const text = parts.filter((p) => p.text).map((p) => p.text).join('');
+        this._trackTextSpend(response);
+        let cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+
+        let parsed;
+        try {
+          parsed = JSON.parse(cleaned);
+        } catch {
+          const match = cleaned.match(/\{[\s\S]*\}/);
+          if (match) {
+            parsed = JSON.parse(match[0]);
+          } else {
+            throw new AppError('Failed to parse scene analysis', 502, 'PARSE_ERROR');
+          }
+        }
+
+        return parsed;
+      } catch (err) {
+        if (err instanceof AppError) throw err;
+        if (isTransientError(err) && attempt < maxAttempts) {
+          lastErr = err;
+          await this._sleep(Math.min(TRANSIENT_RETRY_BASE_MS * (2 ** (attempt - 1)), 30000));
+          continue;
+        }
+        this._handleApiError(err);
+      }
     }
+    if (lastErr) this._handleApiError(lastErr);
   }
 
   async analyzeImageWithPrompt(apiKey, imageBase64, mimeType, prompt) {

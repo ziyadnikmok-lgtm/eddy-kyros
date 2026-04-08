@@ -257,9 +257,9 @@ export default function SceneRecreatePage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
+      <div className="max-w-md">
 
-        {/* ── LEFT PANEL ── */}
+        {/* ── CONTROLS ── */}
         <div className="space-y-3">
 
           {/* Upload card */}
@@ -435,130 +435,6 @@ export default function SceneRecreatePage() {
             </Btn>
           </Card>
 
-        </div>
-
-        {/* ── RIGHT PANEL ── */}
-        <div className="space-y-4">
-
-          {queueItems.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-semibold text-zinc-300">Scene Queue</h3>
-                  <p className="mt-1 text-xs text-zinc-500">Running and failed scene actions stay here until you dismiss them.</p>
-                </div>
-                <Badge color={activeQueueCount > 0 ? 'blue' : 'zinc'}>
-                  {activeQueueCount > 0 ? `${activeQueueCount} running` : `${queueItems.length} update${queueItems.length === 1 ? '' : 's'}`}
-                </Badge>
-              </div>
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                {queueItems.map((job) => (
-                  <PersistentJobCard
-                    key={job.id}
-                    job={job}
-                    steps={SCENE_RECREATE_STEPS}
-                    thresholds={SCENE_RECREATE_THRESHOLDS}
-                    onDismiss={dismissQueueItem}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Main result area */}
-          <Card className="relative overflow-hidden">
-            {/* Result image */}
-            {result && (
-              <div className="animate-in space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-zinc-500 font-medium uppercase tracking-wider">Latest Result</span>
-                  <div className="flex items-center gap-2">
-                    {result.image?.validation?.identity_match_score != null && (
-                      <Badge color={result.image.validation.identity_match_score > 0.7 ? 'green' : 'zinc'}>
-                        Identity {Math.round(result.image.validation.identity_match_score * 100)}%
-                      </Badge>
-                    )}
-                    <Badge color="zinc">{aspectRatio} · {resolutionTier}</Badge>
-                  </div>
-                </div>
-                <ImageCard
-                  base64={result.image?.base64Data}
-                  mimeType={result.image?.mimeType}
-                  meta={{ imageId: result.imageId, identityConfidence: result.image?.validation?.identity_match_score }}
-                  onSelect={() => result.image?.base64Data && openLightbox([`data:${result.image?.mimeType || 'image/png'};base64,${result.image?.base64Data}`], 0)}
-                />
-              </div>
-            )}
-
-            {/* Empty state */}
-            {!result && !isRecreating && (
-              <div className="flex flex-col items-center justify-center py-24 gap-4">
-                <div className="w-16 h-16 rounded-2xl bg-zinc-800/60 border border-zinc-700/40 flex items-center justify-center">
-                  <IconCamera uniqueId="empty-scene-result" size={28} className="text-zinc-600" aria-hidden />
-                </div>
-                <div className="text-center max-w-xs">
-                  <p className="text-sm font-medium text-zinc-400">
-                    {!file ? 'Upload a scene to get started' : 'Select a character and generate'}
-                  </p>
-                  <p className="text-xs text-zinc-600 mt-1">
-                    {!file ? 'Drop an image in the panel on the left' : 'Your recreated scene will appear here'}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Empty while first job running */}
-            {!result && isRecreating && (
-              <div className="flex flex-col items-center justify-center py-16 gap-3">
-                <p className="text-sm text-zinc-500">Results will appear here as they complete</p>
-              </div>
-            )}
-          </Card>
-
-          {/* Side-by-side comparison */}
-          {result && preview && (
-            <div className="grid grid-cols-2 gap-4 animate-in">
-              <Card className="!p-3">
-                <p className="text-[11px] text-zinc-500 font-medium uppercase tracking-wider mb-2">Original</p>
-                <img src={preview} alt="Original" className="w-full rounded-lg" />
-              </Card>
-              <Card className="!p-3">
-                <p className="text-[11px] text-zinc-500 font-medium uppercase tracking-wider mb-2">Recreated</p>
-                {result.image && (
-                  <img
-                    src={`data:${result.image.mimeType};base64,${result.image.base64Data}`}
-                    alt="Recreated"
-                    className="w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
-                    onClick={() => result.image?.base64Data && openLightbox([`data:${result.image?.mimeType || 'image/png'};base64,${result.image?.base64Data}`], 0)}
-                  />
-                )}
-              </Card>
-            </div>
-          )}
-
-          {/* History */}
-          {history.length > 1 && (
-            <div className="animate-in">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs text-zinc-500 font-medium uppercase tracking-wider">History</span>
-                <Badge color="zinc">{history.slice(1, 9).length}</Badge>
-              </div>
-              <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-2">
-                {history.slice(1, 9).filter((h) => h?.image?.base64Data).map((h, i) => (
-                  <ImageCard
-                    key={i}
-                    base64={h.image?.base64Data}
-                    mimeType={h.image?.mimeType}
-                    className="!rounded-lg"
-                    onSelect={() => h?.image?.base64Data && openLightbox(
-                      history.slice(1, 9).filter((img) => img?.image?.base64Data).map((img) => `data:${img.image?.mimeType || 'image/png'};base64,${img.image?.base64Data}`),
-                      i
-                    )}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
       <LightboxComponent />

@@ -371,8 +371,8 @@ useEffect(() => { _cache.postUrl = postUrl; }, [postUrl]);
 
   return (
     <div className="space-y-6 animate-in">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
-        <div className="lg:col-span-1 space-y-4">
+      <div>
+        <div className="space-y-4">
           <Card className="space-y-4">
             <div className="space-y-2">
               <span className="text-xs text-zinc-400 font-medium block">Input Mode</span>
@@ -676,29 +676,7 @@ useEffect(() => { _cache.postUrl = postUrl; }, [postUrl]);
 
         </div>
 
-        <div className="lg:col-span-2 space-y-4">
-          {queueItems.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium text-zinc-400">Post Clone Queue</h3>
-                <Badge color={activeQueueCount > 0 ? 'blue' : 'zinc'}>
-                  {activeQueueCount > 0 ? `${activeQueueCount} running` : `${queueItems.length} update${queueItems.length === 1 ? '' : 's'}`}
-                </Badge>
-              </div>
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                {queueItems.map((job) => (
-                  <PersistentJobCard
-                    key={job.id}
-                    job={job}
-                    steps={POST_CLONE_STEPS[job.kind] || POST_CLONE_STEPS.single}
-                    thresholds={POST_CLONE_THRESHOLDS[job.kind] || POST_CLONE_THRESHOLDS.single}
-                    onDismiss={dismissQueueItem}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
+        <div className="space-y-4 mt-4">
           {isProfileSelecting && (
             <Card className="space-y-3">
               <div className="flex items-center justify-between">
