@@ -219,8 +219,8 @@ function ImageContextMenu({ menu, onClose, onAction }) {
     <div
       className="fixed z-[80] w-64 rounded-xl border border-zinc-700/70 bg-zinc-950/98 p-2 shadow-2xl shadow-black/40 backdrop-blur-xl"
       style={{
-        left: Math.min(menu.x, window.innerWidth - 280),
-        top: Math.min(menu.y, window.innerHeight - 360),
+        left: Math.min(menu.x, window.innerWidth - 260),
+        top: menu.y + 400 > window.innerHeight ? Math.max(0, window.innerHeight - 400) : menu.y,
       }}
       onPointerDown={(event) => event.stopPropagation()}
     >

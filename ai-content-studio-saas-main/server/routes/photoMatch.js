@@ -46,9 +46,9 @@ function framingInstruction(exactMode) {
 
 function expressionInstruction(exactMode) {
   if (exactMode) {
-    return 'EXACTLY REPLICATE the expression, gaze direction, head tilt, and overall attitude from the source image. Do NOT replicate the hair color, hair style, or face of the source image — use the character identity references for all facial features and hair.';
+    return 'EXACTLY REPLICATE the expression, gaze direction, head tilt, hair placement, and overall attitude from the source image. Do NOT copy the hair color or facial features of the person in the source image — use the character identity references for face and hair color.';
   }
-  return 'keep the expression, gaze, and head position close to the source image. Do NOT copy hair color or facial features from the source — use the character identity references for face and hair.';
+  return 'keep the expression, gaze, and head position close to the source image. Do NOT copy the hair color or facial features of the person in the source image — use the character identity references for face and hair color.';
 }
 
 async function optimizeInlineImage(base64Data, mimeType) {
@@ -87,23 +87,20 @@ async function buildPhotoMatchIdentityImages(characterId, activeRefs) {
 }
 
 function buildPhotoMatchParts({ sourceImage, identityImages, prompt, exactMode = false }) {
-  const parts = [
-    {
-      text: exactMode
-        ? '[SOURCE PHOTO]\nUse this uploaded image as an exact reconstruction blueprint. Recreate the same framing, outfit, background, expression, lighting, and pose as closely as possible. Do NOT copy the face, hair color, or hair style from this source image — those come exclusively from the character identity references.'
-        : '[SOURCE PHOTO]\nUse this uploaded image as the scene blueprint. Match its composition, framing, outfit, background, lighting, expression, and overall vibe according to the strength controls. Do NOT copy the face, hair color, or hair style from this source image — use the character identity references for those.',
-    },
-    {
-      inlineData: {
-        mimeType: sourceImage.mimeType,
-        data: sourceImage.base64Data,
-      },
-    },
-  ];
+  const parts = [];
+  const refCount = Array.isArray(identityImages) ? identityImages.length : 0;
+  const sourceImageNumber = refCount + 1;
 
-  if (Array.isArray(identityImages) && identityImages.length > 0) {
+  // Character refs FIRST — so model anchors on identity before seeing the scene
+  if (refCount > 0) {
+    const refNumbers = refCount === 1
+      ? 'Image 1'
+      : refCount === 2
+        ? 'Images 1 and 2'
+        : Array.from({ length: refCount }, (_, i) => `Image ${i + 1}`).join(', ').replace(/,([^,]*)$/, ' and$1');
+
     parts.push({
-      text: '[CHARACTER IDENTITY REFERENCES]\nUse these images for face, hair color, hair style, body identity, skin tone, and all recognizable subject features. The character\'s face and hair MUST come from these references, not from the source photo. Do not copy their scene or outfit unless the prompt explicitly says to.',
+      text: `[${refNumbers} — CHARACTER IDENTITY REFERENCES]\nThese are the character reference images. Use ${refNumbers} for: face, body shape and proportions (including breast volume — match exactly as shown in the references), hair color and style, skin tone, and makeup. These define who appears in the output. Do NOT use anything else from these images (no scene, no background, no outfit unless explicitly requested).`,
     });
     for (const ref of identityImages) {
       parts.push({
@@ -114,6 +111,20 @@ function buildPhotoMatchParts({ sourceImage, identityImages, prompt, exactMode =
       });
     }
   }
+
+  // Source photo LAST — scene/pose/outfit/bg only
+  const sceneLabel = `[Image ${sourceImageNumber} — SCENE TO RECREATE]`;
+  parts.push({
+    text: exactMode
+      ? `${sceneLabel}\nRecreate this image exactly — same framing, outfit, background, lighting, hair placement, expression, and pose — but replace the person with the character from ${refCount > 0 ? (refCount === 1 ? 'Image 1' : `Images 1–${refCount}`) : 'the identity references'}. Do NOT copy the face, hair color, or tattoos from this image.`
+      : `${sceneLabel}\nUse this image as the scene blueprint — match its composition, outfit, background, lighting, expression, and pose according to the strength controls — but the person must be the character from ${refCount > 0 ? (refCount === 1 ? 'Image 1' : `Images 1–${refCount}`) : 'the identity references'}. Do NOT copy the face, hair color, or tattoos from this image.`,
+  });
+  parts.push({
+    inlineData: {
+      mimeType: sourceImage.mimeType,
+      data: sourceImage.base64Data,
+    },
+  });
 
   parts.push({ text: prompt.trim() });
   return parts;
@@ -189,14 +200,19 @@ router.post('/recreate', async (req, res, next) => {
       })
       .filter(Boolean);
 
+    const refCount = identityImages.length;
+    const sourceImageNumber = refCount + 1;
+    const refRange = refCount === 1 ? 'Image 1' : `Images 1–${refCount}`;
+    const sourceRef = `Image ${sourceImageNumber}`;
+
     const prompt = [
       exactMode
-        ? `Create one photorealistic exact recreation of the uploaded photo using ${character.name}'s identity.`
+        ? `Create one photorealistic exact recreation of ${sourceRef} using ${character.name}'s identity from ${refRange}.`
         : `Create one photorealistic matched image of ${character.name}.`,
       exactMode
-        ? 'Use the uploaded source photo as a strict blueprint. Preserve the same shot, clothing, environment, pose, expression, lighting, and composition.'
-        : 'Use the uploaded source photo as the scene and styling blueprint.',
-      'Use the character identity references for face, hair color, and hair style. Do NOT copy hair color or facial features from the source photo.',
+        ? `Use ${sourceRef} as a strict blueprint. Preserve the same shot, clothing, environment, pose, expression, lighting, and composition.`
+        : `Use ${sourceRef} as the scene and styling blueprint.`,
+      `Use ${refRange} for ${character.name}'s face, body shape and proportions (match breast volume exactly as shown), hair color and style, skin tone, and makeup. Do NOT copy the face, hair color, or tattoos from ${sourceRef}.`,
       'Return exactly one image and no text.',
       '',
       '[BACKGROUND — strength ' + bg + '%]',
