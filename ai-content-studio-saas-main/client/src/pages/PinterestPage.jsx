@@ -117,6 +117,8 @@ export default function PinterestPage() {
   const [videoAnalyzing, setVideoAnalyzing] = useState(false);
   const [klingPrompt, setKlingPrompt] = useState('');
   const [promptCopied, setPromptCopied] = useState(false);
+  const [klingPromptCopied, setKlingPromptCopied] = useState(false);
+  const [firstFramePromptCopied, setFirstFramePromptCopied] = useState(false);
 
   // --- Scene / recreate state (mirroring SceneRecreatePage) ---
   const [showEditScene, setShowEditScene] = useState(false);
@@ -598,14 +600,80 @@ export default function PinterestPage() {
                       <Badge color="zinc">First frame</Badge>
                     </div>
                   </div>
+                  {/* Download video */}
+                  {pinVideoUrl && (
+                    <a
+                      href={pinVideoUrl}
+                      download
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-700/80 bg-zinc-800/50 px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-700/60 transition cursor-pointer"
+                    >
+                      ↓ Download Video
+                    </a>
+                  )}
+
+                  {/* First frame scene prompt */}
+                  {editableScene && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">First Frame Prompt</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(editableScene);
+                            setFirstFramePromptCopied(true);
+                            setTimeout(() => setFirstFramePromptCopied(false), 1500);
+                          }}
+                          className="text-[10px] text-blue-400 hover:text-blue-300 transition cursor-pointer"
+                        >
+                          {firstFramePromptCopied ? 'Copied!' : 'Copy'}
+                        </button>
+                      </div>
+                      <div className="rounded-lg border border-zinc-700/60 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-300 leading-5 max-h-24 overflow-y-auto">
+                        {editableScene}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Kling prompt */}
                   {klingPrompt && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-violet-400">Kling Prompt</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(klingPrompt);
+                            setKlingPromptCopied(true);
+                            setTimeout(() => setKlingPromptCopied(false), 1500);
+                          }}
+                          className="text-[10px] text-violet-400 hover:text-violet-300 transition cursor-pointer"
+                        >
+                          {klingPromptCopied ? 'Copied!' : 'Copy'}
+                        </button>
+                      </div>
+                      <div className="rounded-lg border border-violet-800/40 bg-violet-950/20 px-3 py-2 text-xs text-zinc-200 leading-5 max-h-28 overflow-y-auto">
+                        {klingPrompt}
+                      </div>
+                      <Btn
+                        variant="secondary"
+                        onClick={() => triggerAnalyzeVideo(pinVideoUrl)}
+                        disabled={videoAnalyzing}
+                        className="w-full"
+                      >
+                        {videoAnalyzing ? 'Analyzing…' : 'Re-analyze Video'}
+                      </Btn>
+                    </div>
+                  )}
+                  {!klingPrompt && (
                     <Btn
                       variant="secondary"
                       onClick={() => triggerAnalyzeVideo(pinVideoUrl)}
-                      disabled={videoAnalyzing}
+                      disabled={videoAnalyzing || !pinVideoUrl}
                       className="w-full"
                     >
-                      {videoAnalyzing ? 'Analyzing…' : 'Re-analyze Video'}
+                      {videoAnalyzing ? 'Analyzing…' : 'Analyze for Kling Prompt'}
                     </Btn>
                   )}
                   <Btn onClick={handleVideoRecreate} disabled={!pinVideoUrl || !charId || activeQueueCount > 0} className="w-full">

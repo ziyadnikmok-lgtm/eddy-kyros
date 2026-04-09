@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { pushPending, resolvePending, rejectPending } from '../lib/generationFeed';
 import { nsfwGenerate as api, loraPresets as presetsApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Textarea, Spinner, Badge } from '../components/UI';
@@ -375,9 +376,25 @@ export default function NsfwGeneratePage() {
       },
       ...prev.slice(0, 5),
     ]);
+    pushPending({ id: queueId, prompt: finalPrompt, imageModel: 'nsfw-generate', aspectRatio, resolutionTier: '1K' });
     try {
       const data = await api.image({ prompt: finalPrompt, aspectRatio, loras: buildLoras() });
       setCachedQueueItems((prev) => prev.filter((job) => job.id !== queueId));
+      const feedGalleryId = data.galleryId || data.imageId;
+      if (feedGalleryId) {
+        resolvePending(queueId, {
+          imageId: feedGalleryId,
+          galleryId: feedGalleryId,
+          mimeType: data.image?.mimeType || 'image/png',
+          prompt: finalPrompt,
+          imageModel: 'nsfw-generate',
+          aspectRatio,
+          resolutionTier: '1K',
+          generatedAt: Date.now(),
+        });
+      } else {
+        rejectPending(queueId);
+      }
       setCachedResult(data);
       setCachedVariations([]);
       setCachedHistory((h) => {
@@ -386,6 +403,7 @@ export default function NsfwGeneratePage() {
       });
       notify('Image generated!', 'success');
     } catch (err) {
+      rejectPending(queueId);
       setCachedQueueItems((prev) => prev.map((job) => (
         job.id === queueId
           ? { ...job, status: 'error', errorMessage: err?.message || 'Failed to generate image' }
@@ -411,12 +429,17 @@ export default function NsfwGeneratePage() {
       },
       ...prev.slice(0, 5),
     ]);
+    pushPending({ id: queueId, prompt: varPrompt, imageModel: 'nsfw-generate', aspectRatio, resolutionTier: '1K' });
     try {
       const data = await api.vary({
         imageBase64: result.image.base64Data, mimeType: result.image.mimeType,
         prompt: varPrompt, aspectRatio, strength: varyStrength, loras: buildLoras(),
       });
       setCachedQueueItems((prev) => prev.filter((job) => job.id !== queueId));
+      const feedGalleryId = data.galleryId || data.imageId;
+      if (feedGalleryId) {
+        resolvePending(queueId, { imageId: feedGalleryId, galleryId: feedGalleryId, mimeType: data.image?.mimeType || 'image/png', prompt: varPrompt, imageModel: 'nsfw-generate', aspectRatio, resolutionTier: '1K', generatedAt: Date.now() });
+      } else { rejectPending(queueId); }
       setCachedVariations((prev) => [...prev, data]);
       setCachedHistory((h) => {
         const next = [{ imageId: data.imageId, galleryId: data.galleryId || data.imageId, mimeType: data.image?.mimeType, base64: data.image?.base64Data }, ...h].slice(0, 12);
@@ -424,6 +447,7 @@ export default function NsfwGeneratePage() {
       });
       notify('Variation created!', 'success');
     } catch (err) {
+      rejectPending(queueId);
       setCachedQueueItems((prev) => prev.map((job) => (
         job.id === queueId
           ? { ...job, status: 'error', errorMessage: err?.message || 'Failed to create variation' }

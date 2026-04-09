@@ -214,6 +214,10 @@ export default function NanoBypassPage() {
     if (handoff.characterId) {
       autofillCharacterPromptRef.current = true;
       setCharacterId(handoff.characterId);
+    } else {
+      // Coming from Library with no character — clear so no refs auto-inject into image slots
+      autofillCharacterPromptRef.current = false;
+      setCharacterId('');
     }
     if (typeof handoff.aspectRatio === 'string' && ASPECT_RATIOS.includes(handoff.aspectRatio)) {
       setAspectRatio(handoff.aspectRatio);

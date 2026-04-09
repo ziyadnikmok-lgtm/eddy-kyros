@@ -46,9 +46,9 @@ function framingInstruction(exactMode) {
 
 function expressionInstruction(exactMode) {
   if (exactMode) {
-    return 'EXACTLY REPLICATE the expression, gaze direction, head tilt, hair placement, and overall attitude from the source image.';
+    return 'EXACTLY REPLICATE the expression, gaze direction, head tilt, and overall attitude from the source image. Do NOT replicate the hair color, hair style, or face of the source image — use the character identity references for all facial features and hair.';
   }
-  return 'keep the expression, gaze, and head position close to the source image.';
+  return 'keep the expression, gaze, and head position close to the source image. Do NOT copy hair color or facial features from the source — use the character identity references for face and hair.';
 }
 
 async function optimizeInlineImage(base64Data, mimeType) {
@@ -90,8 +90,8 @@ function buildPhotoMatchParts({ sourceImage, identityImages, prompt, exactMode =
   const parts = [
     {
       text: exactMode
-        ? '[SOURCE PHOTO]\nUse this uploaded image as an exact reconstruction blueprint. Recreate the same framing, outfit, background, expression, lighting, hair placement, and pose as closely as possible while transferring only the target character identity.'
-        : '[SOURCE PHOTO]\nUse this uploaded image as the exact scene blueprint. Match its composition, framing, outfit, background, lighting, expression, and overall vibe according to the strength controls.',
+        ? '[SOURCE PHOTO]\nUse this uploaded image as an exact reconstruction blueprint. Recreate the same framing, outfit, background, expression, lighting, and pose as closely as possible. Do NOT copy the face, hair color, or hair style from this source image — those come exclusively from the character identity references.'
+        : '[SOURCE PHOTO]\nUse this uploaded image as the scene blueprint. Match its composition, framing, outfit, background, lighting, expression, and overall vibe according to the strength controls. Do NOT copy the face, hair color, or hair style from this source image — use the character identity references for those.',
     },
     {
       inlineData: {
@@ -103,7 +103,7 @@ function buildPhotoMatchParts({ sourceImage, identityImages, prompt, exactMode =
 
   if (Array.isArray(identityImages) && identityImages.length > 0) {
     parts.push({
-      text: '[CHARACTER IDENTITY REFERENCES]\nUse these images only for face, body identity, skin tone, and recognizable subject features. Do not copy their scene or outfit unless the prompt explicitly says to.',
+      text: '[CHARACTER IDENTITY REFERENCES]\nUse these images for face, hair color, hair style, body identity, skin tone, and all recognizable subject features. The character\'s face and hair MUST come from these references, not from the source photo. Do not copy their scene or outfit unless the prompt explicitly says to.',
     });
     for (const ref of identityImages) {
       parts.push({
@@ -196,7 +196,7 @@ router.post('/recreate', async (req, res, next) => {
       exactMode
         ? 'Use the uploaded source photo as a strict blueprint. Preserve the same shot, clothing, environment, pose, expression, lighting, and composition.'
         : 'Use the uploaded source photo as the scene and styling blueprint.',
-      'Use the character identity references only for identity preservation.',
+      'Use the character identity references for face, hair color, and hair style. Do NOT copy hair color or facial features from the source photo.',
       'Return exactly one image and no text.',
       '',
       '[BACKGROUND — strength ' + bg + '%]',

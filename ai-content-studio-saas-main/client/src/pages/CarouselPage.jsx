@@ -184,6 +184,8 @@ export default function CarouselPage() {
 
   const isAnyJobRunning = executeJobs.some((job) => job?.status === 'running');
 
+  const pushedToFeedRef = useRef(new Set());
+
   const followUpCards = useMemo(() => {
     if (!Array.isArray(followUpDrafts) || followUpDrafts.length === 0) return [];
 
@@ -374,8 +376,6 @@ export default function CarouselPage() {
   }, [pollJobIds]);
 
   const isPollJobRunning = pollJobs.some(j => j?.status === 'running');
-
-  const pushedToFeedRef = useRef(new Set());
 
   useEffect(() => {
     setCompletedSlides(prev => {
