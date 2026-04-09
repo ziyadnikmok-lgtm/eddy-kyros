@@ -210,30 +210,26 @@ export default function CarouselPage() {
         status = 'running';
       }
 
-      // Reject pending skeleton on error
-      if (status === 'error') {
-        const pendingId = `carousel-followup-${draft.id}`;
-        const rejectKey = `rejected-${pendingId}`;
-        if (!pushedToFeedRef.current.has(rejectKey)) {
-          pushedToFeedRef.current.add(rejectKey);
-          rejectPending(pendingId);
-        }
-      }
+      return { ...draft, status, error, src, _result: result };
+    });
+  }, [executeJobs, followUpDrafts, followUpLoading]);
 
-      // Resolve pending skeleton when done
-      if (src && status === 'done') {
-        const pendingId = `carousel-followup-${draft.id}`;
+  // Sync followUpCards → generation feed (must be useEffect, not useMemo)
+  useEffect(() => {
+    if (!Array.isArray(followUpCards) || followUpCards.length === 0) return;
+    for (const card of followUpCards) {
+      const pendingId = `carousel-followup-${card.id}`;
+      if (card.status === 'done' && card.src) {
         const resolveKey = `resolved-${pendingId}`;
         if (!pushedToFeedRef.current.has(resolveKey)) {
           pushedToFeedRef.current.add(resolveKey);
-          const result2 = job?.results?.find((entry) => entry && entry.index === resultIndex);
-          const feedGalleryId = result2?.galleryId || result2?.imageId;
+          const feedGalleryId = card._result?.galleryId || card._result?.imageId;
           if (feedGalleryId) {
             resolvePending(pendingId, {
               imageId: feedGalleryId,
               galleryId: feedGalleryId,
-              mimeType: result2?.image?.mimeType || 'image/png',
-              prompt: draft.prompt || draft.title || 'Carousel slide',
+              mimeType: card._result?.image?.mimeType || 'image/png',
+              prompt: card.prompt || card.title || 'Carousel slide',
               imageModel: imageModel || '',
               aspectRatio,
               resolutionTier,
@@ -241,16 +237,15 @@ export default function CarouselPage() {
             });
           }
         }
+      } else if (card.status === 'error') {
+        const rejectKey = `rejected-${pendingId}`;
+        if (!pushedToFeedRef.current.has(rejectKey)) {
+          pushedToFeedRef.current.add(rejectKey);
+          rejectPending(pendingId);
+        }
       }
-
-      return {
-        ...draft,
-        status,
-        error,
-        src,
-      };
-    });
-  }, [executeJobs, followUpDrafts, followUpLoading, imageModel, aspectRatio, resolutionTier]);
+    }
+  }, [followUpCards, imageModel, aspectRatio, resolutionTier]);
 
   useEffect(() => {
     let cancelled = false;

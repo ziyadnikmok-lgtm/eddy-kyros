@@ -14,6 +14,7 @@ const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 const router = express.Router();
 const PHOTO_MATCH_REF_MAX_DIMENSION = 1024;
+const PHOTO_MATCH_IDENTITY_MAX_DIMENSION = 1536; // higher res for identity refs so body details are preserved
 const ANALYSIS_FALLBACK_CODES = new Set(['GEMINI_TRANSIENT', 'GEMINI_ERROR', 'PARSE_ERROR', 'GENERATION_EMPTY']);
 
 function bgStrengthInstruction(strength) {
@@ -70,61 +71,92 @@ async function optimizeInlineImage(base64Data, mimeType) {
   }
 }
 
-async function buildPhotoMatchIdentityImages(characterId, activeRefs) {
-  const primary = referenceManager.getPrimaryImages(characterId)[0];
-  if (primary?.buffer?.length) {
-    const optimized = await optimizeInlineImage(primary.buffer.toString('base64'), primary.mimeType);
-    return optimized ? [optimized] : [];
+async function optimizeIdentityImage(base64Data, mimeType) {
+  if (!base64Data || typeof base64Data !== 'string') return null;
+  if (!mimeType || typeof mimeType !== 'string' || !mimeType.startsWith('image/')) return null;
+  try {
+    const resized = await sharp(Buffer.from(base64Data, 'base64'))
+      .rotate()
+      .resize(PHOTO_MATCH_IDENTITY_MAX_DIMENSION, PHOTO_MATCH_IDENTITY_MAX_DIMENSION, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 88 })
+      .toBuffer();
+    return { mimeType: 'image/jpeg', base64Data: resized.toString('base64') };
+  } catch {
+    return { mimeType, base64Data };
   }
-
-  const firstActiveRef = Array.isArray(activeRefs) && activeRefs.length > 0 ? activeRefs[0] : null;
-  if (!firstActiveRef) return [];
-
-  const data = referenceManager.getReferenceImage(characterId, firstActiveRef.id);
-  if (!data?.buffer?.length) return [];
-  const optimized = await optimizeInlineImage(data.buffer.toString('base64'), data.mimeType);
-  return optimized ? [optimized] : [];
 }
 
-function buildPhotoMatchParts({ sourceImage, identityImages, prompt, exactMode = false }) {
-  const parts = [];
-  const refCount = Array.isArray(identityImages) ? identityImages.length : 0;
-  const sourceImageNumber = refCount + 1;
+async function buildPhotoMatchIdentityImages(characterId, activeRefs) {
+  const results = [];
 
-  // Character refs FIRST — so model anchors on identity before seeing the scene
-  if (refCount > 0) {
-    const refNumbers = refCount === 1
-      ? 'Image 1'
-      : refCount === 2
-        ? 'Images 1 and 2'
-        : Array.from({ length: refCount }, (_, i) => `Image ${i + 1}`).join(', ').replace(/,([^,]*)$/, ' and$1');
+  // Primary image(s) first — higher res for identity
+  const primaries = referenceManager.getPrimaryImages(characterId);
+  for (const primary of primaries) {
+    if (!primary?.buffer?.length) continue;
+    const optimized = await optimizeIdentityImage(primary.buffer.toString('base64'), primary.mimeType);
+    if (optimized) results.push(optimized);
+  }
 
-    parts.push({
-      text: `[${refNumbers} — CHARACTER IDENTITY REFERENCES]\nThese are the character reference images. Use ${refNumbers} for: face, body shape and proportions (including breast volume — match exactly as shown in the references), hair color and style, skin tone, and makeup. These define who appears in the output. Do NOT use anything else from these images (no scene, no background, no outfit unless explicitly requested).`,
-    });
-    for (const ref of identityImages) {
-      parts.push({
-        inlineData: {
-          mimeType: ref.mimeType,
-          data: ref.base64Data,
-        },
-      });
+  // All active reference images
+  if (Array.isArray(activeRefs)) {
+    for (const ref of activeRefs) {
+      const data = referenceManager.getReferenceImage(characterId, ref.id);
+      if (!data?.buffer?.length) continue;
+      const optimized = await optimizeIdentityImage(data.buffer.toString('base64'), data.mimeType);
+      if (optimized) results.push(optimized);
     }
   }
 
-  // Source photo LAST — scene/pose/outfit/bg only
-  const sceneLabel = `[Image ${sourceImageNumber} — SCENE TO RECREATE]`;
+  // Cap at 4 to avoid hitting token limits
+  return results.slice(0, 4);
+}
+
+function buildPhotoMatchParts({ sourceImage, identityImages, characterName, prompt, exactMode = false }) {
+  const parts = [];
+  const refCount = Array.isArray(identityImages) ? identityImages.length : 0;
+  const sourceNum = refCount + 1;
+  const name = characterName || 'the character';
+
+  // Build ref label e.g. "Image 1", "Images 1 and 2", "Images 1, 2 and 3"
+  const refLabel = refCount === 0 ? null
+    : refCount === 1 ? 'Image 1'
+    : refCount === 2 ? 'Images 1 and 2'
+    : `Images 1, ${Array.from({ length: refCount - 2 }, (_, i) => i + 2).join(', ')} and ${refCount}`;
+
+  // --- CHARACTER REFS FIRST ---
+  if (refCount > 0) {
+    parts.push({
+      text: [
+        `[${refLabel} — ${name.toUpperCase()} REFERENCE PHOTOS]`,
+        `These ${refCount === 1 ? 'is' : 'are'} the character reference ${refCount === 1 ? 'photo' : 'photos'} for ${name}.`,
+        `Copy from ${refLabel}:`,
+        `- Face (exact likeness)`,
+        `- Body shape and breast size/volume (match exactly)`,
+        `- Hair color and style`,
+        `- Skin tone`,
+        `- Makeup`,
+        `Do NOT copy the scene, background, or outfit from ${refLabel}.`,
+      ].join('\n'),
+    });
+    for (const ref of identityImages) {
+      parts.push({ inlineData: { mimeType: ref.mimeType, data: ref.base64Data } });
+    }
+  }
+
+  // --- SOURCE PHOTO LAST ---
   parts.push({
-    text: exactMode
-      ? `${sceneLabel}\nRecreate this image exactly — same framing, outfit, background, lighting, hair placement, expression, and pose — but replace the person with the character from ${refCount > 0 ? (refCount === 1 ? 'Image 1' : `Images 1–${refCount}`) : 'the identity references'}. Do NOT copy the face, hair color, or tattoos from this image.`
-      : `${sceneLabel}\nUse this image as the scene blueprint — match its composition, outfit, background, lighting, expression, and pose according to the strength controls — but the person must be the character from ${refCount > 0 ? (refCount === 1 ? 'Image 1' : `Images 1–${refCount}`) : 'the identity references'}. Do NOT copy the face, hair color, or tattoos from this image.`,
+    text: [
+      `[Image ${sourceNum} — SCENE TO RECREATE]`,
+      exactMode
+        ? `Recreate this photo exactly: same outfit, background, lighting, pose, expression, framing.`
+        : `Use this photo as the scene blueprint: match outfit, background, lighting, pose, and composition.`,
+      refLabel
+        ? `Replace the person in this photo with ${name} from ${refLabel}.`
+        : `The person should be ${name}.`,
+      `Do NOT copy from Image ${sourceNum}: face, body shape, breast size, hair color, skin tone, or tattoos.`,
+    ].join('\n'),
   });
-  parts.push({
-    inlineData: {
-      mimeType: sourceImage.mimeType,
-      data: sourceImage.base64Data,
-    },
-  });
+  parts.push({ inlineData: { mimeType: sourceImage.mimeType, data: sourceImage.base64Data } });
 
   parts.push({ text: prompt.trim() });
   return parts;
@@ -189,8 +221,8 @@ router.post('/recreate', async (req, res, next) => {
     if (sceneData.composition)  sceneParts.push(`Composition: ${sceneData.composition}`);
     if (sceneData.mood)         sceneParts.push(`Mood: ${sceneData.mood}`);
     if (sceneData.pose)         sceneParts.push(`Pose reference: ${sceneData.pose}`);
-    if (sceneData.expression)   sceneParts.push(`Expression: ${sceneData.expression}`);
-    if (sceneData.outfit)       sceneParts.push(`Outfit: ${sceneData.outfit}`);
+    // Intentionally exclude sceneData.expression and sceneData.outfit — those describe
+    // the source person's body/face which we do NOT want to copy onto the character
     const activeRefNotes = (activeRefs || [])
       .map((ref) => {
         const note = typeof ref?.overridePrompt === 'string' ? ref.overridePrompt.trim() : '';
@@ -201,52 +233,51 @@ router.post('/recreate', async (req, res, next) => {
       .filter(Boolean);
 
     const refCount = identityImages.length;
-    const sourceImageNumber = refCount + 1;
-    const refRange = refCount === 1 ? 'Image 1' : `Images 1–${refCount}`;
-    const sourceRef = `Image ${sourceImageNumber}`;
+    const sourceNum = refCount + 1;
+    const refLabel = refCount === 0 ? null
+      : refCount === 1 ? 'Image 1'
+      : refCount === 2 ? 'Images 1 and 2'
+      : `Images 1–${refCount}`;
+    const sourceRef = `Image ${sourceNum}`;
+    const name = character.name;
 
     const prompt = [
+      // Core task
       exactMode
-        ? `Create one photorealistic exact recreation of ${sourceRef} using ${character.name}'s identity from ${refRange}.`
-        : `Create one photorealistic matched image of ${character.name}.`,
-      exactMode
-        ? `Use ${sourceRef} as a strict blueprint. Preserve the same shot, clothing, environment, pose, expression, lighting, and composition.`
-        : `Use ${sourceRef} as the scene and styling blueprint.`,
-      `Use ${refRange} for ${character.name}'s face, body shape and proportions (match breast volume exactly as shown), hair color and style, skin tone, and makeup. Do NOT copy the face, hair color, or tattoos from ${sourceRef}.`,
-      'Return exactly one image and no text.',
+        ? `Recreate ${sourceRef} exactly. Replace the person with ${name}.`
+        : `Create a photorealistic image of ${name} in the scene from ${sourceRef}.`,
       '',
-      '[BACKGROUND — strength ' + bg + '%]',
-      bgInstruction + '.',
+      // Who is the person
+      refLabel
+        ? `WHO: ${name} — take face, body shape, breast volume, hair color, hair style, skin tone, and makeup from ${refLabel}. Match exactly as shown.`
+        : `WHO: ${name} — ${character.masterPrompt || ''}`,
       '',
-      '[POSE — strength ' + pose + '%]',
-      poseInstruction + '.',
+      // What to copy from scene
+      `SCENE (from ${sourceRef}): ${bgInstruction}. ${poseInstruction}. ${outfitInstruction(exactMode)} ${framingInstruction(exactMode)} ${expressionInstruction(exactMode)}`,
       '',
-      '[OUTFIT]',
-      outfitInstruction(exactMode),
+      // Hard rules
+      `RULES:`,
+      `- Do NOT copy face, body, breast size, hair color, skin tone, or tattoos from ${sourceRef}`,
+      `- The person in the output is ${name} only`,
+      exactMode ? `- Do not change outfit, background, crop, camera angle, or scene layout` : null,
       '',
-      '[FRAMING]',
-      framingInstruction(exactMode),
+      // Scene analysis context
+      sceneParts.length > 0 ? `SCENE DETAILS:\n${sceneParts.join('\n')}` : null,
       '',
-      '[EXPRESSION]',
-      expressionInstruction(exactMode),
+      // Active ref notes (per-ref overrides)
+      activeRefNotes.length > 0 ? `CHARACTER NOTES:\n${activeRefNotes.join('\n')}` : null,
       '',
-      sceneParts.length > 0 ? '[SCENE ANALYSIS]' : null,
-      ...sceneParts,
-      sceneParts.length > 0 ? '' : null,
-      activeRefNotes.length > 0 ? '[ACTIVE REFERENCE DETAILS]' : null,
-      ...activeRefNotes,
-      activeRefNotes.length > 0 ? '' : null,
-      '[IDENTITY]',
-      character.masterPrompt || '',
+      // Identity / master prompt (only if refs exist, otherwise already used above)
+      refLabel && character.masterPrompt ? `ADDITIONAL IDENTITY: ${character.masterPrompt}` : null,
       '',
-      exactMode ? '[DO NOT CHANGE]\nDo not invent a new outfit, new background, new pose, new crop, new camera angle, new expression, or new scene layout.' : null,
-      exactMode ? '' : null,
+      'Return exactly one image. No text.',
       REALISM_DIRECTIVE,
     ].filter((s) => s != null).join('\n');
 
     const parts = buildPhotoMatchParts({
       sourceImage,
       identityImages,
+      characterName: name,
       prompt,
       exactMode,
     });
