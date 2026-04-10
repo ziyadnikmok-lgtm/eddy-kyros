@@ -309,6 +309,47 @@ const STEPS = [
   { num: '04', title: 'Generate at scale', body: 'Queue batch jobs, run auto plans, and clone winning formats. Build weeks of content in one session.' },
 ];
 
+const PRICING = [
+  {
+    name: 'Free Trial',
+    price: '$0',
+    meta: 'Start here',
+    description: 'Create your account and test the workflow first before paying.',
+    features: ['20 generations per day', 'Hosted access', 'Character + remix workflows'],
+    accent: '#71717a',
+    cta: 'Start Free Trial',
+    trial: true,
+  },
+  {
+    name: '30 Days',
+    price: '$10',
+    meta: 'Crypto simple',
+    description: 'Easy monthly-style access with one clean crypto payment.',
+    features: ['Full creator workflow', 'Generate + clone + batch', 'Priority over free trial'],
+    accent: DS.cta,
+    cta: 'Get 30 Days',
+  },
+  {
+    name: '1 Year',
+    price: '$79',
+    meta: 'Best value',
+    description: 'Best offer for serious users. Roughly $6.58 per month.',
+    features: ['Everything in 30 Days', 'Year-long access', 'Save $41 vs monthly'],
+    accent: DS.primary,
+    cta: 'Get 1 Year',
+    featured: true,
+  },
+  {
+    name: 'Founder Lifetime',
+    price: '$149',
+    meta: 'Limited',
+    description: 'One founder payment for lifetime access before pricing moves up later.',
+    features: ['Lifetime access', 'All current workflows', 'Founder pricing'],
+    accent: '#f59e0b',
+    cta: 'Claim Lifetime',
+  },
+];
+
 const TESTIMONIALS = [
   { name: 'Sarah M.', role: 'Content Creator', body: 'Kyros Studio replaced 4 different tools for me. The character consistency alone is worth it — every image looks like the same person.', stars: 5 },
   { name: 'Alex R.', role: 'Social Media Agency', body: 'We batch generate an entire month of content for 3 clients in one afternoon. The auto planner is a game changer.', stars: 5 },
@@ -322,6 +363,7 @@ const FAQS = [
   { question: 'What is the Instagram Clone workflow?', answer: 'Point the app at any profile using Apify, it analyzes the content structure, then helps you recreate those formats in your own character and style.' },
   { question: 'Do I need to install anything?', answer: 'No. The main product is accessed entirely through the hosted site. No local setup needed for regular users.' },
   { question: 'Can I generate content automatically?', answer: 'Yes. Auto Planner builds content schedules and Batch Generator queues large runs — set it up and let it keep producing.' },
+  { question: 'How does pricing work?', answer: 'Start with the free trial, then upgrade with crypto through Heleket. The main paid options are 30 Days, 1 Year, and a limited Founder Lifetime pass.' },
 ];
 
 // ─── Main Component ────────────────────────────────────────────────────────────
@@ -379,7 +421,7 @@ export default function LandingPage({ onNavigate, initialAuthModal = null }) {
         </div>
 
         <div className="hidden items-center gap-8 md:flex">
-          {[['Features', 'features'], ['How It Works', 'how-it-works'], ['FAQ', 'faq']].map(([label, id]) => (
+          {[['Features', 'features'], ['How It Works', 'how-it-works'], ['Pricing', 'pricing'], ['FAQ', 'faq']].map(([label, id]) => (
             <button key={id} type="button" onClick={() => scrollTo(id)}
               className="cursor-pointer text-sm font-medium transition-colors hover:text-white"
               style={{ color: DS.textMuted, background: 'none', border: 'none' }}>
@@ -397,7 +439,7 @@ export default function LandingPage({ onNavigate, initialAuthModal = null }) {
           <button type="button" onClick={() => setAuthModal('register')}
             className="h-9 cursor-pointer rounded-full px-5 text-sm font-semibold text-white transition"
             style={{ background: DS.cta, boxShadow: `0 0 20px ${DS.ctaGlow}` }}>
-            Get Started
+            Start Free Trial
           </button>
         </div>
       </nav>
@@ -438,7 +480,7 @@ export default function LandingPage({ onNavigate, initialAuthModal = null }) {
           <button type="button" onClick={() => setAuthModal('register')}
             className="group inline-flex cursor-pointer items-center gap-2 rounded-full px-8 py-3.5 text-sm font-semibold text-white transition-all hover:scale-105"
             style={{ background: DS.cta, boxShadow: `0 4px 24px ${DS.ctaGlow}` }}>
-            Create Free Account
+            Start Free Trial
             <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-1" />
           </button>
           <button type="button" onClick={() => setAuthModal('login')}
@@ -592,6 +634,74 @@ export default function LandingPage({ onNavigate, initialAuthModal = null }) {
         </div>
       </section>
 
+      {/* ── Pricing ── */}
+      <section id="pricing" className="px-6 py-28" style={{ background: DS.surface }}>
+        <div className="mx-auto max-w-6xl">
+          <BlurFade className="mb-3 text-center">
+            <span className="text-xs font-bold uppercase tracking-widest" style={{ color: DS.primary }}>Pricing</span>
+          </BlurFade>
+          <BlurFade delay={0.08} className="mb-5 text-center">
+            <h2 className="text-white" style={{ fontSize: 'clamp(28px,4vw,48px)', fontWeight: 800, lineHeight: 1.08, letterSpacing: '-0.03em' }}>
+              Start free. Upgrade with crypto<br />
+              <span style={{ color: DS.primary }}>only when it already works.</span>
+            </h2>
+          </BlurFade>
+          <BlurFade delay={0.12} className="mb-14 text-center">
+            <p className="mx-auto max-w-2xl text-sm leading-7" style={{ color: DS.textMuted }}>
+              We keep it simple for crypto users: test the workflow first, then choose the access window that fits you.
+            </p>
+          </BlurFade>
+
+          <div className="grid gap-5 lg:grid-cols-4">
+            {PRICING.map((plan, index) => (
+              <BlurFade key={plan.name} delay={0.05 * index}>
+                <motion.div
+                  whileHover={{ y: -6, scale: 1.01 }}
+                  transition={{ duration: 0.2 }}
+                  className="flex h-full flex-col rounded-3xl p-6"
+                  style={{
+                    border: `1px solid ${plan.featured ? `${plan.accent}55` : DS.border}`,
+                    background: plan.featured
+                      ? 'linear-gradient(180deg, rgba(14,165,233,0.12), rgba(8,8,12,1) 28%)'
+                      : DS.bg,
+                    boxShadow: plan.featured ? '0 24px 80px rgba(14,165,233,0.12)' : 'none',
+                  }}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color: plan.accent }}>{plan.meta}</span>
+                    {plan.featured && (
+                      <span className="rounded-full px-3 py-1 text-[11px] font-semibold" style={{ border: '1px solid rgba(14,165,233,0.2)', background: 'rgba(14,165,233,0.12)', color: '#7dd3fc' }}>
+                        Best Value
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="mt-4 text-2xl font-bold text-white">{plan.name}</h3>
+                  <div className="mt-4 text-5xl font-black tracking-tight text-white">{plan.price}</div>
+                  <p className="mt-4 min-h-[72px] text-sm leading-7" style={{ color: DS.textMuted }}>{plan.description}</p>
+                  <div className="mt-6 space-y-3">
+                    {plan.features.map((feature) => (
+                      <div key={feature} className="flex items-start gap-3 rounded-2xl px-4 py-3" style={{ border: `1px solid ${DS.border}`, background: 'rgba(255,255,255,0.03)' }}>
+                        <Check className="mt-0.5 h-4 w-4 shrink-0" style={{ color: plan.accent }} />
+                        <span className="text-sm leading-6" style={{ color: 'rgba(255,255,255,0.76)' }}>{feature}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAuthModal('register')}
+                    className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full px-5 py-3.5 text-sm font-semibold text-white transition-all hover:scale-[1.02]"
+                    style={{ background: plan.trial ? 'rgba(255,255,255,0.07)' : plan.accent, boxShadow: plan.trial ? 'none' : `0 10px 30px ${plan.accent}33` }}
+                  >
+                    {plan.cta}
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
+                </motion.div>
+              </BlurFade>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* ── FAQ ── */}
       <section id="faq" className="px-6 py-28" style={{ background: DS.surface }}>
         <div className="mx-auto max-w-3xl">
@@ -635,7 +745,7 @@ export default function LandingPage({ onNavigate, initialAuthModal = null }) {
                   <button type="button" onClick={() => setAuthModal('register')}
                     className="group inline-flex cursor-pointer items-center gap-2 rounded-full px-10 py-4 text-sm font-semibold text-white transition-all hover:scale-105"
                     style={{ background: DS.cta, boxShadow: `0 4px 24px ${DS.ctaGlow}` }}>
-                    Create Free Account
+                    Start Free Trial
                     <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-1" />
                   </button>
                   <button type="button" onClick={() => setAuthModal('login')}
@@ -645,7 +755,7 @@ export default function LandingPage({ onNavigate, initialAuthModal = null }) {
                   </button>
                 </div>
                 <div className="mt-8 flex flex-wrap items-center justify-center gap-6 text-sm" style={{ color: DS.textSubtle }}>
-                  {['Hosted access', 'Bring your own keys', 'Built for scale'].map((item) => (
+                  {['Start free', 'Crypto upgrades', 'Built for scale'].map((item) => (
                     <span key={item} className="flex items-center gap-1.5">
                       <Check className="h-3.5 w-3.5" style={{ color: DS.primary }} /> {item}
                     </span>
@@ -668,7 +778,7 @@ export default function LandingPage({ onNavigate, initialAuthModal = null }) {
               <span className="font-bold text-white" style={{ fontFamily: DS.font }}>Kyros Studio</span>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-6">
-              {[['Features', 'features'], ['How It Works', 'how-it-works'], ['FAQ', 'faq']].map(([label, id]) => (
+              {[['Features', 'features'], ['How It Works', 'how-it-works'], ['Pricing', 'pricing'], ['FAQ', 'faq']].map(([label, id]) => (
                 <button key={id} type="button" onClick={() => scrollTo(id)}
                   className="cursor-pointer text-sm transition-colors hover:text-white"
                   style={{ color: DS.textSubtle, background: 'none', border: 'none' }}>

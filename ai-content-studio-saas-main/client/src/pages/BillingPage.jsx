@@ -1,64 +1,136 @@
-import { useState, useEffect } from 'react';
-import { Card, Btn, Badge, Spinner } from '../components/UI';
+import { useEffect, useMemo, useState } from 'react';
+import { Badge, Btn, Card, Spinner } from '../components/UI';
 
 const PLANS = [
   {
-    id: 'free',
-    name: 'Free',
+    id: 'trial',
+    planId: 'free',
+    cycle: null,
+    name: 'Free Trial',
+    eyebrow: 'Start here',
     price: '$0',
     period: '',
-    features: ['10 generations/day', 'Basic models', 'Community support'],
-    color: '#52525b',
+    highlight: 'No card. No crypto. Just get in and test it.',
+    features: ['20 generations per day', 'Hosted access', 'Character + remix workflows', 'Telegram support while testing'],
+    accent: '#71717a',
+    cta: 'Start Free',
+    trial: true,
   },
   {
-    id: 'pro',
-    name: 'Pro',
-    price: '$19',
-    period: '/mo',
-    features: ['Unlimited generations', 'All models', 'Priority support', 'Batch generation'],
-    color: '#6366f1',
+    id: 'pro-monthly',
+    planId: 'pro',
+    cycle: 'monthly',
+    name: '30 Days',
+    eyebrow: 'Crypto simple',
+    price: '$10',
+    period: 'one-time',
+    highlight: 'Best for new users who want a clean monthly reset.',
+    features: ['Full creator workflow access', 'Generate, remix, clone, and batch', 'Priority over free trial users', 'Crypto checkout via Heleket'],
+    accent: '#3b82f6',
+    cta: 'Buy 30 Days',
   },
   {
-    id: 'unlimited',
-    name: 'Unlimited',
-    price: '$49',
-    period: '/mo',
-    features: ['Everything in Pro', 'API access', 'Dedicated support', 'Faster generation'],
-    color: '#8b5cf6',
+    id: 'pro-yearly',
+    planId: 'pro',
+    cycle: 'yearly',
+    name: '1 Year',
+    eyebrow: 'Best value',
+    price: '$79',
+    period: 'one-time',
+    highlight: 'Locks in the lowest effective price and saves $41 vs monthly.',
+    features: ['Everything in 30 Days', 'Year-long access', 'Best price per month', 'Recommended for serious creators'],
+    accent: '#0ea5e9',
+    cta: 'Buy 1 Year',
+    featured: true,
+    saveLabel: 'Save $41',
+  },
+  {
+    id: 'founder-lifetime',
+    planId: 'unlimited',
+    cycle: 'lifetime',
+    name: 'Founder Lifetime',
+    eyebrow: 'Limited',
+    price: '$149',
+    period: 'one-time',
+    highlight: 'For early believers who want lifetime access at the founder price.',
+    features: ['One payment, no renewals', 'All current creator workflows', 'Priority support', 'Founder pricing before it disappears'],
+    accent: '#f59e0b',
+    cta: 'Claim Lifetime',
+    lifetime: true,
   },
 ];
+
+const PLAN_NAME_MAP = {
+  free: 'Free Trial',
+  pro: 'Kyros Creator',
+  unlimited: 'Founder Lifetime',
+};
+
+function formatExpiry(expiresAt) {
+  if (!expiresAt) return 'No expiry set';
+  const date = new Date(expiresAt);
+  if (Number.isNaN(date.getTime())) return 'No expiry set';
+  return date.toLocaleDateString();
+}
 
 export default function BillingPage() {
   const [sub, setSub] = useState(null);
   const [me, setMe] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [upgrading, setUpgrading] = useState(false);
+  const [pendingPlan, setPendingPlan] = useState('');
   const [error, setError] = useState('');
+  const paymentStatus = useMemo(() => {
+    if (typeof window === 'undefined') return null;
+    return new URLSearchParams(window.location.search).get('status');
+  }, []);
 
   useEffect(() => {
     Promise.all([
-      fetch('/api/billing/status', { credentials: 'include' }).then(r => r.json()),
-      fetch('/api/auth/me', { credentials: 'include' }).then(r => r.ok ? r.json() : null),
-    ]).then(([subData, meData]) => {
-      setSub(subData);
-      setMe(meData);
-    }).catch(() => {}).finally(() => setLoading(false));
+      fetch('/api/billing/status', { credentials: 'include' }).then((r) => r.json()),
+      fetch('/api/auth/me', { credentials: 'include' }).then((r) => (r.ok ? r.json() : null)),
+    ])
+      .then(([subData, meData]) => {
+        setSub(subData);
+        setMe(meData);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
-  const handleUpgrade = async (planId) => {
-    if (planId === 'free') return;
-    setUpgrading(true); setError('');
+  const currentPlan = sub?.plan || 'free';
+  const isActive = sub?.status === 'active';
+  const heroStats = useMemo(() => {
+    if (currentPlan === 'unlimited') {
+      return { title: 'Founder access active', sublabel: 'You are on the lifetime founder track.' };
+    }
+    if (currentPlan === 'pro') {
+      return { title: 'Creator access active', sublabel: sub?.expires_at ? `Renews or ends ${formatExpiry(sub.expires_at)}` : 'Paid access is active.' };
+    }
+    return { title: 'You are on the free trial', sublabel: 'Test the workflow, then upgrade when you are ready.' };
+  }, [currentPlan, sub?.expires_at]);
+
+  const handleCheckout = async (plan) => {
+    if (plan.trial) return;
+    setPendingPlan(plan.id);
+    setError('');
     try {
       const r = await fetch('/api/billing/create-invoice', {
-        method: 'POST', credentials: 'include',
+        method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plan: planId }),
+        body: JSON.stringify({ plan: plan.planId, cycle: plan.cycle }),
       });
       const d = await r.json();
-      if (!r.ok) { setError(d.error || 'Failed to create invoice'); return; }
+      if (!r.ok) {
+        setError(d.error || 'Failed to create invoice');
+        return;
+      }
       if (d.url) window.location.href = d.url;
-    } catch (e) { setError('Network error: ' + e.message); }
-    finally { setUpgrading(false); }
+    } catch (e) {
+      setError('Network error: ' + e.message);
+    } finally {
+      setPendingPlan('');
+    }
   };
 
   if (loading) {
@@ -69,118 +141,168 @@ export default function BillingPage() {
     );
   }
 
-  const currentPlan = sub?.plan || 'free';
-  const isActive = sub?.status === 'active';
-
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8 space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-zinc-100">Billing & Subscription</h1>
-        {me && (
-          <p className="text-sm text-zinc-500 mt-1">{me.email}</p>
-        )}
-      </div>
-
-      {/* Current plan status */}
-      <Card className="flex items-center justify-between gap-4">
-        <div>
-          <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-1">Current Plan</p>
-          <p className="text-lg font-semibold text-zinc-100 capitalize">{currentPlan}</p>
-          {sub?.expires_at && (
-            <p className="text-xs text-zinc-500 mt-0.5">
-              Renews {new Date(sub.expires_at).toLocaleDateString()}
+    <div className="mx-auto max-w-6xl px-6 py-8 space-y-8">
+      <section className="rounded-3xl border border-zinc-800 bg-[radial-gradient(circle_at_top_right,rgba(59,130,246,0.18),transparent_25%),linear-gradient(180deg,#0f1118_0%,#090b10_100%)] p-8 shadow-[0_30px_120px_rgba(0,0,0,0.35)]">
+        <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-2xl">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-sky-400">Crypto Pricing</div>
+            <h1 className="mt-3 text-4xl font-semibold tracking-tight text-zinc-50 sm:text-5xl">Simple pricing for creators.</h1>
+            <p className="mt-4 max-w-xl text-sm leading-7 text-zinc-400">
+              Start free, then pay with crypto only when the workflow is already working for you. No confusing credits. No weird add-ons.
             </p>
-          )}
+            <div className="mt-6 flex flex-wrap gap-2 text-xs text-zinc-300">
+              <span className="rounded-full border border-sky-500/25 bg-sky-500/10 px-3 py-1.5 text-sky-300">USDT / USDC friendly</span>
+              <span className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1.5">One-time crypto checkout</span>
+              <span className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1.5">Free trial first</span>
+            </div>
+          </div>
+
+          <Card className="min-w-[280px] border-zinc-800 bg-zinc-950/70">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">Current Access</p>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-lg font-semibold text-zinc-100">{heroStats.title}</p>
+                <p className="mt-1 text-sm text-zinc-500">{heroStats.sublabel}</p>
+                {me?.email && <p className="mt-3 text-xs text-zinc-600">{me.email}</p>}
+              </div>
+              <Badge color={isActive ? 'green' : 'red'}>{isActive ? PLAN_NAME_MAP[currentPlan] || currentPlan : sub?.status || 'inactive'}</Badge>
+            </div>
+          </Card>
         </div>
-        <Badge color={isActive ? 'green' : 'red'}>{isActive ? 'Active' : sub?.status || 'inactive'}</Badge>
-      </Card>
+      </section>
 
       {error && (
-        <div className="rounded-lg bg-red-950/60 border border-red-800/50 px-4 py-3 text-sm text-red-400">
+        <div className="rounded-2xl border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-300">
           {error}
         </div>
       )}
 
-      {/* Plan cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {PLANS.map(plan => {
-          const isCurrent = currentPlan === plan.id;
+      {paymentStatus === 'success' && (
+        <div className="rounded-2xl border border-emerald-900/60 bg-emerald-950/40 px-4 py-3 text-sm text-emerald-300">
+          Payment received. Your plan is being activated now.
+        </div>
+      )}
+
+      <section className="grid grid-cols-1 gap-5 xl:grid-cols-4">
+        {PLANS.map((plan) => {
+          const isCurrent = currentPlan === plan.planId;
+          const isProcessing = pendingPlan === plan.id;
           return (
             <div
               key={plan.id}
-              className="rounded-xl border p-5 flex flex-col gap-4 transition-colors"
+              className={`relative flex h-full flex-col overflow-hidden rounded-3xl border p-6 transition-transform duration-200 ${plan.featured ? 'xl:-translate-y-2' : ''}`}
               style={{
-                background: isCurrent ? 'rgba(99,102,241,0.06)' : '#111118',
-                borderColor: isCurrent ? plan.color : '#27272a',
+                borderColor: isCurrent ? `${plan.accent}88` : 'rgba(255,255,255,0.08)',
+                background: plan.featured
+                  ? 'linear-gradient(180deg, rgba(14,165,233,0.16), rgba(10,13,18,0.98) 24%, rgba(10,13,18,0.98) 100%)'
+                  : 'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(9,11,16,0.98))',
+                boxShadow: plan.featured ? '0 24px 80px rgba(14,165,233,0.14)' : '0 20px 60px rgba(0,0,0,0.22)',
               }}
             >
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-semibold text-zinc-100">{plan.name}</span>
-                  {isCurrent && (
-                    <span
-                      className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
-                      style={{ background: plan.color + '33', color: plan.color }}
-                    >
-                      Current
-                    </span>
-                  )}
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.24em]" style={{ color: plan.accent }}>{plan.eyebrow}</div>
+                  <h2 className="mt-3 text-2xl font-semibold text-zinc-50">{plan.name}</h2>
                 </div>
-                <div className="flex items-baseline gap-0.5">
-                  <span className="text-2xl font-bold text-zinc-100">{plan.price}</span>
-                  {plan.period && <span className="text-zinc-500 text-sm">{plan.period}</span>}
-                </div>
+                {plan.featured && <span className="rounded-full border border-sky-400/30 bg-sky-400/12 px-3 py-1 text-[11px] font-semibold text-sky-300">Best Value</span>}
+                {plan.lifetime && <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-3 py-1 text-[11px] font-semibold text-amber-300">Limited</span>}
               </div>
 
-              <ul className="space-y-1.5 flex-1">
-                {plan.features.map(f => (
-                  <li key={f} className="flex items-center gap-2 text-xs text-zinc-400">
-                    <span style={{ color: plan.color }}>✓</span>
-                    {f}
-                  </li>
-                ))}
-              </ul>
+              <div className="mt-5 flex items-end gap-2">
+                <div className="text-5xl font-semibold tracking-tight text-zinc-50">{plan.price}</div>
+                {plan.period && <div className="pb-2 text-sm text-zinc-500">{plan.period}</div>}
+              </div>
 
-              {plan.id !== 'free' && !isCurrent && (
-                <Btn
-                  onClick={() => handleUpgrade(plan.id)}
-                  disabled={upgrading}
-                  variant="primary"
-                  size="sm"
-                  className="w-full"
-                >
-                  {upgrading ? 'Processing…' : `Upgrade to ${plan.name}`}
-                </Btn>
+              {plan.saveLabel && (
+                <div className="mt-3 inline-flex w-fit rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-300">
+                  {plan.saveLabel}
+                </div>
               )}
-              {isCurrent && plan.id !== 'free' && (
-                <p className="text-xs text-center text-zinc-600">You're on this plan</p>
-              )}
-              {plan.id === 'free' && isCurrent && (
-                <p className="text-xs text-center text-zinc-600">Your current plan</p>
-              )}
+
+              <p className="mt-4 min-h-[64px] text-sm leading-7 text-zinc-400">{plan.highlight}</p>
+
+              <div className="mt-6 flex-1 space-y-3">
+                {plan.features.map((feature) => (
+                  <div key={feature} className="flex items-start gap-3 rounded-2xl border border-zinc-800/80 bg-black/20 px-4 py-3 text-sm text-zinc-300">
+                    <span className="mt-0.5 h-2 w-2 rounded-full" style={{ background: plan.accent }} />
+                    <span>{feature}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-6">
+                {plan.trial ? (
+                  <button
+                    type="button"
+                    className="w-full cursor-default rounded-2xl border border-zinc-700 bg-zinc-900/70 px-4 py-3 text-sm font-semibold text-zinc-200"
+                  >
+                    Included when you sign up
+                  </button>
+                ) : (
+                  <Btn
+                    onClick={() => handleCheckout(plan)}
+                    disabled={isProcessing}
+                    variant="primary"
+                    className="w-full rounded-2xl"
+                    style={{ background: plan.accent, boxShadow: `0 18px 40px ${plan.accent}30` }}
+                  >
+                    {isProcessing ? 'Creating invoice…' : plan.cta}
+                  </Btn>
+                )}
+                {isCurrent && (
+                  <p className="mt-3 text-center text-xs text-zinc-500">
+                    You are currently on {PLAN_NAME_MAP[currentPlan] || currentPlan}.
+                  </p>
+                )}
+              </div>
             </div>
           );
         })}
-      </div>
+      </section>
 
-      <p className="text-xs text-zinc-600 text-center">
-        Payments processed via Heleket (crypto). Contact support if you have billing questions.
-      </p>
+      <section className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+        <Card className="border-zinc-800 bg-zinc-950/60">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">How it works</p>
+              <h3 className="mt-2 text-xl font-semibold text-zinc-50">Crypto checkout, but easy.</h3>
+            </div>
+            <span className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs text-zinc-400">Heleket</span>
+          </div>
+          <div className="mt-6 grid gap-3 sm:grid-cols-3">
+            {[
+              ['1', 'Create your account', 'Get into Kyros and test the workflow first.'],
+              ['2', 'Pick a plan', 'Choose 30 Days, 1 Year, or Founder Lifetime.'],
+              ['3', 'Pay with crypto', 'Checkout through Heleket and come back active.'],
+            ].map(([num, title, body]) => (
+              <div key={num} className="rounded-2xl border border-zinc-800 bg-black/20 p-4">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-sky-400">Step {num}</div>
+                <div className="mt-3 text-sm font-semibold text-zinc-100">{title}</div>
+                <div className="mt-2 text-sm leading-6 text-zinc-500">{body}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
 
-      <Card className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-sm font-semibold text-zinc-100">Need help with billing or setup?</p>
-          <p className="text-xs text-zinc-500 mt-1">Join the community support chat and talk directly with the team.</p>
-        </div>
-        <a
-          href="https://t.me/Kyros_Studio"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-500 transition"
-        >
-          Open Telegram Support
-        </a>
-      </Card>
+        <Card className="border-zinc-800 bg-zinc-950/60">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">Billing notes</p>
+          <div className="mt-4 space-y-3 text-sm leading-7 text-zinc-400">
+            <p>Free trial lets new users test the workflow before paying.</p>
+            <p>30 Days is the easiest entry point for crypto-first buyers.</p>
+            <p>1 Year is the strongest offer if someone already knows they will use Kyros seriously.</p>
+            <p>Founder Lifetime should stay limited so it feels special and does not undercut recurring revenue forever.</p>
+          </div>
+          <a
+            href="https://t.me/Kyros_Studio"
+            target="_blank"
+            rel="noreferrer"
+            className="mt-6 inline-flex items-center justify-center rounded-2xl border border-zinc-700 bg-zinc-900/70 px-4 py-3 text-sm font-medium text-zinc-300 transition hover:border-zinc-600 hover:bg-zinc-800/80 hover:text-white"
+          >
+            Need help? Telegram support
+          </a>
+        </Card>
+      </section>
     </div>
   );
 }
