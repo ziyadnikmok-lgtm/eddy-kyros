@@ -57,7 +57,7 @@ router.get('/', (_req, res) => {
 router.post('/', (req, res, next) => {
   try {
     const userId = getUserId() || '__anon__';
-    const { name, path: loraPath, scale } = req.body;
+    const { name, path: loraPath, scale, triggerPrompt } = req.body;
     if (!name || typeof name !== 'string' || !name.trim()) {
       throw new AppError('Name is required', 400, 'VALIDATION_ERROR');
     }
@@ -71,6 +71,7 @@ router.post('/', (req, res, next) => {
       name: name.trim(),
       path: loraPath.trim(),
       scale: typeof scale === 'number' ? scale : 1.0,
+      triggerPrompt: typeof triggerPrompt === 'string' ? triggerPrompt.trim() : '',
       createdAt: new Date().toISOString(),
     };
     presets.push(preset);
@@ -86,10 +87,11 @@ router.patch('/:id', (req, res, next) => {
     const presets = readPresets();
     const idx = findPresetIndex(presets, req.params.id, userId);
     if (idx === -1) throw new AppError('Preset not found', 404, 'NOT_FOUND');
-    const { name, path: loraPath, scale } = req.body;
+    const { name, path: loraPath, scale, triggerPrompt } = req.body;
     if (name !== undefined) presets[idx].name = String(name).trim();
     if (loraPath !== undefined) presets[idx].path = String(loraPath).trim();
     if (scale !== undefined) presets[idx].scale = typeof scale === 'number' ? scale : presets[idx].scale;
+    if (triggerPrompt !== undefined) presets[idx].triggerPrompt = String(triggerPrompt).trim();
     writePresets(presets);
     res.json({ success: true, data: presets[idx] });
   } catch (err) { next(err); }

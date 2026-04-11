@@ -10,8 +10,14 @@ const PLANS = [
     eyebrow: 'Start here',
     price: '$0',
     period: '',
-    highlight: 'No card. No crypto. Test the full workflow first.',
-    features: ['20 generations per day', 'Hosted access', 'Character + remix workflows', 'Telegram support while testing'],
+    highlight: 'Try the tools before you commit to anything.',
+    features: [
+      'AI image generation',
+      'Character creation',
+      'Scene & photo recreation',
+      'Pinterest & reel tools',
+      '20 generations/day',
+    ],
     accent: '#71717a',
     cta: 'Start Free',
     trial: true,
@@ -21,26 +27,42 @@ const PLANS = [
     planId: 'pro',
     cycle: 'monthly',
     name: '1 Month',
-    eyebrow: 'Crypto simple',
+    eyebrow: 'Full access',
     price: '$19.99',
     period: 'one-time',
-    highlight: 'Best for new users who want to try the full workflow for a month.',
-    features: ['Full creator workflow access', 'Generate, remix, clone, and batch', 'Priority over free trial users', 'Crypto checkout via Heleket'],
+    highlight: 'Everything unlocked for 30 days.',
+    features: [
+      'Unlimited image generation',
+      'NSFW generation',
+      'Photo match & scene recreate',
+      'Carousel, batch & auto-generator',
+      'Video compose & reel tools',
+      'Style library & prompt builder',
+      'Pinterest recreate workflow',
+    ],
     accent: '#3b82f6',
-    cta: 'Buy 1 Month',
+    cta: 'Get 1 Month',
   },
   {
     id: 'pro-quarterly',
     planId: 'pro',
     cycle: 'quarterly',
     name: '3 Months',
-    eyebrow: 'Best deal',
+    eyebrow: 'Most popular',
     price: '$44.99',
     period: 'one-time',
-    highlight: 'Lock in 3 months and save $15 vs paying monthly. Most popular.',
-    features: ['Everything in 1 Month', '3 months access', 'Save $15 vs monthly', 'Recommended for serious creators'],
+    highlight: 'Same full access, 3x the runway. Save $15.',
+    features: [
+      'Everything in 1 Month',
+      'Unlimited image generation',
+      'NSFW generation',
+      'All workflows — video, carousel, batch',
+      'Photo match & scene recreate',
+      'Pinterest & reel tools',
+      'Style library & prompt builder',
+    ],
     accent: '#0ea5e9',
-    cta: 'Buy 3 Months',
+    cta: 'Get 3 Months',
     featured: true,
     saveLabel: 'Save $15',
   },
@@ -52,8 +74,16 @@ const PLANS = [
     eyebrow: 'Limited spots',
     price: '$149',
     period: 'one-time',
-    highlight: 'One payment, permanent access. Founder pricing before it disappears.',
-    features: ['One payment, no renewals', 'All current creator workflows', 'Priority support', 'Founder price — limited time'],
+    highlight: 'Pay once, use forever. Every feature, no expiry.',
+    features: [
+      'Everything — forever',
+      'Unlimited image generation',
+      'NSFW generation',
+      'All current & future workflows',
+      'Photo match, scene, video, carousel',
+      'Pinterest, reel & batch tools',
+      'Priority support',
+    ],
     accent: '#f59e0b',
     cta: 'Claim Lifetime',
     lifetime: true,
@@ -157,15 +187,16 @@ export default function BillingPage() {
       <section className="rounded-3xl border border-zinc-800 bg-[radial-gradient(circle_at_top_right,rgba(59,130,246,0.18),transparent_25%),linear-gradient(180deg,#0f1118_0%,#090b10_100%)] p-8 shadow-[0_30px_120px_rgba(0,0,0,0.35)]">
         <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-2xl">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-sky-400">Crypto Pricing</div>
-            <h1 className="mt-3 text-4xl font-semibold tracking-tight text-zinc-50 sm:text-5xl">Simple pricing for creators.</h1>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-sky-400">Kyros Studio</div>
+            <h1 className="mt-3 text-4xl font-semibold tracking-tight text-zinc-50 sm:text-5xl">Everything you need to create.</h1>
             <p className="mt-4 max-w-xl text-sm leading-7 text-zinc-400">
-              Start free, then pay with crypto only when the workflow is already working for you. No confusing credits. No weird add-ons.
+              Generate, recreate, and automate content with your own AI characters. Try free, upgrade when you're ready.
             </p>
             <div className="mt-6 flex flex-wrap gap-2 text-xs text-zinc-300">
-              <span className="rounded-full border border-sky-500/25 bg-sky-500/10 px-3 py-1.5 text-sky-300">USDT / USDC friendly</span>
-              <span className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1.5">One-time crypto checkout</span>
-              <span className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1.5">Free trial first</span>
+              <span className="rounded-full border border-sky-500/25 bg-sky-500/10 px-3 py-1.5 text-sky-300">AI image generation</span>
+              <span className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1.5">Photo & scene recreation</span>
+              <span className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1.5">Video & carousel tools</span>
+              <span className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1.5">Free trial included</span>
             </div>
           </div>
 
@@ -284,35 +315,27 @@ export default function BillingPage() {
 
       <section className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
         <Card className="border-zinc-800 bg-zinc-950/60">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">How it works</p>
-              <h3 className="mt-2 text-xl font-semibold text-zinc-50">Crypto checkout, but easy.</h3>
-            </div>
-            <span className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs text-zinc-400">Heleket</span>
-          </div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">What you get</p>
+          <h3 className="mt-2 text-xl font-semibold text-zinc-50">Every tool in one place.</h3>
           <div className="mt-6 grid gap-3 sm:grid-cols-3">
             {[
-              ['1', 'Create your account', 'Get into Kyros and test the workflow first.'],
-              ['2', 'Pick a plan', 'Choose 30 Days, 1 Year, or Founder Lifetime.'],
-              ['3', 'Pay with crypto', 'Checkout through Heleket and come back active.'],
-            ].map(([num, title, body]) => (
-              <div key={num} className="rounded-2xl border border-zinc-800 bg-black/20 p-4">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-sky-400">Step {num}</div>
-                <div className="mt-3 text-sm font-semibold text-zinc-100">{title}</div>
+              ['Generate', 'Create AI images with your own characters — full control over style, pose, and scene.'],
+              ['Recreate', 'Drop any photo, replicate the scene with your character. Photo match, scene clone, Pinterest.'],
+              ['Automate', 'Batch generation, carousels, auto-scheduler, video compose, reel recreation — all built in.'],
+            ].map(([title, body]) => (
+              <div key={title} className="rounded-2xl border border-zinc-800 bg-black/20 p-4">
+                <div className="text-sm font-semibold text-zinc-100">{title}</div>
                 <div className="mt-2 text-sm leading-6 text-zinc-500">{body}</div>
               </div>
             ))}
           </div>
         </Card>
 
-        <Card className="border-zinc-800 bg-zinc-950/60">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">Billing notes</p>
-          <div className="mt-4 space-y-3 text-sm leading-7 text-zinc-400">
-            <p>Free trial lets new users test the workflow before paying.</p>
-            <p>30 Days is the easiest entry point for crypto-first buyers.</p>
-            <p>1 Year is the strongest offer if someone already knows they will use Kyros seriously.</p>
-            <p>Founder Lifetime should stay limited so it feels special and does not undercut recurring revenue forever.</p>
+        <Card className="border-zinc-800 bg-zinc-950/60 flex flex-col justify-between">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">Questions?</p>
+            <h3 className="mt-2 text-xl font-semibold text-zinc-50">Talk to us directly.</h3>
+            <p className="mt-3 text-sm leading-7 text-zinc-400">After payment we activate your account personally. Message us on Telegram and we will get you set up.</p>
           </div>
           <a
             href="https://t.me/shiaspam"
@@ -321,7 +344,7 @@ export default function BillingPage() {
             className="mt-6 inline-flex items-center justify-center gap-2 rounded-2xl border border-zinc-700 bg-zinc-900/70 px-4 py-3 text-sm font-medium text-zinc-300 transition hover:border-zinc-600 hover:bg-zinc-800/80 hover:text-white"
           >
             <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" xmlns="http://www.w3.org/2000/svg"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.833.941z"/></svg>
-            Need help? Message @shiaspam
+            Message @shiaspam on Telegram
           </a>
         </Card>
       </section>

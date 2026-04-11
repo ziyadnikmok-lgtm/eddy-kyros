@@ -249,6 +249,7 @@ export default function NsfwGeneratePage() {
   const [newPresetName, setNewPresetName] = useState('');
   const [newPresetPath, setNewPresetPath] = useState('');
   const [newPresetScale, setNewPresetScale] = useState(1.0);
+  const [newPresetTrigger, setNewPresetTrigger] = useState('');
   const [varyPrompt, setVaryPrompt] = useState('');
   const [varyStrength, setVaryStrength] = useState(0.6);
   const [presetsLoadedOnce, setPresetsLoadedOnce] = useState(false);
@@ -333,13 +334,17 @@ export default function NsfwGeneratePage() {
   const handleSavePreset = async () => {
     if (!newPresetName.trim() || !newPresetPath.trim()) { notify('Name and LoRA path are required', 'error'); return; }
     try {
-      const created = await presetsApi.create({ name: newPresetName.trim(), path: newPresetPath.trim(), scale: newPresetScale });
+      const created = await presetsApi.create({ name: newPresetName.trim(), path: newPresetPath.trim(), scale: newPresetScale, triggerPrompt: newPresetTrigger.trim() });
       await loadPresets();
       setSelectedPresetId(created.id);
       sync('selectedPresetId', created.id);
       setPresetStrength(created.scale || 1.0);
       sync('presetStrength', created.scale || 1.0);
-      setNewPresetName(''); setNewPresetPath(''); setNewPresetScale(1.0); setShowSavePreset(false);
+      if (created.triggerPrompt) {
+        const next = created.triggerPrompt + (prompt.trim() ? ', ' + prompt.trim() : '');
+        setPrompt(next); sync('prompt', next);
+      }
+      setNewPresetName(''); setNewPresetPath(''); setNewPresetScale(1.0); setNewPresetTrigger(''); setShowSavePreset(false);
       notify('Character LoRA saved and selected', 'success');
     } catch { notify('Failed to save preset', 'error'); }
   };
@@ -559,7 +564,22 @@ export default function NsfwGeneratePage() {
             </div>
             <select
               value={selectedPresetId}
-              onChange={(e) => { setSelectedPresetId(e.target.value); sync('selectedPresetId', e.target.value); setPresetStrength(1.0); sync('presetStrength', 1.0); }}
+              onChange={(e) => {
+              const newId = e.target.value;
+              setSelectedPresetId(newId); sync('selectedPresetId', newId);
+              setPresetStrength(1.0); sync('presetStrength', 1.0);
+              const picked = presets.find((p) => p.id === newId);
+              if (picked?.triggerPrompt) {
+                // Strip previous trigger from prompt if switching presets
+                const prevTrigger = presets.find((p) => p.id === selectedPresetId)?.triggerPrompt || '';
+                let base = prompt.trim();
+                if (prevTrigger && base.startsWith(prevTrigger)) {
+                  base = base.slice(prevTrigger.length).replace(/^,\s*/, '').trim();
+                }
+                const next = picked.triggerPrompt + (base ? ', ' + base : '');
+                setPrompt(next); sync('prompt', next);
+              }
+            }}
               className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-purple-500/70 focus:ring-1 focus:ring-purple-500/20 cursor-pointer"
             >
               <option value="">No character LoRA</option>
@@ -573,6 +593,9 @@ export default function NsfwGeneratePage() {
                   <div className="min-w-0 flex-1">
                     <span className="text-xs text-purple-300 font-medium block truncate">{selectedPreset.name}</span>
                     <span className="text-[10px] text-zinc-500 block truncate">{selectedPreset.path}</span>
+                    {selectedPreset.triggerPrompt && (
+                      <span className="text-[10px] text-purple-400/70 block truncate mt-0.5">Trigger: {selectedPreset.triggerPrompt}</span>
+                    )}
                   </div>
                   <button type="button" onClick={() => handleDeletePreset(selectedPreset.id)} className="text-zinc-500 hover:text-red-400 text-xs ml-2 shrink-0 cursor-pointer" title="Delete preset">&times;</button>
                 </div>
@@ -589,6 +612,7 @@ export default function NsfwGeneratePage() {
               <div className="space-y-2 bg-zinc-800/40 rounded-lg p-3 border border-zinc-700/40">
                 <input type="text" value={newPresetName} onChange={(e) => setNewPresetName(e.target.value)} placeholder="Preset name (e.g. Maria v2)" className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 outline-none focus:border-purple-500/70 placeholder:text-zinc-600" />
                 <input type="text" value={newPresetPath} onChange={(e) => setNewPresetPath(e.target.value)} placeholder="HuggingFace URL or model path" className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 outline-none focus:border-purple-500/70 placeholder:text-zinc-600" />
+                <textarea value={newPresetTrigger} onChange={(e) => setNewPresetTrigger(e.target.value)} placeholder="Trigger prompt (auto-pastes into prompt when selected)" rows={2} className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 outline-none focus:border-purple-500/70 placeholder:text-zinc-600 resize-none" />
                 <div className="flex gap-2 items-center">
                   <div className="flex-1">
                     <input type="number" value={newPresetScale} onChange={(e) => setNewPresetScale(parseFloat(e.target.value) || 0)} min={0} max={4} step={0.1} className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-2 py-2 text-xs text-zinc-100 text-center outline-none focus:border-purple-500/70" />
