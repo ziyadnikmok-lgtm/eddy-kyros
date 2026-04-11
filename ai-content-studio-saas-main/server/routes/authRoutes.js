@@ -186,13 +186,15 @@ router.get('/me', (req, res) => {
   const sub = db.prepare('SELECT plan, status FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(user.id);
   const plan = sub?.plan || 'free';
 
-  // Include usage info when running in hosted mode
+  // Include usage info when running on the hosted web app
   let usageInfo = null;
-  if (process.env.HOSTED) {
-    const { getUsageLast24h, PLAN_LIMITS } = require('../middleware/planLimits');
-    const used = getUsageLast24h(user.id);
-    const limit = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
-    usageInfo = { used, limit: isFinite(limit) ? limit : null, plan };
+  {
+    const { getUsageLast24h, getFreeTrialUsage, PLAN_LIMITS, isHostedRuntime } = require('../middleware/planLimits');
+    if (isHostedRuntime()) {
+      const used = plan === 'free' ? getFreeTrialUsage(user.id) : getUsageLast24h(user.id);
+      const limit = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
+      usageInfo = { used, limit: isFinite(limit) ? limit : null, plan, window: plan === 'free' ? 'trial' : '24h' };
+    }
   }
 
   res.json({ id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan, usageInfo });

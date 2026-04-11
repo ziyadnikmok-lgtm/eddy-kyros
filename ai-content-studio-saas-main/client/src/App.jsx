@@ -139,16 +139,21 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    label: 'Remix',
+    label: 'Image Remix',
     items: [
       { id: 'scene', label: 'Scene Recreate' },
       { id: 'postClone', label: 'Post Clone' },
-      { id: 'pinterest', label: 'Pinterest DL' },
-      { id: 'reel', label: 'Reel Copy' },
       { id: 'carousel', label: 'Carousel' },
-      { id: 'videoCompose', label: 'Video Composer' },
       { id: 'photoMatch', label: 'Photo Match' },
       { id: 'nanoBypass', label: 'Nano Bypass' },
+    ],
+  },
+  {
+    label: 'Video Remix',
+    items: [
+      { id: 'reel', label: 'Reel Copy' },
+      { id: 'pinterest', label: 'Pinterest DL' },
+      { id: 'videoCompose', label: 'Video Composer' },
     ],
   },
   {

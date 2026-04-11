@@ -10,6 +10,7 @@ const videoHistory = require('../services/videoHistoryStore');
 const galleryManager = require('../services/galleryManager');
 const apiKeyManager = require('../services/apiKeyManager');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const { createMultipartParser } = require('../middleware/multipartParser');
 const { UPLOADS_DIR } = require('../paths');
 const { logUsageEvent, startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
@@ -32,7 +33,7 @@ const router = express.Router();
 const VIDEO_DIR = path.join(UPLOADS_DIR, 'videos');
 const parseMultipartIfNeeded = createMultipartParser({ maxBytes: 200 * 1024 * 1024 });
 
-router.post('/generate', parseMultipartIfNeeded, async (req, res, next) => {
+router.post('/generate', parseMultipartIfNeeded, requirePlanCapacity(), async (req, res, next) => {
   let runId = null;
   try {
     const {

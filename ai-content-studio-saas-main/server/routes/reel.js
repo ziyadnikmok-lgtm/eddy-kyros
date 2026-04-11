@@ -8,6 +8,7 @@ const geminiService = require('../services/geminiService');
 const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
 const reelReferenceService = require('../services/reelReferenceService');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const { buildCharacterReferenceImages } = require('./postClone');
 
 const router = express.Router();
@@ -71,7 +72,7 @@ async function analyzeAndRecreateFrame({ frame, characterId, activeReferenceIds,
   };
 }
 
-router.post('/recreate', async (req, res, next) => {
+router.post('/recreate', requirePlanCapacity({ cost: 2 }), async (req, res, next) => {
   try {
     const { reelUrl, characterId, activeReferenceIds, apifyApiKey, imageModel } = req.body || {};
 

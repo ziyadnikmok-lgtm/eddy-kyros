@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('node:fs');
 const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const { asText } = require('../utils/helpers');
 const log = require('../utils/logger');
 const apiKeyManager = require('../services/apiKeyManager');
@@ -14,7 +15,12 @@ const router = express.Router();
 const { TEMP_DIR } = require('../paths');
 const RECREATE_TIMEOUT_MS = 15 * 60_000;
 
-router.post('/', async (req, res, next) => {
+router.post('/', requirePlanCapacity({
+  costResolver: (req) => {
+    const postLimit = Number(req.body?.postLimit);
+    return Number.isInteger(postLimit) && postLimit > 0 ? Math.max(1, Math.min(20, postLimit)) : 5;
+  },
+}), async (req, res, next) => {
   try {
     const {
       profileUrl, characterId, postLimit = 5, mode = 'exact', apifyApiKey, imageModel,
@@ -91,7 +97,12 @@ router.post('/fetch', async (req, res, next) => {
   }
 });
 
-router.post('/recreate', async (req, res, next) => {
+router.post('/recreate', requirePlanCapacity({
+  costResolver: (req) => {
+    const posts = Array.isArray(req.body?.posts) ? req.body.posts.length : 0;
+    return posts > 0 ? Math.min(posts, 20) : 1;
+  },
+}), async (req, res, next) => {
   try {
     const {
       posts, characterId, mode = 'exact', cosplayMode = false, imageModel,

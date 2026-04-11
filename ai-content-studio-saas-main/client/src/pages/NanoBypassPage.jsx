@@ -8,7 +8,7 @@ import { createPersistentPageState, makePersistentJobId, PersistentJobCard } fro
 
 
 const ASPECT_RATIOS = ['auto', '1:1', '9:16', '16:9', '4:5', '3:4', '2:3'];
-const IMAGE_SIZES = ['1K', '2K', '4K'];
+const IMAGE_SIZES = ['1K', '2K'];
 
 const LOCKED_MODEL = { id: 'flash', label: 'Flash 3.1', sublabel: 'gemini-3.1-flash', color: 'bg-blue-600 hover:bg-blue-500' };
 const NANO_BYPASS_HANDOFF_KEY = 'kyros.nanoBypass.handoff';
@@ -157,7 +157,7 @@ export default function NanoBypassPage() {
   const [characterId, setCharacterId] = useState(_cache.characterId);
   const [model, setModel] = useState(_cache.model);
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
-  const [imageSize, setImageSize] = useState(_cache.imageSize);
+  const [imageSize, setImageSize] = useState(IMAGE_SIZES.includes(_cache.imageSize) ? _cache.imageSize : '2K');
   const [temperature, setTemperature] = useState(_cache.temperature);
   const [loadingCharacterRefs, setLoadingCharacterRefs] = useState(false);
 
@@ -247,6 +247,12 @@ export default function NanoBypassPage() {
     });
     autofillCharacterPromptRef.current = false;
   }, [characterId, selectedCharacter]);
+
+  useEffect(() => {
+    if (!IMAGE_SIZES.includes(imageSize)) {
+      setImageSize('2K');
+    }
+  }, [imageSize]);
 
   // Paste support
   useEffect(() => {

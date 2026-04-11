@@ -4,13 +4,14 @@ const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
 const apiKeyManager = require('../services/apiKeyManager');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const log = require('../utils/logger');
 
 const router = express.Router();
 
 const VALID_ASPECT_RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '4:5', '5:4', '3:2', '2:3'];
 
-router.post('/', async (req, res, next) => {
+router.post('/', requirePlanCapacity(), async (req, res, next) => {
   try {
     const { prompt, aspectRatio, loras } = req.body;
 
@@ -71,7 +72,7 @@ router.post('/', async (req, res, next) => {
 });
 
 // ── Img2Img variation ──────────────────────────────────────────
-router.post('/vary', async (req, res, next) => {
+router.post('/vary', requirePlanCapacity(), async (req, res, next) => {
   try {
     const { imageBase64, mimeType, prompt, aspectRatio, strength, loras } = req.body;
 

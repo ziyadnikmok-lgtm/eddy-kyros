@@ -5,13 +5,23 @@ const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
 const log = require('../utils/logger');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const { createMultipartParser } = require('../middleware/multipartParser');
 const { initSSE } = require('../utils/sse');
 
 const router = express.Router();
 const parseMultipartIfNeeded = createMultipartParser({ maxBytes: 50 * 1024 * 1024 });
 
-router.post('/', parseMultipartIfNeeded, (req, res, next) => {
+router.post('/', parseMultipartIfNeeded, requirePlanCapacity({
+  costResolver: (req) => {
+    let config = req.body?.config;
+    if (typeof config === 'string') {
+      try { config = JSON.parse(config); } catch { config = null; }
+    }
+    const count = Number(config?.count);
+    return Number.isInteger(count) && count > 0 ? count : 1;
+  },
+}), (req, res, next) => {
   try {
     let { mode, config } = req.body || {};
     if (typeof config === 'string') {

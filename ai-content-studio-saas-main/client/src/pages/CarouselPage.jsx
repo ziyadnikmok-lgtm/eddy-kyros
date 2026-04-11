@@ -17,6 +17,8 @@ const CAROUSEL_MODES = [
   { key: 'polls', label: 'Polls' },
 ];
 
+const DEFAULT_CAROUSEL_ASPECT_RATIO = '4:5';
+
 function mergeJobSnapshots(prevJobs, fetchedJobs, expectedIds) {
   const prevMap = new Map((Array.isArray(prevJobs) ? prevJobs : []).map((job) => [job.jobId, job]));
   const fetchedMap = new Map((Array.isArray(fetchedJobs) ? fetchedJobs : []).map((job) => [job.jobId, job]));
@@ -111,7 +113,7 @@ const _cache = {
   selectedImageId: null,
   uploadedImages: [],
   characterId: '',
-  aspectRatio: '4:5',
+  aspectRatio: DEFAULT_CAROUSEL_ASPECT_RATIO,
   resolutionTier: DEFAULT_RESOLUTION_TIER,
   followUpDirection: '',
   followUpMode: 'manual',
@@ -132,7 +134,7 @@ export default function CarouselPage() {
   const [uploadedImages, setUploadedImages] = useState(_cache.uploadedImages);
   const [loadingGallery, setLoadingGallery] = useState(true);
 
-  const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
+  const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio || DEFAULT_CAROUSEL_ASPECT_RATIO);
   const [resolutionTier, setResolutionTier] = useState(_cache.resolutionTier);
   const [imageModel, setImageModel] = useState(_cache.imageModel);
   const [kineticMotionBlur, setKineticMotionBlur] = useState(_cache.kineticMotionBlur || 'off');
@@ -171,7 +173,7 @@ export default function CarouselPage() {
   useEffect(() => {
     const params = consumePageParams();
     if (params.recreate) {
-      if (params.aspectRatio) setAspectRatio(params.aspectRatio);
+      setAspectRatio(params.aspectRatio || DEFAULT_CAROUSEL_ASPECT_RATIO);
       if (params.sourceImageId) setSelectedImageId(params.sourceImageId);
     }
   }, []);

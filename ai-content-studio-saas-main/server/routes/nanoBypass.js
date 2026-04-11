@@ -3,13 +3,14 @@ const galleryManager = require('../services/galleryManager');
 const apiKeyManager = require('../services/apiKeyManager');
 const referenceManager = require('../services/referenceManager');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const { logUsageEvent, startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
 const log = require('../utils/logger');
 
 const router = express.Router();
 
 const VALID_ASPECT_RATIOS = ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '4:5', '5:4', '21:9'];
-const VALID_IMAGE_SIZES = ['1K', '2K', '4K'];
+const VALID_IMAGE_SIZES = ['1K', '2K'];
 const VALID_MODELS = ['flash'];
 
 const MODEL_IDS = {
@@ -102,7 +103,7 @@ async function callGemini(apiKey, modelId, parts, aspectRatio, imageSize, temper
 }
 
 // POST /api/nano-bypass/edit
-router.post('/edit', express.json({ limit: '50mb' }), async (req, res, next) => {
+router.post('/edit', express.json({ limit: '50mb' }), requirePlanCapacity(), async (req, res, next) => {
   let runId = null;
   try {
     const {

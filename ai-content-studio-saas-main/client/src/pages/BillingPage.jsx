@@ -16,7 +16,7 @@ const PLANS = [
       'Character creation',
       'Scene & photo recreation',
       'Pinterest & reel tools',
-      '20 generations/day',
+      '10 free generations',
     ],
     accent: '#71717a',
     cta: 'Start Free',
@@ -147,7 +147,7 @@ export default function BillingPage() {
     if (currentPlan === 'pro') {
       return { title: 'Creator access active', sublabel: sub?.expires_at ? `Renews or ends ${formatExpiry(sub.expires_at)}` : 'Paid access is active.' };
     }
-    return { title: 'You are on the free trial', sublabel: 'Test the workflow, then upgrade when you are ready.' };
+    return { title: 'You are on the free trial', sublabel: 'You have 10 generations to test the workflow before upgrading.' };
   }, [currentPlan, sub?.expires_at]);
 
   const handleCheckout = async (plan) => {

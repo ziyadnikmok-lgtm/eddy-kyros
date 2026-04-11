@@ -8,6 +8,7 @@ const galleryManager = require('../services/galleryManager');
 const { resolveDimensions } = require('../services/dimensionResolver');
 const { buildCharacterReferenceImages } = require('./postClone');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 const router = express.Router();
@@ -43,7 +44,7 @@ router.post('/analyze', async (req, res, next) => {
   }
 });
 
-router.post('/recreate', async (req, res, next) => {
+router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
   try {
     const {
       sceneData,

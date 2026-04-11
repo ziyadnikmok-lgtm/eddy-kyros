@@ -8,6 +8,7 @@ const execFileAsync = promisify(execFile);
 const ffmpegPath = require('../utils/ffmpeg');
 const { ApifyClient } = require('apify-client');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const { createMultipartParser } = require('../middleware/multipartParser');
 const { sharedHttpsAgent } = require('../utils/httpAgent');
 const { asText } = require('../utils/helpers');
@@ -466,7 +467,7 @@ async function recreateFrame({
   };
 }
 
-router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
+router.post('/', parseMultipartIfNeeded, requirePlanCapacity(), async (req, res, next) => {
   let videoPath = '';
   let firstPath = '';
   let lastPath = '';

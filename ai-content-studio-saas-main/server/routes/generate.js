@@ -14,6 +14,7 @@ const galleryManager = require('../services/galleryManager');
 const styleLibrary = require('../services/styleLibrary');
 const styleFocusStore = require('../services/styleFocusStore');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const { logUsageEvent, startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
 const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
@@ -49,7 +50,7 @@ function buildCharacterReferenceImages(characterId, activeRefs) {
   return parts;
 }
 
-router.post('/', async (req, res, next) => {
+router.post('/', requirePlanCapacity(), async (req, res, next) => {
   let runId = null;
   try {
     const {

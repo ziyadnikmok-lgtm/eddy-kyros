@@ -196,6 +196,11 @@ function CardActionButton({ tone = 'default', children, ...props }) {
   );
 }
 
+const LIBRARY_CONTEXT_MENU_WIDTH = 256;
+const LIBRARY_CONTEXT_MENU_HEIGHT = 372;
+const LIBRARY_CONTEXT_MENU_GAP = 10;
+const LIBRARY_CONTEXT_MENU_MARGIN = 12;
+
 function ImageContextMenu({ menu, onClose, onAction }) {
   useEffect(() => {
     if (!menu) return undefined;
@@ -219,8 +224,8 @@ function ImageContextMenu({ menu, onClose, onAction }) {
     <div
       className="fixed z-[80] w-64 rounded-xl border border-zinc-700/70 bg-zinc-950/98 p-2 shadow-2xl shadow-black/40 backdrop-blur-xl"
       style={{
-        left: Math.min(menu.x, window.innerWidth - 260),
-        top: menu.y + 400 > window.innerHeight ? Math.max(0, window.innerHeight - 400) : menu.y,
+        left: menu.x,
+        top: menu.y,
       }}
       onPointerDown={(event) => event.stopPropagation()}
     >
@@ -423,7 +428,7 @@ export default function LibraryPage() {
       navigateTo('carousel', {
         recreate: true,
         sourceImageId: editTarget.originalId,
-        aspectRatio: editTarget.aspectRatio || '',
+        aspectRatio: '4:5',
       });
       setEditTarget(null);
       return;
@@ -554,7 +559,7 @@ export default function LibraryPage() {
       navigateTo('carousel', {
         recreate: true,
         sourceImageId: item.originalId,
-        aspectRatio: item.aspectRatio || '',
+        aspectRatio: '4:5',
       });
       setContextMenu(null);
       return;
@@ -591,7 +596,27 @@ export default function LibraryPage() {
 
   const openContextMenu = useCallback((event, item) => {
     event.preventDefault();
-    setContextMenu({ item, x: event.clientX, y: event.clientY });
+    let x = event.clientX + LIBRARY_CONTEXT_MENU_GAP;
+    let y = event.clientY + LIBRARY_CONTEXT_MENU_GAP;
+
+    if (x + LIBRARY_CONTEXT_MENU_WIDTH > window.innerWidth - LIBRARY_CONTEXT_MENU_MARGIN) {
+      x = event.clientX - LIBRARY_CONTEXT_MENU_WIDTH - LIBRARY_CONTEXT_MENU_GAP;
+    }
+
+    if (y + LIBRARY_CONTEXT_MENU_HEIGHT > window.innerHeight - LIBRARY_CONTEXT_MENU_MARGIN) {
+      y = event.clientY - LIBRARY_CONTEXT_MENU_HEIGHT - LIBRARY_CONTEXT_MENU_GAP;
+    }
+
+    x = Math.max(
+      LIBRARY_CONTEXT_MENU_MARGIN,
+      Math.min(x, window.innerWidth - LIBRARY_CONTEXT_MENU_WIDTH - LIBRARY_CONTEXT_MENU_MARGIN),
+    );
+    y = Math.max(
+      LIBRARY_CONTEXT_MENU_MARGIN,
+      Math.min(y, window.innerHeight - LIBRARY_CONTEXT_MENU_HEIGHT - LIBRARY_CONTEXT_MENU_MARGIN),
+    );
+
+    setContextMenu({ item, x, y });
   }, []);
   const clearFilters = () => {
     setSearchQuery('');

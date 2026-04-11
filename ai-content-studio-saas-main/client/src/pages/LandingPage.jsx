@@ -315,7 +315,7 @@ const PRICING = [
     price: '$0',
     meta: 'Start here',
     description: 'Create your account and test the workflow first before paying.',
-    features: ['20 generations per day', 'Hosted access', 'Character + remix workflows'],
+    features: ['10 free generations', 'Hosted access', 'Character + remix workflows'],
     accent: '#71717a',
     cta: 'Start Free Trial',
     trial: true,
@@ -363,7 +363,7 @@ const FAQS = [
   { question: 'What is the Instagram Clone workflow?', answer: 'Point the app at any profile using Apify, it analyzes the content structure, then helps you recreate those formats in your own character and style.' },
   { question: 'Do I need to install anything?', answer: 'No. The main product is accessed entirely through the hosted site. No local setup needed for regular users.' },
   { question: 'Can I generate content automatically?', answer: 'Yes. Auto Planner builds content schedules and Batch Generator queues large runs — set it up and let it keep producing.' },
-  { question: 'How does pricing work?', answer: 'Start with the free trial, then upgrade with crypto through Heleket. The main paid options are 30 Days, 1 Year, and a limited Founder Lifetime pass.' },
+  { question: 'How does pricing work?', answer: 'Start with 10 free generations, then upgrade with crypto when you are ready. The main paid options are 30 Days, 1 Year, and a limited Founder Lifetime pass.' },
 ];
 
 // ─── Main Component ────────────────────────────────────────────────────────────

@@ -643,7 +643,7 @@ export default function GenerationFeedPanel({ mode = 'rail' }) {
       navigateTo('carousel', {
         sourceImageId: targetId,
         characterId: item.characterId || undefined,
-        aspectRatio: item.aspectRatio || undefined,
+        aspectRatio: '4:5',
       });
       return;
     }

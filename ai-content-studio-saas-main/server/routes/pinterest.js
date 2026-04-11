@@ -18,6 +18,7 @@ const galleryManager = require('../services/galleryManager');
 const { resolveDimensions } = require('../services/dimensionResolver');
 const { buildCharacterReferenceImages } = require('./postClone');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const REALISM_DIRECTIVE = require('../utils/realismDirective');
 const ffmpegPath = require('../utils/ffmpeg');
 
@@ -316,7 +317,7 @@ router.post('/analyze', async (req, res, next) => {
 // ---------------------------------------------------------------------------
 // POST /recreate — recreate a Pinterest image with a character identity
 // ---------------------------------------------------------------------------
-router.post('/recreate', async (req, res, next) => {
+router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
   try {
     const { sceneData, characterId, activeReferenceIds, imageModel, sameBackground, samePose } = req.body;
     const { aspectRatio, resolutionTier, width, height } = resolveDimensions(req.body);
@@ -392,7 +393,7 @@ router.post('/recreate', async (req, res, next) => {
 // POST /recreate-video-frame — extract the first frame from a Pinterest video
 // and recreate it with the selected character
 // ---------------------------------------------------------------------------
-router.post('/recreate-video-frame', async (req, res, next) => {
+router.post('/recreate-video-frame', requirePlanCapacity(), async (req, res, next) => {
   let videoPath = null;
   try {
     const { videoUrl, characterId, activeReferenceIds, imageModel } = req.body || {};

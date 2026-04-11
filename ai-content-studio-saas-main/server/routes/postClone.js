@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const axios = require('axios');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const { asText } = require('../utils/helpers');
 const { sharedHttpsAgent } = require('../utils/httpAgent');
 const { buildLoginCookies } = require('../utils/instagramCookies');
@@ -303,7 +304,7 @@ async function handleClone({ url, characterId, mode, cosplayMode = false, postLi
 
 // ── Routes ─────────────────────────────────────────────────────────────────────
 
-router.post('/', async (req, res, next) => {
+router.post('/', requirePlanCapacity(), async (req, res, next) => {
   try {
     const {
       postUrl, characterId, mode = 'exact', cosplayMode = false, apifyApiKey, imageModel,
