@@ -34,7 +34,7 @@ RUN mkdir -p /data
 EXPOSE 3001
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD wget -qO- http://localhost:3001/api/health || exit 1
+  CMD wget -qO- http://127.0.0.1:3001/api/health || exit 1
 
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
