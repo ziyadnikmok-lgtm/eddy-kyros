@@ -2,10 +2,21 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
+const rateLimit = require('express-rate-limit');
 const db = require('../db');
 const log = require('../utils/logger');
 const { requireAuth } = require('../middleware/requireAuth');
 const { logUsageEvent } = require('../services/eventLogger');
+
+// Max 5 invoice attempts per user per 15 minutes
+const invoiceRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => req.session?.userId || req.ip,
+  handler: (_req, res) => res.status(429).json({ error: 'Too many payment attempts. Try again in 15 minutes.' }),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 const router = express.Router();
 
@@ -13,8 +24,8 @@ const PLANS = {
   pro: {
     name: 'Kyros Creator',
     cycles: {
-      monthly: { label: '30 Days', amount: '10.00', currency: 'USD', durationDays: 30 },
-      yearly: { label: '1 Year', amount: '79.00', currency: 'USD', durationDays: 365 },
+      monthly: { label: '1 Month', amount: '19.99', currency: 'USD', durationDays: 30 },
+      quarterly: { label: '3 Months', amount: '44.99', currency: 'USD', durationDays: 90 },
     },
   },
   unlimited: {
@@ -30,17 +41,23 @@ function getPlanCycle(plan, cycle) {
   if (!planConfig) return null;
   const fallbackCycle = plan === 'pro' ? 'monthly' : 'lifetime';
   const cycleKey = cycle || fallbackCycle;
+  // reject unknown cycle keys to prevent injection
+  if (!['monthly', 'quarterly', 'lifetime'].includes(cycleKey)) return null;
   const cycleConfig = planConfig.cycles[cycleKey];
   if (!cycleConfig) return null;
   return { planKey: plan, cycleKey, planConfig, cycleConfig };
 }
 
 // POST /api/billing/create-invoice
-router.post('/create-invoice', requireAuth, async (req, res) => {
-  const { plan, cycle } = req.body || {};
+router.post('/create-invoice', requireAuth, invoiceRateLimit, async (req, res) => {
+  const plan = typeof req.body?.plan === 'string' ? req.body.plan.slice(0, 32) : '';
+  const cycle = typeof req.body?.cycle === 'string' ? req.body.cycle.slice(0, 32) : '';
+  if (!['pro', 'unlimited'].includes(plan)) {
+    return res.status(400).json({ error: 'Invalid plan.' });
+  }
   const selected = getPlanCycle(plan, cycle);
   if (!selected) {
-    return res.status(400).json({ error: 'Invalid plan. Choose monthly, yearly, or lifetime.' });
+    return res.status(400).json({ error: 'Invalid plan or cycle.' });
   }
   const apiKey = process.env.HELEKET_API_KEY;
   const merchantId = process.env.HELEKET_MERCHANT_ID;
@@ -53,7 +70,7 @@ router.post('/create-invoice', requireAuth, async (req, res) => {
     currency: selected.cycleConfig.currency,
     order_id: orderId,
     order_name: `Kyros Studio ${selected.planConfig.name} ${selected.cycleConfig.label}`,
-    url_return: `${appUrl}/billing?status=success`,
+    url_return: `${appUrl}/billing?status=success&tg=1`,
     url_callback: `${appUrl}/api/billing/webhook`,
     customer_email: db.prepare('SELECT email FROM users WHERE id = ?').get(req.session.userId)?.email,
   };
@@ -98,7 +115,10 @@ router.post('/webhook', express.raw({ type: 'application/json' }), (req, res) =>
   const apiKey = process.env.HELEKET_API_KEY || '';
   // Verify HMAC-SHA256 signature — reject if missing or wrong
   const expected = crypto.createHmac('sha256', apiKey).update(req.body).digest('hex');
-  if (!sig || sig !== expected) {
+  const sigBuf = Buffer.from(sig || '', 'utf8');
+  const expBuf = Buffer.from(expected, 'utf8');
+  const valid = sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf);
+  if (!sig || !valid) {
     log.warn('billing_webhook_bad_signature', { sig: sig ? 'present' : 'missing' });
     return res.status(403).json({ error: 'Invalid signature' });
   }

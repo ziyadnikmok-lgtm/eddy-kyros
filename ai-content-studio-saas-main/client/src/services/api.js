@@ -9,7 +9,7 @@ const LONG_RUNNING_PATHS = [
   '/generate', '/batch', '/tweak',
   '/post-clone', '/reel-copy',
   '/carousel/execute', '/carousel/follow-up',
-  '/scene/recreate', '/pinterest/recreate', '/story/generate',
+  '/scene/recreate', '/scene/analyze', '/pinterest/recreate', '/story/generate',
   '/auto/plan', '/auto/execute',
   '/video/generate', '/reformat',
   '/nsfw-generate', '/photo-match', '/nano-bypass', '/lora-datasets/generate',

@@ -10,7 +10,7 @@ const PLANS = [
     eyebrow: 'Start here',
     price: '$0',
     period: '',
-    highlight: 'No card. No crypto. Just get in and test it.',
+    highlight: 'No card. No crypto. Test the full workflow first.',
     features: ['20 generations per day', 'Hosted access', 'Character + remix workflows', 'Telegram support while testing'],
     accent: '#71717a',
     cta: 'Start Free',
@@ -20,40 +20,40 @@ const PLANS = [
     id: 'pro-monthly',
     planId: 'pro',
     cycle: 'monthly',
-    name: '30 Days',
+    name: '1 Month',
     eyebrow: 'Crypto simple',
-    price: '$10',
+    price: '$19.99',
     period: 'one-time',
-    highlight: 'Best for new users who want a clean monthly reset.',
+    highlight: 'Best for new users who want to try the full workflow for a month.',
     features: ['Full creator workflow access', 'Generate, remix, clone, and batch', 'Priority over free trial users', 'Crypto checkout via Heleket'],
     accent: '#3b82f6',
-    cta: 'Buy 30 Days',
+    cta: 'Buy 1 Month',
   },
   {
-    id: 'pro-yearly',
+    id: 'pro-quarterly',
     planId: 'pro',
-    cycle: 'yearly',
-    name: '1 Year',
-    eyebrow: 'Best value',
-    price: '$79',
+    cycle: 'quarterly',
+    name: '3 Months',
+    eyebrow: 'Best deal',
+    price: '$44.99',
     period: 'one-time',
-    highlight: 'Locks in the lowest effective price and saves $41 vs monthly.',
-    features: ['Everything in 30 Days', 'Year-long access', 'Best price per month', 'Recommended for serious creators'],
+    highlight: 'Lock in 3 months and save $15 vs paying monthly. Most popular.',
+    features: ['Everything in 1 Month', '3 months access', 'Save $15 vs monthly', 'Recommended for serious creators'],
     accent: '#0ea5e9',
-    cta: 'Buy 1 Year',
+    cta: 'Buy 3 Months',
     featured: true,
-    saveLabel: 'Save $41',
+    saveLabel: 'Save $15',
   },
   {
     id: 'founder-lifetime',
     planId: 'unlimited',
     cycle: 'lifetime',
-    name: 'Founder Lifetime',
-    eyebrow: 'Limited',
+    name: 'Lifetime',
+    eyebrow: 'Limited spots',
     price: '$149',
     period: 'one-time',
-    highlight: 'For early believers who want lifetime access at the founder price.',
-    features: ['One payment, no renewals', 'All current creator workflows', 'Priority support', 'Founder pricing before it disappears'],
+    highlight: 'One payment, permanent access. Founder pricing before it disappears.',
+    features: ['One payment, no renewals', 'All current creator workflows', 'Priority support', 'Founder price — limited time'],
     accent: '#f59e0b',
     cta: 'Claim Lifetime',
     lifetime: true,
@@ -83,6 +83,17 @@ export default function BillingPage() {
     if (typeof window === 'undefined') return null;
     return new URLSearchParams(window.location.search).get('status');
   }, []);
+  const showTg = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).get('tg') === '1';
+  }, []);
+
+  useEffect(() => {
+    if (paymentStatus === 'success' && showTg) {
+      const t = setTimeout(() => { window.open('https://t.me/shiaspam', '_blank'); }, 2000);
+      return () => clearTimeout(t);
+    }
+  }, [paymentStatus, showTg]);
 
   useEffect(() => {
     Promise.all([
@@ -179,8 +190,18 @@ export default function BillingPage() {
       )}
 
       {paymentStatus === 'success' && (
-        <div className="rounded-2xl border border-emerald-900/60 bg-emerald-950/40 px-4 py-3 text-sm text-emerald-300">
-          Payment received. Your plan is being activated now.
+        <div className="rounded-2xl border border-emerald-900/60 bg-emerald-950/40 px-5 py-4 space-y-3">
+          <p className="text-sm font-semibold text-emerald-300">Payment received. Your plan is being activated now.</p>
+          <p className="text-sm text-emerald-400/80">Opening Telegram to send you your access details{showTg ? ' (opening in 2s…)' : ''}.</p>
+          <a
+            href="https://t.me/shiaspam"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/20 transition"
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" xmlns="http://www.w3.org/2000/svg"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.833.941z"/></svg>
+            Join Telegram — @shiaspam
+          </a>
         </div>
       )}
 
@@ -294,12 +315,13 @@ export default function BillingPage() {
             <p>Founder Lifetime should stay limited so it feels special and does not undercut recurring revenue forever.</p>
           </div>
           <a
-            href="https://t.me/Kyros_Studio"
+            href="https://t.me/shiaspam"
             target="_blank"
             rel="noreferrer"
-            className="mt-6 inline-flex items-center justify-center rounded-2xl border border-zinc-700 bg-zinc-900/70 px-4 py-3 text-sm font-medium text-zinc-300 transition hover:border-zinc-600 hover:bg-zinc-800/80 hover:text-white"
+            className="mt-6 inline-flex items-center justify-center gap-2 rounded-2xl border border-zinc-700 bg-zinc-900/70 px-4 py-3 text-sm font-medium text-zinc-300 transition hover:border-zinc-600 hover:bg-zinc-800/80 hover:text-white"
           >
-            Need help? Telegram support
+            <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" xmlns="http://www.w3.org/2000/svg"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.833.941z"/></svg>
+            Need help? Message @shiaspam
           </a>
         </Card>
       </section>
