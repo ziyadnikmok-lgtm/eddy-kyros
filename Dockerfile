@@ -1,10 +1,10 @@
-# ---- Stage 1: Build client ----
+# ---- Stage 1: Build the real nested client ----
 FROM node:20-alpine AS client-builder
 
 WORKDIR /app/client
-COPY client/package.json client/package-lock.json* client/pnpm-lock.yaml* ./
+COPY ai-content-studio-saas-main/client/package.json ai-content-studio-saas-main/client/package-lock.json* ai-content-studio-saas-main/client/pnpm-lock.yaml* ./
 RUN npm install -g pnpm && pnpm install --no-frozen-lockfile
-COPY client/ ./
+COPY ai-content-studio-saas-main/client/ ./
 RUN pnpm run build
 
 # ---- Stage 2: Production image ----
@@ -18,12 +18,12 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 WORKDIR /app
 
-# Install server production deps (rebuilds native modules for Alpine)
-COPY package.json package-lock.json ./
+# Install production deps from the real nested app (rebuilds native modules for Alpine)
+COPY ai-content-studio-saas-main/package.json ai-content-studio-saas-main/package-lock.json ./
 RUN npm install --omit=dev --build-from-source
 
-# Copy server source
-COPY server/ ./server/
+# Copy the real nested server source
+COPY ai-content-studio-saas-main/server/ ./server/
 
 # Copy built client from stage 1
 COPY --from=client-builder /app/client/dist ./client/dist
