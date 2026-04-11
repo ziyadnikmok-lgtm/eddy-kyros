@@ -2,7 +2,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const db = require('../db');
 const log = require('../utils/logger');
 const { requireAuth } = require('../middleware/requireAuth');
@@ -12,7 +12,7 @@ const { logUsageEvent } = require('../services/eventLogger');
 const invoiceRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
-  keyGenerator: (req) => req.session?.userId || req.ip,
+  keyGenerator: (req) => req.session?.userId || ipKeyGenerator(req.ip),
   handler: (_req, res) => res.status(429).json({ error: 'Too many payment attempts. Try again in 15 minutes.' }),
   standardHeaders: true,
   legacyHeaders: false,
