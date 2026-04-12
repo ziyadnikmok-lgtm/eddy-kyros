@@ -134,7 +134,7 @@ function AuthModal({ mode, onClose, onSuccess, onNavigate }) {
         body: JSON.stringify({ email: loginEmail, password: loginPassword, keepSignedIn }),
       });
       const data = await res.json();
-      if (!res.ok) setLoginError(data.error || 'Login failed');
+      if (!res.ok) setLoginError(typeof data.error === 'string' ? data.error : (data.error?.message || data.message || 'Login failed'));
       else onSuccess?.();
     } catch { setLoginError('Network error'); }
     setLoginLoading(false);
@@ -155,7 +155,7 @@ function AuthModal({ mode, onClose, onSuccess, onNavigate }) {
         body: JSON.stringify(registerForm),
       });
       const data = await res.json();
-      if (!res.ok) setRegisterError(data.error || 'Registration failed');
+      if (!res.ok) setRegisterError(typeof data.error === 'string' ? data.error : (data.error?.message || data.message || 'Registration failed'));
       else setRegisterMsg(data.message || 'Account created. Check your email to verify.');
     } catch { setRegisterError('Network error'); }
     setRegisterLoading(false);

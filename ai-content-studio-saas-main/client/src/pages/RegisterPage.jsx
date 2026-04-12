@@ -18,7 +18,7 @@ export default function RegisterPage({ onNavigate }) {
     try {
       const res = await fetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(form) });
       const data = await res.json();
-      if (!res.ok) setError(data.error || 'Registration failed');
+      if (!res.ok) setError(typeof data.error === 'string' ? data.error : (data.error?.message || data.message || 'Registration failed'));
       else setMsg(data.message);
     } catch { setError('Network error'); }
     setLoading(false);

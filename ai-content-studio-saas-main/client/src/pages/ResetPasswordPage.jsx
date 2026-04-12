@@ -24,7 +24,7 @@ export default function ResetPasswordPage({ onNavigate }) {
     e.preventDefault(); setLoading(true); setError('');
     const res = await fetch(`/api/auth/reset-password/${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
     const data = await res.json();
-    if (!res.ok) setError(data.error || 'Reset failed');
+    if (!res.ok) setError(typeof data.error === 'string' ? data.error : (data.error?.message || data.message || 'Reset failed'));
     else {
       setMsg(data.message || 'Password reset successful. Redirecting...');
       setTimeout(() => onNavigate && onNavigate('login', { replace: true }), 900);

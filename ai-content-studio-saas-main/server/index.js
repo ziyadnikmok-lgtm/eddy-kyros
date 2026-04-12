@@ -215,7 +215,13 @@ try {
   process.exit(1);
 }
 app.use(compressionMiddleware(cfg.COMPRESSION_MIN_BYTES));
-app.use('/api/auth', authLimiter, authRouter);
+// Apply authLimiter only to mutation endpoints (login, register, forgot-password, reset-password)
+// Read-only status/me checks are excluded — they're called on every page load and don't need brute-force protection
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/forgot-password', authLimiter);
+app.use('/api/auth/reset-password', authLimiter);
+app.use('/api/auth', authRouter);
 
 // One-time admin bootstrap — no auth required, protected by BOOTSTRAP_SECRET env var
 // Secret must be sent in POST body, not query param (query params appear in logs/history)
