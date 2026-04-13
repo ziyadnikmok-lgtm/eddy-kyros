@@ -187,7 +187,7 @@ const NAV_SECTIONS = [
 
 const ALL_NAV_ITEMS = NAV_SECTIONS.flatMap((s) => s.items);
 
-const APP_VERSION = '8.1.1';
+const APP_VERSION = '8.1.2';
 
 const FEED_HIDDEN_PAGES = new Set([
   'library',
