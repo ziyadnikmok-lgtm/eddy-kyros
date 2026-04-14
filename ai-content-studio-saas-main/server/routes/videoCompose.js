@@ -32,6 +32,34 @@ function safeTempExtension(filename, fallback) {
   return /^[a-z0-9.]+$/.test(rawExt) ? rawExt : fallback;
 }
 
+function isImageUpload(file) {
+  if (!file) return false;
+  const type = String(file.mimetype || file.type || '').toLowerCase();
+  const ext = safeTempExtension(file.originalname || file.filename || '', '').toLowerCase();
+  return type.startsWith('image/') || ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'].includes(ext);
+}
+
+async function buildStillVideoFromImage({
+  inputPath,
+  outputPath,
+  durationSeconds,
+  width = 1080,
+  height = 1920,
+}) {
+  const safeDuration = Math.max(0.1, Number(durationSeconds) || 5);
+  await execFileAsync(ffmpegPath, [
+    '-y',
+    '-loop', '1',
+    '-i', inputPath,
+    '-t', safeDuration.toFixed(3),
+    '-vf', `fps=30,scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1,format=yuv420p`,
+    '-c:v', 'libx264',
+    '-pix_fmt', 'yuv420p',
+    '-an',
+    outputPath,
+  ], { timeout: 2 * 60_000 });
+}
+
 function clampNumber(value, min, max, fallback) {
   const num = Number(value);
   if (!Number.isFinite(num)) return fallback;
@@ -355,6 +383,8 @@ router.post('/', parseMultipart, async (req, res, next) => {
     const musicVolume = clampNumber(req.body?.musicVolume, 0, 2, 1);
     const originalAudioVolume = clampNumber(req.body?.originalAudioVolume, 0, 2, 1);
     const replaceOriginalAudio = String(req.body?.replaceOriginalAudio || '').toLowerCase() === 'true';
+    const imageDuration = clampNumber(req.body?.imageDuration, 0.1, 60, 5);
+    const imageDuration2 = clampNumber(req.body?.imageDuration2, 0.1, 60, 5);
 
     await fs.mkdir(TEMP_DIR, { recursive: true });
     await fs.mkdir(VIDEO_DIR, { recursive: true });
@@ -369,6 +399,18 @@ router.post('/', parseMultipart, async (req, res, next) => {
 
     await fs.writeFile(videoPath, videoFile.buffer);
 
+    let primaryProbeSourcePath = videoPath;
+    if (isImageUpload(videoFile)) {
+      const primaryStillPath = path.join(TEMP_DIR, `vc_video_${token}_still.mp4`);
+      tmpFiles.push(primaryStillPath);
+      await buildStillVideoFromImage({
+        inputPath: videoPath,
+        outputPath: primaryStillPath,
+        durationSeconds: imageDuration,
+      });
+      primaryProbeSourcePath = primaryStillPath;
+    }
+
     let secondVideoPath = null;
     let secondProbe = null;
     if (secondVideoFile?.buffer) {
@@ -376,6 +418,16 @@ router.post('/', parseMultipart, async (req, res, next) => {
       secondVideoPath = path.join(TEMP_DIR, `vc_video2_${token}${secondExt}`);
       tmpFiles.push(secondVideoPath);
       await fs.writeFile(secondVideoPath, secondVideoFile.buffer);
+      if (isImageUpload(secondVideoFile)) {
+        const secondStillPath = path.join(TEMP_DIR, `vc_video2_${token}_still.mp4`);
+        tmpFiles.push(secondStillPath);
+        await buildStillVideoFromImage({
+          inputPath: secondVideoPath,
+          outputPath: secondStillPath,
+          durationSeconds: imageDuration2,
+        });
+        secondVideoPath = secondStillPath;
+      }
       secondProbe = await probeVideoInfo(secondVideoPath);
     }
 
@@ -389,7 +441,7 @@ router.post('/', parseMultipart, async (req, res, next) => {
       audioProbe = await probeVideoInfo(audioPath);
     }
 
-    const probe = await probeVideoInfo(videoPath);
+    const probe = await probeVideoInfo(primaryProbeSourcePath);
     const sourceDuration = probe.durationSeconds || null;
     const trimStart = clampNumber(req.body?.trimStart, 0, sourceDuration ?? 60 * 60, 0);
     const trimEndFallback = sourceDuration && sourceDuration > 0 ? sourceDuration : trimStart + 10;
@@ -423,7 +475,7 @@ router.post('/', parseMultipart, async (req, res, next) => {
       }), 'utf8');
     }
 
-    const ffmpegArgs = ['-y', '-ss', trimStart.toFixed(3), '-t', trimmedDuration.toFixed(3), '-i', videoPath];
+    const ffmpegArgs = ['-y', '-ss', trimStart.toFixed(3), '-t', trimmedDuration.toFixed(3), '-i', primaryProbeSourcePath];
     if (secondVideoPath && secondTrimmedDuration > 0) {
       ffmpegArgs.push('-t', secondTrimmedDuration.toFixed(3), '-i', secondVideoPath);
     }
