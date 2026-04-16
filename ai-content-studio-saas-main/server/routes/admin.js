@@ -1004,4 +1004,52 @@ router.get('/users/:id/messages', requireAdmin, (req, res) => {
   res.json({ ok: true, messages: rows });
 });
 
+// POST /api/admin/seed-demo-users  — one-time use to populate demo accounts
+router.post('/seed-demo-users', requireAdmin, async (req, res) => {
+  const bcrypt = require('bcryptjs');
+  const count = Math.min(parseInt(req.body?.count || 500, 10), 2000);
+
+  const FIRST = ['Liam','Noah','Oliver','Elijah','James','William','Benjamin','Lucas','Henry','Alexander','Mason','Ethan','Daniel','Matthew','Aiden','Logan','Jackson','Sebastian','Jack','Owen','Emma','Olivia','Ava','Isabella','Sophia','Charlotte','Mia','Amelia','Harper','Evelyn','Luna','Camila','Sofia','Riley','Aria','Scarlett','Victoria','Madison','Layla','Penelope','Marco','Diego','Carlos','Rafael','Miguel','Andres','Nicolas','Mateo','Emilio','Chloe','Zoe','Lily','Hannah','Addison','Eleanor','Natalie','Leah','Brooklyn','Audrey','Tyler','Ryan','Nathan','Brandon','Justin','Dylan','Austin','Jordan','Kyle','Aisha','Fatima','Zara','Nadia','Yasmin','Soraya','Hana','Maryam','Dina','Jayden','Isaiah','Cameron','Kevin','Eric','Brian','Adam','Victor','Oscar','Ivan','Alexa','Morgan','Brooke','Taylor','Kayla','Paige','Amber','Cassidy','Mackenzie','Jasmine','Gabriel','Adrian','Julian','Christian','Aaron','Isaac','Jose','Xavier','Eli','Evan','Savannah','Samantha','Stephanie','Brittany','Melissa','Jennifer','Ashley','Nicole','Amanda','Rachel'];
+  const LAST = ['Smith','Johnson','Williams','Brown','Jones','Garcia','Miller','Davis','Rodriguez','Martinez','Hernandez','Lopez','Gonzalez','Wilson','Anderson','Thomas','Taylor','Moore','Jackson','Martin','Lee','Perez','Thompson','White','Harris','Sanchez','Clark','Ramirez','Lewis','Robinson','Walker','Young','Allen','King','Wright','Scott','Torres','Nguyen','Hill','Flores','Green','Adams','Nelson','Baker','Hall','Rivera','Campbell','Mitchell','Carter','Roberts','Turner','Phillips','Evans','Collins','Stewart','Morris','Rogers','Reed','Cook','Morgan','Bell','Murphy','Bailey','Cooper','Richardson','Cox','Howard','Ward','Peterson','Gray','James','Watson','Brooks','Kelly','Sanders','Price','Bennett','Wood','Barnes','Ross','Henderson','Coleman','Jenkins','Perry','Powell','Long','Patterson','Hughes','Washington','Butler','Simmons','Foster','Bryant','Alexander','Russell','Griffin'];
+  const DOMAINS = ['gmail.com','gmail.com','gmail.com','gmail.com','hotmail.com','hotmail.com','yahoo.com','yahoo.com','outlook.com','icloud.com','protonmail.com','me.com','live.com'];
+  const PLANS = [{p:'free',w:72},{p:'pro',w:18},{p:'unlimited',w:10}];
+
+  const rand = (a) => a[Math.floor(Math.random() * a.length)];
+  const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+  const pickPlan = () => { let r=randInt(1,100),acc=0; for(const {p,w} of PLANS){acc+=w;if(r<=acc)return p;} return 'free'; };
+  const randomDate = () => { const ms=Date.now()-randInt(0,180*86400000); return new Date(ms).toISOString().replace('T',' ').slice(0,19); };
+
+  const hash = await bcrypt.hash('User1234!', 10);
+
+  const insertUser = db.prepare('INSERT OR IGNORE INTO users (id,email,password_hash,name,verified,created_at) VALUES (?,?,?,?,1,?)');
+  const insertSub  = db.prepare('INSERT OR IGNORE INTO subscriptions (id,user_id,plan,status,created_at) VALUES (?,?,?,?,?)');
+
+  const seen = new Set();
+  const users = [];
+  while (users.length < count) {
+    const first = rand(FIRST), last = rand(LAST), domain = rand(DOMAINS);
+    const sep = rand(['.','_','']);
+    const suffix = Math.random() < 0.4 ? String(randInt(1,999)) : '';
+    const email = `${first.toLowerCase()}${sep}${last.toLowerCase()}${suffix}@${domain}`;
+    if (seen.has(email)) continue;
+    seen.add(email);
+    const createdAt = randomDate();
+    users.push({ id: uuidv4(), email, name: `${first} ${last}`, plan: pickPlan(), createdAt, subId: uuidv4() });
+  }
+
+  let created = 0, skipped = 0;
+  const seedAll = db.transaction(() => {
+    for (const u of users) {
+      const r = insertUser.run(u.id, u.email, hash, u.name, u.createdAt);
+      if (r.changes > 0) { insertSub.run(u.subId, u.id, u.plan, 'active', u.createdAt); created++; }
+      else skipped++;
+    }
+  });
+  seedAll();
+
+  const total = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
+  log.info('seed_demo_users', { created, skipped, total, adminId: req.session.userId });
+  res.json({ ok: true, created, skipped, total });
+});
+
 module.exports = router;
