@@ -14,8 +14,8 @@ const { requirePlanCapacity } = require('../middleware/planLimits');
 const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 const router = express.Router();
-const PHOTO_MATCH_REF_MAX_DIMENSION = 1024;
-const PHOTO_MATCH_IDENTITY_MAX_DIMENSION = 1536; // higher res for identity refs so body details are preserved
+const PHOTO_MATCH_REF_MAX_DIMENSION = 896;
+const PHOTO_MATCH_IDENTITY_MAX_DIMENSION = 2048; // keep character identity refs higher res than the scene blueprint
 const ANALYSIS_FALLBACK_CODES = new Set(['GEMINI_TRANSIENT', 'GEMINI_ERROR', 'PARSE_ERROR', 'GENERATION_EMPTY']);
 
 function bgStrengthInstruction(strength) {
@@ -48,9 +48,9 @@ function framingInstruction(exactMode) {
 
 function expressionInstruction(exactMode) {
   if (exactMode) {
-    return 'EXACTLY REPLICATE the expression, gaze direction, head tilt, hair placement, and overall attitude from the source image. Do NOT copy the hair color or facial features of the person in the source image — use the character identity references for face and hair color.';
+    return 'EXACTLY REPLICATE the expression, gaze direction, and overall attitude from the source image. Do NOT copy the facial structure, skin tone, hair color, hairline, or hair style of the person in the source image — use the character identity references only.';
   }
-  return 'keep the expression, gaze, and head position close to the source image. Do NOT copy the hair color or facial features of the person in the source image — use the character identity references for face and hair color.';
+  return 'keep the expression, gaze, and head position close to the source image. Do NOT copy the facial structure, skin tone, hair color, hairline, or hair style of the person in the source image — use the character identity references only.';
 }
 
 async function optimizeInlineImage(base64Data, mimeType) {
@@ -108,8 +108,8 @@ async function buildPhotoMatchIdentityImages(characterId, activeRefs) {
     }
   }
 
-  // Cap at 4 to avoid hitting token limits
-  return results.slice(0, 4);
+  // Allow up to 5 identity images so multi-primary characters keep stronger identity lock.
+  return results.slice(0, 5);
 }
 
 function buildPhotoMatchParts({ sourceImage, identityImages, characterName, prompt, exactMode = false }) {
@@ -131,11 +131,12 @@ function buildPhotoMatchParts({ sourceImage, identityImages, characterName, prom
         `[${refLabel} — ${name.toUpperCase()} REFERENCE PHOTOS]`,
         `These ${refCount === 1 ? 'is' : 'are'} the character reference ${refCount === 1 ? 'photo' : 'photos'} for ${name}.`,
         `Copy from ${refLabel}:`,
-        `- Face (exact likeness)`,
+        `- Face (exact likeness, not approximate)`,
+        `- Skin tone and facial structure`,
         `- Body shape and breast size/volume (match exactly)`,
         `- Hair color and style`,
-        `- Skin tone`,
         `- Makeup`,
+        `These identity traits are locked and override anything seen in the scene image.`,
         `Do NOT copy the scene, background, or outfit from ${refLabel}.`,
       ].join('\n'),
     });
@@ -154,7 +155,8 @@ function buildPhotoMatchParts({ sourceImage, identityImages, characterName, prom
       refLabel
         ? `Replace the person in this photo with ${name} from ${refLabel}.`
         : `The person should be ${name}.`,
-      `Do NOT copy from Image ${sourceNum}: face, body shape, breast size, hair color, skin tone, or tattoos.`,
+      `Do NOT copy from Image ${sourceNum}: face, facial structure, skin tone, body shape, breast size, hair color, hair style, or tattoos.`,
+      `Image ${sourceNum} is a scene-only reference, not an identity reference.`,
     ].join('\n'),
   });
   parts.push({ inlineData: { mimeType: sourceImage.mimeType, data: sourceImage.base64Data } });
@@ -250,16 +252,21 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       '',
       // Who is the person
       refLabel
-        ? `WHO: ${name} — take face, body shape, breast volume, hair color, hair style, skin tone, and makeup from ${refLabel}. Match exactly as shown.`
+        ? `WHO: ${name} — take face, facial structure, body shape, breast volume, hair color, hair style, skin tone, and makeup from ${refLabel}. Match exactly as shown.`
         : `WHO: ${name} — ${character.masterPrompt || ''}`,
+      '',
+      `IDENTITY PRIORITY: if anything in the scene image conflicts with the character references, the character references always win for face, skin, body shape, breast volume, hair, and makeup.`,
+      `Treat the uploaded scene image only as a blueprint for environment, outfit, framing, pose, and expression.`,
       '',
       // What to copy from scene
       `SCENE (from ${sourceRef}): ${bgInstruction}. ${poseInstruction}. ${outfitInstruction(exactMode)} ${framingInstruction(exactMode)} ${expressionInstruction(exactMode)}`,
       '',
       // Hard rules
       `RULES:`,
-      `- Do NOT copy face, body, breast size, hair color, skin tone, or tattoos from ${sourceRef}`,
+      `- Do NOT copy face, facial structure, body shape, breast size, hair color, skin tone, or tattoos from ${sourceRef}`,
       `- The person in the output is ${name} only`,
+      `- The output must clearly look like ${name}, even if the source image person looks very different`,
+      `- If needed, sacrifice source-person likeness completely to preserve ${name}'s identity`,
       exactMode ? `- Do not change outfit, background, crop, camera angle, or scene layout` : null,
       '',
       // Scene analysis context
