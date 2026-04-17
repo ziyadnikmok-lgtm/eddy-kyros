@@ -795,4 +795,26 @@ GeminiService.IMAGE_MODEL_ALTERNATES = IMAGE_MODEL_ALTERNATES;
 GeminiService.ALLOWED_IMAGE_MODELS = ALLOWED_IMAGE_MODELS;
 GeminiService.TEXT_MODEL = TEXT_MODEL;
 
-module.exports = new GeminiService();
+const _directService = new GeminiService();
+
+/**
+ * Auto-delegate to Vertex AI if credentials are stored in apiKeyManager.
+ * This lets every route that imports geminiService automatically use Vertex
+ * without any route changes — just save Vertex credentials in Settings.
+ */
+module.exports = new Proxy(_directService, {
+  get(target, prop) {
+    const val = target[prop];
+    if (typeof val !== 'function') return val;
+    return function (...args) {
+      try {
+        const apiKeyManager = require('./apiKeyManager');
+        if (apiKeyManager.shouldUseVertexBackend()) {
+          const vtx = require('./geminiVertexService');
+          if (typeof vtx[prop] === 'function') return vtx[prop](...args);
+        }
+      } catch { /* fall through */ }
+      return val.apply(target, args);
+    };
+  },
+});

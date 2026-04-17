@@ -221,6 +221,44 @@ router.delete('/wavespeed', (_req, res, next) => {
   }
 });
 
+// ── Vertex AI credentials ────────────────────────────────────────────────────
+
+router.get('/vertex', (_req, res, next) => {
+  try {
+    const data = apiKeyManager.getVertexCredentialsInfo();
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+router.put('/vertex', (req, res, next) => {
+  try {
+    const { credentialsJson } = req.body || {};
+    if (!credentialsJson || typeof credentialsJson !== 'string' || credentialsJson.trim().length === 0) {
+      throw new AppError('"credentialsJson" is required — paste the full contents of your service account JSON file', 400, 'VALIDATION_ERROR');
+    }
+    const data = apiKeyManager.setVertexCredentials(credentialsJson);
+    invalidateHealthCache();
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+router.delete('/vertex', (_req, res, next) => {
+  try {
+    const data = apiKeyManager.clearVertexCredentials();
+    invalidateHealthCache();
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+router.put('/active-backend', (req, res, next) => {
+  try {
+    const { backend } = req.body || {};
+    const data = apiKeyManager.setBackendPreference(backend);
+    invalidateHealthCache();
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
 router.get('/instagram-session', (_req, res, next) => {
   try {
     const data = apiKeyManager.getInstagramSessionInfo();
@@ -327,6 +365,50 @@ async function checkInstagramSessionHealth() {
   }
 }
 
+async function checkVertexHealth() {
+  const started = Date.now();
+  const info = apiKeyManager.getVertexCredentialsInfo();
+  if (!info?.hasVertexCredentials) {
+    return {
+      configured: false,
+      live: false,
+      status: 'missing',
+      latencyMs: Date.now() - started,
+      projectId: '',
+      message: 'No Vertex credentials stored',
+    };
+  }
+
+  try {
+    const geminiVertexService = require('../services/geminiVertexService');
+    const text = await withTimeout(
+      geminiVertexService.generateText(null, 'Reply with exactly: OK'),
+      HEALTH_TIMEOUT_MS,
+      'Vertex'
+    );
+    const normalized = String(text || '').trim().toUpperCase();
+    const looksHealthy = normalized.includes('OK');
+    return {
+      configured: true,
+      live: looksHealthy,
+      status: looksHealthy ? 'ok' : 'degraded',
+      latencyMs: Date.now() - started,
+      projectId: info.projectId,
+      clientEmail: info.clientEmail,
+      message: looksHealthy ? `Vertex AI connected (${info.projectId})` : `Unexpected response: ${String(text || '').slice(0, 50)}`,
+    };
+  } catch (err) {
+    return {
+      configured: true,
+      live: false,
+      status: 'error',
+      latencyMs: Date.now() - started,
+      projectId: info.projectId,
+      message: sanitizeErrorMessage(err),
+    };
+  }
+}
+
 async function checkWavespeedHealth() {
   const started = Date.now();
   const token = (apiKeyManager.getWavespeedKey() || '').trim();
@@ -382,11 +464,12 @@ router.get('/health-check', async (_req, res, next) => {
       return res.json({ success: true, data: { ...snap.cache, cached: true } });
     }
 
-    const [gemini, apify, ig, wavespeed] = await Promise.all([
+    const [gemini, apify, ig, wavespeed, vertex] = await Promise.all([
       checkGeminiHealth(),
       checkApifyHealth(),
       checkInstagramSessionHealth(),
       checkWavespeedHealth(),
+      checkVertexHealth(),
     ]);
 
     const allMissing = [gemini, apify].every((item) => item.status === 'missing');
@@ -400,6 +483,7 @@ router.get('/health-check', async (_req, res, next) => {
       apify,
       instagramSession: ig,
       wavespeed,
+      vertex,
     };
     _healthSnapshot = { cache: result, ts: Date.now() };
 

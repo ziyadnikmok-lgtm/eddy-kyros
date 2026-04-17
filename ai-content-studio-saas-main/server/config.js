@@ -1,6 +1,14 @@
 module.exports = {
   PORT: parseInt(process.env.PORT, 10) || 3001,
   HOST: process.env.HOST || 'localhost',
+
+  // Gemini backend selector: 'direct' (default, API key) or 'vertex' (GCP ADC)
+  GEMINI_BACKEND: process.env.GEMINI_BACKEND || 'direct',
+
+  // Vertex AI config (only used when GEMINI_BACKEND=vertex)
+  VERTEX_PROJECT: process.env.GOOGLE_CLOUD_PROJECT || process.env.VERTEX_PROJECT || '',
+  VERTEX_LOCATION: process.env.GOOGLE_CLOUD_LOCATION || process.env.VERTEX_LOCATION || 'us-central1',
+
   JSON_BODY_LIMIT: '20mb',
   SHUTDOWN_TIMEOUT_MS: 10_000,
 

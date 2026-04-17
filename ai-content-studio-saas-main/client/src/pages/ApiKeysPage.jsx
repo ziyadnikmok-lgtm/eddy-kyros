@@ -166,6 +166,8 @@ export default function ApiKeysPage() {
   const [igLoginPassword, setIgLoginPassword] = useState('');
   const [igLogin2faSecret, setIgLogin2faSecret] = useState('');
   const [igLoginInfo, setIgLoginInfo] = useState({ hasInstagramLogin: false, maskedUsername: '', maskedPassword: '', has2fa: false, masked2faSecret: '', updatedAt: null });
+  const [vertexJson, setVertexJson] = useState('');
+  const [vertexInfo, setVertexInfo] = useState({ hasVertexCredentials: false, projectId: '', clientEmail: '', updatedAt: null });
   const [refreshing, setRefreshing] = useState(false);
   const [health, setHealth] = useState(null);
   const [confirmAction, setConfirmAction] = useState(null);
@@ -182,14 +184,14 @@ export default function ApiKeysPage() {
     return 'red';
   };
 
-  const refreshHealth = () => runHealth(async () => {
+  const refreshHealth = ({ silent = false } = {}) => runHealth(async () => {
     const data = await keysApi.healthCheck();
     setHealth(data);
-  });
+  }, { silent });
 
   const load = () => runList(async () => {
-    const [data, apify, ws, igSession, igLogin, spendData] = await Promise.all([
-      keysApi.list(), keysApi.getApify(), keysApi.getWavespeed(), keysApi.getInstagramSession(), keysApi.getInstagramLogin(), keysApi.getSpend().catch(() => null),
+    const [data, apify, ws, igSession, igLogin, vtx, spendData] = await Promise.all([
+      keysApi.list(), keysApi.getApify(), keysApi.getWavespeed(), keysApi.getInstagramSession(), keysApi.getInstagramLogin(), keysApi.getVertex().catch(() => null), keysApi.getSpend().catch(() => null),
     ]);
     if (spendData) setSpend(spendData);
     setKeyList(data);
@@ -197,17 +199,19 @@ export default function ApiKeysPage() {
     setWavespeedInfo(ws || { hasWavespeedKey: false, maskedKey: '', updatedAt: null });
     setInstagramSessionInfo(igSession || { hasInstagramSession: false, maskedValue: '', updatedAt: null });
     setIgLoginInfo(igLogin || { hasInstagramLogin: false, maskedUsername: '', maskedPassword: '', updatedAt: null });
+    setVertexInfo(vtx || { hasVertexCredentials: false, projectId: '', clientEmail: '', updatedAt: null });
     const act = data.find((k) => k.isActive);
     if (act) setActiveKey(act);
     else if (data.length === 0) setActiveKey(null);
     refreshIntegrationStatus();
-    await refreshHealth();
+    await refreshHealth({ silent: true });
   });
 
   useEffect(() => { load(); }, []);
 
   const hasGeminiKeys = keyList.length > 0;
   const hasActiveGeminiKey = keyList.some((k) => k.isActive);
+  const activeBackend = vertexInfo?.activeBackend || 'gemini';
 
   const handleAdd = () => run(async () => {
     if (!apiKey.trim()) { notify('Please paste your Gemini API key', 'error'); return; }
@@ -257,6 +261,27 @@ export default function ApiKeysPage() {
     await keysApi.clearWavespeed();
     setWavespeedKey('');
     notify('WaveSpeed key removed', 'success');
+    await load();
+  });
+
+  const handleSaveVertex = () => run(async () => {
+    if (!vertexJson.trim()) { notify('Paste your service account JSON first', 'error'); return; }
+    await keysApi.setVertex(vertexJson.trim());
+    setVertexJson('');
+    notify('Vertex AI credentials saved — switched to Vertex', 'success');
+    await load();
+  });
+
+  const handleClearVertex = () => run(async () => {
+    await keysApi.clearVertex();
+    setVertexJson('');
+    notify('Vertex credentials removed', 'success');
+    await load();
+  });
+
+  const handleSetBackend = (backend) => run(async () => {
+    await keysApi.setActiveBackend(backend);
+    notify(backend === 'vertex' ? 'Switched to Vertex AI' : 'Switched to Gemini API Key', 'success');
     await load();
   });
 
@@ -454,6 +479,16 @@ export default function ApiKeysPage() {
                       </div>
                     )}
 
+                    {/* Vertex override notice */}
+                    {activeBackend === 'vertex' && (
+                      <div className="rounded-lg border border-blue-700/40 bg-blue-950/20 px-3 py-2.5 flex gap-2.5 items-start">
+                        <span className="text-blue-400 shrink-0 mt-0.5">☁️</span>
+                        <p className="text-xs text-blue-300/90 leading-relaxed">
+                          <strong className="text-blue-200">Vertex AI is currently active</strong> — generation is routed through your GCP service account, not this key. Scroll down to the AI Backend section to switch back.
+                        </p>
+                      </div>
+                    )}
+
                     {/* Input form — always visible so they can paste a replacement */}
                     {geminiKeyForm}
                   </div>
@@ -505,7 +540,199 @@ export default function ApiKeysPage() {
             </div>
           </Card>
 
-          {/* ── 2. Apify ── */}
+          {/* ── 2. AI Backend Switcher ── */}
+          <Card id="vertex-section" className="space-y-5">
+            {/* Header */}
+            <div>
+              <div className="flex items-center gap-2 flex-wrap mb-1">
+                <span className="font-semibold text-zinc-100 text-sm">AI Backend</span>
+                <Badge color={activeBackend === 'vertex' ? 'blue' : 'green'}>
+                  {activeBackend === 'vertex' ? 'Vertex AI active' : 'Gemini API active'}
+                </Badge>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700/50">Optional</span>
+              </div>
+              <p className="text-xs text-zinc-500 leading-relaxed">
+                Click a card to switch instantly. Both credentials are saved separately — no need to re-paste when switching back.
+              </p>
+            </div>
+
+            {/* Clickable two-option switcher */}
+            <div className="grid grid-cols-2 gap-3">
+              {/* Gemini API Key card */}
+              <button
+                type="button"
+                onClick={() => { if (activeBackend !== 'gemini') handleSetBackend('gemini'); }}
+                disabled={loading || activeBackend === 'gemini'}
+                className={`rounded-xl border-2 p-4 text-left transition-all ${activeBackend === 'gemini' ? 'border-blue-500/60 bg-blue-950/15 cursor-default' : 'border-zinc-700/40 bg-zinc-900/20 hover:border-zinc-600/50 hover:bg-zinc-800/30 cursor-pointer'}`}
+              >
+                <div className="flex items-start gap-2.5">
+                  <div className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${activeBackend === 'gemini' ? 'border-blue-400 bg-blue-400' : 'border-zinc-600'}`}>
+                    {activeBackend === 'gemini' && <div className="w-1.5 h-1.5 rounded-full bg-zinc-950" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-zinc-200">🧠 Gemini API Key</p>
+                    <p className="text-[10px] text-zinc-500 mt-0.5">AI Studio key · Simple setup</p>
+                    {activeBackend === 'gemini'
+                      ? <span className="inline-block mt-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-blue-900/60 text-blue-300 border border-blue-700/50">Active</span>
+                      : <span className="inline-block mt-1.5 text-[10px] text-zinc-500">Click to switch</span>
+                    }
+                  </div>
+                </div>
+              </button>
+              {/* Vertex AI card */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeBackend === 'vertex') return;
+                  if (vertexInfo?.hasVertexCredentials) { handleSetBackend('vertex'); }
+                  else { document.getElementById('vertex-json-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+                }}
+                disabled={loading || activeBackend === 'vertex'}
+                className={`rounded-xl border-2 p-4 text-left transition-all ${activeBackend === 'vertex' ? 'border-emerald-500/60 bg-emerald-950/15 cursor-default' : 'border-zinc-700/40 bg-zinc-900/20 hover:border-zinc-600/50 hover:bg-zinc-800/30 cursor-pointer'}`}
+              >
+                <div className="flex items-start gap-2.5">
+                  <div className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${activeBackend === 'vertex' ? 'border-emerald-400 bg-emerald-400' : 'border-zinc-600'}`}>
+                    {activeBackend === 'vertex' && <div className="w-1.5 h-1.5 rounded-full bg-zinc-950" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-zinc-200">☁️ Vertex AI (GCP)</p>
+                    <p className="text-[10px] text-zinc-500 mt-0.5">Google Cloud · Service account JSON</p>
+                    {activeBackend === 'vertex'
+                      ? <span className="inline-block mt-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-900/60 text-emerald-300 border border-emerald-700/50">Active</span>
+                      : vertexInfo?.hasVertexCredentials
+                        ? <span className="inline-block mt-1.5 text-[10px] text-emerald-500">✓ Saved — click to switch back</span>
+                        : <span className="inline-block mt-1.5 text-[10px] text-zinc-500">Paste JSON below to activate</span>
+                    }
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            {activeBackend === 'vertex' ? (
+              /* ── VERTEX ACTIVE ── */
+              <div className="space-y-3">
+                <div className="rounded-xl border border-emerald-800/40 bg-emerald-950/20 px-4 py-3.5 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-emerald-400">✓</span>
+                    <span className="text-sm font-semibold text-emerald-300">Vertex AI is active</span>
+                    {vertexInfo?.updatedAt && <span className="text-[10px] text-zinc-600 ml-auto">saved {new Date(vertexInfo.updatedAt).toLocaleDateString()}</span>}
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div className="rounded-lg border border-emerald-800/30 bg-emerald-950/30 px-3 py-2">
+                      <p className="text-[10px] text-zinc-500 mb-0.5">GCP Project</p>
+                      <p className="font-mono text-[11px] text-zinc-200 break-all">{vertexInfo?.projectId}</p>
+                    </div>
+                    <div className="rounded-lg border border-emerald-800/30 bg-emerald-950/30 px-3 py-2">
+                      <p className="text-[10px] text-zinc-500 mb-0.5">Service Account</p>
+                      <p className="font-mono text-[10px] text-zinc-300 break-all">{vertexInfo?.clientEmail}</p>
+                    </div>
+                  </div>
+                </div>
+                <details className="group rounded-xl border border-zinc-700/40 bg-zinc-900/20">
+                  <summary className="flex items-center justify-between px-4 py-3 cursor-pointer text-xs font-medium text-zinc-400 hover:text-zinc-300 transition-colors list-none">
+                    <span>Update or remove credentials</span>
+                    <span className="text-zinc-600 group-open:rotate-180 transition-transform text-[10px]">▼</span>
+                  </summary>
+                  <div className="px-4 pb-4 pt-2 space-y-3 border-t border-zinc-700/40">
+                    <textarea
+                      className="w-full rounded-lg border border-zinc-700/60 bg-zinc-900/60 px-3 py-2.5 text-[11px] font-mono text-zinc-300 placeholder-zinc-600 focus:border-blue-500/60 focus:outline-none resize-none"
+                      rows={4}
+                      placeholder={'{\n  "type": "service_account",\n  "project_id": "...",\n  ...\n}'}
+                      value={vertexJson}
+                      onChange={(e) => setVertexJson(e.target.value)}
+                    />
+                    <div className="flex items-center gap-2">
+                      <Btn onClick={handleSaveVertex} disabled={loading || !vertexJson.trim()}>
+                        {loading ? <Spinner size={16} /> : null} Update JSON
+                      </Btn>
+                      <Btn variant="danger" className="!py-1.5 !px-3 !text-xs" onClick={() => setConfirmAction({ title: 'Remove Vertex credentials?', message: 'The stored GCP service account JSON will be permanently deleted. You will need to re-paste it to use Vertex again.', onConfirm: handleClearVertex, label: 'Remove' })} disabled={loading}>
+                        Remove credentials
+                      </Btn>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            ) : vertexInfo?.hasVertexCredentials ? (
+              /* ── GEMINI ACTIVE, VERTEX CREDS SAVED ── */
+              <div className="rounded-xl border border-zinc-700/40 bg-zinc-900/20 px-4 py-3.5 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-blue-400">✓</span>
+                  <span className="text-xs font-semibold text-zinc-300">Using Gemini API Key</span>
+                </div>
+                <div className="rounded-lg border border-emerald-800/30 bg-emerald-950/15 px-3 py-2.5 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] text-emerald-400 font-medium">☁️ Vertex credentials are saved</p>
+                    <p className="text-[10px] text-zinc-500 mt-0.5">Project: <span className="font-mono text-zinc-400">{vertexInfo.projectId}</span></p>
+                    <p className="text-[10px] text-zinc-600 mt-0.5">Click the ☁️ Vertex AI card above to switch back — no re-pasting needed.</p>
+                  </div>
+                  <Btn variant="secondary" className="!py-1.5 !px-3 !text-xs shrink-0" onClick={() => handleSetBackend('vertex')} disabled={loading}>
+                    Use Vertex
+                  </Btn>
+                </div>
+              </div>
+            ) : (
+              /* ── NO VERTEX CREDS — show setup ── */
+              <div className="space-y-4" id="vertex-json-form">
+                <div className="rounded-lg border border-zinc-700/40 bg-zinc-900/30 px-4 py-3 space-y-2">
+                  <p className="text-xs font-semibold text-zinc-300">What is Vertex AI / Why use it?</p>
+                  <div className="grid sm:grid-cols-2 gap-2 text-[11px] text-zinc-500 leading-relaxed">
+                    <div className="space-y-1">
+                      <p className="text-zinc-400 font-medium">Use it if…</p>
+                      <p>✓ You already have a Google Cloud (GCP) account</p>
+                      <p>✓ You want to use GCP billing / $300 free credit</p>
+                      <p>✓ You need higher quotas than AI Studio</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-zinc-400 font-medium">How it works</p>
+                      <p>Download a service account JSON from GCP and paste it here. Same Gemini models, no Gemini API key needed.</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-xl border border-zinc-700/40 bg-zinc-900/20 p-4 space-y-3">
+                  <p className="text-xs font-semibold text-zinc-300">How to get your service account JSON</p>
+                  <div className="space-y-2">
+                    {[
+                      { n: 1, title: 'Open Google Cloud Console', body: null, link: { href: 'https://console.cloud.google.com', label: 'console.cloud.google.com ↗' }, color: 'blue' },
+                      { n: 2, title: 'Enable the Generative Language API', body: 'Search "Generative Language API" → Enable it.', link: null, color: 'blue' },
+                      { n: 3, title: 'Go to IAM & Admin → Service Accounts', body: null, link: null, color: 'violet' },
+                      { n: 4, title: 'Create a Service Account', body: 'Click "+ Create Service Account", give it a name, assign role "Vertex AI User", click Done.', link: null, color: 'violet' },
+                      { n: 5, title: 'Download the JSON key', body: 'Click the account → Keys tab → Add Key → JSON → Create. A .json file downloads.', link: null, color: 'emerald' },
+                      { n: 6, title: 'Paste it below', body: 'Open the file in any text editor, select all, copy, paste below.', link: null, color: 'emerald' },
+                    ].map(({ n, title, body, link, color }) => {
+                      const cm = { blue: 'bg-blue-900/50 border-blue-700/50 text-blue-300', violet: 'bg-violet-900/50 border-violet-700/50 text-violet-300', emerald: 'bg-emerald-900/50 border-emerald-700/50 text-emerald-300' };
+                      return (
+                        <div key={n} className="flex gap-3 items-start">
+                          <div className={`shrink-0 w-6 h-6 rounded-full border flex items-center justify-center ${cm[color]}`}>
+                            <span className="text-[11px] font-bold">{n}</span>
+                          </div>
+                          <div className="flex-1 min-w-0 pt-0.5">
+                            <p className="text-[11px] font-semibold text-zinc-300">{title}</p>
+                            {body && <p className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed">{body}</p>}
+                            {link && <a href={link.href} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue-400 underline underline-offset-2 hover:text-blue-300 mt-0.5 inline-block">{link.label}</a>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-zinc-700/50 bg-zinc-950/50 p-4 space-y-3">
+                  <label className="text-xs font-semibold text-zinc-300">Paste your service account JSON here</label>
+                  <textarea
+                    className="w-full rounded-lg border border-zinc-700/60 bg-zinc-900/60 px-3 py-2.5 text-[11px] font-mono text-zinc-300 placeholder-zinc-600 focus:border-blue-500/60 focus:outline-none resize-none"
+                    rows={6}
+                    placeholder={'{\n  "type": "service_account",\n  "project_id": "my-project",\n  ...\n}'}
+                    value={vertexJson}
+                    onChange={(e) => setVertexJson(e.target.value)}
+                  />
+                  <Btn onClick={handleSaveVertex} disabled={loading || !vertexJson.trim()}>
+                    {loading ? <Spinner size={16} /> : null} Save & Switch to Vertex AI
+                  </Btn>
+                </div>
+              </div>
+            )}
+          </Card>
+
+          {/* ── 3. Apify ── */}
           <Card className="space-y-4">
             <div className="flex items-start gap-3">
               <span className="text-2xl leading-none mt-0.5">📸</span>
@@ -589,6 +816,7 @@ export default function ApiKeysPage() {
                 {[
                   { key: 'gemini', label: '🧠 Gemini', data: health?.gemini },
                   { key: 'apify', label: '📸 Apify', data: health?.apify },
+                  { key: 'vertex', label: '☁️ Vertex AI', data: health?.vertex },
                   { key: 'wavespeed', label: '🎬 WaveSpeed', data: health?.wavespeed },
                   { key: 'instagram', label: '🍪 Instagram', data: health?.instagramSession },
                 ].map(({ key, label, data }) => (
