@@ -191,7 +191,7 @@ const NAV_SECTIONS = [
 
 const ALL_NAV_ITEMS = NAV_SECTIONS.flatMap((s) => s.items);
 
-const APP_VERSION = '8.1.2';
+const APP_VERSION = '8.1.3';
 
 const FEED_HIDDEN_PAGES = new Set([
   'library',
@@ -214,9 +214,9 @@ const FEED_DOMINANT_PAGES = new Set([
 
 function SidebarHeader() {
   return (
-    <header className="flex h-14 items-center gap-2 border-b border-zinc-800/40 px-4">
+    <header className="flex h-[72px] items-center gap-2 border-b border-white/[0.07] px-5">
       <span className="text-sm font-semibold text-zinc-100 tracking-tight">Kyros Studio</span>
-      <span className="inline-flex items-center rounded-full border border-zinc-700/50 bg-zinc-800/60 px-1.5 py-px text-[9px] text-zinc-500 font-mono">
+      <span className="inline-flex items-center rounded-full border border-white/10 bg-white/[0.045] px-1.5 py-px text-[9px] text-zinc-500 font-mono">
         v{APP_VERSION}
       </span>
     </header>
@@ -332,20 +332,20 @@ function StatusDot({ active, label, sublabel, offLabel, onClick }) {
   const clickProps = onClick ? { onClick, type: 'button' } : {};
   if (active) {
     return (
-      <Wrapper className={`flex items-center gap-2 ${onClick ? 'cursor-pointer hover:opacity-80 transition' : ''}`} {...clickProps}>
+      <Wrapper className={`flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/[0.08] px-3 py-1.5 text-xs font-medium text-emerald-300 ${onClick ? 'cursor-pointer hover:border-emerald-300/35 hover:bg-emerald-400/[0.12] transition' : ''}`} {...clickProps}>
         <span className="relative flex h-2 w-2">
           <span className="absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60 animate-ping" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
         </span>
-        <span className="text-xs text-zinc-400 hidden sm:block">{label}</span>
-        {sublabel && <span className="text-[10px] font-mono text-zinc-600 hidden sm:block">{sublabel}</span>}
+        <span className="hidden sm:block">{label}</span>
+        {sublabel && <span className="text-[10px] font-mono text-emerald-200/45 hidden sm:block">{sublabel}</span>}
       </Wrapper>
     );
   }
   return (
-    <Wrapper className={`flex items-center gap-2 ${onClick ? 'cursor-pointer hover:opacity-80 transition' : ''}`} {...clickProps}>
+    <Wrapper className={`flex items-center gap-2 rounded-full border border-red-400/15 bg-red-400/[0.06] px-3 py-1.5 text-xs font-medium text-red-300 ${onClick ? 'cursor-pointer hover:border-red-300/30 hover:bg-red-400/[0.10] transition' : ''}`} {...clickProps}>
       <span className="h-2 w-2 rounded-full bg-red-500" />
-      <span className="text-xs text-zinc-500 hidden sm:block">{offLabel}</span>
+      <span className="hidden sm:block">{offLabel}</span>
     </Wrapper>
   );
 }
@@ -397,33 +397,35 @@ function MainApp({ onLogout, currentUser }) {
 
   return (
     <TooltipPrimitive.Provider delayDuration={200}>
-    <div className="flex h-screen overflow-hidden bg-zinc-950">
+    <div className="relative flex h-screen overflow-hidden bg-[#050608] text-white">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_16%_-12%,rgba(34,211,238,0.15),transparent_30%),radial-gradient(circle_at_86%_4%,rgba(249,115,22,0.10),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.035),transparent_22%)]" />
       {sidebarOpen && (
         <div className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
 
-      <aside className={`fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-zinc-800/50 bg-zinc-900/95 backdrop-blur-md transition-transform duration-250 lg:static lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`fixed inset-y-0 left-0 z-40 flex w-[272px] flex-col border-r border-white/[0.07] bg-[#080a0f]/95 backdrop-blur-2xl transition-transform duration-250 lg:static lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <SidebarHeader />
-        <nav className="flex-1 overflow-y-auto px-3 py-3">
+        <nav className="flex-1 overflow-y-auto px-3 py-4">
           {visibleSections.map((section, sIdx) => (
-            <div key={section.label} className={`mb-1.5 ${sIdx > 0 ? 'pt-3 mt-1' : ''}`}>
+            <div key={section.label} className={`mb-2 ${sIdx > 0 ? 'pt-3 mt-1' : ''}`}>
               <div className="flex items-center gap-2 px-3 py-1.5">
-                <span className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider whitespace-nowrap">{section.label}</span>
-                <div className="flex-1 h-px bg-zinc-800/60" />
+                <span className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.22em] whitespace-nowrap">{section.label}</span>
+                <div className="flex-1 h-px bg-white/[0.06]" />
               </div>
-              <div className="space-y-0.5">
+              <div className="space-y-1">
                 {section.items.map((item) => {
                   const IconComponent = NAV_ICONS[item.id];
                   return (
                     <button key={item.id} onClick={() => { navigateTo(item.id); setSidebarOpen(false); }}
-                      className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150 cursor-pointer group ${
+                      className={`relative flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold transition-all duration-200 cursor-pointer group ${
                         page === item.id
-                          ? 'bg-blue-600/12 text-blue-400 shadow-[inset_2px_0_0_0_#3b82f6]'
-                          : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200 hover:translate-x-0.5'
+                          ? 'bg-cyan-400/[0.105] text-cyan-200 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.16),0_14px_35px_rgba(8,145,178,0.10)]'
+                          : 'text-zinc-500 hover:bg-white/[0.055] hover:text-zinc-100'
                       }`}>
+                      {page === item.id && <span className="absolute left-0 top-1/2 h-7 w-1 -translate-y-1/2 rounded-r-full bg-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.85)]" />}
                       {IconComponent ? (
                         <span
-                          className={`flex items-center justify-center w-5 transition-all duration-150 ${page === item.id ? 'opacity-100' : 'opacity-50 group-hover:opacity-80'}`}
+                          className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all duration-150 ${page === item.id ? 'bg-cyan-300/12 opacity-100' : 'bg-white/[0.045] opacity-55 group-hover:opacity-85'}`}
                           style={{
                             '--nc-gradient-1-color-1': (NAV_COLORS[item.id] || ['#a5b4fc','#6366f1'])[0],
                             '--nc-gradient-1-color-2': (NAV_COLORS[item.id] || ['#a5b4fc','#6366f1'])[1],
@@ -461,10 +463,10 @@ function MainApp({ onLogout, currentUser }) {
           </div>
         )}
 
-        <div className="border-t border-zinc-800/40 px-4 py-3 flex items-center justify-between">
-          <div>
+        <div className="border-t border-white/[0.07] px-4 py-3 flex items-center justify-between">
+          <div className="min-w-0">
             <div className="text-[10px] text-zinc-600 font-mono">{currentUser?.isAdmin ? 'Admin Session' : 'Signed In'}</div>
-            <div className="text-[10px] text-zinc-500 truncate max-w-[120px]">{currentUser?.email || 'Unknown user'}</div>
+            <div className="text-[10px] text-zinc-500 truncate max-w-[145px]">{currentUser?.email || 'Unknown user'}</div>
           </div>
           <button
             onClick={handleLogout}
@@ -477,13 +479,13 @@ function MainApp({ onLogout, currentUser }) {
       </aside>
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex h-14 items-center justify-between border-b border-zinc-800/40 bg-zinc-900/60 backdrop-blur-md px-4 lg:px-6 shrink-0">
+        <header className="flex h-[72px] items-center justify-between border-b border-white/[0.07] bg-[#090b10]/88 backdrop-blur-2xl px-4 lg:px-6 shrink-0">
           <div className="flex items-center gap-3">
             <button className="lg:hidden text-zinc-400 hover:text-zinc-200 p-1 cursor-pointer" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 5h14M3 10h14M3 15h14" /></svg>
             </button>
             <div>
-              <h2 className="text-sm font-semibold text-zinc-300 capitalize">{currentNav?.label || 'Studio'}</h2>
+              <h2 className="text-lg font-black tracking-tight text-zinc-100 capitalize">{currentNav?.label || 'Studio'}</h2>
               {PAGE_DESCRIPTIONS[page] && <p className="text-[10px] text-zinc-500 hidden sm:block">{PAGE_DESCRIPTIONS[page]}</p>}
             </div>
           </div>
@@ -495,7 +497,7 @@ function MainApp({ onLogout, currentUser }) {
         </header>
 
         <div className="flex flex-1 overflow-hidden">
-          <main className={`${isFeedDominant ? 'w-[400px] xl:w-[440px] 2xl:w-[480px] shrink-0 overflow-y-auto overflow-x-hidden safe-bottom ambient-glow border-r border-zinc-800/30 p-3 lg:p-5' : `flex-1 overflow-y-auto overflow-x-hidden safe-bottom ambient-glow ${showGenerationFeed ? 'border-r border-zinc-800/30' : ''} p-3 sm:p-4 lg:p-6`}`}>
+          <main className={`${isFeedDominant ? 'w-[430px] xl:w-[460px] 2xl:w-[500px] shrink-0 overflow-y-auto overflow-x-hidden safe-bottom ambient-glow border-r border-white/[0.07] bg-white/[0.015] p-3 lg:p-5' : `flex-1 overflow-y-auto overflow-x-hidden safe-bottom ambient-glow ${showGenerationFeed ? 'border-r border-white/[0.07]' : ''} p-3 sm:p-4 lg:p-6`}`}>
             <div className={`relative ${isFeedDominant ? 'max-w-none' : 'mx-auto max-w-6xl'}`}>
               <PageErrorBoundary pageKey={page}>
                 <Suspense fallback={<PageFallback />}>
