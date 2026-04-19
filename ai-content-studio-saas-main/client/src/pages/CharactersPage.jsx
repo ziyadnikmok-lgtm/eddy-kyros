@@ -38,13 +38,13 @@ function getPastedImageFile(event) {
   return item?.getAsFile() || null;
 }
 
-function fileToBase64(file) {
-  return new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload = () => res(r.result);
-    r.onerror = rej;
-    r.readAsDataURL(file);
+function characterImageFormData(fields, file) {
+  const formData = new FormData();
+  Object.entries(fields).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) formData.append(key, value);
   });
+  formData.append('image', file, file.name || 'character-image');
+  return formData;
 }
 
 export default function CharactersPage() {
@@ -227,8 +227,7 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
   const addPrimaryImageFile = useCallback((file) => {
     if (!validateCharacterImageFile(file, notify)) return;
     run(async () => {
-      const dataUri = await fileToBase64(file);
-      await charApi.addPrimaryImage(char.id, { image: dataUri });
+      await charApi.addPrimaryImage(char.id, characterImageFormData({}, file));
       notify('Primary image added', 'success');
       onUpdate();
     });
@@ -460,8 +459,7 @@ function CreateCharacterModal({ open, onClose, onCreated, seedFile }) {
     if (!name.trim()) { notify('Character name is required', 'error'); return; }
     if (!masterPrompt.trim()) { notify('Master prompt is required — describe face, body, and defining traits', 'error'); return; }
     if (!file) { notify('Primary image is required — upload a clear reference photo', 'error'); return; }
-    const dataUri = await fileToBase64(file);
-    await charApi.create({ name: name.trim(), masterPrompt: masterPrompt.trim(), image: dataUri });
+    await charApi.create(characterImageFormData({ name: name.trim(), masterPrompt: masterPrompt.trim() }, file));
     notify('Character created', 'success');
     if (preview) URL.revokeObjectURL(preview);
     setName(''); setMasterPrompt(''); setFile(null); setPreview(null);
@@ -553,8 +551,7 @@ function AddReferenceModal({ open, onClose, characterId, onAdded }) {
 
   const handleAdd = () => run(async () => {
     if (!file || !overridePrompt.trim()) { notify('Image and override prompt required', 'error'); return; }
-    const dataUri = await fileToBase64(file);
-    await charApi.addReference(characterId, { image: dataUri, mimeType: file.type, name: file.name, category, overridePrompt: overridePrompt.trim() });
+    await charApi.addReference(characterId, characterImageFormData({ category, overridePrompt: overridePrompt.trim() }, file));
     notify('Reference added', 'success');
     setOverridePrompt(''); setFile(null);
     setPreview((prev) => {

@@ -86,6 +86,7 @@ class GalleryManager {
       try {
         const files = fs.readdirSync(uploadsDir);
         state.validFiles = new Set(files);
+        this._pruneMissingEntries(state);
       } catch { state.validFiles = new Set(); }
     }
 
@@ -120,13 +121,19 @@ class GalleryManager {
   getFilePath(id) {
     const state = this._getState();
     const uploadsDir = this._uploadsDir;
-    const entry = state.store.find((e) => e.id === id);
+    const entryIndex = state.store.findIndex((e) => e.id === id);
+    const entry = entryIndex >= 0 ? state.store[entryIndex] : null;
     if (!entry) throw new AppError('Gallery image not found', 404, 'NOT_FOUND');
     const fp = path.join(uploadsDir, entry.filename);
     if (!path.resolve(fp).startsWith(path.resolve(uploadsDir))) {
       throw new AppError('Invalid file path', 403, 'INVALID_PATH');
     }
-    if (!fs.existsSync(fp)) throw new AppError('Image file missing from disk', 404, 'FILE_MISSING');
+    if (!fs.existsSync(fp)) {
+      state.validFiles.delete(entry.filename);
+      state.store.splice(entryIndex, 1);
+      this._persist(state);
+      throw new AppError('Image file missing from disk', 404, 'FILE_MISSING');
+    }
     return { filePath: fp, mimeType: entry.mimeType };
   }
 
@@ -304,6 +311,17 @@ class GalleryManager {
 
   _persist(state) {
     atomicWriteJSON(this._dataFile, state.store);
+  }
+
+  _pruneMissingEntries(state) {
+    if (!state?.store?.length) return;
+
+    const originalLength = state.store.length;
+    state.store = state.store.filter((entry) => state.validFiles.has(entry.filename));
+
+    if (state.store.length !== originalLength) {
+      this._persist(state);
+    }
   }
 }
 

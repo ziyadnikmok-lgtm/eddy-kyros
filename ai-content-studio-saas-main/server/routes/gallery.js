@@ -205,8 +205,10 @@ router.get('/:id/image', (req, res, next) => {
         return res.send(buf);
       }
     } catch (fallbackErr) {
-      const log = require('../utils/logger');
-      log.warn('gallery_image_fallback_failed', { id: req.params.id, error: fallbackErr.message });
+      if (!['IMAGE_NOT_FOUND', 'NOT_FOUND'].includes(fallbackErr.code)) {
+        const log = require('../utils/logger');
+        log.warn('gallery_image_fallback_failed', { id: req.params.id, error: fallbackErr.message });
+      }
     }
     next(err);
   }

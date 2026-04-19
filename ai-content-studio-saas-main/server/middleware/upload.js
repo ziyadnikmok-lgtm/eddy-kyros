@@ -7,6 +7,37 @@ const SUPPORTED_FORMATS_TEXT = 'PNG, JPG, or WEBP';
 
 function parseImageUpload(req, _res, next) {
   try {
+    const uploadedFile = req.files?.image || req.file;
+    if (uploadedFile?.buffer) {
+      if (!ALLOWED_MIME_TYPES.includes(uploadedFile.mimetype)) {
+        throw new AppError(
+          `Unsupported image format. Use ${SUPPORTED_FORMATS_TEXT}. HEIC/HEIF is not supported yet.`,
+          400,
+          'INVALID_FILE_TYPE'
+        );
+      }
+
+      if (uploadedFile.buffer.length === 0) {
+        throw new AppError('Uploaded image is empty', 400, 'VALIDATION_ERROR');
+      }
+
+      if (uploadedFile.buffer.length > MAX_SIZE) {
+        throw new AppError(
+          `Image is too large. Use a ${SUPPORTED_FORMATS_TEXT} file under ${MAX_SIZE_MB}MB.`,
+          400,
+          'FILE_TOO_LARGE'
+        );
+      }
+
+      req.imageUpload = {
+        buffer: uploadedFile.buffer,
+        mimeType: uploadedFile.mimetype,
+        originalName: uploadedFile.originalname || 'upload.png',
+      };
+
+      return next();
+    }
+
     const { image, mimeType, name } = req.body || {};
 
     if (!image || typeof image !== 'string') {
