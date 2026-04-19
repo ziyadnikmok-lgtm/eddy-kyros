@@ -16,6 +16,7 @@ function getDbPath() {
   // ELECTRON_USER_DATA is set by electron/main.js to app.getPath('userData')
   const WEB_DATA_ROOT = process.env.WEB_DATA_ROOT
     || (process.env.ELECTRON_USER_DATA ? path.join(process.env.ELECTRON_USER_DATA, 'data') : null)
+    || (process.env.NODE_ENV === 'production' && fs.existsSync('/data') ? '/data' : null)
     || path.join(projectRoot, 'userdata');
   return path.join(WEB_DATA_ROOT, 'saas.db');
 }

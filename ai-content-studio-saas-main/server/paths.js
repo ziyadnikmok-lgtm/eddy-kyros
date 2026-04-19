@@ -1,10 +1,15 @@
 const path = require('node:path');
 const os = require('node:os');
+const fs = require('node:fs');
 const { getUserId } = require('./userContext');
 
 const projectRoot = path.join(__dirname, '..');
 const isTestRuntime = process.env.NODE_ENV === 'test' || !!process.env.VITEST;
-const WEB_DATA_ROOT = process.env.WEB_DATA_ROOT || path.join(projectRoot, 'userdata');
+const defaultWebDataRoot =
+  process.env.NODE_ENV === 'production' && fs.existsSync('/data')
+    ? '/data'
+    : path.join(projectRoot, 'userdata');
+const WEB_DATA_ROOT = process.env.WEB_DATA_ROOT || defaultWebDataRoot;
 const SERVER_DIR = __dirname;
 const CLIENT_DIST = path.join(projectRoot, 'client', 'dist');
 

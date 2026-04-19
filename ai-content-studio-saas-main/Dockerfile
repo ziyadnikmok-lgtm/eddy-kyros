@@ -39,5 +39,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=3001
+ENV WEB_DATA_ROOT=/data
 
 CMD ["node", "server/index.js"]

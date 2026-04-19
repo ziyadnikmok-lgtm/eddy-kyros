@@ -10,6 +10,12 @@ const parseCharacterUpload = createMultipartParser({
   maxBytes: cfg.MAX_MULTIPART_BYTES,
 });
 
+router.use((_req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  next();
+});
+
 router.post('/', parseCharacterUpload, parseImageUpload, (req, res, next) => {
   try {
     const { name, masterPrompt } = req.body;

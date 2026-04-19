@@ -165,7 +165,7 @@ export const videoCompose = {
 };
 
 export const characters = {
-  list: () => request('/characters'),
+  list: () => request(`/characters?_=${Date.now()}`, { cache: 'no-store' }),
   get: (id) => request(`/characters/${id}`),
   create: (data) => request('/characters', { method: 'POST', body: data }),
   update: (id, data) => request(`/characters/${id}`, { method: 'PATCH', body: data }),
