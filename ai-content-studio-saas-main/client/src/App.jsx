@@ -463,6 +463,33 @@ function MainApp({ onLogout, currentUser }) {
           </div>
         )}
 
+        {currentUser?.usageInfo?.plan === 'free' && currentUser.usageInfo.limit != null && (
+          <div className="px-4 py-3 border-t border-white/[0.07]">
+            {currentUser.usageInfo.used >= currentUser.usageInfo.limit ? (
+              <div className="rounded-lg bg-red-950/40 border border-red-800/30 p-3 text-center">
+                <p className="text-[11px] font-semibold text-red-400 mb-1">Free trial used up</p>
+                <p className="text-[10px] text-zinc-500 mb-2">Upgrade to keep generating</p>
+                <button onClick={() => navigateTo('billing')}
+                  className="w-full rounded-md bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-medium py-1.5 transition cursor-pointer">
+                  Upgrade to Pro
+                </button>
+              </div>
+            ) : (
+              <div>
+                <div className="flex justify-between mb-1">
+                  <span className="text-[10px] text-zinc-500">Free trial</span>
+                  <span className="text-[10px] text-zinc-500 font-mono">{currentUser.usageInfo.used}/{currentUser.usageInfo.limit}</span>
+                </div>
+                <div className="h-1 rounded-full bg-zinc-800 overflow-hidden">
+                  <div className="h-full rounded-full bg-blue-500 transition-all"
+                    style={{ width: `${Math.min(100, (currentUser.usageInfo.used / currentUser.usageInfo.limit) * 100)}%` }} />
+                </div>
+                <p className="text-[9px] text-zinc-600 mt-1">{currentUser.usageInfo.limit - currentUser.usageInfo.used} generations left</p>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="border-t border-white/[0.07] px-4 py-3 flex items-center justify-between">
           <div className="min-w-0">
             <div className="text-[10px] text-zinc-600 font-mono">{currentUser?.isAdmin ? 'Admin Session' : 'Signed In'}</div>
