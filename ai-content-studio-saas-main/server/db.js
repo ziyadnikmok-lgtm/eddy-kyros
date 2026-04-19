@@ -55,6 +55,12 @@ try {
   if (userCols.length > 0 && !userCols.some((c) => c.name === 'username')) {
     db.exec('ALTER TABLE users ADD COLUMN username TEXT');
   }
+  if (userCols.length > 0 && !userCols.some((c) => c.name === 'referral_code')) {
+    db.exec('ALTER TABLE users ADD COLUMN referral_code TEXT');
+  }
+  if (userCols.length > 0 && !userCols.some((c) => c.name === 'referred_by')) {
+    db.exec('ALTER TABLE users ADD COLUMN referred_by TEXT REFERENCES users(id) ON DELETE SET NULL');
+  }
 } catch (e) {
   // Users table may not exist yet; CREATE TABLE below will handle it
 }
@@ -72,11 +78,16 @@ db.exec(`
     reset_token TEXT,
     reset_token_expiry TEXT,
     is_admin   INTEGER NOT NULL DEFAULT 0,
-    is_banned  INTEGER NOT NULL DEFAULT 0
+    is_banned  INTEGER NOT NULL DEFAULT 0,
+    referral_code TEXT UNIQUE,
+    referred_by TEXT REFERENCES users(id) ON DELETE SET NULL
   );
 
   CREATE INDEX IF NOT EXISTS idx_users_email ON users(email COLLATE NOCASE);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username COLLATE NOCASE);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_users_referral_code
+    ON users(referral_code) WHERE referral_code IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users(referred_by);
 
   CREATE TABLE IF NOT EXISTS subscriptions (
     id         TEXT PRIMARY KEY,
@@ -192,6 +203,25 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_admin_messages_user_created
     ON admin_messages(user_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS referral_commissions (
+    id          TEXT PRIMARY KEY,
+    referrer_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    referee_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    plan        TEXT NOT NULL,
+    amount_usd  REAL NOT NULL DEFAULT 0,
+    status      TEXT NOT NULL DEFAULT 'pending',
+    notes       TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    paid_at     TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_referral_commissions_referrer_created
+    ON referral_commissions(referrer_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_referral_commissions_referee_plan
+    ON referral_commissions(referee_id, plan);
+  CREATE INDEX IF NOT EXISTS idx_referral_commissions_status
+    ON referral_commissions(status);
 `);
 
 // Best-effort unique index on heleket_order_id — skipped silently if duplicates exist in old data

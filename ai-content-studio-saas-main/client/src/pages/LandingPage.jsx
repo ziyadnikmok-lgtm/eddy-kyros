@@ -82,7 +82,7 @@ function FAQItem({ question, answer, isOpen, onToggle }) {
 }
 
 // ─── Auth Modal ─────────────────────────────────────────────────────────────────
-function AuthModal({ mode, onClose, onSuccess, onNavigate }) {
+function AuthModal({ mode, onClose, onSuccess, onNavigate, refCode }) {
   const [tab, setTab] = useState(mode || 'register');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -113,7 +113,8 @@ function AuthModal({ mode, onClose, onSuccess, onNavigate }) {
     if (form.password.length < 8) { setRegisterError('Min 8 characters'); return; }
     setRegisterLoading(true); setRegisterError(''); setRegisterMsg('');
     try {
-      const res = await fetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(form) });
+      const storedRef = refCode || localStorage.getItem('kyros_ref') || undefined;
+      const res = await fetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ ...form, ...(storedRef ? { ref_code: storedRef } : {}) }) });
       const data = await res.json();
       if (!res.ok) setRegisterError(typeof data.error === 'string' ? data.error : (data.error?.message || 'Registration failed'));
       else setRegisterMsg(data.message || 'Account created. Check your email to verify.');
@@ -420,6 +421,16 @@ export default function LandingPage({ onNavigate, initialAuthModal = null }) {
   const [openFAQ, setOpenFAQ] = useState(0);
   const [authModal, setAuthModal] = useState(initialAuthModal);
   const [scrolled, setScrolled] = useState(false);
+  const [refCode, setRefCode] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('ref') || localStorage.getItem('kyros_ref') || '';
+  });
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('ref');
+    if (code) { localStorage.setItem('kyros_ref', code); setRefCode(code); }
+  }, []);
 
   useEffect(() => { setAuthModal(initialAuthModal || null); }, [initialAuthModal]);
   useEffect(() => {
@@ -461,6 +472,7 @@ export default function LandingPage({ onNavigate, initialAuthModal = null }) {
       {/* Auth Modal */}
       {authModal && (
         <AuthModal mode={authModal}
+          refCode={refCode}
           onClose={() => { setAuthModal(null); if (initialAuthModal) onNavigate?.('landing', { replace: true }); }}
           onSuccess={() => { setAuthModal(null); window.location.reload(); }}
           onNavigate={(page) => { setAuthModal(null); onNavigate?.(page); }} />

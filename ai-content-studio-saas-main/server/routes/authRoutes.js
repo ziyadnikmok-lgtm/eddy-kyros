@@ -67,7 +67,7 @@ const { sendMail } = require('../utils/mailer');
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
   try {
-    const { email, password, name } = req.body || {};
+    const { email, password, name, ref_code } = req.body || {};
     if (!email || !password || !name) return res.status(400).json({ error: 'email, password and name are required' });
     if (typeof email !== 'string' || email.length > 254) return res.status(400).json({ error: 'Invalid email' });
     if (typeof name !== 'string' || name.length > 100) return res.status(400).json({ error: 'Name too long (max 100 chars)' });
@@ -78,16 +78,25 @@ router.post('/register', async (req, res) => {
     if (existing) return res.status(409).json({ error: 'Email already registered' });
     const hash = await bcrypt.hash(password, 12);
     const id = uuidv4();
-    const token = uuidv4().replace(/-/g, '');
-    db.prepare('INSERT INTO users (id, email, password_hash, name, verified, verification_token) VALUES (?,?,?,?,?,?)').run(id, email.toLowerCase(), hash, name, 1, null);
+    // Generate unique referral code for new user
+    const crypto = require('crypto');
+    let newCode;
+    let attempts = 0;
+    do { newCode = crypto.randomBytes(5).toString('hex').toUpperCase().slice(0, 8); attempts++; }
+    while (db.prepare('SELECT 1 FROM users WHERE referral_code = ?').get(newCode) && attempts < 10);
+    db.prepare('INSERT INTO users (id, email, password_hash, name, verified, verification_token, referral_code) VALUES (?,?,?,?,?,?,?)').run(id, email.toLowerCase(), hash, name, 1, null, newCode);
     db.prepare('INSERT INTO subscriptions (id, user_id, plan, status) VALUES (?,?,?,?)').run(uuidv4(), id, 'free', 'active');
+    // Record referral if a valid ref_code was provided
+    if (ref_code && typeof ref_code === 'string') {
+      try { require('../services/referralService').recordReferral(id, ref_code.trim()); } catch (_) {}
+    }
     logUsageEvent({
       userId: id,
       eventType: 'auth.registered',
       entityType: 'user',
       entityId: id,
       source: 'auth',
-      payload: { email: email.toLowerCase() },
+      payload: { email: email.toLowerCase(), referred: !!ref_code },
     });
     return res.status(201).json({ success: true, message: 'Registration successful. You can now log in.' });
   } catch (err) {

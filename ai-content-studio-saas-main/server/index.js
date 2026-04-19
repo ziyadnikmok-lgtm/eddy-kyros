@@ -105,6 +105,7 @@ const SqliteStore = require('better-sqlite3-session-store')(session);
 const { router: userKeysRouter } = require('./routes/userKeys');
 const billingRouter = require('./routes/billing');
 const adminRouter = require('./routes/admin');
+const referralRouter = require('./routes/referral');
 const libraryRouter = require('./routes/library');
 const notificationsRouter = require('./routes/notifications');
 const { requireAuth } = require('./middleware/requireAuth');
@@ -240,6 +241,7 @@ app.use(requireAuth);
 app.use('/api/user/keys', userKeysRouter);
 app.use('/api/billing', billingRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/referral', referralRouter);
 app.use('/api/notifications', notificationsRouter);
 
 app.use((req, res, next) => {

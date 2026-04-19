@@ -143,6 +143,11 @@ router.post('/webhook', express.raw({ type: 'application/json' }), (req, res) =>
         payload: { plan: sub.plan, cycle: cycleKey || null, orderId: order_id, expiresAt: expires },
       });
       log.info('billing_subscription_activated', { userId: sub.user_id, plan: sub.plan, cycle: cycleKey || null, orderId: order_id });
+      // Fire referral commission if this user was referred
+      try {
+        const commission = require('../services/referralService').createCommission(sub.user_id, sub.plan);
+        if (commission) log.info('referral_commission_created', commission);
+      } catch (e) { log.warn('referral_commission_error', { message: e.message }); }
     }
   }
   res.json({ ok: true });

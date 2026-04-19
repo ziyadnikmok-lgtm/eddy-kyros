@@ -16,7 +16,11 @@ export default function RegisterPage({ onNavigate }) {
     if (form.password.length < 8) { setError('Password must be at least 8 characters'); return; }
     setLoading(true); setError(''); setMsg('');
     try {
-      const res = await fetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(form) });
+      const params = new URLSearchParams(window.location.search);
+      const refCode = params.get('ref') || localStorage.getItem('kyros_ref') || '';
+      if (refCode) localStorage.setItem('kyros_ref', refCode);
+      const payload = { ...form, ...(refCode ? { ref_code: refCode } : {}) };
+      const res = await fetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(payload) });
       const data = await res.json();
       if (!res.ok) setError(typeof data.error === 'string' ? data.error : (data.error?.message || data.message || 'Registration failed'));
       else setMsg(data.message);

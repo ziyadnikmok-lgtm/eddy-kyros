@@ -65,6 +65,7 @@ const PhotoMatchPage = lazy(() => import('./pages/PhotoMatchPage'));
 const NanoBypassPage = lazy(() => import('./pages/NanoBypassPage'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const ReferralPage = lazy(() => import('./pages/ReferralPage'));
 
 const NAV_ICONS = {
   generate: IconBadgeSparkle,
@@ -93,6 +94,7 @@ const NAV_ICONS = {
   logs: IconBulletList,
   photoMatch: IconCrosshairs,
   nanoBypass: IconMagicWandSparkle,
+  referral: IconUsers,
   admin: IconBulletList,
   settings: IconSettingsWrench,
 };
@@ -124,6 +126,7 @@ const NAV_COLORS = {
   logs:           ['#fda4af', '#e11d48'],
   photoMatch:     ['#6ee7b7', '#0891b2'],
   nanoBypass:     ['#c4b5fd', '#7c3aed'],
+  referral:       ['#fb923c', '#ea580c'],
   admin:          ['#fcd34d', '#d97706'],
   settings:       ['#94a3b8', '#64748b'],
 };
@@ -179,6 +182,7 @@ const NAV_SECTIONS = [
     items: [
       { id: 'keys', label: 'API Keys' },
       { id: 'billing', label: 'Billing' },
+      { id: 'referral', label: 'Referral' },
       { id: 'settings', label: 'Settings' },
       { id: 'logs', label: 'App Logs' },
     ],
@@ -197,6 +201,7 @@ const FEED_HIDDEN_PAGES = new Set([
   'characters',
   'keys',
   'billing',
+  'referral',
   'settings',
   'logs',
 ]);
@@ -240,6 +245,7 @@ const PAGE_DESCRIPTIONS = {
   characters: 'Manage character identities and references',
   keys: 'Configure API keys and connections',
   billing: 'View your plan and upgrade your subscription',
+  referral: 'Earn 20% recurring commission for every creator you refer',
   videoCompose: 'Drop a video — add audio and text overlay',
   logs: 'View recent app logs and copy them for support',
   settings: 'Change password, manage your account',
@@ -271,6 +277,7 @@ const PAGES = {
   characters: CharactersPage,
   keys: ApiKeysPage,
   billing: BillingPage,
+  referral: ReferralPage,
   videoCompose: VideoComposePage,
   logs: LogsPage,
   photoMatch: PhotoMatchPage,
