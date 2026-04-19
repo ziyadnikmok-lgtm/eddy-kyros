@@ -26,7 +26,7 @@ function isHostedRuntime() {
 
 function getCurrentPlan(userId) {
   const row = db.prepare(`
-    SELECT s1.plan, s1.status
+    SELECT s1.plan, s1.status, s1.expires_at
     FROM subscriptions s1
     INNER JOIN (
       SELECT user_id, MAX(datetime(created_at)) AS mc
@@ -35,6 +35,8 @@ function getCurrentPlan(userId) {
     WHERE s1.user_id = ?
   `).get(userId);
   if (!row || row.status !== 'active') return 'free';
+  // Treat subscription as expired if expires_at is set and in the past
+  if (row.expires_at && new Date(row.expires_at) < new Date()) return 'free';
   return row.plan || 'free';
 }
 
@@ -114,6 +116,12 @@ function requirePlanCapacity(options = {}) {
     if (!userId) return next(); // auth middleware handles unauth
 
     try {
+      // If the user has their own API key or Vertex credentials, bypass all limits
+      const apiKeyManager = require('../services/apiKeyManager');
+      try {
+        if (apiKeyManager.getActiveKey() || apiKeyManager.hasVertexCredentials()) return next();
+      } catch { /* key manager unavailable — fall through to plan check */ }
+
       const plan = getCurrentPlan(userId);
       const limit = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
       if (!isFinite(limit)) return next(); // unlimited plan
