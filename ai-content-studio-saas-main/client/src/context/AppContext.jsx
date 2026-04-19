@@ -24,6 +24,7 @@ async function fetchJson(url) {
 
 export function AppProvider({ children }) {
   const [activeKey, setActiveKey] = useState(null);
+  const [vertexActive, setVertexActive] = useState(false);
   const [integrationRefreshToken, setIntegrationRefreshToken] = useState(0);
   const [toasts, setToasts] = useState([]);
   const timers = useRef({});
@@ -99,12 +100,12 @@ export function AppProvider({ children }) {
   }, []);
 
   const value = useMemo(() => ({
-    activeKey, setActiveKey, integrationRefreshToken, refreshIntegrationStatus, toasts, notify, dismissToast,
+    activeKey, setActiveKey, vertexActive, setVertexActive, integrationRefreshToken, refreshIntegrationStatus, toasts, notify, dismissToast,
     page, navigateTo, consumePageParams,
     characters, refreshCharacters,
     sceneMemories, refreshSceneMemories,
     outfits, refreshOutfits,
-  }), [activeKey, setActiveKey, integrationRefreshToken, refreshIntegrationStatus, toasts, notify, dismissToast,
+  }), [activeKey, setActiveKey, vertexActive, setVertexActive, integrationRefreshToken, refreshIntegrationStatus, toasts, notify, dismissToast,
     page, navigateTo, consumePageParams,
     characters, refreshCharacters, sceneMemories, refreshSceneMemories,
     outfits, refreshOutfits]);

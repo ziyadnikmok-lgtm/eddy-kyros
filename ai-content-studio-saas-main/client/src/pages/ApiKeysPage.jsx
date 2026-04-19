@@ -153,7 +153,7 @@ function SetupGuide({ title, subtitle, url, steps, note, onCopyLink, badge = 'ST
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function ApiKeysPage() {
-  const { activeKey, setActiveKey, refreshIntegrationStatus, notify } = useApp();
+  const { activeKey, setActiveKey, setVertexActive, refreshIntegrationStatus, notify } = useApp();
   const [keyList, setKeyList] = useState([]);
   const [apiKey, setApiKey] = useState('');
   const [apifyKey, setApifyKey] = useState('');
@@ -199,7 +199,9 @@ export default function ApiKeysPage() {
     setWavespeedInfo(ws || { hasWavespeedKey: false, maskedKey: '', updatedAt: null });
     setInstagramSessionInfo(igSession || { hasInstagramSession: false, maskedValue: '', updatedAt: null });
     setIgLoginInfo(igLogin || { hasInstagramLogin: false, maskedUsername: '', maskedPassword: '', updatedAt: null });
-    setVertexInfo(vtx || { hasVertexCredentials: false, projectId: '', clientEmail: '', updatedAt: null });
+    const vtxData = vtx || { hasVertexCredentials: false, projectId: '', clientEmail: '', updatedAt: null };
+    setVertexInfo(vtxData);
+    setVertexActive(!!vtxData.hasVertexCredentials);
     const act = data.find((k) => k.isActive);
     if (act) setActiveKey(act);
     else if (data.length === 0) setActiveKey(null);

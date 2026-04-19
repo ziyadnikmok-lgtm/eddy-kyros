@@ -397,7 +397,7 @@ function setCachedSuggestedCaptions(next) {
 }
 
 export default function GeneratePage() {
-  const { notify, activeKey, characters: chars, sceneMemories, outfits, consumePageParams } = useApp();
+  const { notify, activeKey, vertexActive, characters: chars, sceneMemories, outfits, consumePageParams } = useApp();
   const autofillCharacterPromptRef = useRef(false);
   const lastAutofilledCharacterIdRef = useRef('');
   const { openLightbox, LightboxComponent } = useImageLightbox();
@@ -857,7 +857,7 @@ export default function GeneratePage() {
   const activeQueueCount = queueItems.filter((job) => job.status === 'running').length;
   return (
     <div className="space-y-6 animate-in">
-      {!activeKey && (
+      {!activeKey && !vertexActive && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-4">
           <p className="text-sm text-amber-300 font-medium mb-2">Getting started</p>
           <div className="space-y-1.5 text-sm text-zinc-300">

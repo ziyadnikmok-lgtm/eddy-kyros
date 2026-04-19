@@ -351,7 +351,7 @@ function StatusDot({ active, label, sublabel, offLabel, onClick }) {
 }
 
 function MainApp({ onLogout, currentUser }) {
-  const { activeKey, setActiveKey, integrationRefreshToken, page, navigateTo } = useApp();
+  const { activeKey, setActiveKey, vertexActive, setVertexActive, integrationRefreshToken, page, navigateTo } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [apifyConnected, setApifyConnected] = useState(false);
   const isFeedDominant = FEED_DOMINANT_PAGES.has(page);
@@ -365,12 +365,13 @@ function MainApp({ onLogout, currentUser }) {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([keysApi.list(), keysApi.getApify()])
-      .then(([data, apify]) => {
+    Promise.all([keysApi.list(), keysApi.getApify(), keysApi.getVertex().catch(() => null)])
+      .then(([data, apify, vtx]) => {
         if (cancelled) return;
         const act = data.find((k) => k.isActive);
         if (act) setActiveKey(act);
         else setActiveKey(null);
+        setVertexActive(!!vtx?.hasVertexCredentials);
         setApifyConnected(!!apify?.hasApifyKey);
       })
       .catch(() => {
@@ -528,7 +529,7 @@ function MainApp({ onLogout, currentUser }) {
           </div>
 
           <div className="flex items-center gap-3">
-            <StatusDot active={!!activeKey} label={activeKey?.name} sublabel={activeKey?.maskedKey} offLabel="No API key" onClick={() => navigateTo('keys')} />
+            <StatusDot active={!!activeKey || vertexActive} label={activeKey?.name || (vertexActive ? 'Vertex AI' : null)} sublabel={activeKey?.maskedKey || (vertexActive ? 'GCP backend' : null)} offLabel="No API key" onClick={() => navigateTo('keys')} />
             <StatusDot active={apifyConnected} label="Apify connected" offLabel="Apify not set" onClick={() => navigateTo('keys')} />
           </div>
         </header>
