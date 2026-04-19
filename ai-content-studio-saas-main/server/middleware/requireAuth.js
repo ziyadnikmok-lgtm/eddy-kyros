@@ -31,4 +31,18 @@ function requireAdmin(req, res, next) {
   return res.status(403).json({ error: 'Forbidden' });
 }
 
-module.exports = { requireAuth, requireAdmin };
+function requireOwner(req, res, next) {
+  if (req.session && req.session.userId) {
+    if (req.session.isOwner) {
+      return runWithUser(req.session.userId, () => next());
+    }
+    const user = db.prepare('SELECT is_owner FROM users WHERE id = ?').get(req.session.userId);
+    if (user?.is_owner) {
+      req.session.isOwner = true;
+      return runWithUser(req.session.userId, () => next());
+    }
+  }
+  return res.status(403).json({ error: 'Forbidden — owner only' });
+}
+
+module.exports = { requireAuth, requireAdmin, requireOwner };

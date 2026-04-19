@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
-const { requireAdmin } = require('../middleware/requireAuth');
+const { requireAdmin, requireOwner } = require('../middleware/requireAuth');
 const { logAdminAction } = require('../services/adminAuditLogger');
 const apiKeyManager = require('../services/apiKeyManager');
 const galleryManager = require('../services/galleryManager');
@@ -38,6 +38,7 @@ function getUserSummaryById(userId) {
       u.email,
       u.name,
       u.is_admin,
+      u.is_owner,
       u.is_banned,
       u.verified,
       u.created_at,
@@ -551,6 +552,7 @@ router.get('/users', requireAdmin, (req, res) => {
       u.email,
       u.name,
       u.is_admin,
+      u.is_owner,
       u.is_banned,
       u.verified,
       u.created_at,
@@ -806,6 +808,21 @@ router.patch('/users/:id', requireAdmin, (req, res) => {
     return res.json({ ok: true, user: result.user });
   }
   return res.status(400).json({ error: 'No supported fields supplied' });
+});
+
+// PATCH /api/admin/users/:id/owner — grant or revoke owner role (owner-only)
+router.patch('/users/:id/owner', requireOwner, (req, res) => {
+  const { grant } = req.body || {};
+  const targetId = req.params.id;
+  if (targetId === req.session.userId) return res.status(400).json({ error: 'Cannot change your own owner status' });
+  const target = db.prepare('SELECT id, email FROM users WHERE id = ?').get(targetId);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  const newValue = grant ? 1 : 0;
+  db.prepare('UPDATE users SET is_owner = ?, is_admin = ? WHERE id = ?').run(newValue, newValue, targetId);
+  logAdminAction({ adminUserId: req.session.userId, targetUserId: targetId, actionType: grant ? 'grant_owner' : 'revoke_owner' });
+  log.info(grant ? 'owner_granted' : 'owner_revoked', { by: req.session.userId, target: targetId });
+  const updated = db.prepare('SELECT id, email, name, is_admin, is_owner, is_banned, verified FROM users WHERE id = ?').get(targetId);
+  res.json({ ok: true, user: updated });
 });
 
 // GET /api/admin/system  — live server health snapshot

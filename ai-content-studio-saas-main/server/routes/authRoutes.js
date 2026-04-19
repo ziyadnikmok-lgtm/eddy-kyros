@@ -18,7 +18,7 @@ function normalizeLogin(value) {
 
 function getUserByLogin(login) {
   return db.prepare(`
-    SELECT *
+    SELECT id, email, username, password_hash, name, verified, is_admin, is_owner, is_banned
     FROM users
     WHERE email = ?
        OR username = ?
@@ -148,6 +148,7 @@ router.post('/login', async (req, res) => {
       }
       req.session.userId = user.id;
       req.session.isAdmin = !!user.is_admin;
+      req.session.isOwner = !!user.is_owner;
       if (keepSignedIn) {
         req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000; // 30 days
       }
@@ -161,7 +162,7 @@ router.post('/login', async (req, res) => {
         payload: { keepSignedIn: !!keepSignedIn },
       });
       const plan = (sub?.status === 'active' && sub?.plan) ? sub.plan : 'free';
-      return res.json({ success: true, id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan });
+      return res.json({ success: true, id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, isOwner: !!user.is_owner, plan });
     });
   } catch (err) {
     log.error('login_failed', { message: err.message });
@@ -191,7 +192,7 @@ router.post('/logout', (req, res) => {
 // GET /api/auth/me
 router.get('/me', (req, res) => {
   if (!req.session || !req.session.userId) return res.status(401).json({ error: 'Not authenticated' });
-  const user = db.prepare('SELECT id, email, name, is_admin FROM users WHERE id = ?').get(req.session.userId);
+  const user = db.prepare('SELECT id, email, name, is_admin, is_owner FROM users WHERE id = ?').get(req.session.userId);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const sub = db.prepare('SELECT plan, status FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(user.id);
   const plan = (sub?.status === 'active' && sub?.plan) ? sub.plan : 'free';
@@ -207,7 +208,7 @@ router.get('/me', (req, res) => {
     }
   }
 
-  res.json({ id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan, usageInfo });
+  res.json({ id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, isOwner: !!user.is_owner, plan, usageInfo });
 });
 
 // GET /api/auth/status  (legacy compat)

@@ -494,7 +494,9 @@ function MainApp({ onLogout, currentUser }) {
         <div className="border-t border-white/[0.07] px-4 py-3 flex items-center justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 mb-0.5">
-              {currentUser?.isAdmin ? (
+              {currentUser?.isOwner ? (
+                <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-yellow-900/50 text-yellow-300 border border-yellow-600/40">Owner</span>
+              ) : currentUser?.isAdmin ? (
                 <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-400 border border-amber-700/30">Admin</span>
               ) : currentUser?.plan === 'unlimited' ? (
                 <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-violet-900/40 text-violet-300 border border-violet-700/30">Unlimited</span>

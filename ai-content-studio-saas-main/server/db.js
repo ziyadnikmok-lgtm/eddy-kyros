@@ -61,6 +61,9 @@ try {
   if (userCols.length > 0 && !userCols.some((c) => c.name === 'referred_by')) {
     db.exec('ALTER TABLE users ADD COLUMN referred_by TEXT REFERENCES users(id) ON DELETE SET NULL');
   }
+  if (userCols.length > 0 && !userCols.some((c) => c.name === 'is_owner')) {
+    db.exec('ALTER TABLE users ADD COLUMN is_owner INTEGER NOT NULL DEFAULT 0');
+  }
 } catch (e) {
   // Users table may not exist yet; CREATE TABLE below will handle it
 }
@@ -78,6 +81,7 @@ db.exec(`
     reset_token TEXT,
     reset_token_expiry TEXT,
     is_admin   INTEGER NOT NULL DEFAULT 0,
+    is_owner   INTEGER NOT NULL DEFAULT 0,
     is_banned  INTEGER NOT NULL DEFAULT 0,
     referral_code TEXT UNIQUE,
     referred_by TEXT REFERENCES users(id) ON DELETE SET NULL
@@ -281,6 +285,16 @@ if (process.env.SEED_ADMIN_EMAIL) {
     }
   } catch (e) {
     console.error('[db] Admin seed failed:', e.message);
+  }
+}
+
+// SEED_ADMIN_EMAIL is always the app owner (can grant owner role to others)
+if (process.env.SEED_ADMIN_EMAIL) {
+  try {
+    const r = db.prepare('UPDATE users SET is_owner=1, is_admin=1 WHERE email=?').run(process.env.SEED_ADMIN_EMAIL.toLowerCase());
+    if (r.changes > 0) console.log('[db] Owner promoted:', process.env.SEED_ADMIN_EMAIL.toLowerCase());
+  } catch (e) {
+    console.error('[db] Owner seed failed:', e.message);
   }
 }
 

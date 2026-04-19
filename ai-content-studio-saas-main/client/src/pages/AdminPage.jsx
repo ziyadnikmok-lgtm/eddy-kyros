@@ -491,6 +491,23 @@ function UsersTab({ notify }) {
     }
   }
 
+  async function handleOwnerToggle() {
+    if (!selectedUserId || acting) return;
+    const grant = !selectedUser?.is_owner;
+    if (!window.confirm(grant ? `Grant owner role to ${selectedUser?.email}?` : `Revoke owner role from ${selectedUser?.email}?`)) return;
+    setActing(true);
+    try {
+      await adminApi.setOwner(selectedUserId, grant);
+      notify(grant ? 'Owner role granted' : 'Owner role revoked', 'success');
+      const [ud] = await Promise.all([adminApi.user(selectedUserId), loadUsers()]);
+      setSelectedUser(ud.user || null);
+    } catch (err) {
+      notify(err.message || 'Action failed', 'error');
+    } finally {
+      setActing(false);
+    }
+  }
+
   async function handleForceReset() {
     if (!selectedUserId || acting) return;
     setActing(true);
@@ -591,7 +608,7 @@ function UsersTab({ notify }) {
                   <td className="py-3 pr-3">{user.generation_count_30d || 0}</td>
                   <td className="py-3">
                     <div className="flex flex-wrap gap-1">
-                      {user.is_admin ? <Badge color="yellow">Admin</Badge> : null}
+                      {user.is_owner ? <Badge color="amber">Owner</Badge> : user.is_admin ? <Badge color="yellow">Admin</Badge> : null}
                       {user.is_banned ? <Badge color="red">Banned</Badge> : <Badge color="green">Active</Badge>}
                       {!user.verified ? <Badge color="zinc">Unverified</Badge> : null}
                     </div>
@@ -643,6 +660,9 @@ function UsersTab({ notify }) {
                 </Btn>
                 <Btn variant="secondary" disabled={acting} onClick={() => handleAction(selectedUser.is_admin ? 'revoke_admin' : 'grant_admin')}>
                   {selectedUser.is_admin ? 'Revoke Admin' : 'Grant Admin'}
+                </Btn>
+                <Btn variant="secondary" disabled={acting} onClick={handleOwnerToggle} style={{ borderColor: selectedUser.is_owner ? '#a16207' : undefined, color: selectedUser.is_owner ? '#fbbf24' : undefined }}>
+                  {selectedUser.is_owner ? '★ Revoke Owner' : '★ Grant Owner'}
                 </Btn>
                 <Btn variant="ghost" disabled={acting} onClick={() => handleAction('change_plan', { plan: 'free' })}>→ Free</Btn>
                 <Btn variant="ghost" disabled={acting} onClick={() => handleAction('change_plan', { plan: 'pro' })}>→ Pro</Btn>

@@ -472,6 +472,7 @@ export const admin = {
   exportUsersUrl: () => '/api/admin/users/export.csv',
   forceReset: (id) => request(`/admin/users/${id}/force-reset`, { method: 'POST' }),
   deleteUser: (id, note) => request(`/admin/users/${id}`, { method: 'DELETE', body: { note } }),
+  setOwner: (id, grant) => request(`/admin/users/${id}/owner`, { method: 'PATCH', body: { grant } }),
   userLibraryAll: (id) => request(`/admin/users/${id}/library/all`),
   sendMessage: (id, subject, body) => request(`/admin/users/${id}/messages`, { method: 'POST', body: { subject, body } }),
   getUserMessages: (id) => request(`/admin/users/${id}/messages`),
