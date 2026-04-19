@@ -160,7 +160,8 @@ router.post('/login', async (req, res) => {
         source: 'auth',
         payload: { keepSignedIn: !!keepSignedIn },
       });
-      return res.json({ success: true, id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan: sub?.plan || 'free' });
+      const plan = (sub?.status === 'active' && sub?.plan) ? sub.plan : 'free';
+      return res.json({ success: true, id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan });
     });
   } catch (err) {
     log.error('login_failed', { message: err.message });
@@ -193,7 +194,7 @@ router.get('/me', (req, res) => {
   const user = db.prepare('SELECT id, email, name, is_admin FROM users WHERE id = ?').get(req.session.userId);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const sub = db.prepare('SELECT plan, status FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(user.id);
-  const plan = sub?.plan || 'free';
+  const plan = (sub?.status === 'active' && sub?.plan) ? sub.plan : 'free';
 
   // Include usage info when running on the hosted web app
   let usageInfo = null;
