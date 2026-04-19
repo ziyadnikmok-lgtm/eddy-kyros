@@ -491,9 +491,6 @@ router.post('/analyze-video', async (req, res, next) => {
   }
 
   const apiKey = apiKeyManager.getActiveKey();
-  if (!apiKey) {
-    return res.status(500).json({ error: 'No active Gemini API key' });
-  }
 
   const tmpFile = path.join(os.tmpdir(), `pin-video-${Date.now()}.mp4`);
   let uploadedFileName = null;

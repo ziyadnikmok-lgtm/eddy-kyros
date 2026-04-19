@@ -180,9 +180,6 @@ router.post('/suggest', async (req, res, next) => {
     }
 
     const apiKey = apiKeyManager.getActiveKey();
-    if (!apiKey) {
-      return res.status(400).json({ success: false, error: { message: 'No active Gemini API key' } });
-    }
 
     const currentAtoms = atomIds.map(id => {
       try { return styleLibrary.getAtom(id); } catch { return null; }

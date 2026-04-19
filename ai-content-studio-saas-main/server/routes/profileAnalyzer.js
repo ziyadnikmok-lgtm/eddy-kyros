@@ -164,10 +164,6 @@ router.get('/analyze', async (req, res) => {
   }
 
   const apiKey = apiKeyManager.getActiveKey();
-  if (!apiKey) {
-    send('error', { message: 'No active Gemini API key configured' });
-    return res.end();
-  }
 
   let closed = false;
   req.on('close', () => { closed = true; });

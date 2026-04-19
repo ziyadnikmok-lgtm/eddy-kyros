@@ -31,9 +31,6 @@ router.post('/start', async (req, res) => {
   }
 
   const apiKey = apiKeyManager.getActiveKey();
-  if (!apiKey) {
-    throw new AppError('No active Gemini API key configured. Add one in API Keys.', 400, 'NO_API_KEY');
-  }
 
   const cleanAccounts = accounts.map((a) => a.replace(/^@/, '').trim()).filter(Boolean);
 
