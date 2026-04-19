@@ -1,6 +1,6 @@
 const express = require('express');
 const apiKeyManager = require('../services/apiKeyManager');
-const geminiService = require('../services/geminiService');
+const geminiService = require('../services/geminiBackend');
 const sceneAnalyzer = require('../services/sceneAnalyzer');
 const referenceManager = require('../services/referenceManager');
 const imageStore = require('../services/imageStore');

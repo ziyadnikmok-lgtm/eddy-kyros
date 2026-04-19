@@ -1,7 +1,7 @@
 const express = require('express');
 const styleLibrary = require('../services/styleLibrary');
 const apiKeyManager = require('../services/apiKeyManager');
-const geminiService = require('../services/geminiService');
+const geminiService = require('../services/geminiBackend');
 
 const router = express.Router();
 

@@ -1,6 +1,6 @@
 ﻿const { AppError } = require('../../middleware/errorHandler');
 const apiKeyManager = require('../apiKeyManager');
-const geminiService = require('../geminiService');
+const geminiService = require('../geminiBackend');
 const log = require('../../utils/logger');
 
 const personaInstructions = {

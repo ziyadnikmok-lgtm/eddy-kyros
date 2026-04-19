@@ -6,7 +6,7 @@ const { AppError } = require('../middleware/errorHandler');
 const { asText } = require('../utils/helpers');
 const { initSSE } = require('../utils/sse');
 const apiKeyManager = require('../services/apiKeyManager');
-const geminiService = require('../services/geminiService');
+const geminiService = require('../services/geminiBackend');
 const styleLibrary = require('../services/styleLibrary');
 const {
   runPostActor,

@@ -137,6 +137,9 @@ router.post('/edit', express.json({ limit: '50mb' }), requirePlanCapacity(), asy
     }
 
     const apiKey = apiKeyManager.getActiveKey();
+    if (!apiKey) {
+      throw new AppError('Nano Bypass requires a Gemini API key. Go to API Keys and add one — Vertex AI is not supported for this feature.', 400, 'GEMINI_KEY_REQUIRED');
+    }
     const modelId = MODEL_IDS[model];
     runId = startGenerationRun({
       userId: req.session?.userId,

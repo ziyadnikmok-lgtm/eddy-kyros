@@ -1,7 +1,7 @@
 const { AppError } = require('../middleware/errorHandler');
 const { asText } = require('../utils/helpers');
 const apiKeyManager = require('./apiKeyManager');
-const geminiService = require('./geminiService');
+const geminiService = require('./geminiBackend');
 const poseEngine = require('./poseEngine');
 const externalProfileMemory = require('./auto/externalProfileMemory');
 

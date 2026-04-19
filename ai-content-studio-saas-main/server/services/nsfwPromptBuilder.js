@@ -1,4 +1,4 @@
-const geminiService = require('./geminiService');
+const geminiService = require('./geminiBackend');
 const apiKeyManager = require('./apiKeyManager');
 const { AppError } = require('../middleware/errorHandler');
 const log = require('../utils/logger');

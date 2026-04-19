@@ -260,7 +260,7 @@ router.delete('/:jobId', (req, res, next) => {
 });
 
 // --- Quality Score Picks endpoint ---
-const geminiService = require('../services/geminiService');
+const geminiService = require('../services/geminiBackend');
 const apiKeyManager = require('../services/apiKeyManager');
 
 const SCORE_CONCURRENCY = 3;

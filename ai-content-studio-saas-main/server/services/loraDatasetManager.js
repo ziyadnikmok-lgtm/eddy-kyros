@@ -1,6 +1,6 @@
 const { EventEmitter } = require('node:events');
 const apiKeyManager = require('./apiKeyManager');
-const geminiService = require('./geminiService');
+const geminiService = require('./geminiBackend');
 const referenceManager = require('./referenceManager');
 const promptBuilder = require('./promptBuilder');
 const galleryManager = require('./galleryManager');

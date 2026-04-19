@@ -1,6 +1,6 @@
 'use strict';
 const { asText } = require('../../utils/helpers');
-const geminiService = require('../geminiService');
+const geminiService = require('../geminiBackend');
 const referenceManager = require('../referenceManager');
 const promptBuilder = require('../promptBuilder');
 const promptKnowledgeService = require('../promptKnowledgeService');

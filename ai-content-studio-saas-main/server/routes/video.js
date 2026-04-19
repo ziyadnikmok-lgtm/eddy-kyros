@@ -83,6 +83,9 @@ router.post('/generate', parseMultipartIfNeeded, requirePlanCapacity(), async (r
         throw new AppError('Veo requires at least a prompt or source image', 400, 'VALIDATION_ERROR');
       }
       const apiKey = apiKeyManager.getActiveKey();
+      if (!apiKey) {
+        throw new AppError('Video generation requires a Gemini API key. Go to API Keys and add one — Vertex AI is not supported for video.', 400, 'GEMINI_KEY_REQUIRED');
+      }
       const operation = await geminiVideo.createVideoOperation(apiKey, {
         model,
         prompt: prompt ? String(prompt).slice(0, 2500) : '',
@@ -249,6 +252,7 @@ router.get('/:taskId/status', async (req, res, next) => {
     const entry = videoHistory.findByTaskId(taskId);
     if (entry?.provider === 'gemini') {
       const apiKey = apiKeyManager.getActiveKey();
+      if (!apiKey) throw new AppError('Gemini API key required to check video status.', 400, 'GEMINI_KEY_REQUIRED');
       const result = await geminiVideo.getVideoOperation(apiKey, entry.operationName);
 
       if (!result.done) {
