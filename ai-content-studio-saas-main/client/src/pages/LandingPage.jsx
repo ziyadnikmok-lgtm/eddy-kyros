@@ -519,14 +519,14 @@ export default function LandingPage({ onNavigate, initialAuthModal = null }) {
               className="inline-flex items-center gap-2 rounded-full px-4 py-1.5 mb-10 text-[11px] font-semibold uppercase tracking-[0.2em]"
               style={{ border: `1px solid ${DS.coral}35`, background: DS.coralDim, color: DS.coral, fontFamily: DS.display }}>
               <span className="h-1.5 w-1.5 rounded-full inline-block" style={{ background: DS.coral, animation: 'pulse-coral 2s infinite' }} />
-              The OFM content system
+              Built for OFM agencies
             </motion.div>
 
             {/* Headline — split weight editorial, product-specific */}
             <div className="mb-8">
               {[
-                { text: '3 photos in.', weight: 400, delay: 0.1 },
-                { text: '200 posts out.', weight: 800, delay: 0.2 },
+                { text: 'Your AI content keeps getting flagged.', weight: 400, delay: 0.1 },
+                { text: "Ours doesn't.", weight: 800, delay: 0.2 },
               ].map(({ text, weight, delay }) => (
                 <motion.div key={text} initial={{ opacity: 0, y: 30, filter: 'blur(10px)' }}
                   animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }} transition={{ delay, duration: 0.7, ease: [0.22, 1, 0.36, 1] }}>
@@ -547,7 +547,7 @@ export default function LandingPage({ onNavigate, initialAuthModal = null }) {
                 animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }} transition={{ delay: 0.3, duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
                 className="coral-text"
                 style={{ fontFamily: DS.display, fontSize: 'clamp(40px, 7vw, 80px)', lineHeight: 1.05, letterSpacing: '-0.035em', fontWeight: 800, margin: 0 }}>
-                None get flagged.
+                Generate anything. Post everything.
               </motion.h1>
             </div>
 
@@ -555,7 +555,7 @@ export default function LandingPage({ onNavigate, initialAuthModal = null }) {
             <motion.p initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45, duration: 0.6 }}
               className="mb-10 text-lg leading-[1.8] max-w-xl"
               style={{ color: DS.textMuted, fontFamily: DS.body }}>
-              Upload a shoot. Kyros multiplies it across 200+ scenes — same face, same body — then strips every AI fingerprint before anything goes live.
+              Kyros strips AI fingerprints before you post, locks your character's identity across every image, and batches 200 pieces of content in one run. No flags. No shoots. No gaps.
             </motion.p>
 
             {/* CTAs */}
