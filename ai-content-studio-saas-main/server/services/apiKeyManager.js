@@ -117,8 +117,8 @@ class ApiKeyManager {
 
   getActiveKey() {
     if (!this._store.activeKeyId) {
-      // If Vertex credentials are configured, the backend doesn't need a Gemini key
-      if (this.hasVertexCredentials()) return null;
+      // If Vertex is the selected backend, generation auth comes from the service account.
+      if (this.shouldUseVertexBackend()) return null;
       throw new AppError('No active API key set. Add a key first.', 400, 'NO_ACTIVE_KEY');
     }
 
