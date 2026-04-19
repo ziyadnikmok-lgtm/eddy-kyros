@@ -1,3 +1,4 @@
+const { AsyncResource } = require('node:async_hooks');
 const { AppError } = require('./errorHandler');
 
 const DEFAULT_MAX_BYTES = 50 * 1024 * 1024;
@@ -17,6 +18,12 @@ function createMultipartParser(options = {}) {
       return next(new AppError('Invalid multipart request boundary', 400, 'UPLOAD_PARSE_ERROR'));
     }
 
+    // Capture the current async context (includes runWithUser from requireAuth).
+    // Node.js stream event callbacks fire from the I/O thread and lose AsyncLocalStorage
+    // context — AsyncResource re-binds next() to the context captured here.
+    const asyncCtx = new AsyncResource('multipart-parser');
+    const safeNext = (...args) => asyncCtx.runInAsyncScope(next, null, ...args);
+
     const chunks = [];
     let totalBytes = 0;
     let done = false;
@@ -28,7 +35,7 @@ function createMultipartParser(options = {}) {
         done = true;
         chunks.length = 0;
         req.destroy();
-        return next(new AppError(`Upload exceeds ${Math.round(maxBytes / (1024 * 1024))}MB limit`, 413, 'PAYLOAD_TOO_LARGE'));
+        return safeNext(new AppError(`Upload exceeds ${Math.round(maxBytes / (1024 * 1024))}MB limit`, 413, 'PAYLOAD_TOO_LARGE'));
       }
       chunks.push(chunk);
     });
@@ -80,12 +87,12 @@ function createMultipartParser(options = {}) {
         req.files = files;
         if (file) {
           req.file = file;
-          return next();
+          return safeNext();
         }
 
-        return fallback ? fallback(req, _res, next) : next();
+        return fallback ? fallback(req, _res, safeNext) : safeNext();
       } catch (_err) {
-        return next(new AppError('Failed to parse multipart upload', 400, 'UPLOAD_PARSE_ERROR'));
+        return safeNext(new AppError('Failed to parse multipart upload', 400, 'UPLOAD_PARSE_ERROR'));
       }
     });
 
@@ -93,7 +100,7 @@ function createMultipartParser(options = {}) {
       if (done) return;
       done = true;
       chunks.length = 0;
-      next(new AppError('Failed to read upload stream', 400, 'UPLOAD_PARSE_ERROR'));
+      safeNext(new AppError('Failed to read upload stream', 400, 'UPLOAD_PARSE_ERROR'));
     });
   };
 }
