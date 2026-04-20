@@ -100,11 +100,17 @@ class StyleLibraryService {
     this._validateAtomPayload(data);
 
     const text = data.text.trim();
+    const source = this._normalizeSource(data.source);
 
-    const quality = this.passesQualityGate(data.category, text);
-    if (!quality.pass) {
-      log.info('style_library_quality_reject', { reason: quality.reason, text: text.substring(0, 60) });
-      return null;
+    // Manual atoms are user-authored building blocks. Keep the stricter quality
+    // gate for imported/auto-extracted atoms, but do not silently discard a
+    // creator's manual snippet and make the UI look like it vanished on refresh.
+    if (source.type !== 'manual') {
+      const quality = this.passesQualityGate(data.category, text);
+      if (!quality.pass) {
+        log.info('style_library_quality_reject', { reason: quality.reason, text: text.substring(0, 60) });
+        return null;
+      }
     }
 
     this._ensureDataFile(this._dataFile);
@@ -120,7 +126,7 @@ class StyleLibraryService {
       category: data.category,
       text,
       tags: Array.isArray(data.tags) ? data.tags.map(t => String(t).trim().toLowerCase()).filter(Boolean) : [],
-      source: this._normalizeSource(data.source),
+      source,
       createdAt: new Date().toISOString(),
       usageCount: 0,
       favorite: false,
@@ -227,6 +233,29 @@ class StyleLibraryService {
       limit,
       pages: Math.ceil(total / limit),
     };
+  }
+
+  listAllAtoms(filters = {}) {
+    this._ensureDataFile(this._dataFile);
+    let results = this._loadStore();
+    if (filters.category) results = results.filter(a => a.category === filters.category);
+    if (filters.tag) {
+      const tag = filters.tag.toLowerCase();
+      results = results.filter(a => a.tags && a.tags.includes(tag));
+    }
+    if (filters.sourceType) results = results.filter(a => a.source?.type === filters.sourceType);
+    if (filters.sourceUsername) results = results.filter(a => a.source?.profileUsername === filters.sourceUsername);
+    if (filters.favorite === true || filters.favorite === 'true') results = results.filter(a => a.favorite);
+    if (filters.q) {
+      const q = filters.q.toLowerCase();
+      results = results.filter(a => a.text.toLowerCase().includes(q) || (a.tags && a.tags.some(t => t.includes(q))));
+    }
+    return results
+      .sort((a, b) => {
+        if (a.favorite !== b.favorite) return b.favorite ? 1 : -1;
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      })
+      .map(a => ({ ...a }));
   }
 
   updateAtom(id, updates) {

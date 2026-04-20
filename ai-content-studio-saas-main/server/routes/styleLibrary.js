@@ -2,8 +2,14 @@ const express = require('express');
 const styleLibrary = require('../services/styleLibrary');
 const apiKeyManager = require('../services/apiKeyManager');
 const geminiService = require('../services/geminiBackend');
+const { AppError } = require('../middleware/errorHandler');
 
 const router = express.Router();
+
+router.use((_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
 
 router.get('/', (req, res, next) => {
   try {
@@ -64,7 +70,7 @@ router.get('/content-presets', (_req, res) => {
 router.get('/export', (_req, res) => {
   const grouped = {};
   for (const cat of ['pose', 'expression', 'outfit', 'scene', 'lighting', 'camera', 'vibe', 'accessories', 'format']) {
-    const texts = styleLibrary._store.filter(a => a.category === cat).map(a => a.text);
+    const texts = styleLibrary.listAllAtoms({ category: cat }).map(a => a.text);
     if (texts.length) grouped[cat] = texts;
   }
   res.setHeader('Content-Disposition', 'attachment; filename="style-library-prompts.json"');
@@ -84,6 +90,9 @@ router.get('/:id', (req, res, next) => {
 router.post('/', (req, res, next) => {
   try {
     const atom = styleLibrary.createAtom(req.body);
+    if (!atom) {
+      throw new AppError('Atom was skipped because it already exists or failed style quality rules', 409, 'ATOM_SKIPPED');
+    }
     res.status(201).json({ success: true, data: atom });
   } catch (err) {
     next(err);
