@@ -119,6 +119,49 @@ function _buildGenerationInputSignature(options = {}) {
   return `:refs:${crypto.createHash('sha256').update(summary).digest('hex')}`;
 }
 
+function _resolveVariationSeed(options = {}) {
+  const explicitSeed = Number.parseInt(options.variationSeed ?? options.seed, 10);
+  if (Number.isSafeInteger(explicitSeed) && explicitSeed > 0) return explicitSeed;
+  return crypto.randomInt(1, 2147483647);
+}
+
+function _buildVariationSeedSuffix(seed) {
+  if (!Number.isSafeInteger(seed) || seed <= 0) return '';
+  return `\n\n[INTERNAL VARIATION SEED: ${seed}. Use this only to randomize composition and sampling. Do not render this seed or any text in the image.]`;
+}
+
+function _appendVariationSeedToPrompt(prompt, seed) {
+  const suffix = _buildVariationSeedSuffix(seed);
+  if (!suffix) return prompt;
+  const maxBaseLength = Math.max(0, cfg.PROMPT_MAX_LENGTH - suffix.length);
+  return `${String(prompt || '').trim().slice(0, maxBaseLength)}${suffix}`;
+}
+
+function _appendVariationSeedToParts(parts, seed) {
+  const suffix = _buildVariationSeedSuffix(seed);
+  if (!suffix) return parts;
+
+  const cloned = parts.map((part) => {
+    if (!part || typeof part !== 'object') return part;
+    if (part.inlineData) return { ...part, inlineData: { ...part.inlineData } };
+    return { ...part };
+  });
+
+  for (let index = cloned.length - 1; index >= 0; index -= 1) {
+    if (typeof cloned[index]?.text === 'string') {
+      const maxBaseLength = Math.max(0, cfg.PROMPT_MAX_LENGTH - suffix.length);
+      cloned[index] = {
+        ...cloned[index],
+        text: `${cloned[index].text.trim().slice(0, maxBaseLength)}${suffix}`,
+      };
+      return cloned;
+    }
+  }
+
+  cloned.push({ text: suffix.trim() });
+  return cloned;
+}
+
 function isTransientError(err) {
   const msg = (err && err.message) ? err.message : '';
   return (
@@ -172,9 +215,11 @@ class GeminiVertexService {
     if (prompt.trim().length > cfg.PROMPT_MAX_LENGTH) {
       throw new AppError(`Prompt must be ${cfg.PROMPT_MAX_LENGTH.toLocaleString()} characters or fewer`, 400, 'VALIDATION_ERROR');
     }
-    const inputSig = _buildGenerationInputSignature(options);
-    const dedupKey = `vtx:img:${crypto.createHash('sha256').update(prompt.trim() + (options.aspectRatio || '') + (options.imageSize || '') + inputSig).digest('hex')}`;
-    return dedupRequest(dedupKey, () => this._generateImageInner(prompt, options));
+    const variationSeed = _resolveVariationSeed(options);
+    const generationOptions = { ...options, variationSeed };
+    const inputSig = _buildGenerationInputSignature(generationOptions);
+    const dedupKey = `vtx:img:${crypto.createHash('sha256').update(prompt.trim() + (options.aspectRatio || '') + (options.imageSize || '') + inputSig + `:seed:${variationSeed}`).digest('hex')}`;
+    return dedupRequest(dedupKey, () => this._generateImageInner(prompt, generationOptions));
   }
 
   async _generateImageInner(prompt, options) {
@@ -198,7 +243,7 @@ class GeminiVertexService {
       let currentPrompt = prompt;
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
-          const retryPrompt = this._buildRetryPrompt(currentPrompt, attempt);
+          const retryPrompt = this._buildRetryPrompt(_appendVariationSeedToPrompt(currentPrompt, options.variationSeed), attempt);
           const contentParts = this._buildImageGenerationParts(retryPrompt, options);
           const response = await withTimeout(
             genAI.models.generateContent({
@@ -221,7 +266,7 @@ class GeminiVertexService {
             }
             const refCount = contentParts.filter((p) => p.inlineData).length;
             this._trackImageSpend(selectedImageModel, options.imageSize || '2K', refCount, response, options.characterId);
-            return { image: parsed.imageResult, text: parsed.textResult || null, modelUsed: selectedImageModel };
+            return { image: parsed.imageResult, text: parsed.textResult || null, modelUsed: selectedImageModel, seed: options.variationSeed || null };
           }
 
           if (parsed.blockReason || parsed.hasNoParts) {
@@ -326,7 +371,7 @@ class GeminiVertexService {
         if (!part.text && !part.inlineData) throw new AppError('Each part must have "text" or "inlineData"', 400, 'VALIDATION_ERROR');
         if (part.inlineData && (!part.inlineData.mimeType || !part.inlineData.data)) throw new AppError('inlineData parts must include mimeType and data', 400, 'VALIDATION_ERROR');
       }
-      return options.parts;
+      return _appendVariationSeedToParts(options.parts, options.variationSeed);
     }
     const parts = [];
     const referenceImages = Array.isArray(options.referenceImages) ? options.referenceImages : [];
