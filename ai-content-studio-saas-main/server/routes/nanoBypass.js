@@ -2,6 +2,7 @@ const express = require('express');
 const galleryManager = require('../services/galleryManager');
 const apiKeyManager = require('../services/apiKeyManager');
 const referenceManager = require('../services/referenceManager');
+const geminiBackend = require('../services/geminiBackend');
 const { AppError } = require('../middleware/errorHandler');
 const { requirePlanCapacity } = require('../middleware/planLimits');
 const { logUsageEvent, startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
@@ -105,6 +106,7 @@ async function callGemini(apiKey, modelId, parts, aspectRatio, imageSize, temper
 // POST /api/nano-bypass/edit
 router.post('/edit', express.json({ limit: '50mb' }), requirePlanCapacity(), async (req, res, next) => {
   let runId = null;
+  let provider = 'gemini';
   try {
     const {
       images,        // array of { base64, mimeType }
@@ -136,15 +138,17 @@ router.post('/edit', express.json({ limit: '50mb' }), requirePlanCapacity(), asy
       throw new AppError(`invalid imageSize`, 400, 'VALIDATION_ERROR');
     }
 
-    const apiKey = apiKeyManager.getActiveKey();
-    if (!apiKey) {
-      throw new AppError('Nano Bypass requires a Gemini API key. Go to API Keys and add one — Vertex AI is not supported for this feature.', 400, 'GEMINI_KEY_REQUIRED');
+    const useVertexBackend = apiKeyManager.shouldUseVertexBackend();
+    const apiKey = useVertexBackend ? '' : apiKeyManager.getActiveKey();
+    if (!useVertexBackend && !apiKey) {
+      throw new AppError('Nano Bypass requires a Gemini API key or active Vertex AI credentials. Go to API Keys and add one.', 400, 'GEMINI_KEY_REQUIRED');
     }
     const modelId = MODEL_IDS[model];
+    provider = useVertexBackend ? 'vertex' : 'gemini';
     runId = startGenerationRun({
       userId: req.session?.userId,
       feature: 'nano-bypass',
-      provider: 'gemini',
+      provider,
       model: modelId,
     });
     logUsageEvent({
@@ -153,7 +157,7 @@ router.post('/edit', express.json({ limit: '50mb' }), requirePlanCapacity(), asy
       entityType: 'generation_run',
       entityId: runId,
       source: 'nano-bypass',
-      payload: { feature: 'nano-bypass', model: modelId, imageCount: images.length },
+      payload: { feature: 'nano-bypass', provider, model: modelId, imageCount: images.length },
     });
 
     let effectivePrompt = prompt.trim();
@@ -182,7 +186,18 @@ router.post('/edit', express.json({ limit: '50mb' }), requirePlanCapacity(), asy
     }
     parts.push({ text: effectivePrompt });
 
-    const b64Result = await callGemini(apiKey, modelId, parts, aspectRatio, imageSize, temperature);
+    const generated = await geminiBackend.generateImage(apiKey, effectivePrompt, {
+      parts,
+      model: modelId,
+      aspectRatio: aspectRatio !== 'auto' ? aspectRatio : undefined,
+      imageSize,
+      temperature,
+      characterId: characterId || undefined,
+    });
+    const b64Result = generated?.image?.base64Data;
+    if (!b64Result) {
+      throw new AppError('Nano Bypass returned no image. Try a different prompt or image.', 502, 'NANO_BYPASS_NO_IMAGE');
+    }
 
     let galleryId = null;
     if (saveToGallery) {
@@ -201,7 +216,7 @@ router.post('/edit', express.json({ limit: '50mb' }), requirePlanCapacity(), asy
     finishGenerationRun(runId, {
       status: 'succeeded',
       outputCount: 1,
-      provider: 'gemini',
+      provider,
       model: modelId,
     });
     logUsageEvent({
@@ -210,7 +225,7 @@ router.post('/edit', express.json({ limit: '50mb' }), requirePlanCapacity(), asy
       entityType: 'generation_run',
       entityId: runId,
       source: 'nano-bypass',
-      payload: { feature: 'nano-bypass', galleryId, model: modelId },
+      payload: { feature: 'nano-bypass', provider, galleryId, model: modelId },
     });
 
     log.info('nano_bypass_edit_ok', { model: modelId, imageCount: images.length, galleryId });
@@ -228,7 +243,7 @@ router.post('/edit', express.json({ limit: '50mb' }), requirePlanCapacity(), asy
     finishGenerationRun(runId, {
       status: 'failed',
       outputCount: 0,
-      provider: 'gemini',
+      provider,
       errorCode: err.code || err.name || 'UNKNOWN',
       errorMessage: err.message || 'Nano bypass failed',
     });
@@ -238,7 +253,7 @@ router.post('/edit', express.json({ limit: '50mb' }), requirePlanCapacity(), asy
       entityType: 'generation_run',
       entityId: runId,
       source: 'nano-bypass',
-      payload: { feature: 'nano-bypass', errorCode: err.code || err.name || 'UNKNOWN', message: err.message || 'Nano bypass failed' },
+      payload: { feature: 'nano-bypass', provider, errorCode: err.code || err.name || 'UNKNOWN', message: err.message || 'Nano bypass failed' },
     });
     next(err);
   }
