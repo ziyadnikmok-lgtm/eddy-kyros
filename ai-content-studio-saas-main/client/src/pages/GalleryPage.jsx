@@ -468,7 +468,6 @@ export default function GalleryPage() {
         sourceImageBase64: parsed.base64,
         sourceImageMimeType: parsed.mimeType,
         sourceImageName: img.filename || filenameFromUrl(galleryApi.imageUrl(img.id)) || `gallery-${img.id}.png`,
-        characterId: img.characterId || '',
         aspectRatio: img.aspectRatio || 'auto',
       });
     } catch (err) {

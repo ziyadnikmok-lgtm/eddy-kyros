@@ -661,7 +661,6 @@ export default function GenerationFeedPanel({ mode = 'rail' }) {
           sourceImageBase64: parsed.base64,
           sourceImageMimeType: parsed.mimeType,
           sourceImageName: buildActionFilename(item, parsed.mimeType),
-          characterId: item.characterId || undefined,
           aspectRatio: item.aspectRatio || undefined,
         });
         notify('Loaded image into Nano Bypass', 'success');

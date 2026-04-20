@@ -495,7 +495,6 @@ export default function NsfwGeneratePage() {
       sourceImageBase64: img.base64Data,
       sourceImageMimeType: img.mimeType || 'image/png',
       sourceImageName: filename,
-      characterId: resolveCharacterIdFromPreset(selectedPreset, characters),
       aspectRatio,
     };
     writeHandoff(NANO_BYPASS_HANDOFF_KEY, payload);
