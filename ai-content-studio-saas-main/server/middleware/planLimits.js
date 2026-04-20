@@ -88,11 +88,14 @@ function reserveFreeTrialUsage(userId, cost, source = 'generation') {
     INSERT INTO usage_events (id, user_id, event_type, entity_type, entity_id, source, payload_json)
     VALUES (?, ?, 'trial.generation_reserved', 'trial', ?, ?, ?)
   `);
+  const ids = [];
 
   const tx = db.transaction(() => {
     for (let index = 0; index < cost; index += 1) {
+      const id = uuidv4();
+      ids.push(id);
       insertEvent.run(
-        uuidv4(),
+        id,
         userId,
         `slot-${Date.now()}-${index}`,
         source,
@@ -102,6 +105,23 @@ function reserveFreeTrialUsage(userId, cost, source = 'generation') {
   });
 
   tx();
+  return ids;
+}
+
+function releaseFreeTrialUsage(reservationIds = []) {
+  if (!Array.isArray(reservationIds) || reservationIds.length === 0) return 0;
+  const deleteEvent = db.prepare(`
+    DELETE FROM usage_events
+    WHERE id = ? AND event_type = 'trial.generation_reserved'
+  `);
+  const tx = db.transaction(() => {
+    let removed = 0;
+    for (const id of reservationIds) {
+      removed += deleteEvent.run(id).changes || 0;
+    }
+    return removed;
+  });
+  return tx();
 }
 
 /**
@@ -140,7 +160,12 @@ function requirePlanCapacity(options = {}) {
       }
 
       if (plan === 'free') {
-        reserveFreeTrialUsage(userId, cost, req.path || req.originalUrl || 'generation');
+        const reservationIds = reserveFreeTrialUsage(userId, cost, req.path || req.originalUrl || 'generation');
+        res.once('finish', () => {
+          if (res.statusCode >= 400) {
+            try { releaseFreeTrialUsage(reservationIds); } catch { /* best effort refund */ }
+          }
+        });
       }
 
       // Attach to req for logging
@@ -152,4 +177,4 @@ function requirePlanCapacity(options = {}) {
   };
 }
 
-module.exports = { requirePlanCapacity, getCurrentPlan, getUsageLast24h, getFreeTrialUsage, PLAN_LIMITS, isHostedRuntime };
+module.exports = { requirePlanCapacity, getCurrentPlan, getUsageLast24h, getFreeTrialUsage, reserveFreeTrialUsage, releaseFreeTrialUsage, PLAN_LIMITS, isHostedRuntime };
