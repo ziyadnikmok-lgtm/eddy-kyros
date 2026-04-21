@@ -113,7 +113,11 @@ router.post('/', requirePlanCapacity(), async (req, res, next) => {
 
     if (placementReference) {
       referenceImages.push(placementReference);
-      finalPrompt = `${finalPrompt}\n\n[EXTRA REFERENCE MAPPING]\nUse the first reference image as identity and subject appearance.\nUse the second reference image as the scene composition, camera framing, and subject placement.\nPlace the same character from reference image 1 naturally inside the location/context of reference image 2.\nDo not copy the person from reference image 2.`;
+      if (resolvedCharacterId) {
+        finalPrompt = `${finalPrompt}\n\n[EXTRA REFERENCE MAPPING]\nUse the character reference images as identity and subject appearance.\nUse the last reference image as the scene composition, camera framing, and subject placement.\nPlace the same character naturally inside the location/context of the last reference image.\nDo not copy the person from the scene/reference image.`;
+      } else {
+        finalPrompt = `${finalPrompt}\n\n[IMAGE EDIT INPUT]\nUse the reference image as the base image to modify.\nPreserve the original composition, camera angle, and useful details unless the user prompt asks to change them.\nApply the user requested edits naturally and return one polished image.`;
+      }
     }
 
     if (specificReferences.length > 0) {

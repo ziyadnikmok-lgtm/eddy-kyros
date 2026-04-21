@@ -21,6 +21,15 @@ function fileToDataUrl(file) {
   });
 }
 
+function getClipboardImageFile(event) {
+  const item = [...(event.clipboardData?.items || [])].find((entry) => entry.type.startsWith('image/'));
+  if (!item) return null;
+  const file = item.getAsFile();
+  if (!file) return null;
+  const ext = (file.type || 'image/png').split('/')[1] || 'png';
+  return new File([file], `generate-paste-${Date.now()}.${ext}`, { type: file.type || 'image/png' });
+}
+
 const AUTHENTICITY_MODIFIERS = [
   { id: 'iphone-selfie', label: 'iPhone Selfie', text: 'Shot on iPhone, slight lens distortion, natural phone camera quality' },
   { id: 'natural-grain', label: 'Natural Grain', text: 'Subtle film grain, organic noise texture, not studio-perfect' },
@@ -602,11 +611,6 @@ export default function GeneratePage() {
     };
   }, [selectedCharId, chars]);
   useEffect(() => {
-    if (!useCharacter) {
-      update({ useExtraReference: false, extraReference: null, extraReferencePreview: '' });
-    }
-  }, [useCharacter]);
-  useEffect(() => {
     if (!useExtraReference) {
       update({ extraReference: null, extraReferencePreview: '' });
     }
@@ -759,7 +763,9 @@ export default function GeneratePage() {
       body.characterId = selectedCharId;
       const activeRefIds = selectedChar?.references?.filter((r) => r.isActive).map((r) => r.id);
       if (activeRefIds?.length) body.activeReferenceIds = activeRefIds;
-      if (useExtraReference && extraReference?.image) body.extraReferenceImage = extraReference;
+    }
+    if (useExtraReference && extraReference?.image) {
+      body.extraReferenceImage = extraReference;
     }
     const typedRefs = [
       specificOutfitRef
@@ -815,17 +821,39 @@ export default function GeneratePage() {
     }
   };
 
-  const handleExtraReferenceUpload = async (event) => {
-    const file = event.target.files?.[0];
+  const applyExtraReferenceFile = async (file, successMessage = 'Image added to Generate') => {
     if (!file) return;
+    if (!file.type?.startsWith('image/')) {
+      notify('Please use an image file', 'error');
+      return;
+    }
     try {
       const dataUrl = await fileToDataUrl(file);
       update({
+        useExtraReference: true,
         extraReference: { image: dataUrl, mimeType: file.type, name: file.name },
         extraReferencePreview: dataUrl,
       });
+      notify(successMessage, 'success');
     } catch {
-      notify('Failed to read extra reference image', 'error');
+      notify('Failed to read image', 'error');
+    }
+  };
+
+  useEffect(() => {
+    const onPaste = (event) => {
+      const pastedFile = getClipboardImageFile(event);
+      if (!pastedFile) return;
+      applyExtraReferenceFile(pastedFile, 'Pasted image into Generate');
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, []);
+
+  const handleExtraReferenceUpload = async (event) => {
+    const file = event.target.files?.[0];
+    try {
+      await applyExtraReferenceFile(file, 'Image added to Generate');
     } finally {
       event.target.value = '';
     }
@@ -963,6 +991,65 @@ export default function GeneratePage() {
                 />
               </div>
 
+              <div
+                className={`rounded-2xl border p-3 transition ${
+                  useExtraReference
+                    ? 'border-cyan-500/35 bg-cyan-500/[0.06]'
+                    : 'border-zinc-800/80 bg-zinc-900/45'
+                }`}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  applyExtraReferenceFile(event.dataTransfer.files?.[0], 'Dropped image into Generate');
+                }}
+              >
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Image Input</div>
+                    <div className="mt-1 text-xs text-zinc-400">
+                      Paste, drop, or upload an image, then write what to change.
+                    </div>
+                  </div>
+                  <Toggle checked={useExtraReference} onChange={(v) => update({ useExtraReference: v })} label={null} />
+                </div>
+
+                {useExtraReference && (
+                  <div className="space-y-2">
+                    <label className="flex min-h-28 cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-dashed border-cyan-500/30 bg-zinc-950/60 transition hover:border-cyan-400/60">
+                      {extraReferencePreview ? (
+                        <div className="flex w-full items-center gap-3 p-2">
+                          <img src={extraReferencePreview} alt="Generate input" className="h-24 w-20 rounded-lg border border-zinc-700/80 object-cover" />
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-medium text-zinc-100">Image ready</div>
+                            <div className="mt-1 truncate text-xs text-zinc-500">{extraReference?.name || 'Pasted image'}</div>
+                            <div className="mt-2 text-[11px] leading-relaxed text-cyan-300/80">
+                              {useCharacter && selectedCharId
+                                ? 'Kyros will keep your selected character and use this image for scene/composition.'
+                                : 'Kyros will use this as the base image and apply your prompt edits.'}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="px-4 py-5 text-center">
+                          <div className="text-sm font-medium text-zinc-200">Add image to modify</div>
+                          <div className="mt-1 text-xs text-zinc-500">Ctrl+V, drag here, or click to browse</div>
+                        </div>
+                      )}
+                      <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleExtraReferenceUpload} />
+                    </label>
+                    {extraReference && (
+                      <button
+                        type="button"
+                        onClick={() => update({ useExtraReference: false, extraReference: null, extraReferencePreview: '' })}
+                        className="text-xs text-zinc-400 hover:text-zinc-200 cursor-pointer"
+                      >
+                        Remove image input
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div className="flex items-center justify-between rounded-xl border border-zinc-800/70 bg-zinc-900/60 px-3 py-2.5">
                 <Toggle checked={enhanceEnabled} onChange={setEnhanceEnabled} label="AI Prompt Assist" />
                 <span className="text-[10px] text-zinc-500">{enhanceEnabled ? 'On' : 'Off'}</span>
@@ -1024,35 +1111,32 @@ export default function GeneratePage() {
                     <div className="space-y-2 rounded-xl border border-zinc-800/70 bg-zinc-950/60 p-3">
                       <div className="flex items-center justify-between gap-2">
                         <div>
-                          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Scene Reference</div>
-                          <div className="mt-1 text-[11px] text-zinc-500">Optional second image for scene or composition.</div>
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Character + Image Input</div>
+                          <div className="mt-1 text-[11px] text-zinc-500">The image input above becomes scene/composition while this character stays locked.</div>
                         </div>
                         <Toggle checked={useExtraReference} onChange={(v) => update({ useExtraReference: v })} label={null} />
                       </div>
 
                       {useExtraReference && (
                         <>
-                          <label className={`flex items-center justify-center border border-dashed rounded-xl transition h-28 overflow-hidden bg-zinc-900/50 ${selectedCharId ? 'border-zinc-700/80 cursor-pointer hover:border-zinc-500' : 'border-zinc-800 cursor-not-allowed opacity-70'}`}>
+                          <label className="flex h-28 cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-dashed border-zinc-700/80 bg-zinc-900/50 transition hover:border-zinc-500">
                             {extraReferencePreview ? (
                               <img src={extraReferencePreview} alt="Extra reference" className="max-h-full max-w-full object-contain" />
                             ) : (
                               <div className="text-center">
-                                <div className="text-zinc-300 text-sm">Add second image</div>
-                                <div className="text-zinc-500 text-xs mt-1">Character keeps identity, scene follows this image</div>
+                                <div className="text-zinc-300 text-sm">Add or paste scene image</div>
+                                <div className="text-zinc-500 text-xs mt-1">Same input slot as above</div>
                               </div>
                             )}
-                            <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleExtraReferenceUpload} disabled={!selectedCharId} />
+                            <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleExtraReferenceUpload} />
                           </label>
-                          {!selectedCharId && (
-                            <div className="text-xs text-zinc-500">Select a character first to use this upload.</div>
-                          )}
                           {extraReference && (
                             <button
                               type="button"
-                              onClick={() => update({ extraReference: null, extraReferencePreview: '' })}
+                              onClick={() => update({ useExtraReference: false, extraReference: null, extraReferencePreview: '' })}
                               className="text-xs text-zinc-400 hover:text-zinc-200 cursor-pointer"
                             >
-                              Remove extra reference
+                              Remove image input
                             </button>
                           )}
                         </>
