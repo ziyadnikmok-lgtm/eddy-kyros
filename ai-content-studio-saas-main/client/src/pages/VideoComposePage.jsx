@@ -59,6 +59,14 @@ function isVideoFile(file) {
   return Boolean(file && String(file.type || '').toLowerCase().startsWith('video/'));
 }
 
+function getClipboardImageFile(event) {
+  const item = [...(event.clipboardData?.items || [])].find((entry) => entry.type.startsWith('image/'));
+  const file = item?.getAsFile?.();
+  if (!file) return null;
+  const ext = file.type?.split('/')?.[1] || 'png';
+  return new File([file], `composer-paste-${Date.now()}.${ext}`, { type: file.type || 'image/png' });
+}
+
 function DropZone({ label, accept, file, onFile, showGalleryPicker }) {
   const ref = useRef(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -116,7 +124,7 @@ function DropZone({ label, accept, file, onFile, showGalleryPicker }) {
           <>
             <div className="text-3xl mb-2 opacity-30">+</div>
             <div className="text-sm text-zinc-400">{label}</div>
-            <div className="text-[11px] text-zinc-600 mt-0.5">Drop or click to browse</div>
+            <div className="text-[11px] text-zinc-600 mt-0.5">Drop, paste, or click to browse</div>
           </>
         )}
       </button>
@@ -178,7 +186,7 @@ function DraggableClip({ clip, isSelected, onSelect, onUpdate }) {
       className="absolute cursor-move touch-none flex items-center justify-center -translate-x-1/2 -translate-y-1/2"
       style={{ left, top, zIndex: isSelected ? 30 : 20 }}
     >
-      <div className={`whitespace-nowrap px-4 py-2 text-center font-bold text-white transition cursor-move ${isSelected ? 'scale-105 opacity-100' : 'opacity-90'}`}
+      <div className={`max-w-[92%] whitespace-pre-line px-4 py-2 text-center font-bold leading-tight text-white transition cursor-move ${isSelected ? 'scale-105 opacity-100' : 'opacity-90'}`}
         style={{ fontFamily: "'Montserrat', 'Inter', 'Roboto', 'Arial Black', sans-serif", letterSpacing: '-0.02em', fontSize: `${Math.max(13, Math.min(38, clip.fontSize * 0.37))}px`, textShadow: '2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 0 4px 8px rgba(0,0,0,0.8)' }}>
         {clip.text}
       </div>
@@ -237,7 +245,7 @@ function DraggableTimelineClip({ clip, timelineDuration, isSelected, onSelect, o
         onPointerDown={(e) => handlePointerDown(e, 'left')} 
         className="w-2.5 h-full bg-fuchsia-400/0 hover:bg-fuchsia-400/40 cursor-w-resize shrink-0 transition relative z-20 flex items-center border-r border-fuchsia-500/20" 
       />
-      <span className="text-[9px] text-fuchsia-200 truncate flex-1 px-1 pointer-events-none select-none drop-shadow">{clip.text}</span>
+      <span className="text-[9px] text-fuchsia-200 truncate flex-1 px-1 pointer-events-none select-none drop-shadow">{String(clip.text || '').replace(/\s*\n\s*/g, ' / ')}</span>
       <div 
         onPointerDown={(e) => handlePointerDown(e, 'right')} 
         className="w-2.5 h-full bg-fuchsia-400/0 hover:bg-fuchsia-400/40 cursor-e-resize shrink-0 transition relative z-20 flex items-center justify-end border-l border-fuchsia-500/20" 
@@ -487,6 +495,28 @@ function VideoComposePage() {
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
   useEffect(() => () => { if (previewUrl2) URL.revokeObjectURL(previewUrl2); }, [previewUrl2]);
   useEffect(() => () => { if (audioPreviewUrl) URL.revokeObjectURL(audioPreviewUrl); }, [audioPreviewUrl]);
+
+  useEffect(() => {
+    const onPaste = (event) => {
+      const pastedImage = getClipboardImageFile(event);
+      if (!pastedImage) return;
+
+      event.preventDefault();
+      if (!videoFile) {
+        setVideoFile(pastedImage);
+        setPanel('media');
+        notify('Pasted image as main clip', 'success');
+        return;
+      }
+
+      setVideoFile2(pastedImage);
+      setPanel('media');
+      notify('Pasted image as second clip', 'success');
+    };
+
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [notify, videoFile]);
 
   useEffect(() => {
     setClips([]); setSelectedClipId(null); setTrimStart(0); setTrimEnd(0);
