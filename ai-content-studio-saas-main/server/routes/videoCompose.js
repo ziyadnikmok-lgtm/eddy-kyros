@@ -12,6 +12,7 @@ const { TEMP_DIR, UPLOADS_DIR } = require('../paths');
 const videoHistory = require('../services/videoHistoryStore');
 const apiKeyManager = require('../services/apiKeyManager');
 const geminiService = require('../services/geminiBackend');
+const directGeminiService = require('../services/geminiService');
 
 const router = express.Router();
 const parseMultipart = createMultipartParser({ maxBytes: 500 * 1024 * 1024 });
@@ -256,6 +257,29 @@ function parseOverlayTextResponse(rawText, timelineDuration) {
     .filter(Boolean);
 }
 
+async function analyzeOverlayFramesWithFallback(apiKey, frames, prompt) {
+  try {
+    return await geminiService.analyzeImagesWithPrompt(
+      apiKey,
+      frames.map((frame) => ({ mimeType: frame.mimeType, base64Data: frame.base64Data })),
+      prompt,
+    );
+  } catch (err) {
+    const canFallbackToGeminiKey = Boolean(apiKey);
+    const shouldFallback = ['INVALID_CREDENTIALS', 'CONFIG_ERROR', 'NO_VERTEX_CREDENTIALS'].includes(err.code);
+    if (!canFallbackToGeminiKey || !shouldFallback || !apiKeyManager.shouldUseVertexBackend()) {
+      throw err;
+    }
+
+    console.warn('[video-compose] Vertex overlay extraction failed; falling back to active Gemini API key:', err.message);
+    return directGeminiService.__direct.analyzeImagesWithPrompt(
+      apiKey,
+      frames.map((frame) => ({ mimeType: frame.mimeType, base64Data: frame.base64Data })),
+      prompt,
+    );
+  }
+}
+
 // Compute the combined CSS sepia × hue-rotate colour matrix for cool warmth.
 function _coolMatrix(sepiaAmt, hueDeg) {
   const s = sepiaAmt;
@@ -444,11 +468,7 @@ Rules:
 - If no overlay text exists, return {"clips":[]}.`;
 
     const apiKey = apiKeyManager.getActiveKey();
-    const text = await geminiService.analyzeImagesWithPrompt(
-      apiKey,
-      frames.map((frame) => ({ mimeType: frame.mimeType, base64Data: frame.base64Data })),
-      prompt,
-    );
+    const text = await analyzeOverlayFramesWithFallback(apiKey, frames, prompt);
     const clips = parseOverlayTextResponse(text, timelineDuration);
     res.json({ success: true, data: { clips } });
   } catch (err) {
