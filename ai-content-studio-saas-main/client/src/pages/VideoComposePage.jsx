@@ -67,6 +67,14 @@ function getClipboardImageFile(event) {
   return new File([file], `composer-paste-${Date.now()}.${ext}`, { type: file.type || 'image/png' });
 }
 
+function getClipboardVideoFile(event) {
+  const item = [...(event.clipboardData?.items || [])].find((entry) => entry.type.startsWith('video/'));
+  const file = item?.getAsFile?.();
+  if (!file) return null;
+  const ext = file.type?.split('/')?.[1] || 'mp4';
+  return new File([file], `overlay-source-${Date.now()}.${ext}`, { type: file.type || 'video/mp4' });
+}
+
 function DropZone({ label, accept, file, onFile, showGalleryPicker }) {
   const ref = useRef(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -445,6 +453,8 @@ function VideoComposePage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerItems, setPickerItems] = useState([]);
   const [pickerTarget, setPickerTarget] = useState('primary');
+  const [overlaySourceFile, setOverlaySourceFile] = useState(null);
+  const [extractingText, setExtractingText] = useState(false);
 
   const previewUrl = useMemo(() => (videoFile ? URL.createObjectURL(videoFile) : null), [videoFile]);
   const previewUrl2 = useMemo(() => (videoFile2 ? URL.createObjectURL(videoFile2) : null), [videoFile2]);
@@ -498,6 +508,15 @@ function VideoComposePage() {
 
   useEffect(() => {
     const onPaste = (event) => {
+      if (panel === 'text') {
+        const pastedVideo = getClipboardVideoFile(event);
+        if (pastedVideo) {
+          event.preventDefault();
+          importTextOverlayFromVideo(pastedVideo);
+          return;
+        }
+      }
+
       const pastedImage = getClipboardImageFile(event);
       if (!pastedImage) return;
 
@@ -516,7 +535,7 @@ function VideoComposePage() {
 
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
-  }, [notify, videoFile]);
+  }, [notify, videoFile, panel, timelineDuration, visibleDuration]);
 
   useEffect(() => {
     setClips([]); setSelectedClipId(null); setTrimStart(0); setTrimEnd(0);
@@ -820,6 +839,55 @@ function VideoComposePage() {
     setClips(prev => prev.filter(c => c.id !== selectedClipId));
   }
 
+  function clearAudio() {
+    audioRef.current?.pause();
+    setAudioFile(null);
+    setAudioDuration(0);
+    setAudioStart(0);
+    setAudioEnd(0);
+    setAudioOffset(0);
+    setReplaceOriginalAudio(false);
+    notify('Audio removed', 'info');
+  }
+
+  async function importTextOverlayFromVideo(file) {
+    if (!file) return;
+    if (!isVideoFile(file)) {
+      notify('Drop or paste a video to extract text overlay', 'error');
+      return;
+    }
+    setOverlaySourceFile(file);
+    setExtractingText(true);
+    try {
+      const fd = new FormData();
+      fd.append('video', file);
+      fd.append('timelineDuration', String(timelineDuration || visibleDuration || 6));
+      const data = await videoComposeApi.extractTextOverlay(fd);
+      const imported = Array.isArray(data?.clips) ? data.clips : [];
+      if (imported.length === 0) {
+        notify('No text overlay found in that video', 'info');
+        return;
+      }
+      const maxEnd = Math.max(0.1, timelineDuration || visibleDuration || imported[imported.length - 1]?.end || 6);
+      const nextClips = imported.map((clip, index) => ({
+        id: newId(),
+        text: String(clip.text || '').trim(),
+        start: clamp(clip.start, 0, Math.max(0, maxEnd - 0.1), index === 0 ? 0 : index * 2),
+        end: clamp(clip.end, 0.1, maxEnd, Math.min(maxEnd, (index + 1) * 2)),
+        position: POSITIONS.includes(clip.position) ? clip.position : 'center',
+        fontSize: clamp(clip.fontSize, 16, 160, 64),
+      })).filter((clip) => clip.text && clip.end > clip.start);
+      setClips((prev) => [...prev, ...nextClips].sort((a, b) => a.start - b.start));
+      setSelectedClipId(nextClips[0]?.id || selectedClipId);
+      setPanel('text');
+      notify(`Imported ${nextClips.length} text overlay${nextClips.length === 1 ? '' : 's'}`, 'success');
+    } catch (err) {
+      notify(err.message || 'Failed to extract text overlay', 'error');
+    } finally {
+      setExtractingText(false);
+    }
+  }
+
   function handleAudioClipUpdate(nextStart, nextEnd, mode) {
     const sourceDuration = Math.max(0.1, audioDuration || audioEnd || timelineDuration || 5);
     const currentDuration = Math.max(0.1, audioEnd - audioStart);
@@ -1021,7 +1089,31 @@ function VideoComposePage() {
             {panel === 'text' && <>
               <div className="rounded-xl border border-zinc-800 bg-zinc-900/25 p-3">
                 <div className="text-[10px] uppercase tracking-widest text-zinc-600">Text Layers</div>
-                <div className="mt-1 text-[11px] text-zinc-500">Create hook text and timed caption blocks, then position them on the reel.</div>
+                <div className="mt-1 text-[11px] text-zinc-500">Create hook text, or paste/drop a video here to copy only its visible text overlay.</div>
+              </div>
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-zinc-600">Import Overlay Text</div>
+                    <div className="mt-1 text-[11px] text-zinc-500">Drop/paste a reference video. Kyros reads the text on screen and creates editable caption blocks.</div>
+                  </div>
+                  {extractingText ? <Spinner size={14} /> : null}
+                </div>
+                <DropZone
+                  label={extractingText ? 'Reading text overlay...' : 'Drop reference video'}
+                  accept="video/*"
+                  file={overlaySourceFile}
+                  onFile={importTextOverlayFromVideo}
+                />
+                {overlaySourceFile && (
+                  <button
+                    type="button"
+                    onClick={() => setOverlaySourceFile(null)}
+                    className="text-[10px] text-zinc-600 transition hover:text-zinc-300"
+                  >
+                    Clear reference video
+                  </button>
+                )}
               </div>
               <div className="flex items-center justify-between">
                 <div className="text-[10px] uppercase tracking-widest text-zinc-600">Captions</div>
@@ -1078,10 +1170,19 @@ function VideoComposePage() {
               )}
               {audioFile && (
                 <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-3 space-y-3">
-                  <button onClick={() => setReplaceOriginalAudio(v => !v)}
-                    className={`w-full rounded-lg py-1.5 text-[11px] font-medium border transition ${replaceOriginalAudio ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'}`}>
-                    {replaceOriginalAudio ? 'Replace Original' : 'Mix With Original'}
-                  </button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => setReplaceOriginalAudio(v => !v)}
+                      className={`rounded-lg py-1.5 text-[11px] font-medium border transition ${replaceOriginalAudio ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'}`}>
+                      {replaceOriginalAudio ? 'Replace Original' : 'Mix With Original'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearAudio}
+                      className="rounded-lg border border-rose-500/35 bg-rose-500/10 py-1.5 text-[11px] font-medium text-rose-300 transition hover:bg-rose-500/20"
+                    >
+                      Remove Audio
+                    </button>
+                  </div>
                   <div className="text-[10px] text-zinc-600">
                     Segment: {stamp(audioStart)} {'->'} {stamp(audioEnd)} at {stamp(audioOffset)}
                   </div>

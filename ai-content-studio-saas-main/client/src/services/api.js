@@ -162,6 +162,7 @@ export const video = {
 
 export const videoCompose = {
   compose: (formData) => request('/video-compose', { method: 'POST', body: formData, timeoutMs: LONG_TIMEOUT_MS }),
+  extractTextOverlay: (formData) => request('/video-compose/extract-text-overlay', { method: 'POST', body: formData, timeoutMs: VIDEO_ANALYZE_TIMEOUT_MS }),
 };
 
 export const characters = {

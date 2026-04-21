@@ -10,6 +10,8 @@ const { AppError } = require('../middleware/errorHandler');
 const { createMultipartParser } = require('../middleware/multipartParser');
 const { TEMP_DIR, UPLOADS_DIR } = require('../paths');
 const videoHistory = require('../services/videoHistoryStore');
+const apiKeyManager = require('../services/apiKeyManager');
+const geminiService = require('../services/geminiBackend');
 
 const router = express.Router();
 const parseMultipart = createMultipartParser({ maxBytes: 500 * 1024 * 1024 });
@@ -68,10 +70,14 @@ function clampNumber(value, min, max, fallback) {
 
 function escapeAssText(text = '') {
   return String(text)
-    .replace(/\\/g, '\\\\')
-    .replace(/\{/g, '\\{')
-    .replace(/\}/g, '\\}')
-    .replace(/\r?\n/g, '\\N');
+    .replace(/\\r\\n|\\n|\\r/g, '\n')
+    .replace(/\r\n|\r/g, '\n')
+    .split('\n')
+    .map((line) => line
+      .replace(/\\/g, '\\\\')
+      .replace(/\{/g, '\\{')
+      .replace(/\}/g, '\\}'))
+    .join('\\N');
 }
 
 function assAlignmentFor(position = 'bottom') {
@@ -197,6 +203,57 @@ async function probeVideoInfo(videoPath) {
     return { width, height, durationSeconds, hasAudio };
   }
   return { width: 1080, height: 1920, durationSeconds: null, hasAudio: false };
+}
+
+async function extractOverlayFrames(videoPath, token, count = 4) {
+  const framePattern = path.join(TEMP_DIR, `vc_overlay_${token}_%02d.jpg`);
+  await execFileAsync(ffmpegPath, [
+    '-y',
+    '-i', videoPath,
+    '-vf', `fps=1,scale=720:-1:force_original_aspect_ratio=decrease`,
+    '-frames:v', String(count),
+    framePattern,
+  ], { timeout: 60_000 });
+
+  const frames = [];
+  for (let i = 1; i <= count; i += 1) {
+    const framePath = path.join(TEMP_DIR, `vc_overlay_${token}_${String(i).padStart(2, '0')}.jpg`);
+    const buffer = await fs.readFile(framePath).catch(() => null);
+    if (buffer?.length) {
+      frames.push({ path: framePath, mimeType: 'image/jpeg', base64Data: buffer.toString('base64') });
+    }
+  }
+  return frames;
+}
+
+function parseOverlayTextResponse(rawText, timelineDuration) {
+  const cleaned = String(rawText || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  let parsed = null;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) {
+      try { parsed = JSON.parse(match[0]); } catch { parsed = null; }
+    }
+  }
+  const sourceClips = Array.isArray(parsed?.clips) ? parsed.clips : [];
+  const maxDuration = Math.max(0.1, Number(timelineDuration) || 6);
+  return sourceClips
+    .map((clip, index) => {
+      const text = String(clip?.text || '').replace(/\\n/g, '\n').trim();
+      if (!text) return null;
+      const start = clampNumber(clip?.start, 0, Math.max(0, maxDuration - 0.1), Math.min(index * 2, maxDuration - 0.1));
+      const end = clampNumber(clip?.end, start + 0.1, maxDuration, Math.min(maxDuration, start + 2));
+      return {
+        text,
+        start,
+        end,
+        position: ['top', 'center', 'bottom'].includes(clip?.position) ? clip.position : 'center',
+        fontSize: Math.round(clampNumber(clip?.fontSize, 16, 160, 64)),
+      };
+    })
+    .filter(Boolean);
 }
 
 // Compute the combined CSS sepia × hue-rotate colour matrix for cool warmth.
@@ -351,6 +408,57 @@ function buildFramingChain(width, height, zoom, panX, panY) {
 
   return `scale=${scaledWidth}:${scaledHeight},crop=${safeWidth}:${safeHeight}:(iw-ow)*${xRatio}:(ih-oh)*${yRatio}`;
 }
+
+router.post('/extract-text-overlay', parseMultipart, async (req, res, next) => {
+  const tmpFiles = [];
+  try {
+    const videoFile = req.files?.video;
+    if (!videoFile?.buffer) throw new AppError('video file is required', 400, 'VALIDATION_ERROR');
+
+    await fs.mkdir(TEMP_DIR, { recursive: true });
+    const token = crypto.randomUUID();
+    const ext = safeTempExtension(videoFile.originalname || videoFile.filename || 'overlay.mp4', '.mp4');
+    const videoPath = path.join(TEMP_DIR, `vc_overlay_source_${token}${ext}`);
+    tmpFiles.push(videoPath);
+    await fs.writeFile(videoPath, videoFile.buffer);
+
+    const timelineDuration = clampNumber(req.body?.timelineDuration, 0.1, 60 * 60, 6);
+    const frames = await extractOverlayFrames(videoPath, token, 4);
+    tmpFiles.push(...frames.map((frame) => frame.path));
+    if (frames.length === 0) {
+      throw new AppError('Could not read frames from video', 400, 'VIDEO_FRAME_ERROR');
+    }
+
+    const prompt = `You are extracting ONLY visible text overlays/captions from a short social video.
+Look at these frames and ignore people, background, UI, watermarks, usernames, logos, subtitles from apps, and interface text.
+Return ONLY valid JSON with this shape:
+{
+  "clips": [
+    { "text": "line 1\\nline 2", "start": 0, "end": 2.5, "position": "top|center|bottom", "fontSize": 64 }
+  ]
+}
+Rules:
+- Preserve line breaks exactly when the overlay is stacked on multiple lines.
+- If one overlay has a list, keep it as multiple lines in a single text string.
+- Use approximate timing across a ${timelineDuration.toFixed(1)} second target timeline.
+- If no overlay text exists, return {"clips":[]}.`;
+
+    const apiKey = apiKeyManager.getActiveKey();
+    const text = await geminiService.analyzeImagesWithPrompt(
+      apiKey,
+      frames.map((frame) => ({ mimeType: frame.mimeType, base64Data: frame.base64Data })),
+      prompt,
+    );
+    const clips = parseOverlayTextResponse(text, timelineDuration);
+    res.json({ success: true, data: { clips } });
+  } catch (err) {
+    next(err);
+  } finally {
+    await Promise.all(tmpFiles.map(async (filePath) => {
+      try { await fs.unlink(filePath); } catch {}
+    }));
+  }
+});
 
 router.post('/', parseMultipart, async (req, res, next) => {
   const tmpFiles = [];
