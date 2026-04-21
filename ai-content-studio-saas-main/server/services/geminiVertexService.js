@@ -172,6 +172,23 @@ function isTransientError(err) {
   );
 }
 
+function classifyVertexRuntimeError(message = '') {
+  const m = String(message || '').toLowerCase();
+  if (m.includes('service_disabled') || m.includes('api has not been used') || m.includes('is disabled')) {
+    return { code: 'VERTEX_API_DISABLED', message: 'Vertex/Gemini API is disabled in your GCP project. Enable both APIs in Google Cloud console.' };
+  }
+  if (m.includes('serviceusage.services.use') || m.includes('iam') || m.includes('permission_denied') || m.includes('403')) {
+    return { code: 'VERTEX_IAM_MISSING', message: 'GCP IAM issue: service account needs "Vertex AI User" and "Service Usage Consumer" roles.' };
+  }
+  if (m.includes('quota project') || m.includes('consumer_invalid') || m.includes('billing')) {
+    return { code: 'VERTEX_BILLING', message: 'GCP billing/quota issue: enable billing (or trial) and ensure project_id matches your billed project.' };
+  }
+  if (m.includes('invalid_grant') || m.includes('invalid_client') || m.includes('authentication') || m.includes('credentials')) {
+    return { code: 'INVALID_CREDENTIALS', message: 'Service account JSON/key is invalid or revoked. Create a new JSON key and paste it again.' };
+  }
+  return null;
+}
+
 function withTimeout(promise, ms, label) {
   let timer;
   const timeout = new Promise((_, reject) => {
@@ -613,8 +630,9 @@ Return ONLY valid JSON: {"score": <number 0-100>, "reasons": ["<reason1>", "<rea
 
   _handleApiError(err) {
     const message = err.message || 'Unknown Vertex/GCP error';
-    if (message.includes('PERMISSION_DENIED') || message.includes('403') || message.includes('credentials') || message.includes('authentication')) {
-      throw new AppError('GCP credentials error. Check your service account JSON and project permissions.', 401, 'INVALID_CREDENTIALS');
+    const diagnosed = classifyVertexRuntimeError(message);
+    if (diagnosed) {
+      throw new AppError(diagnosed.message, 401, diagnosed.code);
     }
     if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
       throw new AppError('Rate limit reached. Wait and try again.', 429, 'RATE_LIMITED');

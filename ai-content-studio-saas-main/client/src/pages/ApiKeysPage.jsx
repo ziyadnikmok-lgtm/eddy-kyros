@@ -829,6 +829,30 @@ export default function ApiKeysPage() {
                     </div>
                     <p className="text-[10px] text-zinc-500 leading-tight">{data?.message || 'Not checked yet'}</p>
                     {data?.latencyMs != null && <span className="text-[10px] font-mono text-zinc-600">{data.latencyMs}ms</span>}
+                    {key === 'vertex' && Array.isArray(data?.steps) && data.steps.length > 0 && (
+                      <div className="mt-1 rounded-md border border-zinc-800/60 bg-zinc-950/45 p-2 space-y-1">
+                        {data.steps.slice(0, 3).map((step, idx) => (
+                          <p key={`${step}-${idx}`} className="text-[10px] leading-tight text-zinc-400">
+                            {idx + 1}. {step}
+                          </p>
+                        ))}
+                        {Array.isArray(data?.links) && data.links.length > 0 && (
+                          <div className="pt-1 flex flex-wrap gap-1.5">
+                            {data.links.map((link) => (
+                              <a
+                                key={`${link.label}-${link.url}`}
+                                href={link.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[10px] text-blue-400 hover:text-blue-300 underline"
+                              >
+                                {link.label}
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {data?.status === 'expired' && igLoginInfo?.hasInstagramLogin && (
                       <Btn variant="secondary" className="!py-0.5 !px-2 !text-[10px] mt-1 w-full" onClick={handleAutoRefresh} disabled={refreshing}>
                         {refreshing ? <Spinner size={10} /> : null} Auto Fix

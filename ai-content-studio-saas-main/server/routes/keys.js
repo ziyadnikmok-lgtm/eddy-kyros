@@ -24,6 +24,100 @@ function sanitizeErrorMessage(err) {
   return raw.replace(/\s+/g, ' ').slice(0, 180);
 }
 
+function classifyVertexIssue(err) {
+  const raw = (err && err.message ? String(err.message) : '').toLowerCase();
+  const links = {
+    billing: 'https://console.cloud.google.com/billing',
+    vertexApi: 'https://console.cloud.google.com/apis/library/aiplatform.googleapis.com',
+    geminiApi: 'https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com',
+    iam: 'https://console.cloud.google.com/iam-admin/iam',
+    serviceAccounts: 'https://console.cloud.google.com/iam-admin/serviceaccounts',
+  };
+
+  if (raw.includes('service_disabled') || raw.includes('api has not been used') || raw.includes('is disabled')) {
+    return {
+      status: 'error',
+      message: 'Vertex/Gemini API is disabled in this GCP project.',
+      steps: [
+        'Enable Vertex AI API.',
+        'Enable Generative Language (Gemini) API.',
+      ],
+      links: [
+        { label: 'Enable Vertex AI API', url: links.vertexApi },
+        { label: 'Enable Gemini API', url: links.geminiApi },
+      ],
+    };
+  }
+
+  if (raw.includes('permission_denied') || raw.includes('iam') || raw.includes('serviceusage.services.use')) {
+    return {
+      status: 'error',
+      message: 'Service account is missing required IAM roles.',
+      steps: [
+        'Grant "Vertex AI User" role.',
+        'Grant "Service Usage Consumer" role.',
+      ],
+      links: [
+        { label: 'Open IAM', url: links.iam },
+      ],
+    };
+  }
+
+  if (raw.includes('quota project') || raw.includes('consumer_invalid') || raw.includes('billing')) {
+    return {
+      status: 'error',
+      message: 'Billing or quota project configuration failed.',
+      steps: [
+        'Enable billing/free trial on this project.',
+        'Confirm the JSON project_id matches the billed project.',
+      ],
+      links: [
+        { label: 'Open Billing', url: links.billing },
+      ],
+    };
+  }
+
+  if (raw.includes('invalid_grant') || raw.includes('invalid_client') || raw.includes('invalid credentials') || raw.includes('authentication')) {
+    return {
+      status: 'error',
+      message: 'Service account key is invalid, revoked, or malformed.',
+      steps: [
+        'Create a fresh JSON key for the same service account.',
+        'Paste the full JSON again in Kyros API Keys.',
+      ],
+      links: [
+        { label: 'Open Service Accounts', url: links.serviceAccounts },
+      ],
+    };
+  }
+
+  if (raw.includes('rate_limit') || raw.includes('resource_exhausted') || raw.includes('429')) {
+    return {
+      status: 'degraded',
+      message: 'Vertex quota/rate limit reached.',
+      steps: [
+        'Wait 1-2 minutes and retry.',
+        'Increase quota in GCP if this keeps happening.',
+      ],
+      links: [],
+    };
+  }
+
+  return {
+    status: 'error',
+    message: sanitizeErrorMessage(err),
+    steps: [
+      'Verify service account JSON is complete and valid.',
+      'Confirm APIs, IAM roles, and billing are active.',
+    ],
+    links: [
+      { label: 'Open Service Accounts', url: links.serviceAccounts },
+      { label: 'Open IAM', url: links.iam },
+      { label: 'Open Billing', url: links.billing },
+    ],
+  };
+}
+
 async function checkGeminiHealth() {
   const started = Date.now();
   let apiKey = '';
@@ -398,13 +492,17 @@ async function checkVertexHealth() {
       message: looksHealthy ? `Vertex AI connected (${info.projectId})` : `Unexpected response: ${String(text || '').slice(0, 50)}`,
     };
   } catch (err) {
+    const diagnosis = classifyVertexIssue(err);
     return {
       configured: true,
       live: false,
-      status: 'error',
+      status: diagnosis.status,
       latencyMs: Date.now() - started,
       projectId: info.projectId,
-      message: sanitizeErrorMessage(err),
+      clientEmail: info.clientEmail,
+      message: diagnosis.message,
+      steps: diagnosis.steps,
+      links: diagnosis.links,
     };
   }
 }
