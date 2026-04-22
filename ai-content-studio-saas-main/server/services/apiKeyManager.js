@@ -144,6 +144,36 @@ class ApiKeyManager {
     return this._decrypt(entry.encryptedKey);
   }
 
+  /**
+   * Returns a Gemini API key for backend fallback:
+   * 1) active key if valid
+   * 2) newest saved key if active key is missing/corrupt
+   * Returns null when no Gemini key exists.
+   */
+  getFallbackGeminiKey() {
+    try {
+      const active = this.getActiveKey();
+      if (active && typeof active === 'string' && active.trim()) return active.trim();
+    } catch {
+      // ignore and try other saved keys below
+    }
+
+    if (!Array.isArray(this._store.keys) || this._store.keys.length === 0) {
+      return null;
+    }
+
+    const newest = this._store.keys
+      .slice()
+      .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))[0];
+    if (!newest?.encryptedKey) return null;
+    try {
+      const key = this._decrypt(newest.encryptedKey);
+      return key && typeof key === 'string' && key.trim() ? key.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
   listKeys() {
     // SECURITY: explicitly allowlist fields — encryptedKey must NEVER be returned
     return this._store.keys.map((k) => ({

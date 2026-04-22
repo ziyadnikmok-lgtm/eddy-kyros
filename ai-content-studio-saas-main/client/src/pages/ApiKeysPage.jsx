@@ -667,9 +667,24 @@ export default function ApiKeysPage() {
                     <p className="text-[10px] text-zinc-500 mt-0.5">Project: <span className="font-mono text-zinc-400">{vertexInfo.projectId}</span></p>
                     <p className="text-[10px] text-zinc-600 mt-0.5">Click the ☁️ Vertex AI card above to switch back — no re-pasting needed.</p>
                   </div>
-                  <Btn variant="secondary" className="!py-1.5 !px-3 !text-xs shrink-0" onClick={() => handleSetBackend('vertex')} disabled={loading}>
-                    Use Vertex
-                  </Btn>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Btn variant="secondary" className="!py-1.5 !px-3 !text-xs" onClick={() => handleSetBackend('vertex')} disabled={loading}>
+                      Use Vertex
+                    </Btn>
+                    <Btn
+                      variant="danger"
+                      className="!py-1.5 !px-3 !text-xs"
+                      onClick={() => setConfirmAction({
+                        title: 'Delete saved Vertex JSON?',
+                        message: 'This will remove Vertex credentials and keep Gemini as the only backend until you paste a new JSON.',
+                        onConfirm: handleClearVertex,
+                        label: 'Delete',
+                      })}
+                      disabled={loading}
+                    >
+                      Delete Vertex JSON
+                    </Btn>
+                  </div>
                 </div>
               </div>
             ) : (

@@ -47,7 +47,9 @@ function _isRateLimitError(err) {
 function _getGeminiFallbackKey() {
   try {
     const apiKeyManager = require('./apiKeyManager');
-    const key = apiKeyManager.getActiveKey();
+    const key = typeof apiKeyManager.getFallbackGeminiKey === 'function'
+      ? apiKeyManager.getFallbackGeminiKey()
+      : apiKeyManager.getActiveKey();
     return typeof key === 'string' && key.trim() ? key.trim() : null;
   } catch {
     return null;
@@ -73,6 +75,7 @@ module.exports = new Proxy({}, {
 
           const fallbackKey = _getGeminiFallbackKey();
           if (!fallbackKey) {
+            log.warn('vertex_rate_limited_no_gemini_fallback_key', { method: String(prop) });
             throw err;
           }
 
