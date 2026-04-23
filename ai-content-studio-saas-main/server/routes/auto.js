@@ -9,9 +9,57 @@ const { generateWeeklyPlan } = require('../services/auto/planner');
 const {
   startMultiBatches, resolveActiveReferenceIds, buildAutoPlanData,
 } = require('../services/auto/planHelpers');
+const {
+  getCurrentPlan,
+  getUsageLast24h,
+  getFreeTrialUsage,
+  reserveFreeTrialUsage,
+  releaseFreeTrialUsage,
+  PLAN_LIMITS,
+  isHostedRuntime,
+} = require('../middleware/planLimits');
 
 const router = express.Router();
 const MAX_DURATION_DAYS = 30;
+
+function reservePlanCapacity(req, res, cost, source = 'auto') {
+  if (!isHostedRuntime()) return { plan: 'unlimited', reservationIds: [] };
+  const userId = req.session?.userId;
+  if (!userId) return { plan: 'unlimited', reservationIds: [] };
+
+  const safeCost = Math.max(1, Math.floor(Number(cost) || 1));
+  const plan = getCurrentPlan(userId);
+  const limit = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
+  if (!isFinite(limit)) return { plan, reservationIds: [] };
+
+  const used = plan === 'free' ? getFreeTrialUsage(userId) : getUsageLast24h(userId);
+  if (used + safeCost > limit) {
+    throw new AppError(
+      plan === 'free'
+        ? `Free trial limit reached (${used}/${limit} generations used). Upgrade to keep creating.`
+        : `Daily generation limit reached (${used}/${limit} images used). Upgrade your plan for more.`,
+      429,
+      'PLAN_LIMIT_EXCEEDED',
+    );
+  }
+
+  if (plan !== 'free') return { plan, reservationIds: [] };
+
+  const reservationIds = reserveFreeTrialUsage(
+    userId,
+    safeCost,
+    source || req.path || req.originalUrl || 'auto',
+  );
+
+  // If request fails, refund reservations
+  res.once('finish', () => {
+    if (res.statusCode >= 400) {
+      try { releaseFreeTrialUsage(reservationIds); } catch { /* best effort */ }
+    }
+  });
+
+  return { plan, reservationIds };
+}
 
 // ── Plan CRUD ──────────────────────────────────────────────────────────────────
 
@@ -41,6 +89,7 @@ router.delete('/plans/:id', (req, res, next) => {
 });
 
 router.post('/plans/:id/execute-day', async (req, res, next) => {
+  let reservationIds = [];
   try {
     const plan = autoPlanStore.get(req.params.id);
     const { dayNumber } = req.body || {};
@@ -67,6 +116,7 @@ router.post('/plans/:id/execute-day', async (req, res, next) => {
       if (typeof prompt === 'string' && prompt.trim()) entries.push({ type: 'story', prompt, sceneMemoryId: dayBlock.sceneMemoryId || null, outfitId: dayBlock.outfitId || null, cameraProfileId: dayBlock.cameraProfiles?.reel || 'friend_phone_flash', resolutionTier: '2K', aspectRatio: '9:16' });
     }
     if (entries.length === 0) throw new AppError(`Day ${dayNumber} has no prompts to execute`, 400, 'VALIDATION_ERROR');
+    ({ reservationIds } = reservePlanCapacity(req, res, entries.length, '/api/auto/plans/:id/execute-day'));
 
     const styleAtomIds = plan.config?.styleAtomIds || [];
     const planImageModel = plan.config?.imageModel || undefined;
@@ -87,7 +137,12 @@ router.post('/plans/:id/execute-day', async (req, res, next) => {
 
     autoPlanStore.markDayExecuted(plan.id, dayNumber, jobIds);
     res.status(202).json({ success: true, data: { dayNumber, totalImages: entries.length, jobIds } });
-  } catch (err) { next(err); }
+  } catch (err) {
+    if (reservationIds.length) {
+      try { releaseFreeTrialUsage(reservationIds); } catch { /* best effort */ }
+    }
+    next(err);
+  }
 });
 
 // ── Plan + execute helpers ─────────────────────────────────────────────────────
@@ -150,15 +205,26 @@ function executePlannedEntries(planned, { characterId, personaMode, resolvedActi
 // ── Plan / Execute routes ──────────────────────────────────────────────────────
 
 router.post('/plan', async (req, res, next) => {
+  let reservationIds = [];
   try {
     const result = await validateAndPlan(req.body);
     const { planned } = result;
-    if (req.body && req.body.execute) return res.status(202).json({ success: true, data: executePlannedEntries(planned, result) });
+    if (req.body && req.body.execute) {
+      const data = executePlannedEntries(planned, result);
+      ({ reservationIds } = reservePlanCapacity(req, res, data.totalImages, '/api/auto/plan'));
+      return res.status(202).json({ success: true, data });
+    }
     res.json({ success: true, data: planned.days });
-  } catch (err) { next(err); }
+  } catch (err) {
+    if (reservationIds.length) {
+      try { releaseFreeTrialUsage(reservationIds); } catch { /* best effort */ }
+    }
+    next(err);
+  }
 });
 
 router.post('/execute', async (req, res, next) => {
+  let reservationIds = [];
   try {
     const result = await validateAndPlan(req.body);
     const { planned } = result;
@@ -183,9 +249,15 @@ router.post('/execute', async (req, res, next) => {
     });
 
     const data = executePlannedEntries(planned, result);
+    ({ reservationIds } = reservePlanCapacity(req, res, data.totalImages, '/api/auto/execute'));
     for (const day of planned.days) autoPlanStore.markDayExecuted(savedPlan.id, day.day, data.jobIds);
     res.status(202).json({ success: true, data: { ...data, planId: savedPlan.id, plan: savedPlan } });
-  } catch (err) { next(err); }
+  } catch (err) {
+    if (reservationIds.length) {
+      try { releaseFreeTrialUsage(reservationIds); } catch { /* best effort */ }
+    }
+    next(err);
+  }
 });
 
 module.exports = router;

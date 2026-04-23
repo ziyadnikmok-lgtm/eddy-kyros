@@ -136,12 +136,6 @@ function requirePlanCapacity(options = {}) {
     if (!userId) return next(); // auth middleware handles unauth
 
     try {
-      // If the user has their own API key or Vertex credentials, bypass all limits
-      const apiKeyManager = require('../services/apiKeyManager');
-      try {
-        if (apiKeyManager.getActiveKey() || apiKeyManager.hasVertexCredentials()) return next();
-      } catch { /* key manager unavailable — fall through to plan check */ }
-
       const plan = getCurrentPlan(userId);
       const limit = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
       if (!isFinite(limit)) return next(); // unlimited plan
