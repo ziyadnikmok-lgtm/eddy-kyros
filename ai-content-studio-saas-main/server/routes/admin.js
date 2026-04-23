@@ -20,6 +20,7 @@ const PLAN_PRICES = {
   pro: 19,
   unlimited: 49,
 };
+const FREE_TRIAL_LIMIT = 10;
 
 function getCurrentSubscription(userId) {
   return db.prepare(`
@@ -29,6 +30,15 @@ function getCurrentSubscription(userId) {
     ORDER BY datetime(created_at) DESC
     LIMIT 1
   `).get(userId) || { plan: 'free', status: 'active', expires_at: null, created_at: null };
+}
+
+function getFreeTrialUsageByUser(userId) {
+  const row = db.prepare(`
+    SELECT COUNT(*) AS total
+    FROM usage_events
+    WHERE user_id = ? AND event_type = 'trial.generation_reserved'
+  `).get(userId);
+  return row?.total || 0;
 }
 
 function getUserSummaryById(userId) {
@@ -241,7 +251,7 @@ function getUserKeySummary(userId) {
   });
 }
 
-function performAdminAction({ adminUserId, targetId, type, plan, note }) {
+function performAdminAction({ adminUserId, targetId, type, plan, note, durationDays }) {
   const target = getUserSummaryById(targetId);
   if (!target) return { error: 'User not found', status: 404 };
 
@@ -264,10 +274,16 @@ function performAdminAction({ adminUserId, targetId, type, plan, note }) {
       if (!['free', 'pro', 'unlimited'].includes(plan)) {
         return { error: 'Invalid plan', status: 400 };
       }
+      let expiresAt = null;
+      if (plan === 'pro') {
+        const parsedDays = Number.isFinite(Number(durationDays)) ? Math.floor(Number(durationDays)) : 30;
+        const safeDays = Math.min(Math.max(parsedDays, 1), 365);
+        expiresAt = new Date(Date.now() + safeDays * 24 * 60 * 60 * 1000).toISOString();
+      }
       db.prepare(`
-        INSERT INTO subscriptions (id, user_id, plan, status)
-        VALUES (lower(hex(randomblob(16))), ?, ?, 'active')
-      `).run(targetId, plan);
+        INSERT INTO subscriptions (id, user_id, plan, status, expires_at)
+        VALUES (lower(hex(randomblob(16))), ?, ?, 'active', ?)
+      `).run(targetId, plan, expiresAt);
       break;
     default:
       return { error: 'Invalid action type', status: 400 };
@@ -352,6 +368,43 @@ router.get('/overview', requireAdmin, (req, res) => {
     LIMIT 8
   `).all();
 
+  const recentActiveUsers = db.prepare(`
+    WITH latest_subscriptions AS (
+      SELECT s1.user_id, s1.plan, s1.status, s1.expires_at
+      FROM subscriptions s1
+      INNER JOIN (
+        SELECT user_id, MAX(datetime(created_at)) AS max_created
+        FROM subscriptions
+        GROUP BY user_id
+      ) latest
+        ON latest.user_id = s1.user_id
+       AND datetime(s1.created_at) = latest.max_created
+    )
+    SELECT
+      u.id,
+      u.email,
+      u.name,
+      COALESCE(ls.plan, 'free') AS plan,
+      MAX(ue.created_at) AS last_active_at,
+      (
+        SELECT COUNT(*)
+        FROM usage_events t
+        WHERE t.user_id = u.id AND t.event_type = 'trial.generation_reserved'
+      ) AS trial_used
+    FROM usage_events ue
+    INNER JOIN users u ON u.id = ue.user_id
+    LEFT JOIN latest_subscriptions ls ON ls.user_id = u.id
+    WHERE ue.user_id IS NOT NULL
+      AND datetime(ue.created_at) >= datetime('now', '-1 day')
+    GROUP BY u.id, u.email, u.name, ls.plan
+    ORDER BY datetime(last_active_at) DESC
+    LIMIT 8
+  `).all().map((row) => ({
+    ...row,
+    trial_limit: FREE_TRIAL_LIMIT,
+    trial_finished: row.plan === 'free' && (row.trial_used || 0) >= FREE_TRIAL_LIMIT,
+  }));
+
   const recentFailures = db.prepare(`
     SELECT gr.id, gr.user_id, u.email, gr.feature, gr.model, gr.error_code, gr.started_at
     FROM generation_runs gr
@@ -378,6 +431,7 @@ router.get('/overview', requireAdmin, (req, res) => {
     },
     billing,
     recentSignups,
+    recentActiveUsers,
     recentFailures,
   });
 });
@@ -559,6 +613,22 @@ router.get('/users', requireAdmin, (req, res) => {
       COALESCE(ls.plan, 'free') AS plan,
       COALESCE(ls.status, 'active') AS subscription_status,
       (
+        SELECT COUNT(*)
+        FROM usage_events ue2
+        WHERE ue2.user_id = u.id AND ue2.event_type = 'trial.generation_reserved'
+      ) AS trial_used,
+      ${FREE_TRIAL_LIMIT} AS trial_limit,
+      CASE
+        WHEN COALESCE(ls.plan, 'free') = 'free'
+         AND (
+           SELECT COUNT(*)
+           FROM usage_events ue3
+           WHERE ue3.user_id = u.id AND ue3.event_type = 'trial.generation_reserved'
+         ) >= ${FREE_TRIAL_LIMIT}
+        THEN 1
+        ELSE 0
+      END AS trial_finished,
+      (
         SELECT MAX(created_at)
         FROM usage_events ue
         WHERE ue.user_id = u.id
@@ -615,6 +685,7 @@ router.get('/users/:id', requireAdmin, (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const subscription = getCurrentSubscription(req.params.id);
+  const freeTrialUsed = getFreeTrialUsageByUser(req.params.id);
   const content = getUserContentSnapshot(req.params.id, 16);
   const keySummary = getUserKeySummary(req.params.id);
 
@@ -652,6 +723,11 @@ router.get('/users/:id', requireAdmin, (req, res) => {
       generation_count_30d: user.generation_count_30d || content.count30d,
       subscription,
       generationByFeature,
+      freeTrial: {
+        used: freeTrialUsed,
+        limit: FREE_TRIAL_LIMIT,
+        finished: (subscription?.plan || 'free') === 'free' && freeTrialUsed >= FREE_TRIAL_LIMIT,
+      },
       recentRuns,
       billingHistory,
       supportNotes: getSupportNotes(req.params.id, 25),
@@ -777,13 +853,14 @@ router.post('/users/:id/support-notes', requireAdmin, (req, res) => {
 
 // POST /api/admin/users/:id/action
 router.post('/users/:id/action', requireAdmin, (req, res) => {
-  const { type, plan, note } = req.body || {};
+  const { type, plan, note, durationDays } = req.body || {};
   const result = performAdminAction({
     adminUserId: req.session.userId,
     targetId: req.params.id,
     type,
     plan,
     note,
+    durationDays,
   });
   if (result.error) return res.status(result.status).json({ error: result.error });
   res.json({ ok: true, user: result.user });
@@ -791,9 +868,9 @@ router.post('/users/:id/action', requireAdmin, (req, res) => {
 
 // PATCH /api/admin/users/:id
 router.patch('/users/:id', requireAdmin, (req, res) => {
-  const { plan, is_banned, is_admin, note } = req.body || {};
+  const { plan, is_banned, is_admin, note, durationDays } = req.body || {};
   if (plan !== undefined) {
-    const result = performAdminAction({ adminUserId: req.session.userId, targetId: req.params.id, type: 'change_plan', plan, note });
+    const result = performAdminAction({ adminUserId: req.session.userId, targetId: req.params.id, type: 'change_plan', plan, note, durationDays });
     if (result.error) return res.status(result.status).json({ error: result.error });
     return res.json({ ok: true, user: result.user });
   }

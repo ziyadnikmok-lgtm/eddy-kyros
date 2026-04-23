@@ -213,6 +213,32 @@ function OverviewTab({ overview, analytics, auditLogs, loading }) {
         </Card>
 
         <Card className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-zinc-200">Recently Active (24h)</h2>
+            <Badge color="zinc">{overview?.activity?.activeUsers24h ?? 0}</Badge>
+          </div>
+          <div className="space-y-2">
+            {(overview?.recentActiveUsers || []).map((item) => (
+              <div key={item.id} className="rounded-lg border border-zinc-800/60 px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-medium text-zinc-100 truncate">{item.email}</div>
+                  <Badge color={planColor(item.plan)}>{item.plan || 'free'}</Badge>
+                </div>
+                <div className="mt-1 flex items-center gap-2 text-xs">
+                  <span className="text-zinc-500">{formatDate(item.last_active_at)}</span>
+                  {(item.plan || 'free') === 'free' ? (
+                    item.trial_finished
+                      ? <Badge color="red">Trial finished</Badge>
+                      : <Badge color="blue">Trial {item.trial_used || 0}/{item.trial_limit || 10}</Badge>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+            {!overview?.recentActiveUsers?.length && <Empty icon="user" title="No active users in last 24h" subtitle="" />}
+          </div>
+        </Card>
+
+        <Card className="space-y-4">
           <h2 className="text-sm font-semibold text-zinc-200">Top Failure Codes (30D)</h2>
           {failureRows.length === 0 ? <Empty icon="search" title="No failures recorded" subtitle="" /> : (
             <div className="space-y-2">
@@ -587,6 +613,7 @@ function UsersTab({ notify }) {
               <tr className="border-b border-zinc-800/60">
                 <th className="py-3 pr-3 font-medium">User</th>
                 <th className="py-3 pr-3 font-medium">Plan</th>
+                <th className="py-3 pr-3 font-medium">Trial</th>
                 <th className="py-3 pr-3 font-medium">Last Active</th>
                 <th className="py-3 pr-3 font-medium">30D Runs</th>
                 <th className="py-3 font-medium">State</th>
@@ -604,6 +631,15 @@ function UsersTab({ notify }) {
                     <div className="text-xs text-zinc-500">{user.name || 'No name'}</div>
                   </td>
                   <td className="py-3 pr-3"><Badge color={planColor(user.plan)}>{user.plan || 'free'}</Badge></td>
+                  <td className="py-3 pr-3">
+                    {(user.plan || 'free') === 'free' ? (
+                      user.trial_finished
+                        ? <Badge color="red">Finished</Badge>
+                        : <Badge color="blue">{user.trial_used || 0}/{user.trial_limit || 10}</Badge>
+                    ) : (
+                      <span className="text-xs text-zinc-600">—</span>
+                    )}
+                  </td>
                   <td className="py-3 pr-3 text-xs text-zinc-400">{formatDate(user.last_active_at)}</td>
                   <td className="py-3 pr-3">{user.generation_count_30d || 0}</td>
                   <td className="py-3">
@@ -646,6 +682,16 @@ function UsersTab({ notify }) {
             {/* Key stats */}
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <MetricCard label="Plan" value={selectedUser.subscription?.plan || 'free'} sublabel={selectedUser.subscription?.status || 'active'} />
+              <MetricCard
+                label="Free Trial"
+                value={(selectedUser.subscription?.plan || 'free') === 'free'
+                  ? `${selectedUser.freeTrial?.used || 0}/${selectedUser.freeTrial?.limit || 10}`
+                  : 'Paid plan'}
+                sublabel={(selectedUser.subscription?.plan || 'free') === 'free'
+                  ? (selectedUser.freeTrial?.finished ? 'Trial finished' : 'Trial active')
+                  : 'Trial cap not applied'}
+                accent={(selectedUser.subscription?.plan || 'free') === 'free' && selectedUser.freeTrial?.finished ? 'text-red-400' : undefined}
+              />
               <MetricCard label="Keys" value={selectedUser.connected_key_count || 0} sublabel="Connected provider keys" />
               <MetricCard label="Total Runs" value={selectedUser.generation_count_total || 0} sublabel={`${selectedUser.generation_count_30d || 0} in 30d`} />
               <MetricCard label="Last Active" value={selectedUser.last_active_at ? formatDateShort(selectedUser.last_active_at) : 'Never'} sublabel={formatDate(selectedUser.last_active_at)} />
@@ -665,7 +711,7 @@ function UsersTab({ notify }) {
                   {selectedUser.is_owner ? '★ Revoke Owner' : '★ Grant Owner'}
                 </Btn>
                 <Btn variant="ghost" disabled={acting} onClick={() => handleAction('change_plan', { plan: 'free' })}>→ Free</Btn>
-                <Btn variant="ghost" disabled={acting} onClick={() => handleAction('change_plan', { plan: 'pro' })}>→ Pro</Btn>
+                <Btn variant="ghost" disabled={acting} onClick={() => handleAction('change_plan', { plan: 'pro', durationDays: 30 })}>→ Pro (30d)</Btn>
                 <Btn variant="ghost" disabled={acting} onClick={() => handleAction('change_plan', { plan: 'unlimited' })}>→ Unlimited</Btn>
                 <Btn variant="secondary" disabled={acting} onClick={handleForceReset}>Force Password Reset</Btn>
                 {!selectedUser.is_admin && (
