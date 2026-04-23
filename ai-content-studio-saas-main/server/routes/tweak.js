@@ -12,11 +12,12 @@ const REALISM_DIRECTIVE = require('../utils/realismDirective');
 const { buildCharacterReferenceImages } = require('./postClone');
 const { AppError } = require('../middleware/errorHandler');
 const { createMultipartParser } = require('../middleware/multipartParser');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 
 const router = express.Router();
 const parseMultipartIfNeeded = createMultipartParser();
 
-router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
+router.post('/', parseMultipartIfNeeded, requirePlanCapacity(), async (req, res, next) => {
   try {
     let { imageId, modifications, characterId, activeReferenceIds, imageModel } = req.body || {};
     if (typeof modifications === 'string') {

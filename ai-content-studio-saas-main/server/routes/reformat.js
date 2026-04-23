@@ -7,6 +7,7 @@ const log = require('../utils/logger');
 const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 
 const router = express.Router();
 
@@ -50,7 +51,7 @@ function loadImageData(imageId) {
   return null;
 }
 
-router.post('/', async (req, res, next) => {
+router.post('/', requirePlanCapacity(), async (req, res, next) => {
   try {
     const { imageId, targetRatio, imageBase64, imageMimeType } = req.body || {};
 

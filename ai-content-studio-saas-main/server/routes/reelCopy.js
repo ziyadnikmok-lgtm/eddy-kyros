@@ -467,7 +467,7 @@ async function recreateFrame({
   };
 }
 
-router.post('/', parseMultipartIfNeeded, requirePlanCapacity(), async (req, res, next) => {
+router.post('/', parseMultipartIfNeeded, requirePlanCapacity({ cost: 2 }), async (req, res, next) => {
   let videoPath = '';
   let firstPath = '';
   let lastPath = '';
