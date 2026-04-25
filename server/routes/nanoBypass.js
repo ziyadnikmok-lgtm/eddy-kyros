@@ -13,6 +13,8 @@ const router = express.Router();
 const VALID_ASPECT_RATIOS = ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '4:5', '5:4', '21:9'];
 const VALID_IMAGE_SIZES = ['1K', '2K'];
 const VALID_MODELS = ['flash'];
+const MAX_TOTAL_IMAGE_BYTES = 60 * 1024 * 1024;
+const MAX_TOTAL_IMAGE_MB = Math.round(MAX_TOTAL_IMAGE_BYTES / 1024 / 1024);
 
 const MODEL_IDS = {
   flash: 'gemini-3.1-flash-image-preview',
@@ -25,6 +27,12 @@ const SAFETY_SETTINGS = [
   { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
   { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_ONLY_HIGH' },
 ];
+
+function estimateBase64Bytes(value) {
+  const clean = String(value || '').replace(/\s/g, '');
+  const padding = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((clean.length * 3) / 4) - padding);
+}
 
 function extractImageFromResponse(data) {
   const candidates = data?.candidates || [];
@@ -104,7 +112,7 @@ async function callGemini(apiKey, modelId, parts, aspectRatio, imageSize, temper
 }
 
 // POST /api/nano-bypass/edit
-router.post('/edit', express.json({ limit: '50mb' }), requirePlanCapacity(), async (req, res, next) => {
+router.post('/edit', express.json({ limit: '100mb' }), requirePlanCapacity(), async (req, res, next) => {
   let runId = null;
   let provider = 'gemini';
   try {
@@ -124,9 +132,6 @@ router.post('/edit', express.json({ limit: '50mb' }), requirePlanCapacity(), asy
     }
     if (!Array.isArray(images) || images.length === 0) {
       throw new AppError('at least one image is required', 400, 'VALIDATION_ERROR');
-    }
-    if (images.length > 5) {
-      throw new AppError('maximum 5 images at once', 400, 'VALIDATION_ERROR');
     }
     if (!VALID_MODELS.includes(model)) {
       throw new AppError('Nano Bypass only supports Gemini 3.1 Flash', 400, 'VALIDATION_ERROR');
@@ -176,13 +181,22 @@ router.post('/edit', express.json({ limit: '50mb' }), requirePlanCapacity(), asy
 
     // Build parts: images first, then prompt (mirrors ComfyUI node)
     const parts = [];
+    let totalImageBytes = 0;
     for (const img of images) {
       if (!img.base64 || typeof img.base64 !== 'string') {
         throw new AppError('each image must have a base64 field', 400, 'VALIDATION_ERROR');
       }
       // Strip data URI prefix if present
       const raw = img.base64.replace(/^data:[^;]+;base64,/, '');
-      parts.push({ inlineData: { mimeType: img.mimeType || 'image/png', data: raw } });
+      const mimeType = img.mimeType || 'image/png';
+      if (!mimeType.startsWith('image/')) {
+        throw new AppError('each image must have an image mime type', 400, 'VALIDATION_ERROR');
+      }
+      totalImageBytes += estimateBase64Bytes(raw);
+      if (totalImageBytes > MAX_TOTAL_IMAGE_BYTES) {
+        throw new AppError(`combined Nano Bypass images are too large; use smaller files or fewer images (${MAX_TOTAL_IMAGE_MB}MB total limit)`, 400, 'VALIDATION_ERROR');
+      }
+      parts.push({ inlineData: { mimeType, data: raw } });
     }
     parts.push({ text: effectivePrompt });
 

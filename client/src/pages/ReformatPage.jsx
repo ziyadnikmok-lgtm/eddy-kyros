@@ -33,7 +33,7 @@ export default function ReformatPage() {
     if (!selectedId) return;
     setRunning(true); setError(''); setResult(null);
     try {
-      const data = await reformatApi.convert(selectedId, targetRatio);
+      const data = await reformatApi.convert({ imageId: selectedId, targetRatio });
       setResult(data);
     } catch (e) {
       setError(e?.message || 'Generation failed');

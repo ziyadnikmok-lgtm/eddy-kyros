@@ -1,6 +1,35 @@
 import { useStepTimer } from '../hooks/useStepTimer';
 import { Badge, Card, Spinner } from '../components/UI';
 
+const INTERRUPTED_JOB_MESSAGE = 'This request was interrupted by a page reload. Please start it again.';
+
+function cleanQueueItems(items) {
+  if (!Array.isArray(items)) return [];
+  return items.filter((job) => job && typeof job === 'object');
+}
+
+export function normalizePersistedQueueItems(items) {
+  return cleanQueueItems(items).map((job) => (
+    job.status === 'running'
+      ? { ...job, status: 'error', errorMessage: job.errorMessage || INTERRUPTED_JOB_MESSAGE }
+      : job
+  ));
+}
+
+export function preparePersistedQueueItems(items) {
+  return cleanQueueItems(items);
+}
+
+function normalizePersistedValue(key, value) {
+  if (key === 'queueItems') return normalizePersistedQueueItems(value);
+  return value;
+}
+
+function preparePersistedValue(key, value) {
+  if (key === 'queueItems') return preparePersistedQueueItems(value);
+  return value;
+}
+
 function readPersistedState(storageKey, persistKeys) {
   if (typeof window === 'undefined' || !storageKey || !persistKeys?.length) return {};
   try {
@@ -10,7 +39,7 @@ function readPersistedState(storageKey, persistKeys) {
     if (!parsed || typeof parsed !== 'object') return {};
     const next = {};
     for (const key of persistKeys) {
-      if (key in parsed) next[key] = parsed[key];
+      if (key in parsed) next[key] = normalizePersistedValue(key, parsed[key]);
     }
     return next;
   } catch {
@@ -24,7 +53,7 @@ function persistState(storageKey, persistKeys, cache) {
     const payload = {};
     let hasValue = false;
     for (const key of persistKeys) {
-      const value = cache[key];
+      const value = preparePersistedValue(key, cache[key]);
       const isEmptyArray = Array.isArray(value) && value.length === 0;
       if (value == null || isEmptyArray) continue;
       payload[key] = value;

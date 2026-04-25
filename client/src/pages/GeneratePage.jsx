@@ -5,6 +5,7 @@ import { useStepTimer } from '../hooks/useStepTimer';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Textarea, Toggle, Spinner, ImageCard, Badge, Section, Hint, CopyBtn } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
+import { normalizePersistedQueueItems, preparePersistedQueueItems } from '../lib/persistentPageState';
 import {
   ASPECT_RATIOS, RESOLUTION_TIERS,
   CAMERA_PROFILES, POSE_MODES, EXPRESSION_MODES, SCENE_MODES,
@@ -314,7 +315,7 @@ function readStoredQueueItems() {
     const raw = window.sessionStorage.getItem(GENERATE_QUEUE_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return normalizePersistedQueueItems(parsed);
   } catch {
     return [];
   }
@@ -323,11 +324,12 @@ function readStoredQueueItems() {
 function writeStoredQueueItems(items) {
   if (typeof window === 'undefined') return;
   try {
-    if (!items || items.length === 0) {
+    const safeItems = preparePersistedQueueItems(items);
+    if (!safeItems.length) {
       window.sessionStorage.removeItem(GENERATE_QUEUE_STORAGE_KEY);
       return;
     }
-    window.sessionStorage.setItem(GENERATE_QUEUE_STORAGE_KEY, JSON.stringify(items));
+    window.sessionStorage.setItem(GENERATE_QUEUE_STORAGE_KEY, JSON.stringify(safeItems));
   } catch {
     // Ignore storage failures (quota/private mode) and keep in-memory behavior.
   }
@@ -512,7 +514,7 @@ export default function GeneratePage() {
     setShowAtomPicker(false);
     const details = [];
     for (const id of ids) {
-      try { const atom = await styleApi.get(id); details.push({ id: atom.id, category: atom.category, text: atom.text }); } catch { }
+      try { const atom = await styleApi.get(id); details.push({ id: atom.id, category: atom.category, text: atom.text }); } catch { /* Skip atoms that were deleted or cannot be loaded. */ }
     }
     setStyleAtomDetails(details);
   };
@@ -529,7 +531,7 @@ export default function GeneratePage() {
     try {
       const ids = JSON.parse(raw);
       if (Array.isArray(ids) && ids.length > 0) handleApplyAtoms(ids);
-    } catch { }
+    } catch { /* Ignore stale prompt-builder handoff data. */ }
     const ar = sessionStorage.getItem('pb_aspectRatio');
     const res = sessionStorage.getItem('pb_resolutionTier');
     if (ar) { update({ aspectRatio: ar }); sessionStorage.removeItem('pb_aspectRatio'); }

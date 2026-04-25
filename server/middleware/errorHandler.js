@@ -18,10 +18,17 @@ function _classifyError(err) {
 }
 
 function errorHandler(err, req, res, _next) {
-  const statusCode = err.statusCode || 500;
-  const code = err.isOperational
+  let statusCode = err.statusCode || err.status || 500;
+  let code = err.isOperational
     ? (err.code || 'INTERNAL_ERROR')
     : _classifyError(err);
+  let message = err.isOperational ? err.message : 'An unexpected error occurred';
+
+  if (err.type === 'entity.too.large') {
+    statusCode = 413;
+    code = 'PAYLOAD_TOO_LARGE';
+    message = 'Upload is too large. Try fewer images or smaller files.';
+  }
 
   if (statusCode >= 500) {
     const meta = {
@@ -47,7 +54,7 @@ function errorHandler(err, req, res, _next) {
     success: false,
     error: {
       code,
-      message: err.isOperational ? err.message : 'An unexpected error occurred',
+      message,
     },
   });
 }

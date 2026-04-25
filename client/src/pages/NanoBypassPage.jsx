@@ -12,6 +12,7 @@ const IMAGE_SIZES = ['1K', '2K'];
 
 const LOCKED_MODEL = { id: 'flash', label: 'Flash 3.1', sublabel: 'gemini-3.1-flash', color: 'bg-blue-600 hover:bg-blue-500' };
 const NANO_BYPASS_HANDOFF_KEY = 'kyros.nanoBypass.handoff';
+const INITIAL_IMAGE_SLOT_COUNT = 5;
 
 const _cache = {
   prompt: '',
@@ -56,6 +57,67 @@ function dataUrlToImageItem(dataUrl, filename = 'nano-source.png') {
   };
 }
 
+function fileToImageItem(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({
+      base64: reader.result,
+      mimeType: file.type || 'image/png',
+      preview: reader.result,
+      filename: file.name || 'nano-source.png',
+    });
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function filesToImageItems(fileList) {
+  const files = Array.from(fileList || []).filter((file) => file?.type?.startsWith('image/'));
+  if (files.length === 0) return [];
+  return Promise.all(files.map(fileToImageItem));
+}
+
+function createEmptyImageSlots(count = INITIAL_IMAGE_SLOT_COUNT) {
+  return Array.from({ length: count }, () => null);
+}
+
+function ensureOpenImageSlot(slots) {
+  const next = Array.isArray(slots) ? [...slots] : createEmptyImageSlots();
+  let lastFilledIndex = -1;
+  next.forEach((slot, index) => {
+    if (slot) lastFilledIndex = index;
+  });
+
+  const targetLength = Math.max(INITIAL_IMAGE_SLOT_COUNT, lastFilledIndex + 2);
+  while (next.length < targetLength) next.push(null);
+  return next.slice(0, targetLength);
+}
+
+function placeImagesAt(slots, startIndex, incoming) {
+  const next = Array.isArray(slots) ? [...slots] : createEmptyImageSlots();
+  const imagesToPlace = Array.isArray(incoming) ? incoming.filter(Boolean) : [];
+  let cursor = Math.max(0, Number(startIndex) || 0);
+
+  imagesToPlace.forEach((image, offset) => {
+    if (offset === 0) {
+      while (next.length <= cursor) next.push(null);
+      next[cursor] = image;
+      cursor += 1;
+      return;
+    }
+
+    let nextOpenIndex = next.findIndex((slot, index) => index >= cursor && !slot);
+    if (nextOpenIndex === -1) {
+      nextOpenIndex = next.length;
+      next.push(null);
+    }
+    next[nextOpenIndex] = image;
+    cursor = nextOpenIndex + 1;
+  });
+
+  return ensureOpenImageSlot(next);
+}
+
 function readNanoBypassHandoff() {
   if (typeof window === 'undefined') return null;
   try {
@@ -93,19 +155,21 @@ function buildCharacterReferenceDescriptors(characterId, character) {
   return items;
 }
 
-function ImageSlot({ index, image, onAdd, onRemove }) {
+function ImageSlot({ index, image, onAddMany, onRemove }) {
   const inputRef = useRef(null);
+
+  const addFiles = async (fileList) => {
+    try {
+      const items = await filesToImageItems(fileList);
+      if (items.length > 0) onAddMany(index, items);
+    } catch {
+      // Ignore unreadable local files; the page-level API call will still validate inputs.
+    }
+  };
 
   const handleDrop = (e) => {
     e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file && file.type.startsWith('image/')) readFile(file);
-  };
-
-  const readFile = (file) => {
-    const reader = new FileReader();
-    reader.onload = () => onAdd(index, { base64: reader.result, mimeType: file.type, preview: reader.result });
-    reader.readAsDataURL(file);
+    addFiles(e.dataTransfer.files);
   };
 
   return (
@@ -117,7 +181,17 @@ function ImageSlot({ index, image, onAdd, onRemove }) {
       onDragOver={(e) => e.preventDefault()}
       onClick={() => !image && inputRef.current?.click()}
     >
-      <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) readFile(f); }} />
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          addFiles(e.target.files);
+          e.target.value = '';
+        }}
+      />
       {image ? (
         <>
           <img src={image.preview} alt="" className="w-full h-full object-cover rounded-xl" />
@@ -152,7 +226,7 @@ export default function NanoBypassPage() {
   const autofillCharacterPromptRef = useRef(false);
   const lastAutofilledCharacterIdRef = useRef('');
 
-  const [images, setImages] = useState([null, null, null, null, null]);
+  const [images, setImages] = useState(() => createEmptyImageSlots());
   const [prompt, setPrompt] = useState(_cache.prompt);
   const [characterId, setCharacterId] = useState(_cache.characterId);
   const [model, setModel] = useState(_cache.model);
@@ -208,7 +282,7 @@ export default function NanoBypassPage() {
         autoCharacterRef: false,
         referenceLabel: 'Source',
       };
-      return next;
+      return ensureOpenImageSlot(next);
     });
 
     if (handoff.characterId) {
@@ -263,17 +337,13 @@ export default function NanoBypassPage() {
         if (item.type.startsWith('image/')) {
           const file = item.getAsFile();
           if (!file) continue;
-          const reader = new FileReader();
-          reader.onload = () => {
+          filesToImageItems([file]).then((items) => {
+            if (items.length === 0) return;
             setImages((prev) => {
-              const next = [...prev];
-              const slot = next.findIndex((s) => !s);
-              if (slot === -1) return prev;
-              next[slot] = { base64: reader.result, mimeType: file.type, preview: reader.result };
-              return next;
+              const slot = prev.findIndex((s) => !s);
+              return placeImagesAt(prev, slot === -1 ? prev.length : slot, items);
             });
-          };
-          reader.readAsDataURL(file);
+          }).catch(() => {});
           break;
         }
       }
@@ -282,12 +352,20 @@ export default function NanoBypassPage() {
     return () => window.removeEventListener('paste', handler);
   }, []);
 
-  const handleAdd = useCallback((index, img) => {
-    setImages((prev) => { const next = [...prev]; next[index] = img; return next; });
+  const handleAddMany = useCallback((index, items) => {
+    setImages((prev) => placeImagesAt(prev, index, items));
+  }, []);
+
+  const addImageSlot = useCallback(() => {
+    setImages((prev) => [...prev, null]);
   }, []);
 
   const handleRemove = useCallback((index) => {
-    setImages((prev) => { const next = [...prev]; next[index] = null; return next; });
+    setImages((prev) => {
+      const next = [...prev];
+      next[index] = null;
+      return ensureOpenImageSlot(next);
+    });
   }, []);
 
   useEffect(() => {
@@ -323,11 +401,14 @@ export default function NanoBypassPage() {
         setImages((prev) => {
           const next = prev.map((img) => (img?.autoCharacterRef ? null : img));
           for (const refImage of loadedRefs) {
-            const emptyIndex = next.findIndex((img) => !img);
-            if (emptyIndex === -1) break;
+            let emptyIndex = next.findIndex((img) => !img);
+            if (emptyIndex === -1) {
+              emptyIndex = next.length;
+              next.push(null);
+            }
             next[emptyIndex] = refImage;
           }
-          return next;
+          return ensureOpenImageSlot(next);
         });
       } catch (err) {
         if (!cancelled) notify(err.message || 'Failed to load character reference images', 'error');
@@ -458,12 +539,21 @@ export default function NanoBypassPage() {
           {/* Images grid */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-zinc-400 font-medium">Images ({activeImages.length}/5)</span>
-              <span className="text-[10px] text-zinc-600">Paste or drop</span>
+              <span className="text-xs text-zinc-400 font-medium">Images ({activeImages.length})</span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={addImageSlot}
+                  className="text-[10px] font-medium text-blue-300 hover:text-blue-200"
+                >
+                  Add slot
+                </button>
+                <span className="text-[10px] text-zinc-600">Paste/drop multiple</span>
+              </div>
             </div>
             <div className="grid grid-cols-3 gap-2">
               {images.map((img, i) => (
-                <ImageSlot key={i} index={i} image={img} onAdd={handleAdd} onRemove={handleRemove} />
+                <ImageSlot key={i} index={i} image={img} onAddMany={handleAddMany} onRemove={handleRemove} />
               ))}
             </div>
           </div>
