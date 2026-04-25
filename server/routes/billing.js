@@ -2,34 +2,75 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const db = require('../db');
 const log = require('../utils/logger');
 const { requireAuth } = require('../middleware/requireAuth');
 const { logUsageEvent } = require('../services/eventLogger');
 
+// Max 5 invoice attempts per user per 15 minutes
+const invoiceRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => req.session?.userId || ipKeyGenerator(req.ip),
+  handler: (_req, res) => res.status(429).json({ error: 'Too many payment attempts. Try again in 15 minutes.' }),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 const router = express.Router();
 
 const PLANS = {
-  pro: { name: 'Pro', amount: '19.00', currency: 'USD' },
-  unlimited: { name: 'Unlimited', amount: '49.00', currency: 'USD' },
+  pro: {
+    name: 'Kyros Creator',
+    cycles: {
+      monthly: { label: '1 Month', amount: '19.99', currency: 'USD', durationDays: 30 },
+      quarterly: { label: '3 Months', amount: '44.99', currency: 'USD', durationDays: 90 },
+    },
+  },
+  unlimited: {
+    name: 'Founder Lifetime',
+    cycles: {
+      lifetime: { label: 'Lifetime', amount: '149.00', currency: 'USD', durationDays: null },
+    },
+  },
 };
 
+function getPlanCycle(plan, cycle) {
+  const planConfig = PLANS[plan];
+  if (!planConfig) return null;
+  const fallbackCycle = plan === 'pro' ? 'monthly' : 'lifetime';
+  const cycleKey = cycle || fallbackCycle;
+  // reject unknown cycle keys to prevent injection
+  if (!['monthly', 'quarterly', 'lifetime'].includes(cycleKey)) return null;
+  const cycleConfig = planConfig.cycles[cycleKey];
+  if (!cycleConfig) return null;
+  return { planKey: plan, cycleKey, planConfig, cycleConfig };
+}
+
 // POST /api/billing/create-invoice
-router.post('/create-invoice', requireAuth, async (req, res) => {
-  const { plan } = req.body || {};
-  if (!PLANS[plan]) return res.status(400).json({ error: 'Invalid plan. Choose pro or unlimited.' });
+router.post('/create-invoice', requireAuth, invoiceRateLimit, async (req, res) => {
+  const plan = typeof req.body?.plan === 'string' ? req.body.plan.slice(0, 32) : '';
+  const cycle = typeof req.body?.cycle === 'string' ? req.body.cycle.slice(0, 32) : '';
+  if (!['pro', 'unlimited'].includes(plan)) {
+    return res.status(400).json({ error: 'Invalid plan.' });
+  }
+  const selected = getPlanCycle(plan, cycle);
+  if (!selected) {
+    return res.status(400).json({ error: 'Invalid plan or cycle.' });
+  }
   const apiKey = process.env.HELEKET_API_KEY;
   const merchantId = process.env.HELEKET_MERCHANT_ID;
   if (!apiKey || apiKey === 'placeholder_set_by_admin') return res.status(503).json({ error: 'Payment system not configured' });
-  const orderId = `${plan}-${req.session.userId.slice(0, 8)}-${Date.now()}`;
+  const orderId = `${selected.planKey}__${selected.cycleKey}__${req.session.userId.slice(0, 8)}__${Date.now()}`;
   const appUrl = process.env.APP_URL || 'http://localhost:3001';
   const payload = {
     merchant_id: merchantId,
-    amount: PLANS[plan].amount,
-    currency: PLANS[plan].currency,
+    amount: selected.cycleConfig.amount,
+    currency: selected.cycleConfig.currency,
     order_id: orderId,
-    order_name: `AI Content Studio ${PLANS[plan].name}`,
-    url_return: `${appUrl}/dashboard/billing?status=success`,
+    order_name: `Kyros Studio ${selected.planConfig.name} ${selected.cycleConfig.label}`,
+    url_return: `${appUrl}/billing?status=success&tg=1`,
     url_callback: `${appUrl}/api/billing/webhook`,
     customer_email: db.prepare('SELECT email FROM users WHERE id = ?').get(req.session.userId)?.email,
   };
@@ -49,7 +90,12 @@ router.post('/create-invoice', requireAuth, async (req, res) => {
       entityType: 'subscription',
       entityId: orderId,
       source: 'billing',
-      payload: { plan, amount: PLANS[plan].amount, currency: PLANS[plan].currency },
+      payload: {
+        plan: selected.planKey,
+        cycle: selected.cycleKey,
+        amount: selected.cycleConfig.amount,
+        currency: selected.cycleConfig.currency,
+      },
     });
     res.json({ url: data.url || data.payment_url, orderId });
   } catch (e) {
@@ -69,7 +115,10 @@ router.post('/webhook', express.raw({ type: 'application/json' }), (req, res) =>
   const apiKey = process.env.HELEKET_API_KEY || '';
   // Verify HMAC-SHA256 signature — reject if missing or wrong
   const expected = crypto.createHmac('sha256', apiKey).update(req.body).digest('hex');
-  if (!sig || sig !== expected) {
+  const sigBuf = Buffer.from(sig || '', 'utf8');
+  const expBuf = Buffer.from(expected, 'utf8');
+  const valid = sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf);
+  if (!sig || !valid) {
     log.warn('billing_webhook_bad_signature', { sig: sig ? 'present' : 'missing' });
     return res.status(403).json({ error: 'Invalid signature' });
   }
@@ -79,7 +128,11 @@ router.post('/webhook', express.raw({ type: 'application/json' }), (req, res) =>
   if (status === 'paid' || status === 'completed') {
     const sub = db.prepare('SELECT id, plan, user_id FROM subscriptions WHERE heleket_order_id = ?').get(order_id);
     if (sub) {
-      const expires = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
+      const [, cycleKey] = String(order_id || '').split('__');
+      const selected = getPlanCycle(sub.plan, cycleKey);
+      const expires = selected?.cycleConfig?.durationDays
+        ? new Date(Date.now() + selected.cycleConfig.durationDays * 24 * 3600 * 1000).toISOString()
+        : null;
       db.prepare('UPDATE subscriptions SET status = ?, expires_at = ? WHERE id = ?').run('active', expires, sub.id);
       logUsageEvent({
         userId: sub.user_id,
@@ -87,9 +140,14 @@ router.post('/webhook', express.raw({ type: 'application/json' }), (req, res) =>
         entityType: 'subscription',
         entityId: sub.id,
         source: 'billing',
-        payload: { plan: sub.plan, orderId: order_id, expiresAt: expires },
+        payload: { plan: sub.plan, cycle: cycleKey || null, orderId: order_id, expiresAt: expires },
       });
-      log.info('billing_subscription_activated', { userId: sub.user_id, plan: sub.plan, orderId: order_id });
+      log.info('billing_subscription_activated', { userId: sub.user_id, plan: sub.plan, cycle: cycleKey || null, orderId: order_id });
+      // Fire referral commission if this user was referred
+      try {
+        const commission = require('../services/referralService').createCommission(sub.user_id, sub.plan);
+        if (commission) log.info('referral_commission_created', commission);
+      } catch (e) { log.warn('referral_commission_error', { message: e.message }); }
     }
   }
   res.json({ ok: true });

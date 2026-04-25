@@ -1,5 +1,6 @@
 export const RESOLUTION_TIERS = ['1K', '2K', '4K'];
-export const DEFAULT_IMAGE_MODEL = 'gemini-3-pro-image-preview';
+export const DEFAULT_IMAGE_MODEL = 'nano-bypass-experimental';
+export const DEFAULT_RESOLUTION_TIER = '1K';
 export const EXPERIMENTAL_NANO_BYPASS_MODEL = 'nano-bypass-experimental';
 export const IMAGE_MODEL_OPTIONS = [
   { value: 'gemini-3-pro-image-preview', label: 'Nano Banana Pro (Old)' },

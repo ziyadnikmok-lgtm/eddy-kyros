@@ -11,6 +11,10 @@ const ERROR_CODE_MAP = {
   GEMINI_TRANSIENT: 'Temporary Gemini error — retries exhausted. Try again shortly.',
   TOO_MANY_JOBS: 'Too many batch jobs running. Wait for one to finish or cancel it.',
   PAYLOAD_TOO_LARGE: 'Upload is too large. Reduce the file size and try again.',
+  FILE_TOO_LARGE: 'Image is too large. Use PNG, JPG, or WEBP under 10MB.',
+  INVALID_FILE_TYPE: 'Unsupported image format. Use PNG, JPG, or WEBP. HEIC is not supported.',
+  INVALID_FILE_CONTENT: 'That image file looks broken or mismatched. Re-export it as PNG, JPG, or WEBP and try again.',
+  UPLOAD_PARSE_ERROR: 'Could not read that image. Re-export it as PNG, JPG, or WEBP and try again.',
   CORS_ERROR: 'Cross-origin request blocked.',
   INSTAGRAM_UNAVAILABLE: 'Instagram post is unavailable or private.',
 };

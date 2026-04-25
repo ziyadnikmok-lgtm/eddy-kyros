@@ -39,7 +39,7 @@ export default function PromptBuilderPage() {
   const [pickerCat, setPickerCat] = useState(null);
   const [disabledSlots, setDisabledSlots] = useState(() => new Set(DEFAULT_DISABLED));
   const [aspectRatio, setAspectRatio] = useState('4:5');
-  const [resolutionTier, setResolutionTier] = useState('2K');
+  const [resolutionTier, setResolutionTier] = useState('1K');
 
   const [presets, setPresets] = useState(() => {
     try { return JSON.parse(localStorage.getItem('pb_presets') || '[]'); } catch { return []; }

@@ -4,10 +4,11 @@ const REALISM_DIRECTIVE = require('../utils/realismDirective');
 const referenceManager = require('../services/referenceManager');
 const sceneAnalyzer = require('../services/sceneAnalyzer');
 const apiKeyManager = require('../services/apiKeyManager');
-const geminiService = require('../services/geminiService');
+const geminiService = require('../services/geminiBackend');
 const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
 const reelReferenceService = require('../services/reelReferenceService');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const { buildCharacterReferenceImages } = require('./postClone');
 
 const router = express.Router();
@@ -53,7 +54,7 @@ async function analyzeAndRecreateFrame({ frame, characterId, activeReferenceIds,
   galleryManager.save({
     base64Data: result.image.base64Data,
     mimeType: result.image.mimeType,
-    prompt: 'Reel frame recreation',
+    prompt: finalPrompt,
     source: 'reel-recreate',
     characterId,
     aspectRatio: '9:16',
@@ -71,7 +72,7 @@ async function analyzeAndRecreateFrame({ frame, characterId, activeReferenceIds,
   };
 }
 
-router.post('/recreate', async (req, res, next) => {
+router.post('/recreate', requirePlanCapacity({ cost: 2 }), async (req, res, next) => {
   try {
     const { reelUrl, characterId, activeReferenceIds, apifyApiKey, imageModel } = req.body || {};
 

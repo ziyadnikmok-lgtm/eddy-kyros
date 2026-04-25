@@ -82,6 +82,105 @@ function PromptDisplay({ prompt, onCopy }) {
   );
 }
 
+function filenameFromUrl(url) {
+  try {
+    const parsed = new URL(url, window.location.origin);
+    return decodeURIComponent(parsed.pathname.split('/').pop() || '');
+  } catch {
+    return '';
+  }
+}
+
+async function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function parseDataUrl(dataUrl) {
+  const match = String(dataUrl || '').match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return null;
+  return { mimeType: match[1], base64: match[2] };
+}
+
+async function copyImageFromUrl(url, notify) {
+  try {
+    if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+      throw new Error('Copy image is not supported in this browser');
+    }
+    const response = await fetch(url, { credentials: 'include' });
+    if (!response.ok) throw new Error(`Failed to load image (${response.status})`);
+    const blob = await response.blob();
+    await navigator.clipboard.write([new ClipboardItem({ [blob.type || 'image/png']: blob })]);
+    notify?.('Image copied', 'success');
+  } catch (err) {
+    notify?.(err.message || 'Failed to copy image', 'error');
+  }
+}
+
+function CardActionButton({ tone = 'default', children, ...props }) {
+  const toneClass = tone === 'danger'
+    ? 'text-red-300 hover:bg-red-500/10 hover:text-red-200'
+    : 'text-zinc-200 hover:bg-zinc-800/90 hover:text-white';
+  return (
+    <button
+      type="button"
+      className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${toneClass}`}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ImageContextMenu({ menu, onClose, onAction }) {
+  useEffect(() => {
+    if (!menu) return undefined;
+    const handlePointerDown = () => onClose();
+    const handleEscape = (event) => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleEscape);
+    window.addEventListener('scroll', handlePointerDown, true);
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleEscape);
+      window.removeEventListener('scroll', handlePointerDown, true);
+    };
+  }, [menu, onClose]);
+
+  if (!menu) return null;
+
+  return (
+    <div
+      className="fixed z-[80] w-64 rounded-xl border border-zinc-700/70 bg-zinc-950/98 p-2 shadow-2xl shadow-black/40 backdrop-blur-xl"
+      style={{
+        left: Math.min(menu.x, window.innerWidth - 280),
+        top: Math.min(menu.y, window.innerHeight - 380),
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <div className="mb-2 border-b border-zinc-800 px-2 pb-2">
+        <p className="truncate text-xs font-medium text-zinc-200">{menu.item.filename || 'Image actions'}</p>
+        <p className="text-[11px] text-zinc-500">Preview, copy, edit, send, or delete this image.</p>
+      </div>
+      <div className="space-y-1">
+        <CardActionButton onClick={() => onAction('open')}>Open preview</CardActionButton>
+        <CardActionButton onClick={() => onAction('copyPrompt')}>Copy prompt</CardActionButton>
+        <CardActionButton onClick={() => onAction('copyImage')}>Copy image</CardActionButton>
+        <CardActionButton onClick={() => onAction('recreate')}>Open original workflow</CardActionButton>
+        <CardActionButton onClick={() => onAction('imageEditor')}>Edit in Image Editor</CardActionButton>
+        <CardActionButton onClick={() => onAction('nanoBypass')}>More edit in Nano Bypass</CardActionButton>
+        <CardActionButton onClick={() => onAction('carousel')}>Go to Carousel</CardActionButton>
+        <CardActionButton onClick={() => onAction('download')}>Download</CardActionButton>
+        <CardActionButton tone="danger" onClick={() => onAction('delete')}>Delete</CardActionButton>
+      </div>
+    </div>
+  );
+}
+
 function useIsMobile(breakpoint = 768) {
   const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < breakpoint);
   useEffect(() => {
@@ -139,6 +238,7 @@ export default function GalleryPage() {
   const sentinelRef = useRef(null);
   const [spoofAvailable, setSpoofAvailable] = useState(false);
   const [spoofEnabled, setSpoofEnabled] = useState(true);
+  const [contextMenu, setContextMenu] = useState(null);
 
   const availableSources = useMemo(() => {
     const s = new Set(images.map((i) => i.source).filter(Boolean));
@@ -296,6 +396,86 @@ export default function GalleryPage() {
       setApplyingLastId(null);
     }
   }, [notify]);
+
+  const handleContextAction = useCallback(async (action) => {
+    const img = contextMenu?.item;
+    if (!img) return;
+
+    if (action === 'open') {
+      const idx = filteredImages.findIndex((entry) => entry.id === img.id);
+      openLightbox(galleryImageUrls, idx >= 0 ? idx : 0);
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'copyPrompt') {
+      copyPromptToClipboard(img.prompt || '');
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'copyImage') {
+      await copyImageFromUrl(galleryApi.imageUrl(img.id), notify);
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'recreate') {
+      handleRecreate(img);
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'imageEditor') {
+      navigateTo('imageEditor', { editId: img.id });
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'carousel') {
+      navigateTo('carousel', {
+        recreate: true,
+        sourceImageId: img.id,
+        characterId: img.characterId || '',
+        aspectRatio: img.aspectRatio || '',
+      });
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'download') {
+      handleDownload(img.id, img.filename);
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'delete') {
+      setDeleteConfirmId(img.id);
+      setContextMenu(null);
+      return;
+    }
+
+    if (action !== 'nanoBypass') return;
+
+    try {
+      const response = await fetch(galleryApi.imageUrl(img.id), { credentials: 'include' });
+      if (!response.ok) throw new Error(`Failed to load image (${response.status})`);
+      const blob = await response.blob();
+      const dataUrl = await blobToDataUrl(blob);
+      const parsed = parseDataUrl(dataUrl);
+      if (!parsed) throw new Error('Could not prepare this image for Nano Bypass');
+      navigateTo('nanoBypass', {
+        sourceImageBase64: parsed.base64,
+        sourceImageMimeType: parsed.mimeType,
+        sourceImageName: img.filename || filenameFromUrl(galleryApi.imageUrl(img.id)) || `gallery-${img.id}.png`,
+        aspectRatio: img.aspectRatio || 'auto',
+      });
+    } catch (err) {
+      notify(err.message || 'Failed to open image in Nano Bypass', 'error');
+    } finally {
+      setContextMenu(null);
+    }
+  }, [contextMenu, filteredImages, galleryImageUrls, navigateTo, notify, openLightbox]);
 
   const toggleSelection = useCallback((id) => {
     setSelectedIds((prev) => {
@@ -609,12 +789,13 @@ export default function GalleryPage() {
                     const idx = filteredImages.findIndex((i) => i.id === img.id);
                     openLightbox(galleryImageUrls, idx >= 0 ? idx : 0);
                   }}>
-                    <img
-                      src={isMobile ? `/api/gallery/${img.id}/thumb` : galleryApi.imageUrl(img.id)}
-                      alt=""
-                      className="w-full aspect-square object-cover group-hover:scale-105 transition-transform"
-                      loading="lazy"
-                    />
+                  <img
+                    src={isMobile ? `/api/gallery/${img.id}/thumb` : galleryApi.imageUrl(img.id)}
+                    alt=""
+                    className="w-full aspect-square object-cover group-hover:scale-105 transition-transform"
+                    loading="lazy"
+                    onContextMenu={(event) => { event.preventDefault(); setContextMenu({ item: img, x: event.clientX, y: event.clientY }); }}
+                  />
                   </div>
                 ))}
               </div>
@@ -642,6 +823,10 @@ export default function GalleryPage() {
                     loading="lazy"
                     style={{ cursor: 'pointer' }}
                     onClick={() => bulkMode ? toggleSelection(img.id) : openLightbox(galleryImageUrls, index)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      setContextMenu({ item: img, x: event.clientX, y: event.clientY });
+                    }}
                     onLoad={() => setLoadedImages((prev) => { const next = new Set(prev); next.add(img.id); return next; })}
                   />
 
@@ -798,6 +983,7 @@ export default function GalleryPage() {
       />
 
       <LightboxComponent />
+      <ImageContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} onAction={handleContextAction} />
     </div>
   );
 }

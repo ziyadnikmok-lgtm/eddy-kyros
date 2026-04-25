@@ -6,7 +6,7 @@ const { AppError } = require('../middleware/errorHandler');
 const { asText } = require('../utils/helpers');
 const { initSSE } = require('../utils/sse');
 const apiKeyManager = require('../services/apiKeyManager');
-const geminiService = require('../services/geminiService');
+const geminiService = require('../services/geminiBackend');
 const styleLibrary = require('../services/styleLibrary');
 const {
   runPostActor,
@@ -164,10 +164,6 @@ router.get('/analyze', async (req, res) => {
   }
 
   const apiKey = apiKeyManager.getActiveKey();
-  if (!apiKey) {
-    send('error', { message: 'No active Gemini API key configured' });
-    return res.end();
-  }
 
   let closed = false;
   req.on('close', () => { closed = true; });

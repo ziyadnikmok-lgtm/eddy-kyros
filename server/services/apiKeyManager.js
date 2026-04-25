@@ -117,6 +117,8 @@ class ApiKeyManager {
 
   getActiveKey() {
     if (!this._store.activeKeyId) {
+      // If Vertex is the selected backend, generation auth comes from the service account.
+      if (this.shouldUseVertexBackend()) return null;
       throw new AppError('No active API key set. Add a key first.', 400, 'NO_ACTIVE_KEY');
     }
 
@@ -140,6 +142,36 @@ class ApiKeyManager {
     if (_keyAccessLog.length > KEY_ACCESS_LOG_MAX) _keyAccessLog.shift();
 
     return this._decrypt(entry.encryptedKey);
+  }
+
+  /**
+   * Returns a Gemini API key for backend fallback:
+   * 1) active key if valid
+   * 2) newest saved key if active key is missing/corrupt
+   * Returns null when no Gemini key exists.
+   */
+  getFallbackGeminiKey() {
+    try {
+      const active = this.getActiveKey();
+      if (active && typeof active === 'string' && active.trim()) return active.trim();
+    } catch {
+      // ignore and try other saved keys below
+    }
+
+    if (!Array.isArray(this._store.keys) || this._store.keys.length === 0) {
+      return null;
+    }
+
+    const newest = this._store.keys
+      .slice()
+      .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))[0];
+    if (!newest?.encryptedKey) return null;
+    try {
+      const key = this._decrypt(newest.encryptedKey);
+      return key && typeof key === 'string' && key.trim() ? key.trim() : null;
+    } catch {
+      return null;
+    }
   }
 
   listKeys() {
@@ -257,6 +289,83 @@ class ApiKeyManager {
     this._store.wavespeedUpdatedAt = null;
     this._saveStore();
     return { removed: true };
+  }
+
+  setVertexCredentials(jsonString) {
+    if (!jsonString || typeof jsonString !== 'string' || jsonString.trim().length === 0) {
+      throw new AppError('Service account JSON is required', 400, 'VALIDATION_ERROR');
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonString.trim());
+    } catch {
+      throw new AppError('Invalid JSON — paste the full contents of your service account key file', 400, 'VALIDATION_ERROR');
+    }
+    if (parsed.type !== 'service_account') {
+      throw new AppError('Invalid credentials — must be a "service_account" key file downloaded from GCP', 400, 'VALIDATION_ERROR');
+    }
+    if (!parsed.project_id || !parsed.private_key || !parsed.client_email) {
+      throw new AppError('Incomplete service account JSON — missing project_id, private_key, or client_email', 400, 'VALIDATION_ERROR');
+    }
+    const value = jsonString.trim();
+    this._store.vertexCredsEncrypted = this._encrypt(value);
+    this._store.vertexCredsProjectId = parsed.project_id;
+    this._store.vertexCredsClientEmail = parsed.client_email;
+    this._store.vertexCredsUpdatedAt = new Date().toISOString();
+    this._store.backendPreference = 'vertex'; // auto-activate when credentials are saved
+    this._saveStore();
+    return this.getVertexCredentialsInfo();
+  }
+
+  getVertexCredentials() {
+    if (!this._store.vertexCredsEncrypted) return null;
+    try {
+      const raw = this._decrypt(this._store.vertexCredsEncrypted);
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  hasVertexCredentials() {
+    return !!this._store.vertexCredsEncrypted;
+  }
+
+  /** Returns true only when credentials exist AND user prefers vertex backend */
+  shouldUseVertexBackend() {
+    return !!this._store.vertexCredsEncrypted && this._store.backendPreference !== 'gemini';
+  }
+
+  setBackendPreference(pref) {
+    if (pref !== 'vertex' && pref !== 'gemini') {
+      throw new AppError('"backend" must be "vertex" or "gemini"', 400, 'VALIDATION_ERROR');
+    }
+    if (pref === 'vertex' && !this._store.vertexCredsEncrypted) {
+      throw new AppError('Cannot activate Vertex AI — no credentials saved. Paste your service account JSON first.', 400, 'NO_VERTEX_CREDENTIALS');
+    }
+    this._store.backendPreference = pref;
+    this._saveStore();
+    return this.getVertexCredentialsInfo();
+  }
+
+  getVertexCredentialsInfo() {
+    return {
+      hasVertexCredentials: !!this._store.vertexCredsEncrypted,
+      activeBackend: this._store.backendPreference || 'gemini',
+      projectId: this._store.vertexCredsProjectId || '',
+      clientEmail: this._store.vertexCredsClientEmail || '',
+      updatedAt: this._store.vertexCredsUpdatedAt || null,
+    };
+  }
+
+  clearVertexCredentials() {
+    this._store.vertexCredsEncrypted = null;
+    this._store.vertexCredsProjectId = '';
+    this._store.vertexCredsClientEmail = '';
+    this._store.vertexCredsUpdatedAt = null;
+    this._store.backendPreference = 'gemini';
+    this._saveStore();
+    return this.getVertexCredentialsInfo();
   }
 
   setInstagramSessionId(sessionid) {
@@ -470,6 +579,11 @@ class ApiKeyManager {
             wavespeedKeyEncrypted: parsed.wavespeedKeyEncrypted || null,
             wavespeedKeyMasked: parsed.wavespeedKeyMasked || '',
             wavespeedUpdatedAt: parsed.wavespeedUpdatedAt || null,
+            vertexCredsEncrypted: parsed.vertexCredsEncrypted || null,
+            vertexCredsProjectId: parsed.vertexCredsProjectId || '',
+            vertexCredsClientEmail: parsed.vertexCredsClientEmail || '',
+            vertexCredsUpdatedAt: parsed.vertexCredsUpdatedAt || null,
+            backendPreference: parsed.backendPreference || (parsed.vertexCredsEncrypted ? 'vertex' : 'gemini'),
           };
         }
       }
@@ -485,6 +599,11 @@ class ApiKeyManager {
       wavespeedKeyEncrypted: null,
       wavespeedKeyMasked: '',
       wavespeedUpdatedAt: null,
+      vertexCredsEncrypted: null,
+      vertexCredsProjectId: '',
+      vertexCredsClientEmail: '',
+      vertexCredsUpdatedAt: null,
+      backendPreference: 'gemini',
       instagramSessionEncrypted: null,
       instagramSessionMasked: '',
       instagramSessionUpdatedAt: null,

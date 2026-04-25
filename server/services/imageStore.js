@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const { AppError } = require('../middleware/errorHandler');
 const log = require('../utils/logger');
 const cfg = require('../config');
+const { getUserId } = require('../userContext');
 
 const IMAGE_TTL_MS = cfg.IMAGE_TTL_MS;
 const CLEANUP_INTERVAL_MS = cfg.IMAGE_CLEANUP_INTERVAL_MS;
@@ -74,13 +75,23 @@ class ImageStore {
       throw new AppError(`source must be one of: ${validSources.join(', ')}`, 500, 'STORE_ERROR');
     }
 
-    if (parentImageId && !images.has(parentImageId)) {
-      throw new AppError('Parent image not found', 404, 'PARENT_NOT_FOUND');
+    const userId = getUserId() || '__anon__';
+
+    if (parentImageId) {
+      const parent = images.get(parentImageId);
+      if (!parent) {
+        throw new AppError('Parent image not found', 404, 'PARENT_NOT_FOUND');
+      }
+      // Prevent cross-user parent references
+      if (parent.userId && parent.userId !== '__anon__' && userId !== '__anon__' && parent.userId !== userId) {
+        throw new AppError('Parent image not found', 404, 'PARENT_NOT_FOUND');
+      }
     }
 
     const imageId = crypto.randomUUID();
     const entry = {
       imageId,
+      userId,
       basePrompt,
       characterId,
       activeReferenceIds: Array.isArray(activeReferenceIds) ? activeReferenceIds : null,
@@ -132,6 +143,10 @@ class ImageStore {
     if (!entry) {
       throw new AppError('Image not found', 404, 'IMAGE_NOT_FOUND');
     }
+    const userId = getUserId();
+    if (userId && entry.userId && entry.userId !== '__anon__' && entry.userId !== userId) {
+      throw new AppError('Image not found', 404, 'IMAGE_NOT_FOUND');
+    }
     return this._toSafe(entry);
   }
 
@@ -144,14 +159,18 @@ class ImageStore {
   }
 
   list() {
+    const userId = getUserId();
     const result = [];
     for (const entry of images.values()) {
+      if (userId && entry.userId && entry.userId !== '__anon__' && entry.userId !== userId) continue;
       result.push(this._toSafe(entry, false));
     }
     return result;
   }
 
   getChildren(imageId) {
+    // Use the ownership-aware get() so cross-user access is rejected
+    this.get(imageId);
     const entry = this._getInternal(imageId);
     return entry.children
       .filter((cid) => images.has(cid))

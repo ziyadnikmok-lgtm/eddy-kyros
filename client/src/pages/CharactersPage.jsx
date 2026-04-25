@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { characters as charApi, outfits as outfitApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
@@ -6,14 +6,45 @@ import { Card, Btn, Input, Textarea, Modal, Badge, Spinner, Empty, ConfirmDialog
 import { IconUsers, IconCamera, IconImage } from 'nucleo-glass';
 
 const CATEGORIES = ['Clothing', 'Hairstyle', 'Pose', 'Accessory', 'Expression', 'Lighting', 'Custom'];
+const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+const MAX_CHARACTER_IMAGE_BYTES = 10 * 1024 * 1024;
 
-function fileToBase64(file) {
-  return new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload = () => res(r.result);
-    r.onerror = rej;
-    r.readAsDataURL(file);
+function formatFileSize(bytes) {
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
+
+function getImageValidationError(file) {
+  if (!file) return 'Please choose an image file';
+  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    return 'Unsupported image format. Use PNG, JPG, or WEBP. HEIC is not supported.';
+  }
+  if (file.size > MAX_CHARACTER_IMAGE_BYTES) {
+    return `Image is too large (${formatFileSize(file.size)}). Use a file under 10MB.`;
+  }
+  return null;
+}
+
+function validateCharacterImageFile(file, notify) {
+  const error = getImageValidationError(file);
+  if (error) {
+    notify(error, 'error');
+    return false;
+  }
+  return true;
+}
+
+function getPastedImageFile(event) {
+  const item = [...(event.clipboardData?.items || [])].find((entry) => entry.type.startsWith('image/'));
+  return item?.getAsFile() || null;
+}
+
+function characterImageFormData(fields, file) {
+  const formData = new FormData();
+  Object.entries(fields).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) formData.append(key, value);
   });
+  formData.append('image', file, file.name || 'character-image');
+  return formData;
 }
 
 export default function CharactersPage() {
@@ -21,6 +52,8 @@ export default function CharactersPage() {
   const [selected, setSelected] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showAddRef, setShowAddRef] = useState(false);
+  const [createSeedFile, setCreateSeedFile] = useState(null);
+  const [isCreateCardDragging, setIsCreateCardDragging] = useState(false);
   const { loading, run } = useAsync();
 
   const load = refreshCharacters;
@@ -30,37 +63,135 @@ export default function CharactersPage() {
     if (data) setSelected(data);
   };
 
+  const openCreate = useCallback((file = null) => {
+    setCreateSeedFile(file);
+    setShowCreate(true);
+  }, []);
+
+  const handleCreateSeedFile = useCallback((file) => {
+    if (!validateCharacterImageFile(file, notify)) return;
+    openCreate(file);
+  }, [notify, openCreate]);
+
+  const handleCreateCardPaste = useCallback((event) => {
+    const file = getPastedImageFile(event);
+    if (!file) return;
+    event.preventDefault();
+    setIsCreateCardDragging(false);
+    handleCreateSeedFile(file);
+  }, [handleCreateSeedFile]);
+
+  const handleCreateCardDrop = useCallback((event) => {
+    event.preventDefault();
+    setIsCreateCardDragging(false);
+    const file = event.dataTransfer?.files?.[0];
+    if (file) handleCreateSeedFile(file);
+  }, [handleCreateSeedFile]);
+
   return (
     <div className="space-y-6 animate-in">
-      <div className="flex items-center justify-end">
-        <Btn onClick={() => setShowCreate(true)}>+ New Character</Btn>
-      </div>
-
       {chars.length === 0 ? (
-        <div className="space-y-4">
-          <Empty icon={<IconUsers uniqueId="empty-characters" size={40} aria-hidden />} title="No characters yet" subtitle="Create your first identity-locked character" />
-          <Card className="flex flex-col items-start gap-3 border-blue-500/20 bg-blue-500/[0.06]">
-            <div>
-              <h3 className="text-sm font-semibold text-zinc-100">Don't have a character yet?</h3>
-              <p className="mt-1 text-sm text-zinc-400">Get a ready-made AI character and start creating faster.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 min-h-[400px]">
+          {/* 1 — New Character (main, bigger) */}
+          <button
+            onClick={() => openCreate()}
+            onDragOver={(event) => { event.preventDefault(); setIsCreateCardDragging(true); }}
+            onDragLeave={() => setIsCreateCardDragging(false)}
+            onDrop={handleCreateCardDrop}
+            onPaste={handleCreateCardPaste}
+            className={`group relative rounded-2xl border transition-all duration-300 flex flex-col items-center justify-center gap-6 cursor-pointer overflow-hidden py-16 px-8 ${
+              isCreateCardDragging
+                ? 'border-blue-500/70 bg-blue-500/10'
+                : 'border-zinc-700/50 bg-zinc-900/40 hover:bg-zinc-900/70 hover:border-blue-500/40'
+            }`}
+          >
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(59,130,246,0.07)_0%,transparent_70%)] opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(59,130,246,0.04)_0%,transparent_60%)]" />
+
+            <div className="relative w-24 h-24 rounded-2xl bg-gradient-to-br from-blue-600/30 to-blue-800/20 border border-blue-500/30 flex items-center justify-center shadow-[0_0_40px_rgba(59,130,246,0.15)] group-hover:shadow-[0_0_70px_rgba(59,130,246,0.3)] transition-all duration-300">
+              <span className="text-5xl text-blue-400 font-extralight leading-none group-hover:scale-110 transition-transform duration-200 inline-block">+</span>
             </div>
-            <Btn
-              onClick={() => window.open('https://aicreatormarketplace.com?ref=ZiyadAiOFM', '_blank', 'noopener,noreferrer')}
-            >
-              Get a Character
-            </Btn>
-          </Card>
+
+            <div className="relative text-center space-y-2">
+              <p className="text-2xl font-semibold text-zinc-100 group-hover:text-white transition-colors">New Character</p>
+              <p className="text-sm text-zinc-500 group-hover:text-zinc-400 transition-colors max-w-xs leading-relaxed">
+                Create your own identity-locked character and use it across all your generations
+              </p>
+            </div>
+
+            <div className="relative flex items-center gap-2 text-xs text-zinc-600 group-hover:text-zinc-500 transition-colors">
+              <span className="w-6 h-px bg-zinc-700/60" />
+              Drop or paste image to start
+              <span className="w-6 h-px bg-zinc-700/60" />
+            </div>
+          </button>
+
+          {/* 2 — Get a Character */}
+          <button
+            onClick={() => window.open('https://aicreatormarketplace.com?ref=ZiyadAiOFM', '_blank', 'noopener,noreferrer')}
+            className="group relative rounded-2xl border border-zinc-700/40 bg-zinc-900/20 hover:bg-zinc-900/50 hover:border-zinc-600/60 transition-all duration-300 flex flex-col items-center justify-center gap-6 cursor-pointer overflow-hidden py-16 px-8"
+          >
+            <div className="relative w-24 h-24 rounded-2xl bg-zinc-800/60 border border-zinc-700/40 flex items-center justify-center group-hover:border-zinc-600 transition-all duration-300">
+              <IconUsers uniqueId="get-char-icon" size={36} className="text-zinc-500 group-hover:text-zinc-400 transition-colors" aria-hidden />
+            </div>
+
+            <div className="relative text-center space-y-2">
+              <p className="text-2xl font-semibold text-zinc-300 group-hover:text-zinc-100 transition-colors">Get a Character</p>
+              <p className="text-sm text-zinc-600 group-hover:text-zinc-500 transition-colors max-w-xs leading-relaxed">
+                Don't have one yet? Browse ready-made AI characters and start creating right away
+              </p>
+            </div>
+
+            <div className="relative flex items-center gap-2 text-xs text-zinc-600 group-hover:text-zinc-500 transition-colors">
+              <span className="w-6 h-px bg-zinc-700/60" />
+              Browse marketplace
+              <span className="w-6 h-px bg-zinc-700/60" />
+            </div>
+          </button>
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+          {/* Big + New Character card first */}
+          <button
+            onClick={() => openCreate()}
+            onDragOver={(event) => { event.preventDefault(); setIsCreateCardDragging(true); }}
+            onDragLeave={() => setIsCreateCardDragging(false)}
+            onDrop={handleCreateCardDrop}
+            onPaste={handleCreateCardPaste}
+            className={`rounded-xl border-2 border-dashed transition-all flex flex-col items-center justify-center gap-2.5 cursor-pointer group aspect-square p-4 ${
+              isCreateCardDragging
+                ? 'border-blue-500/70 bg-blue-500/12'
+                : 'border-blue-500/30 bg-blue-500/5 hover:bg-blue-500/10 hover:border-blue-500/50'
+            }`}
+          >
+            <div className="w-12 h-12 rounded-xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center group-hover:bg-blue-600/30 transition-all">
+              <span className="text-2xl text-blue-400 font-light leading-none">+</span>
+            </div>
+            <span className="text-sm font-semibold text-zinc-300 group-hover:text-zinc-100 transition-colors text-center">New Character</span>
+            <span className="text-[11px] text-zinc-500 text-center">Drop or paste image</span>
+          </button>
+
           {chars.map((c) => (
             <Card key={c.id} className={`cursor-pointer hover:border-zinc-600 transition-all !p-3 ${selected?.id === c.id ? '!border-blue-500 ring-1 ring-blue-500/20' : ''}`}
               onClick={() => selectChar(c.id)}>
-              <div className="aspect-square rounded-lg overflow-hidden bg-zinc-900 mb-3">
+              {/* Reference badges at top */}
+              {c.references?.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {c.references.slice(0, 4).map((r, i) => (
+                    <span key={i} className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium border ${r.isActive !== false ? 'bg-blue-500/10 text-blue-400 border-blue-500/30' : 'bg-zinc-800 text-zinc-500 border-zinc-700/40'}`}>
+                      {r.category || r}
+                    </span>
+                  ))}
+                  {c.references.length > 4 && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-500 border border-zinc-700/40">+{c.references.length - 4}</span>
+                  )}
+                </div>
+              )}
+              <div className="aspect-square rounded-lg overflow-hidden bg-zinc-900 mb-2">
                 {c.hasPrimaryImage && <img src={charApi.imageUrl(c.id)} alt={c.name} className="w-full h-full object-cover" loading="lazy" />}
               </div>
               <div className="text-sm font-medium text-zinc-200 truncate">{c.name}</div>
-              <div className="text-xs text-zinc-500 mt-0.5">{c.references?.length || 0} references</div>
+              <div className="text-xs text-zinc-500 mt-0.5">{c.references?.length || 0} ref{c.references?.length !== 1 ? 's' : ''}</div>
             </Card>
           ))}
         </div>
@@ -73,7 +204,12 @@ export default function CharactersPage() {
 
       {selected && <Wardrobe characterId={selected.id} characterName={selected.name} />}
 
-      <CreateCharacterModal open={showCreate} onClose={() => setShowCreate(false)} onCreated={() => { setShowCreate(false); load(); }} />
+      <CreateCharacterModal
+        open={showCreate}
+        seedFile={createSeedFile}
+        onClose={() => { setShowCreate(false); setCreateSeedFile(null); }}
+        onCreated={() => { setShowCreate(false); setCreateSeedFile(null); load(); }}
+      />
       {selected && <AddReferenceModal open={showAddRef} onClose={() => setShowAddRef(false)} characterId={selected.id} onAdded={() => { setShowAddRef(false); selectChar(selected.id); }} />}
     </div>
   );
@@ -85,16 +221,23 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [editingPrompt, setEditingPrompt] = useState(false);
   const [promptDraft, setPromptDraft] = useState('');
+  const [isPrimaryDragging, setIsPrimaryDragging] = useState(false);
+  const primaryInputRef = useRef(null);
 
-  const addPrimaryImage = (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
+  const addPrimaryImageFile = useCallback((file) => {
+    if (!validateCharacterImageFile(file, notify)) return;
     run(async () => {
-      const dataUri = await fileToBase64(f);
-      await charApi.addPrimaryImage(char.id, { image: dataUri });
+      await charApi.addPrimaryImage(char.id, characterImageFormData({}, file));
       notify('Primary image added', 'success');
       onUpdate();
     });
+  }, [char.id, notify, onUpdate, run]);
+
+  const addPrimaryImage = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    addPrimaryImageFile(file);
+    e.target.value = '';
   };
   const removePrimaryImage = (index) => run(async () => {
     await charApi.removePrimaryImage(char.id, index);
@@ -185,10 +328,39 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
             </div>
           ))}
           {imgCount < 10 && (
-            <label className="w-20 h-20 rounded-lg border-2 border-dashed border-zinc-700/60 hover:border-blue-500/40 flex items-center justify-center cursor-pointer transition">
-              <span className="text-zinc-500 text-lg">+</span>
-              <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={addPrimaryImage} />
-            </label>
+            <div
+              tabIndex={0}
+              onClick={() => primaryInputRef.current?.click()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  primaryInputRef.current?.click();
+                }
+              }}
+              onPaste={(event) => {
+                const file = getPastedImageFile(event);
+                if (!file) return;
+                event.preventDefault();
+                addPrimaryImageFile(file);
+              }}
+              onDragOver={(event) => { event.preventDefault(); setIsPrimaryDragging(true); }}
+              onDragLeave={() => setIsPrimaryDragging(false)}
+              onDrop={(event) => {
+                event.preventDefault();
+                setIsPrimaryDragging(false);
+                const file = event.dataTransfer?.files?.[0];
+                if (file) addPrimaryImageFile(file);
+              }}
+              className={`w-20 h-20 rounded-lg border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition outline-none ${
+                isPrimaryDragging
+                  ? 'border-blue-500/70 bg-blue-500/10'
+                  : 'border-zinc-700/60 hover:border-blue-500/40'
+              }`}
+            >
+              <span className="text-zinc-500 text-lg leading-none">+</span>
+              <span className="mt-1 text-[9px] text-zinc-500">Drop / Paste</span>
+              <input ref={primaryInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={addPrimaryImage} />
+            </div>
           )}
         </div>
       </div>
@@ -241,35 +413,53 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
   );
 }
 
-function CreateCharacterModal({ open, onClose, onCreated }) {
+function CreateCharacterModal({ open, onClose, onCreated, seedFile }) {
   const { notify } = useApp();
   const { loading, run } = useAsync();
   const [name, setName] = useState('');
   const [masterPrompt, setMasterPrompt] = useState('');
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
 
-  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+  const applyFile = useCallback((nextFile) => {
+    if (!validateCharacterImageFile(nextFile, notify)) return;
+    setFile(nextFile);
+    const nextUrl = URL.createObjectURL(nextFile);
+    setPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return nextUrl;
+    });
+  }, [notify]);
 
   const handleFile = (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    if (f.size > MAX_FILE_SIZE) {
-      notify(`Image is too large (${(f.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 10MB — please resize or compress your image.`, 'error');
-      e.target.value = '';
-      return;
-    }
-    if (preview) URL.revokeObjectURL(preview);
-    setFile(f);
-    setPreview(URL.createObjectURL(f));
+    const nextFile = e.target.files?.[0];
+    if (!nextFile) return;
+    applyFile(nextFile);
+    e.target.value = '';
   };
+
+  useEffect(() => {
+    if (!open) return;
+    const onPaste = (event) => {
+      const pastedFile = getPastedImageFile(event);
+      if (!pastedFile) return;
+      event.preventDefault();
+      applyFile(pastedFile);
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [open, applyFile]);
+
+  useEffect(() => {
+    if (open && seedFile) applyFile(seedFile);
+  }, [open, seedFile, applyFile]);
 
   const handleCreate = () => run(async () => {
     if (!name.trim()) { notify('Character name is required', 'error'); return; }
     if (!masterPrompt.trim()) { notify('Master prompt is required — describe face, body, and defining traits', 'error'); return; }
     if (!file) { notify('Primary image is required — upload a clear reference photo', 'error'); return; }
-    const dataUri = await fileToBase64(file);
-    await charApi.create({ name: name.trim(), masterPrompt: masterPrompt.trim(), image: dataUri });
+    await charApi.create(characterImageFormData({ name: name.trim(), masterPrompt: masterPrompt.trim() }, file));
     notify('Character created', 'success');
     if (preview) URL.revokeObjectURL(preview);
     setName(''); setMasterPrompt(''); setFile(null); setPreview(null);
@@ -282,23 +472,37 @@ function CreateCharacterModal({ open, onClose, onCreated }) {
         <Input label="Character Name" required placeholder="e.g. Aria the Warrior" value={name} onChange={(e) => setName(e.target.value)} />
         <Textarea label="Master Prompt (Identity Lock)" required placeholder="Describe face, body, skin, defining traits..." value={masterPrompt} onChange={(e) => setMasterPrompt(e.target.value)} className="!min-h-[100px]" />
         <div>
-          <span className="text-sm text-zinc-400 font-medium block mb-1.5">Primary Image<span className="text-red-400 ml-0.5">*</span></span>
-          <label className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-4 cursor-pointer transition h-32 ${preview ? 'border-blue-500/40 bg-blue-500/5' : 'border-zinc-700/80 hover:border-blue-500/30 bg-zinc-900/30'}`}>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-sm text-zinc-400 font-medium">Primary Image<span className="text-red-400 ml-0.5">*</span></span>
+            <Badge color="zinc">Ctrl+V to paste</Badge>
+          </div>
+          <label
+            onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              setIsDragging(false);
+              const droppedFile = event.dataTransfer?.files?.[0];
+              if (droppedFile) applyFile(droppedFile);
+            }}
+            className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-4 cursor-pointer transition h-32 ${
+              isDragging
+                ? 'border-blue-500/70 bg-blue-500/10'
+                : preview
+                  ? 'border-blue-500/40 bg-blue-500/5'
+                  : 'border-zinc-700/80 hover:border-blue-500/30 bg-zinc-900/30'
+            }`}
+          >
             {preview ? <img src={preview} alt="" className="max-h-full rounded" /> : (
               <div className="text-center">
                 <div className="flex justify-center mb-1 [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]"><IconCamera uniqueId="char-primary-img" size={28} aria-hidden /></div>
-                <span className="text-zinc-400 text-sm">Click to upload a clear reference photo</span>
+                <span className="text-zinc-400 text-sm">Drop, click or paste a clear reference photo</span>
               </div>
             )}
             <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile} />
           </label>
-          <div className="mt-2 flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/25 px-3 py-2">
-            <span className="text-amber-400 text-sm leading-none mt-0.5">⚠</span>
-            <p className="text-xs text-amber-300/90">
-              <span className="font-semibold text-amber-300">Max file size: 10MB.</span>{' '}
-              Use PNG, JPG, or WEBP. HEIC is not supported. Images over 10MB will be rejected.
-            </p>
-          </div>
+          <p className="text-xs text-zinc-500 mt-2">Use PNG, JPG, or WEBP under 10MB. HEIC is not supported.</p>
+          {file ? <p className="text-[11px] text-zinc-400 mt-1">{file.name} · {formatFileSize(file.size)}</p> : null}
         </div>
         <Btn onClick={handleCreate} disabled={loading || !name.trim() || !masterPrompt.trim() || !file} className="w-full">
           {loading ? <Spinner size={16} /> : null} Create Character
@@ -314,26 +518,46 @@ function AddReferenceModal({ open, onClose, characterId, onAdded }) {
   const [category, setCategory] = useState('Clothing');
   const [overridePrompt, setOverridePrompt] = useState('');
   const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
 
-  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+  const applyFile = useCallback((nextFile) => {
+    if (!validateCharacterImageFile(nextFile, notify)) return;
+    setFile(nextFile);
+    const nextUrl = URL.createObjectURL(nextFile);
+    setPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return nextUrl;
+    });
+  }, [notify]);
 
-  const handleRefFile = (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    if (f.size > MAX_FILE_SIZE) {
-      notify(`Image is too large (${(f.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 10MB — please resize or compress your image.`, 'error');
-      e.target.value = '';
-      return;
-    }
-    setFile(f);
-  };
+  useEffect(() => {
+    if (!open) return;
+    const onPaste = (event) => {
+      const pastedFile = getPastedImageFile(event);
+      if (!pastedFile) return;
+      event.preventDefault();
+      applyFile(pastedFile);
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [open, applyFile]);
+
+  useEffect(() => {
+    return () => {
+      if (preview) URL.revokeObjectURL(preview);
+    };
+  }, [preview]);
 
   const handleAdd = () => run(async () => {
     if (!file || !overridePrompt.trim()) { notify('Image and override prompt required', 'error'); return; }
-    const dataUri = await fileToBase64(file);
-    await charApi.addReference(characterId, { image: dataUri, mimeType: file.type, name: file.name, category, overridePrompt: overridePrompt.trim() });
+    await charApi.addReference(characterId, characterImageFormData({ category, overridePrompt: overridePrompt.trim() }, file));
     notify('Reference added', 'success');
     setOverridePrompt(''); setFile(null);
+    setPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
     onAdded();
   });
 
@@ -353,26 +577,48 @@ function AddReferenceModal({ open, onClose, characterId, onAdded }) {
         </div>
         <Textarea label="Override Prompt" required placeholder="Describe this style override..." value={overridePrompt} onChange={(e) => setOverridePrompt(e.target.value)} />
         <div>
-          <span className="text-sm text-zinc-400 font-medium block mb-1.5">Reference Image<span className="text-red-400 ml-0.5">*</span></span>
-          <label className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-4 cursor-pointer transition h-24 ${file ? 'border-blue-500/40 bg-blue-500/5' : 'border-zinc-700/80 hover:border-blue-500/30 bg-zinc-900/30'}`}>
-            {file ? (
-              <span className="text-blue-300 text-sm truncate max-w-full px-2">{file.name}</span>
-            ) : (
-              <div className="text-center">
-                <div className="flex justify-center mb-0.5 [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]"><IconImage uniqueId="char-ref-img" size={20} aria-hidden /></div>
-                <span className="text-zinc-400 text-sm">Click to upload reference image</span>
-              </div>
-            )}
-            <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleRefFile} />
-          </label>
-          <div className="mt-2 flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/25 px-3 py-2">
-            <span className="text-amber-400 text-sm leading-none mt-0.5">⚠</span>
-            <p className="text-xs text-amber-300/90">
-              <span className="font-semibold text-amber-300">Max file size: 10MB.</span>{' '}
-              Use PNG, JPG, or WEBP. HEIC is not supported.
-            </p>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-sm text-zinc-400 font-medium">Reference Image<span className="text-red-400 ml-0.5">*</span></span>
+            <Badge color="zinc">Ctrl+V to paste</Badge>
           </div>
         </div>
+        <label
+          onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setIsDragging(false);
+            const droppedFile = event.dataTransfer?.files?.[0];
+            if (droppedFile) applyFile(droppedFile);
+          }}
+          className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-4 cursor-pointer transition h-28 ${
+            isDragging
+              ? 'border-blue-500/70 bg-blue-500/10'
+              : file
+                ? 'border-blue-500/40 bg-blue-500/5'
+                : 'border-zinc-700/80 hover:border-blue-500/30 bg-zinc-900/30'
+          }`}
+        >
+          {preview ? (
+            <img src={preview} alt="" className="max-h-full rounded object-contain" />
+          ) : (
+            <div className="text-center">
+              <div className="flex justify-center mb-0.5 [--nc-gradient-1-color-1:currentColor] [--nc-gradient-1-color-2:currentColor]"><IconImage uniqueId="char-ref-img" size={20} aria-hidden /></div>
+              <span className="text-zinc-400 text-sm">Drop, click or paste reference image</span>
+            </div>
+          )}
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="hidden"
+            onChange={(e) => {
+              const nextFile = e.target.files?.[0];
+              if (nextFile) applyFile(nextFile);
+              e.target.value = '';
+            }}
+          />
+        </label>
+        {file ? <p className="text-[11px] text-zinc-400 mt-2">{file.name} · {formatFileSize(file.size)}</p> : null}
         <Btn onClick={handleAdd} disabled={loading || !file || !overridePrompt.trim()} className="w-full">
           {loading ? <Spinner size={16} /> : null} Add Reference
         </Btn>

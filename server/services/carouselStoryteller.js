@@ -1,7 +1,7 @@
 const { AppError } = require('../middleware/errorHandler');
 const fs = require('node:fs');
 const apiKeyManager = require('./apiKeyManager');
-const geminiService = require('./geminiService');
+const geminiService = require('./geminiBackend');
 const imageStore = require('./imageStore');
 const galleryManager = require('./galleryManager');
 const nicheManager = require('./nicheManager');

@@ -213,6 +213,32 @@ function OverviewTab({ overview, analytics, auditLogs, loading }) {
         </Card>
 
         <Card className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-zinc-200">Recently Active (24h)</h2>
+            <Badge color="zinc">{overview?.activity?.activeUsers24h ?? 0}</Badge>
+          </div>
+          <div className="space-y-2">
+            {(overview?.recentActiveUsers || []).map((item) => (
+              <div key={item.id} className="rounded-lg border border-zinc-800/60 px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-medium text-zinc-100 truncate">{item.email}</div>
+                  <Badge color={planColor(item.plan)}>{item.plan || 'free'}</Badge>
+                </div>
+                <div className="mt-1 flex items-center gap-2 text-xs">
+                  <span className="text-zinc-500">{formatDate(item.last_active_at)}</span>
+                  {(item.plan || 'free') === 'free' ? (
+                    item.trial_finished
+                      ? <Badge color="red">Trial finished</Badge>
+                      : <Badge color="blue">Trial {item.trial_used || 0}/{item.trial_limit || 10}</Badge>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+            {!overview?.recentActiveUsers?.length && <Empty icon="user" title="No active users in last 24h" subtitle="" />}
+          </div>
+        </Card>
+
+        <Card className="space-y-4">
           <h2 className="text-sm font-semibold text-zinc-200">Top Failure Codes (30D)</h2>
           {failureRows.length === 0 ? <Empty icon="search" title="No failures recorded" subtitle="" /> : (
             <div className="space-y-2">
@@ -428,6 +454,14 @@ function UsersTab({ notify }) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [acting, setActing] = useState(false);
   const [resetResult, setResetResult] = useState(null);
+  const [lightboxItem, setLightboxItem] = useState(null);
+  const [allLibraryItems, setAllLibraryItems] = useState(null);
+  const [allLibraryLoading, setAllLibraryLoading] = useState(false);
+  const [showAllLibrary, setShowAllLibrary] = useState(false);
+  const [msgSubject, setMsgSubject] = useState('');
+  const [msgBody, setMsgBody] = useState('');
+  const [msgSending, setMsgSending] = useState(false);
+  const [sentMessages, setSentMessages] = useState([]);
 
   const filters = useMemo(() => ({
     page: pagination.page, limit: pagination.limit, query, plan, status, role,
@@ -453,12 +487,15 @@ function UsersTab({ notify }) {
     let cancelled = false;
     setDetailLoading(true);
     setResetResult(null);
-    Promise.all([adminApi.user(selectedUserId), adminApi.userActivity(selectedUserId), adminApi.userSupportNotes(selectedUserId)])
-      .then(([ud, ad, nd]) => {
+    Promise.all([adminApi.user(selectedUserId), adminApi.userActivity(selectedUserId), adminApi.userSupportNotes(selectedUserId), adminApi.getUserMessages(selectedUserId)])
+      .then(([ud, ad, nd, md]) => {
         if (cancelled) return;
         setSelectedUser(ud.user || null);
         setSelectedActivity(ad.items || []);
         setSupportNotes(nd.items || []);
+        setSentMessages(md.messages || []);
+        setAllLibraryItems(null);
+        setShowAllLibrary(false);
       })
       .catch((err) => { if (!cancelled) notify(err.message || 'Failed to load user', 'error'); })
       .finally(() => { if (!cancelled) setDetailLoading(false); });
@@ -471,6 +508,23 @@ function UsersTab({ notify }) {
     try {
       await adminApi.actOnUser(selectedUserId, { type, ...extra });
       notify('Action applied', 'success');
+      const [ud] = await Promise.all([adminApi.user(selectedUserId), loadUsers()]);
+      setSelectedUser(ud.user || null);
+    } catch (err) {
+      notify(err.message || 'Action failed', 'error');
+    } finally {
+      setActing(false);
+    }
+  }
+
+  async function handleOwnerToggle() {
+    if (!selectedUserId || acting) return;
+    const grant = !selectedUser?.is_owner;
+    if (!window.confirm(grant ? `Grant owner role to ${selectedUser?.email}?` : `Revoke owner role from ${selectedUser?.email}?`)) return;
+    setActing(true);
+    try {
+      await adminApi.setOwner(selectedUserId, grant);
+      notify(grant ? 'Owner role granted' : 'Owner role revoked', 'success');
       const [ud] = await Promise.all([adminApi.user(selectedUserId), loadUsers()]);
       setSelectedUser(ud.user || null);
     } catch (err) {
@@ -559,6 +613,7 @@ function UsersTab({ notify }) {
               <tr className="border-b border-zinc-800/60">
                 <th className="py-3 pr-3 font-medium">User</th>
                 <th className="py-3 pr-3 font-medium">Plan</th>
+                <th className="py-3 pr-3 font-medium">Trial</th>
                 <th className="py-3 pr-3 font-medium">Last Active</th>
                 <th className="py-3 pr-3 font-medium">30D Runs</th>
                 <th className="py-3 font-medium">State</th>
@@ -576,11 +631,20 @@ function UsersTab({ notify }) {
                     <div className="text-xs text-zinc-500">{user.name || 'No name'}</div>
                   </td>
                   <td className="py-3 pr-3"><Badge color={planColor(user.plan)}>{user.plan || 'free'}</Badge></td>
+                  <td className="py-3 pr-3">
+                    {(user.plan || 'free') === 'free' ? (
+                      user.trial_finished
+                        ? <Badge color="red">Finished</Badge>
+                        : <Badge color="blue">{user.trial_used || 0}/{user.trial_limit || 10}</Badge>
+                    ) : (
+                      <span className="text-xs text-zinc-600">—</span>
+                    )}
+                  </td>
                   <td className="py-3 pr-3 text-xs text-zinc-400">{formatDate(user.last_active_at)}</td>
                   <td className="py-3 pr-3">{user.generation_count_30d || 0}</td>
                   <td className="py-3">
                     <div className="flex flex-wrap gap-1">
-                      {user.is_admin ? <Badge color="yellow">Admin</Badge> : null}
+                      {user.is_owner ? <Badge color="amber">Owner</Badge> : user.is_admin ? <Badge color="yellow">Admin</Badge> : null}
                       {user.is_banned ? <Badge color="red">Banned</Badge> : <Badge color="green">Active</Badge>}
                       {!user.verified ? <Badge color="zinc">Unverified</Badge> : null}
                     </div>
@@ -605,7 +669,7 @@ function UsersTab({ notify }) {
       {/* User Detail Modal */}
       <Modal
         open={!!selectedUserId}
-        onClose={() => { setSelectedUserId(null); setSelectedUser(null); setSelectedActivity([]); setSupportNotes([]); setNewSupportNote(''); setResetResult(null); }}
+        onClose={() => { setSelectedUserId(null); setSelectedUser(null); setSelectedActivity([]); setSupportNotes([]); setNewSupportNote(''); setResetResult(null); setAllLibraryItems(null); setShowAllLibrary(false); setMsgSubject(''); setMsgBody(''); setSentMessages([]); }}
         title={selectedUser?.email || 'User detail'}
         className="max-w-4xl"
       >
@@ -618,6 +682,16 @@ function UsersTab({ notify }) {
             {/* Key stats */}
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <MetricCard label="Plan" value={selectedUser.subscription?.plan || 'free'} sublabel={selectedUser.subscription?.status || 'active'} />
+              <MetricCard
+                label="Free Trial"
+                value={(selectedUser.subscription?.plan || 'free') === 'free'
+                  ? `${selectedUser.freeTrial?.used || 0}/${selectedUser.freeTrial?.limit || 10}`
+                  : 'Paid plan'}
+                sublabel={(selectedUser.subscription?.plan || 'free') === 'free'
+                  ? (selectedUser.freeTrial?.finished ? 'Trial finished' : 'Trial active')
+                  : 'Trial cap not applied'}
+                accent={(selectedUser.subscription?.plan || 'free') === 'free' && selectedUser.freeTrial?.finished ? 'text-red-400' : undefined}
+              />
               <MetricCard label="Keys" value={selectedUser.connected_key_count || 0} sublabel="Connected provider keys" />
               <MetricCard label="Total Runs" value={selectedUser.generation_count_total || 0} sublabel={`${selectedUser.generation_count_30d || 0} in 30d`} />
               <MetricCard label="Last Active" value={selectedUser.last_active_at ? formatDateShort(selectedUser.last_active_at) : 'Never'} sublabel={formatDate(selectedUser.last_active_at)} />
@@ -633,8 +707,11 @@ function UsersTab({ notify }) {
                 <Btn variant="secondary" disabled={acting} onClick={() => handleAction(selectedUser.is_admin ? 'revoke_admin' : 'grant_admin')}>
                   {selectedUser.is_admin ? 'Revoke Admin' : 'Grant Admin'}
                 </Btn>
+                <Btn variant="secondary" disabled={acting} onClick={handleOwnerToggle} style={{ borderColor: selectedUser.is_owner ? '#a16207' : undefined, color: selectedUser.is_owner ? '#fbbf24' : undefined }}>
+                  {selectedUser.is_owner ? '★ Revoke Owner' : '★ Grant Owner'}
+                </Btn>
                 <Btn variant="ghost" disabled={acting} onClick={() => handleAction('change_plan', { plan: 'free' })}>→ Free</Btn>
-                <Btn variant="ghost" disabled={acting} onClick={() => handleAction('change_plan', { plan: 'pro' })}>→ Pro</Btn>
+                <Btn variant="ghost" disabled={acting} onClick={() => handleAction('change_plan', { plan: 'pro', durationDays: 30 })}>→ Pro (30d)</Btn>
                 <Btn variant="ghost" disabled={acting} onClick={() => handleAction('change_plan', { plan: 'unlimited' })}>→ Unlimited</Btn>
                 <Btn variant="secondary" disabled={acting} onClick={handleForceReset}>Force Password Reset</Btn>
                 {!selectedUser.is_admin && (
@@ -678,34 +755,226 @@ function UsersTab({ notify }) {
 
             <Card className="space-y-4">
               <div className="flex items-center justify-between gap-3">
-                <h3 className="text-sm font-semibold text-zinc-200">Recent Library</h3>
-                <span className="text-xs text-zinc-500">{selectedUser.recentLibraryItems?.length || 0} items shown</span>
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold text-zinc-200">
+                    {selectedUser.recentLibraryMode === 'runs-fallback' ? 'Recent Runs' : 'Recent Library'}
+                  </h3>
+                  {selectedUser.recentLibraryNote ? (
+                    <div className="text-xs text-zinc-500">{selectedUser.recentLibraryNote}</div>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-zinc-500">{selectedUser.recentLibraryItems?.length || 0} shown</span>
+                  <Btn variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={async () => {
+                    if (allLibraryItems) { setShowAllLibrary(true); return; }
+                    setAllLibraryLoading(true);
+                    try {
+                      const r = await adminApi.userLibraryAll(selectedUserId);
+                      setAllLibraryItems(r.items || []);
+                      setShowAllLibrary(true);
+                    } catch (e) { notify(e.message || 'Failed', 'error'); }
+                    finally { setAllLibraryLoading(false); }
+                  }} disabled={allLibraryLoading}>
+                    {allLibraryLoading ? <Spinner size={12} /> : `View all`}
+                  </Btn>
+                </div>
               </div>
               {selectedUser.recentLibraryItems?.length ? (
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   {selectedUser.recentLibraryItems.map((item) => (
-                    <div key={`${item.mediaType}-${item.id}`} className="overflow-hidden rounded-xl border border-zinc-800/60 bg-zinc-900/40">
+                    <div
+                      key={`${item.mediaType}-${item.id}`}
+                      className="overflow-hidden rounded-xl border border-zinc-800/60 bg-zinc-900/40 cursor-pointer hover:border-zinc-600/60 transition-colors"
+                      onClick={() => setLightboxItem(item)}
+                    >
                       <div className="aspect-[4/5] bg-zinc-950 flex items-center justify-center overflow-hidden">
                         {item.mediaType === 'image' && item.previewUrl ? (
                           <img src={item.previewUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
                         ) : item.mediaType === 'video' && item.previewUrl ? (
-                          <video src={item.previewUrl} className="h-full w-full object-cover" muted controls preload="metadata" />
+                          <video src={item.previewUrl} className="h-full w-full object-cover" muted preload="metadata" />
                         ) : (
-                          <div className="text-xs text-zinc-600 px-3 text-center">No preview</div>
+                          <div className="space-y-1 px-3 text-center">
+                            <div className="text-xs font-medium text-zinc-500">
+                              {selectedUser.recentLibraryMode === 'runs-fallback' ? 'Run history only' : 'No preview'}
+                            </div>
+                            {item.metadata?.model ? (
+                              <div className="text-[10px] text-zinc-600 line-clamp-2">{item.metadata.model}</div>
+                            ) : null}
+                          </div>
                         )}
                       </div>
                       <div className="p-2.5 space-y-1.5">
                         <div className="flex gap-1.5 flex-wrap">
                           <Badge color={item.mediaType === 'image' ? 'blue' : 'purple'}>{item.mediaType}</Badge>
                           {item.source ? <Badge color="zinc">{item.source}</Badge> : null}
+                          {item.status ? <Badge color={item.status === 'succeeded' || item.status === 'completed' ? 'green' : item.status === 'failed' ? 'red' : 'yellow'}>{item.status}</Badge> : null}
                         </div>
                         <div className="text-xs text-zinc-400 line-clamp-3">{item.prompt || 'No prompt'}</div>
+                        {item.metadata?.outputCount !== undefined || item.metadata?.error ? (
+                          <div className="text-[10px] text-zinc-500 line-clamp-2">
+                            {item.metadata?.outputCount !== undefined ? `${item.metadata.outputCount} outputs` : ''}
+                            {item.metadata?.outputCount !== undefined && item.metadata?.error ? ' · ' : ''}
+                            {item.metadata?.error || ''}
+                          </div>
+                        ) : null}
                         <div className="text-[10px] text-zinc-600">{formatDate(item.createdAt)}</div>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : <Empty icon="image" title="No library items" subtitle="" />}
+
+              {/* Image lightbox */}
+              {lightboxItem && (
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+                  onClick={() => setLightboxItem(null)}
+                >
+                  <div
+                    className="relative bg-zinc-900 border border-zinc-700/60 rounded-2xl overflow-hidden max-w-3xl w-full max-h-[90vh] flex flex-col"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {/* Close */}
+                    <button
+                      className="absolute top-3 right-3 z-10 rounded-full bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white w-8 h-8 flex items-center justify-center text-lg leading-none transition-colors"
+                      onClick={() => setLightboxItem(null)}
+                    >×</button>
+
+                    {/* Media */}
+                    <div className="bg-zinc-950 flex items-center justify-center overflow-hidden" style={{ maxHeight: '60vh' }}>
+                      {lightboxItem.mediaType === 'image' && lightboxItem.previewUrl ? (
+                        <img src={lightboxItem.previewUrl} alt="" className="max-h-[60vh] max-w-full object-contain" />
+                      ) : lightboxItem.mediaType === 'video' && lightboxItem.previewUrl ? (
+                        <video src={lightboxItem.previewUrl} className="max-h-[60vh] max-w-full" controls autoPlay muted />
+                      ) : (
+                        <div className="py-16 text-zinc-600 text-sm">No preview available</div>
+                      )}
+                    </div>
+
+                    {/* Prompt + meta */}
+                    <div className="p-4 space-y-3 overflow-y-auto">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Badge color={lightboxItem.mediaType === 'image' ? 'blue' : 'purple'}>{lightboxItem.mediaType}</Badge>
+                        {lightboxItem.source ? <Badge color="zinc">{lightboxItem.source}</Badge> : null}
+                        {lightboxItem.status ? <Badge color={lightboxItem.status === 'succeeded' || lightboxItem.status === 'completed' ? 'green' : lightboxItem.status === 'failed' ? 'red' : 'yellow'}>{lightboxItem.status}</Badge> : null}
+                        <span className="text-[11px] text-zinc-500 ml-auto">{formatDate(lightboxItem.createdAt)}</span>
+                      </div>
+                      {lightboxItem.prompt ? (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">Prompt</span>
+                            <Btn
+                              variant="secondary"
+                              className="!py-1 !px-2.5 !text-xs"
+                              onClick={() => {
+                                navigator.clipboard.writeText(lightboxItem.prompt).catch(() => {});
+                                notify('Prompt copied', 'success');
+                              }}
+                            >Copy Prompt</Btn>
+                          </div>
+                          <div className="rounded-lg bg-zinc-950/60 border border-zinc-700/40 px-3 py-2.5 text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
+                            {lightboxItem.prompt}
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-zinc-500">No prompt recorded</p>
+                      )}
+                      {lightboxItem.metadata?.model ? (
+                        <div className="text-[11px] text-zinc-500">Model: <span className="text-zinc-400">{lightboxItem.metadata.model}</span></div>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* View all library modal */}
+              {showAllLibrary && (
+                <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/85 backdrop-blur-sm p-4 overflow-y-auto" onClick={() => setShowAllLibrary(false)}>
+                  <div className="relative bg-zinc-900 border border-zinc-700/60 rounded-2xl w-full max-w-6xl mt-8 mb-8" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800/60">
+                      <span className="font-semibold text-zinc-100">All Images — {selectedUser?.email}</span>
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs text-zinc-500">{allLibraryItems?.length || 0} items</span>
+                        <button className="rounded-full bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 w-8 h-8 flex items-center justify-center text-lg transition-colors" onClick={() => setShowAllLibrary(false)}>×</button>
+                      </div>
+                    </div>
+                    <div className="p-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                      {(allLibraryItems || []).map((item) => (
+                        <div key={`all-${item.id}`} className="overflow-hidden rounded-xl border border-zinc-800/60 bg-zinc-900/40 cursor-pointer hover:border-zinc-600/60 transition-colors" onClick={() => { setShowAllLibrary(false); setLightboxItem(item); }}>
+                          <div className="aspect-square bg-zinc-950 flex items-center justify-center overflow-hidden">
+                            {item.mediaType === 'image' && item.previewUrl ? (
+                              <img src={item.previewUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                            ) : item.mediaType === 'video' && item.previewUrl ? (
+                              <video src={item.previewUrl} className="h-full w-full object-cover" muted preload="metadata" />
+                            ) : (
+                              <div className="text-xs text-zinc-600 px-2 text-center">No preview</div>
+                            )}
+                          </div>
+                          <div className="p-2 space-y-1">
+                            <div className="flex gap-1 flex-wrap">
+                              <Badge color={item.mediaType === 'image' ? 'blue' : 'purple'}>{item.mediaType}</Badge>
+                              {item.source ? <Badge color="zinc">{item.source}</Badge> : null}
+                            </div>
+                            <div className="text-[10px] text-zinc-500 line-clamp-2">{item.prompt || 'No prompt'}</div>
+                            <div className="text-[10px] text-zinc-600">{formatDate(item.createdAt)}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </Card>
+
+            {/* ── Send Message to User ── */}
+            <Card className="space-y-4">
+              <h3 className="text-sm font-semibold text-zinc-200">Send Message to User</h3>
+              <p className="text-xs text-zinc-500 -mt-2">The user will see this as a notification when they next open the app.</p>
+              <Input
+                label="Subject (optional)"
+                placeholder="e.g. Welcome to Kyros!"
+                value={msgSubject}
+                onChange={(e) => setMsgSubject(e.target.value)}
+              />
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-zinc-400">Message</label>
+                <textarea
+                  className="w-full rounded-lg border border-zinc-700/60 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:border-zinc-500 focus:outline-none resize-none"
+                  rows={3}
+                  placeholder="Your message to the user..."
+                  value={msgBody}
+                  onChange={(e) => setMsgBody(e.target.value)}
+                />
+              </div>
+              <Btn
+                disabled={msgSending || !msgBody.trim()}
+                onClick={async () => {
+                  setMsgSending(true);
+                  try {
+                    await adminApi.sendMessage(selectedUserId, msgSubject.trim(), msgBody.trim());
+                    setMsgSubject(''); setMsgBody('');
+                    notify('Message sent', 'success');
+                    const md = await adminApi.getUserMessages(selectedUserId);
+                    setSentMessages(md.messages || []);
+                  } catch (e) { notify(e.message || 'Failed to send', 'error'); }
+                  finally { setMsgSending(false); }
+                }}
+              >{msgSending ? <Spinner size={14} /> : 'Send Message'}</Btn>
+              {sentMessages.length > 0 && (
+                <div className="space-y-2 pt-1 border-t border-zinc-800/60">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">Previously sent</p>
+                  {sentMessages.map((m) => (
+                    <div key={m.id} className="rounded-lg border border-zinc-800/60 bg-zinc-900/30 px-3 py-2 space-y-0.5">
+                      {m.subject ? <p className="text-xs font-semibold text-zinc-300">{m.subject}</p> : null}
+                      <p className="text-xs text-zinc-400">{m.body}</p>
+                      <div className="flex items-center gap-2 text-[10px] text-zinc-600">
+                        <span>{formatDate(m.created_at)}</span>
+                        {m.read_at ? <span className="text-emerald-600">· Read</span> : <span className="text-amber-600">· Unread</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </Card>
 
             <Card className="space-y-4">

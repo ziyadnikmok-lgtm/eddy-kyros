@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { pushPending, resolvePending, rejectPending } from '../lib/generationFeed';
 import { nanoBypass as api, gallery as galleryApi, characters as charApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Textarea, Spinner, Badge } from '../components/UI';
@@ -7,7 +8,7 @@ import { createPersistentPageState, makePersistentJobId, PersistentJobCard } fro
 
 
 const ASPECT_RATIOS = ['auto', '1:1', '9:16', '16:9', '4:5', '3:4', '2:3'];
-const IMAGE_SIZES = ['1K', '2K', '4K'];
+const IMAGE_SIZES = ['1K', '2K'];
 
 const LOCKED_MODEL = { id: 'flash', label: 'Flash 3.1', sublabel: 'gemini-3.1-flash', color: 'bg-blue-600 hover:bg-blue-500' };
 const NANO_BYPASS_HANDOFF_KEY = 'kyros.nanoBypass.handoff';
@@ -148,13 +149,15 @@ export default function NanoBypassPage() {
   const { notify, characters, consumePageParams } = useApp();
   const { openLightbox, LightboxComponent } = useImageLightbox();
   const initialStoreState = nanoPageStore.getSnapshot();
+  const autofillCharacterPromptRef = useRef(false);
+  const lastAutofilledCharacterIdRef = useRef('');
 
   const [images, setImages] = useState([null, null, null, null, null]);
   const [prompt, setPrompt] = useState(_cache.prompt);
   const [characterId, setCharacterId] = useState(_cache.characterId);
   const [model, setModel] = useState(_cache.model);
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
-  const [imageSize, setImageSize] = useState(_cache.imageSize);
+  const [imageSize, setImageSize] = useState(IMAGE_SIZES.includes(_cache.imageSize) ? _cache.imageSize : '2K');
   const [temperature, setTemperature] = useState(_cache.temperature);
   const [loadingCharacterRefs, setLoadingCharacterRefs] = useState(false);
 
@@ -171,6 +174,11 @@ export default function NanoBypassPage() {
     () => buildCharacterReferenceDescriptors(characterId, selectedCharacter),
     [characterId, selectedCharacter],
   );
+
+  const handleCharacterChange = useCallback((nextCharacterId) => {
+    autofillCharacterPromptRef.current = Boolean(nextCharacterId);
+    setCharacterId(nextCharacterId);
+  }, []);
 
   useEffect(() => nanoPageStore.subscribe((snapshot) => {
     setResult(snapshot.result);
@@ -203,12 +211,48 @@ export default function NanoBypassPage() {
       return next;
     });
 
-    if (handoff.characterId) setCharacterId(handoff.characterId);
+    if (handoff.characterId) {
+      autofillCharacterPromptRef.current = true;
+      setCharacterId(handoff.characterId);
+    } else {
+      // Coming from Library with no character — clear so no refs auto-inject into image slots
+      autofillCharacterPromptRef.current = false;
+      setCharacterId('');
+    }
     if (typeof handoff.aspectRatio === 'string' && ASPECT_RATIOS.includes(handoff.aspectRatio)) {
       setAspectRatio(handoff.aspectRatio);
     }
     notify('Loaded image into Nano Bypass', 'success');
   }, [consumePageParams, notify]);
+
+  useEffect(() => {
+    if (!characterId) {
+      autofillCharacterPromptRef.current = false;
+      lastAutofilledCharacterIdRef.current = '';
+      return;
+    }
+
+    const masterPrompt = String(selectedCharacter?.masterPrompt || '').trim();
+    if (!masterPrompt) {
+      autofillCharacterPromptRef.current = false;
+      return;
+    }
+
+    setPrompt((prev) => {
+      const shouldAutofill = autofillCharacterPromptRef.current
+        || (!String(prev || '').trim() && lastAutofilledCharacterIdRef.current !== characterId);
+      if (!shouldAutofill) return prev;
+      lastAutofilledCharacterIdRef.current = characterId;
+      return masterPrompt;
+    });
+    autofillCharacterPromptRef.current = false;
+  }, [characterId, selectedCharacter]);
+
+  useEffect(() => {
+    if (!IMAGE_SIZES.includes(imageSize)) {
+      setImageSize('2K');
+    }
+  }, [imageSize]);
 
   // Paste support
   useEffect(() => {
@@ -311,6 +355,7 @@ export default function NanoBypassPage() {
     if (!prompt.trim()) { notify('Enter a prompt describing the edit', 'error'); return; }
 
     const queueId = makePersistentJobId('nano-bypass');
+    pushPending({ id: queueId, prompt: prompt || '', imageModel: model || '', aspectRatio, resolutionTier: imageSize });
     nanoPageStore.patch({
       result: null,
       queueItems: [
@@ -353,8 +398,20 @@ export default function NanoBypassPage() {
       nanoPageStore.setValue('result', data);
       nanoPageStore.setValue('history', (prev) => [data, ...prev].slice(0, 12));
       nanoPageStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
+      resolvePending(queueId, {
+        imageId: data.imageId,
+        galleryId: data.galleryId || data.imageId,
+        mimeType: data.image?.mimeType,
+        prompt: prompt || '',
+        imageModel: model || '',
+        aspectRatio,
+        resolutionTier: imageSize,
+        generatedAt: Date.now(),
+        characterId: characterId || null,
+      });
       notify('Done!', 'success');
     } catch (err) {
+      rejectPending(queueId);
       nanoPageStore.setValue('queueItems', (prev) => prev.map((job) => (
         job.id === queueId ? { ...job, status: 'error', errorMessage: err.message || 'Generation failed' } : job
       )));
@@ -416,7 +473,7 @@ export default function NanoBypassPage() {
             <span className="text-xs text-zinc-400 font-medium block mb-1.5">Character</span>
             <select
               value={characterId}
-              onChange={(e) => setCharacterId(e.target.value)}
+              onChange={(e) => handleCharacterChange(e.target.value)}
               className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500"
             >
               <option value="">No character</option>
@@ -425,7 +482,7 @@ export default function NanoBypassPage() {
               ))}
             </select>
             <p className="mt-1 text-[10px] text-zinc-500">
-              Optional. Selecting a character auto-loads that character&apos;s primary/reference images into empty slots.
+              Optional. Selecting a character auto-loads that character&apos;s primary/reference images and master prompt.
             </p>
             {characterReferenceDescriptors.length > 0 && (
               <div className="mt-2 space-y-2">
@@ -530,115 +587,6 @@ export default function NanoBypassPage() {
         </Card>
       </div>
 
-      {/* Right panel */}
-      <div className="flex-1 min-w-0 overflow-y-auto pb-8 space-y-6">
-
-        {loading && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">Nano Queue</h3>
-                <p className="mt-1 text-xs text-zinc-500">Your edit keeps running even if you leave this page.</p>
-              </div>
-              <Badge color="blue">{activeQueueCount} running</Badge>
-            </div>
-            {queueItems.map((job) => (
-              <PersistentJobCard
-                key={job.id}
-                job={job}
-                steps={NANO_STEPS}
-                thresholds={NANO_THRESHOLDS}
-                runningColor="blue"
-                idleHint="You can leave Nano Bypass and come back while Gemini finishes the edit."
-                onDismiss={dismissQueueItem}
-              />
-            ))}
-          </div>
-        )}
-
-        {!loading && result && (
-          <Card className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-zinc-300">Result</h3>
-              <div className="flex items-center gap-2">
-                <Badge color="blue">{LOCKED_MODEL.label}</Badge>
-                {result.galleryId && <Badge color="green">Saved</Badge>}
-              </div>
-            </div>
-            <img
-              src={`data:image/png;base64,${result.base64Data}`}
-              alt="Nano Bypass result"
-              className="w-full rounded-xl border border-zinc-700/60 cursor-pointer"
-              onClick={() => openLightbox([`data:image/png;base64,${result.base64Data}`])}
-            />
-            <div className="flex gap-2">
-              <Btn onClick={downloadResult} className="flex-1 bg-zinc-700 hover:bg-zinc-600">
-                Download PNG
-              </Btn>
-              <Btn
-                variant="ghost"
-                onClick={() => { setResult(null); }}
-                className="flex-1"
-              >
-                Clear
-              </Btn>
-            </div>
-          </Card>
-        )}
-
-        {!loading && !result && (
-          <Card className="flex flex-col items-center justify-center py-20 space-y-3">
-            <div className="text-4xl">⚡</div>
-            <p className="text-sm font-medium text-zinc-400">Nano Bypass</p>
-            <p className="text-xs text-zinc-600 text-center max-w-xs">
-              Upload up to 5 images + a prompt. Gemini edits them directly — combine, transform, reimagine.
-            </p>
-          </Card>
-        )}
-
-        {!loading && queueItems.length > 0 && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">Nano Queue</h3>
-                <p className="mt-1 text-xs text-zinc-500">Recent running and failed edits stay here until you dismiss them.</p>
-              </div>
-              {queueItems.some((job) => job.status === 'running') ? <Badge color="blue">Active</Badge> : <Badge color="zinc">Idle</Badge>}
-            </div>
-            {queueItems.map((job) => (
-              <PersistentJobCard
-                key={job.id}
-                job={job}
-                steps={NANO_STEPS}
-                thresholds={NANO_THRESHOLDS}
-                runningColor="blue"
-                idleHint="You can leave Nano Bypass and come back while Gemini finishes the edit."
-                onDismiss={dismissQueueItem}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* History */}
-        {history.length > 1 && (
-          <div>
-            <span className="text-xs text-zinc-400 font-medium block mb-2">Recent</span>
-            <div className="grid grid-cols-3 lg:grid-cols-4 gap-2">
-              {history.slice(1).map((h, i) => (
-                <div key={i} className="relative group rounded-lg overflow-hidden border border-zinc-700/40 cursor-pointer"
-                  onClick={() => openLightbox([`data:image/png;base64,${h.base64Data}`])}>
-                  <img
-                    src={`data:image/png;base64,${h.base64Data}`}
-                    alt=""
-                    className="w-full aspect-square object-cover"
-                  />
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition" />
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
 
       <LightboxComponent />
     </div>

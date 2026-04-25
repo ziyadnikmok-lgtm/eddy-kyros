@@ -32,14 +32,95 @@ function stamp(s) {
 }
 function newId() { return `c-${Date.now()}-${Math.random().toString(36).slice(2,6)}`; }
 
+function fileMatchesAccept(file, accept = '') {
+  if (!file) return false;
+  const rules = String(accept || '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (rules.length === 0) return true;
+
+  const fileType = String(file.type || '').toLowerCase();
+  const fileName = String(file.name || '').toLowerCase();
+
+  return rules.some((rule) => {
+    if (rule.endsWith('/*')) return fileType.startsWith(rule.slice(0, -1));
+    if (rule.startsWith('.')) return fileName.endsWith(rule);
+    return fileType === rule;
+  });
+}
+
+function isImageFile(file) {
+  return Boolean(file && String(file.type || '').toLowerCase().startsWith('image/'));
+}
+
+function isVideoFile(file) {
+  return Boolean(file && String(file.type || '').toLowerCase().startsWith('video/'));
+}
+
+function getClipboardImageFile(event) {
+  const item = [...(event.clipboardData?.items || [])].find((entry) => entry.type.startsWith('image/'));
+  const file = item?.getAsFile?.();
+  if (!file) return null;
+  const ext = file.type?.split('/')?.[1] || 'png';
+  return new File([file], `composer-paste-${Date.now()}.${ext}`, { type: file.type || 'image/png' });
+}
+
+function getClipboardVideoFile(event) {
+  const item = [...(event.clipboardData?.items || [])].find((entry) => entry.type.startsWith('video/'));
+  const file = item?.getAsFile?.();
+  if (!file) return null;
+  const ext = file.type?.split('/')?.[1] || 'mp4';
+  return new File([file], `overlay-source-${Date.now()}.${ext}`, { type: file.type || 'video/mp4' });
+}
+
 function DropZone({ label, accept, file, onFile, showGalleryPicker }) {
   const ref = useRef(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const applyFile = (incomingFile) => {
+    if (!incomingFile) return;
+    if (!fileMatchesAccept(incomingFile, accept)) return;
+    onFile(incomingFile);
+  };
+
   return (
     <div className="flex min-w-0 gap-2">
-      <button type="button" onClick={() => ref.current?.click()}
-        className="flex-1 min-w-0 rounded-xl border-2 border-dashed border-zinc-700 bg-zinc-900/40 px-4 py-6 text-center transition hover:border-cyan-500/60 hover:bg-cyan-500/5">
+      <button
+        type="button"
+        onClick={() => ref.current?.click()}
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setIsDragging(true);
+        }}
+        onDragEnter={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setIsDragging(true);
+        }}
+        onDragLeave={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.currentTarget.contains(event.relatedTarget)) return;
+          setIsDragging(false);
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setIsDragging(false);
+          const droppedFile = event.dataTransfer?.files?.[0];
+          applyFile(droppedFile);
+        }}
+        className={`flex-1 min-w-0 rounded-xl border-2 border-dashed px-4 py-6 text-center transition ${
+          isDragging
+            ? 'border-cyan-400 bg-cyan-500/10 shadow-[0_0_0_1px_rgba(34,211,238,0.3)]'
+            : 'border-zinc-700 bg-zinc-900/40 hover:border-cyan-500/60 hover:bg-cyan-500/5'
+        }`}
+      >
         <input ref={ref} type="file" accept={accept} className="hidden"
-          onChange={e => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
+          onChange={e => { const f = e.target.files?.[0]; if (f) applyFile(f); }} />
         {file ? (
           <div className="mx-auto flex max-w-full flex-col items-center gap-1">
             <div className="max-w-full text-center text-sm font-medium leading-tight text-zinc-200 break-all">
@@ -51,7 +132,7 @@ function DropZone({ label, accept, file, onFile, showGalleryPicker }) {
           <>
             <div className="text-3xl mb-2 opacity-30">+</div>
             <div className="text-sm text-zinc-400">{label}</div>
-            <div className="text-[11px] text-zinc-600 mt-0.5">Click to browse</div>
+            <div className="text-[11px] text-zinc-600 mt-0.5">Drop, paste, or click to browse</div>
           </>
         )}
       </button>
@@ -113,7 +194,7 @@ function DraggableClip({ clip, isSelected, onSelect, onUpdate }) {
       className="absolute cursor-move touch-none flex items-center justify-center -translate-x-1/2 -translate-y-1/2"
       style={{ left, top, zIndex: isSelected ? 30 : 20 }}
     >
-      <div className={`whitespace-nowrap px-4 py-2 text-center font-bold text-white transition cursor-move ${isSelected ? 'scale-105 opacity-100' : 'opacity-90'}`}
+      <div className={`max-w-[92%] whitespace-pre-line px-4 py-2 text-center font-bold leading-tight text-white transition cursor-move ${isSelected ? 'scale-105 opacity-100' : 'opacity-90'}`}
         style={{ fontFamily: "'Montserrat', 'Inter', 'Roboto', 'Arial Black', sans-serif", letterSpacing: '-0.02em', fontSize: `${Math.max(13, Math.min(38, clip.fontSize * 0.37))}px`, textShadow: '2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 0 4px 8px rgba(0,0,0,0.8)' }}>
         {clip.text}
       </div>
@@ -172,7 +253,7 @@ function DraggableTimelineClip({ clip, timelineDuration, isSelected, onSelect, o
         onPointerDown={(e) => handlePointerDown(e, 'left')} 
         className="w-2.5 h-full bg-fuchsia-400/0 hover:bg-fuchsia-400/40 cursor-w-resize shrink-0 transition relative z-20 flex items-center border-r border-fuchsia-500/20" 
       />
-      <span className="text-[9px] text-fuchsia-200 truncate flex-1 px-1 pointer-events-none select-none drop-shadow">{clip.text}</span>
+      <span className="text-[9px] text-fuchsia-200 truncate flex-1 px-1 pointer-events-none select-none drop-shadow">{String(clip.text || '').replace(/\s*\n\s*/g, ' / ')}</span>
       <div 
         onPointerDown={(e) => handlePointerDown(e, 'right')} 
         className="w-2.5 h-full bg-fuchsia-400/0 hover:bg-fuchsia-400/40 cursor-e-resize shrink-0 transition relative z-20 flex items-center justify-end border-l border-fuchsia-500/20" 
@@ -345,6 +426,12 @@ function VideoComposePage() {
   const [warmth, setWarmth] = useState(0);
   const [sharpness, setSharpness] = useState(0);
   const [vignette, setVignette] = useState(0);
+  const [primaryZoom, setPrimaryZoom] = useState(1);
+  const [primaryPanX, setPrimaryPanX] = useState(0);
+  const [primaryPanY, setPrimaryPanY] = useState(0);
+  const [secondaryZoom, setSecondaryZoom] = useState(1);
+  const [secondaryPanX, setSecondaryPanX] = useState(0);
+  const [secondaryPanY, setSecondaryPanY] = useState(0);
   const [musicVolume, setMusicVolume] = useState(0.8);
   const [originalAudioVolume, setOriginalAudioVolume] = useState(1);
   const [replaceOriginalAudio, setReplaceOriginalAudio] = useState(false);
@@ -354,6 +441,8 @@ function VideoComposePage() {
   const [audioOffset, setAudioOffset] = useState(0);
   const [duration, setDuration] = useState(0);
   const [duration2, setDuration2] = useState(0);
+  const [imageDuration, setImageDuration] = useState(5);
+  const [imageDuration2, setImageDuration2] = useState(5);
   const [time, setTime] = useState(0);
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0);
@@ -364,10 +453,15 @@ function VideoComposePage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerItems, setPickerItems] = useState([]);
   const [pickerTarget, setPickerTarget] = useState('primary');
+  const [overlaySourceFile, setOverlaySourceFile] = useState(null);
+  const [extractingText, setExtractingText] = useState(false);
 
   const previewUrl = useMemo(() => (videoFile ? URL.createObjectURL(videoFile) : null), [videoFile]);
   const previewUrl2 = useMemo(() => (videoFile2 ? URL.createObjectURL(videoFile2) : null), [videoFile2]);
   const audioPreviewUrl = useMemo(() => (audioFile ? URL.createObjectURL(audioFile) : null), [audioFile]);
+  const primaryIsImage = isImageFile(videoFile);
+  const secondaryIsImage = isImageFile(videoFile2);
+  const audioIsVideo = isVideoFile(audioFile);
   const selectedClip = clips.find(c => c.id === selectedClipId) || null;
   const effectiveTrimEnd = duration > 0 ? (trimReady ? trimEnd : duration) : trimEnd;
   const visibleDuration = duration > 0 ? Math.max(0.1, effectiveTrimEnd - trimStart) : 0;
@@ -393,6 +487,9 @@ function VideoComposePage() {
     const finalSharpness = Math.max(0, Math.min(2.5, presetValues.sharpness + sharpness));
     const finalVignette = Math.max(0, Math.min(1, presetValues.vignette + vignette));
     return {
+      objectPosition: `${(50 + primaryPanX * 25).toFixed(1)}% ${(50 + primaryPanY * 25).toFixed(1)}%`,
+      transform: `scale(${primaryZoom.toFixed(3)})`,
+      transformOrigin: 'center center',
       filter: [
         `brightness(${(1 + finalBrightness).toFixed(3)})`,
         `contrast(${finalContrast.toFixed(3)})`,
@@ -403,20 +500,63 @@ function VideoComposePage() {
         finalBlur > 0.01 ? `blur(${finalBlur.toFixed(2)}px)` : '',
       ].filter(Boolean).join(' '),
     };
-  }, [preset, brightness, contrast, saturation, blur, warmth, sharpness, vignette]);
+  }, [preset, brightness, contrast, saturation, blur, warmth, sharpness, vignette, primaryPanX, primaryPanY, primaryZoom]);
 
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
   useEffect(() => () => { if (previewUrl2) URL.revokeObjectURL(previewUrl2); }, [previewUrl2]);
   useEffect(() => () => { if (audioPreviewUrl) URL.revokeObjectURL(audioPreviewUrl); }, [audioPreviewUrl]);
 
   useEffect(() => {
+    const onPaste = (event) => {
+      if (panel === 'text') {
+        const pastedVideo = getClipboardVideoFile(event);
+        if (pastedVideo) {
+          event.preventDefault();
+          importTextOverlayFromVideo(pastedVideo);
+          return;
+        }
+      }
+
+      const pastedImage = getClipboardImageFile(event);
+      if (!pastedImage) return;
+
+      event.preventDefault();
+      if (!videoFile) {
+        setVideoFile(pastedImage);
+        setPanel('media');
+        notify('Pasted image as main clip', 'success');
+        return;
+      }
+
+      setVideoFile2(pastedImage);
+      setPanel('media');
+      notify('Pasted image as second clip', 'success');
+    };
+
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [notify, videoFile, panel, timelineDuration, visibleDuration]);
+
+  useEffect(() => {
     setClips([]); setSelectedClipId(null); setTrimStart(0); setTrimEnd(0);
     setTrimReady(false); setResult(null); setPlaying(false); setAudioDuration(0); setAudioStart(0); setAudioEnd(0); setAudioOffset(0);
+    setPrimaryZoom(1); setPrimaryPanX(0); setPrimaryPanY(0);
   }, [videoFile]);
+
+  useEffect(() => {
+    if (videoFile2) return;
+    setSecondaryZoom(1);
+    setSecondaryPanX(0);
+    setSecondaryPanY(0);
+  }, [videoFile2]);
 
   useEffect(() => {
     if (!previewUrl2) {
       setDuration2(0);
+      return undefined;
+    }
+    if (secondaryIsImage) {
+      setDuration2(Math.max(0.1, imageDuration2 || 5));
       return undefined;
     }
     const probeNode = document.createElement('video');
@@ -434,7 +574,7 @@ function VideoComposePage() {
       probeNode.removeEventListener('error', onError);
       probeNode.src = '';
     };
-  }, [previewUrl2]);
+  }, [previewUrl2, secondaryIsImage, imageDuration2]);
 
   useEffect(() => {
     if (!audioPreviewUrl) {
@@ -444,7 +584,9 @@ function VideoComposePage() {
       setAudioOffset(0);
       return undefined;
     }
-    const audio = new Audio(audioPreviewUrl);
+    const audio = audioIsVideo ? document.createElement('video') : new Audio(audioPreviewUrl);
+    audio.preload = 'metadata';
+    audio.src = audioPreviewUrl;
     const onLoaded = () => {
       const nextDuration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
       setAudioDuration(nextDuration);
@@ -460,12 +602,24 @@ function VideoComposePage() {
     };
     audio.addEventListener('loadedmetadata', onLoaded);
     audio.addEventListener('error', onError);
-    audio.load();
+    if (typeof audio.load === 'function') audio.load();
     return () => {
       audio.removeEventListener('loadedmetadata', onLoaded);
       audio.removeEventListener('error', onError);
+      audio.src = '';
     };
-  }, [audioPreviewUrl, timelineDuration]);
+  }, [audioPreviewUrl, timelineDuration, audioIsVideo]);
+
+  useEffect(() => {
+    if (!videoFile || !primaryIsImage) return undefined;
+    const nextDuration = Math.max(0.1, imageDuration || 5);
+    setDuration(nextDuration);
+    setTrimStart(0);
+    setTrimEnd(nextDuration);
+    setTrimReady(true);
+    setTime(0);
+    return undefined;
+  }, [videoFile, primaryIsImage, imageDuration]);
 
   function syncPreviewAudio(shouldPlay = false) {
     const videoNode = videoRef.current;
@@ -493,6 +647,7 @@ function VideoComposePage() {
   }
 
   useEffect(() => {
+    if (primaryIsImage) return undefined;
     const node = videoRef.current;
     if (!node) return;
     const onMeta = () => {
@@ -530,9 +685,10 @@ function VideoComposePage() {
       node.removeEventListener('seeked', onSeeked);
       node.removeEventListener('play', onPlay); node.removeEventListener('pause', onPause);
     };
-  }, [previewUrl, trimReady, trimStart, effectiveTrimEnd]);
+  }, [previewUrl, trimReady, trimStart, effectiveTrimEnd, primaryIsImage]);
 
   useEffect(() => {
+    if (primaryIsImage) return;
     const node = videoRef.current;
     if (!node || !trimReady) return;
     if (node.currentTime < trimStart || node.currentTime > effectiveTrimEnd) {
@@ -541,9 +697,10 @@ function VideoComposePage() {
       node.currentTime = trimStart;
       setTime(trimStart);
     }
-  }, [trimStart, effectiveTrimEnd, trimReady]);
+  }, [trimStart, effectiveTrimEnd, trimReady, primaryIsImage]);
 
   useEffect(() => {
+    if (primaryIsImage) return undefined;
     const node = videoRef.current;
     if (!node || !playing || !trimReady) return undefined;
     let rafId = 0;
@@ -566,15 +723,16 @@ function VideoComposePage() {
     };
     rafId = window.requestAnimationFrame(syncTrimBounds);
     return () => window.cancelAnimationFrame(rafId);
-  }, [playing, trimReady, trimStart, effectiveTrimEnd]);
+  }, [playing, trimReady, trimStart, effectiveTrimEnd, primaryIsImage]);
 
   useEffect(() => {
+    if (primaryIsImage) return;
     const node = videoRef.current;
     if (!node) return;
     node.playbackRate = speed;
     node.volume = audioPreviewUrl && replaceOriginalAudio ? 0 : originalAudioVolume;
     node.muted = audioPreviewUrl && replaceOriginalAudio ? true : false;
-  }, [speed, originalAudioVolume, replaceOriginalAudio, audioPreviewUrl]);
+  }, [speed, originalAudioVolume, replaceOriginalAudio, audioPreviewUrl, primaryIsImage]);
 
   useEffect(() => {
     const audioNode = audioRef.current;
@@ -634,6 +792,7 @@ function VideoComposePage() {
   });
 
   function togglePlay() {
+    if (primaryIsImage) return;
     const n = videoRef.current; if (!n) return;
     if (trimReady && (n.currentTime < trimStart || n.currentTime >= effectiveTrimEnd - 0.01)) {
       n.currentTime = trimStart;
@@ -649,6 +808,7 @@ function VideoComposePage() {
   }
 
   function seekFromTimeline(e) {
+    if (primaryIsImage) return;
     if (!videoRef.current || !visibleDuration) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
@@ -677,6 +837,55 @@ function VideoComposePage() {
   function removeClip() {
     if (!selectedClipId) return;
     setClips(prev => prev.filter(c => c.id !== selectedClipId));
+  }
+
+  function clearAudio() {
+    audioRef.current?.pause();
+    setAudioFile(null);
+    setAudioDuration(0);
+    setAudioStart(0);
+    setAudioEnd(0);
+    setAudioOffset(0);
+    setReplaceOriginalAudio(false);
+    notify('Audio removed', 'info');
+  }
+
+  async function importTextOverlayFromVideo(file) {
+    if (!file) return;
+    if (!isVideoFile(file)) {
+      notify('Drop or paste a video to extract text overlay', 'error');
+      return;
+    }
+    setOverlaySourceFile(file);
+    setExtractingText(true);
+    try {
+      const fd = new FormData();
+      fd.append('video', file);
+      fd.append('timelineDuration', String(timelineDuration || visibleDuration || 6));
+      const data = await videoComposeApi.extractTextOverlay(fd);
+      const imported = Array.isArray(data?.clips) ? data.clips : [];
+      if (imported.length === 0) {
+        notify('No text overlay found in that video', 'info');
+        return;
+      }
+      const maxEnd = Math.max(0.1, timelineDuration || visibleDuration || imported[imported.length - 1]?.end || 6);
+      const nextClips = imported.map((clip, index) => ({
+        id: newId(),
+        text: String(clip.text || '').trim(),
+        start: clamp(clip.start, 0, Math.max(0, maxEnd - 0.1), index === 0 ? 0 : index * 2),
+        end: clamp(clip.end, 0.1, maxEnd, Math.min(maxEnd, (index + 1) * 2)),
+        position: POSITIONS.includes(clip.position) ? clip.position : 'center',
+        fontSize: clamp(clip.fontSize, 16, 160, 64),
+      })).filter((clip) => clip.text && clip.end > clip.start);
+      setClips((prev) => [...prev, ...nextClips].sort((a, b) => a.start - b.start));
+      setSelectedClipId(nextClips[0]?.id || selectedClipId);
+      setPanel('text');
+      notify(`Imported ${nextClips.length} text overlay${nextClips.length === 1 ? '' : 's'}`, 'success');
+    } catch (err) {
+      notify(err.message || 'Failed to extract text overlay', 'error');
+    } finally {
+      setExtractingText(false);
+    }
   }
 
   function handleAudioClipUpdate(nextStart, nextEnd, mode) {
@@ -710,16 +919,24 @@ function VideoComposePage() {
     setWarmth(0);
     setSharpness(0);
     setVignette(0);
+    setPrimaryZoom(1);
+    setPrimaryPanX(0);
+    setPrimaryPanY(0);
+    setSecondaryZoom(1);
+    setSecondaryPanX(0);
+    setSecondaryPanY(0);
   }
 
   async function compose() {
-    if (!videoFile) return notify('Add a video first', 'error');
+    if (!videoFile) return notify('Add a clip first', 'error');
     setLoading(true); setResult(null);
     try {
       const fd = new FormData();
       fd.append('video', videoFile);
       if (videoFile2) fd.append('video2', videoFile2);
       if (audioFile) fd.append('audio', audioFile);
+      if (primaryIsImage) fd.append('imageDuration', String(Math.max(0.1, imageDuration || 5)));
+      if (secondaryIsImage) fd.append('imageDuration2', String(Math.max(0.1, imageDuration2 || 5)));
       fd.append('textClips', JSON.stringify(clips));
       fd.append('trimStart', String(trimStart)); fd.append('trimEnd', String(effectiveTrimEnd));
       fd.append('preset', preset); fd.append('speed', String(speed));
@@ -728,6 +945,12 @@ function VideoComposePage() {
       fd.append('warmth', String(warmth));
       fd.append('sharpness', String(sharpness));
       fd.append('vignette', String(vignette));
+      fd.append('primaryZoom', String(primaryZoom));
+      fd.append('primaryPanX', String(primaryPanX));
+      fd.append('primaryPanY', String(primaryPanY));
+      fd.append('secondaryZoom', String(secondaryZoom));
+      fd.append('secondaryPanX', String(secondaryPanX));
+      fd.append('secondaryPanY', String(secondaryPanY));
       fd.append('musicVolume', String(musicVolume)); fd.append('originalAudioVolume', String(originalAudioVolume));
       fd.append('replaceOriginalAudio', String(replaceOriginalAudio));
       fd.append('audioStart', String(audioStart));
@@ -826,10 +1049,20 @@ function VideoComposePage() {
                 <div className="text-[10px] uppercase tracking-widest text-zinc-600">Media</div>
                 <div className="mt-1 text-[11px] text-zinc-500">Load a reel clip, trim it, then pick the look you want.</div>
               </div>
-              <div className="text-[10px] uppercase tracking-widest text-zinc-600 mb-1">Source Video</div>
-              <DropZone label="Drop video here" accept="video/*" file={videoFile} onFile={setVideoFile} showGalleryPicker={() => openGalleryPicker('primary')} />
+              <div className="text-[10px] uppercase tracking-widest text-zinc-600 mb-1">Source Clip</div>
+              <DropZone label="Drop video or image here" accept="video/*,image/*" file={videoFile} onFile={setVideoFile} showGalleryPicker={() => openGalleryPicker('primary')} />
+              {primaryIsImage && (
+                <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-3">
+                  <FriendlySlider label="Still Duration" hint="main image" value={imageDuration} onChange={setImageDuration} min={1} max={20} step={0.5} formatter={(v) => `${v.toFixed(1)}s`} onReset={() => setImageDuration(5)} resetDisabled={Math.abs(imageDuration - 5) < 0.0001} />
+                </div>
+              )}
               <div className="text-[10px] uppercase tracking-widest text-zinc-600 mt-3 mb-1">Append Second Clip</div>
-              <DropZone label="Drop second clip here" accept="video/*" file={videoFile2} onFile={setVideoFile2} showGalleryPicker={() => openGalleryPicker('secondary')} />
+              <DropZone label="Drop second video or image here" accept="video/*,image/*" file={videoFile2} onFile={setVideoFile2} showGalleryPicker={() => openGalleryPicker('secondary')} />
+              {secondaryIsImage && (
+                <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-3">
+                  <FriendlySlider label="Still Duration" hint="second image" value={imageDuration2} onChange={setImageDuration2} min={1} max={20} step={0.5} formatter={(v) => `${v.toFixed(1)}s`} onReset={() => setImageDuration2(5)} resetDisabled={Math.abs(imageDuration2 - 5) < 0.0001} />
+                </div>
+              )}
               {videoFile2 && (
                 <div className="rounded-xl border border-zinc-800 bg-zinc-900/20 p-3 text-[11px] text-zinc-500">
                   The second clip appends after the trimmed main clip during export.
@@ -856,7 +1089,31 @@ function VideoComposePage() {
             {panel === 'text' && <>
               <div className="rounded-xl border border-zinc-800 bg-zinc-900/25 p-3">
                 <div className="text-[10px] uppercase tracking-widest text-zinc-600">Text Layers</div>
-                <div className="mt-1 text-[11px] text-zinc-500">Create hook text and timed caption blocks, then position them on the reel.</div>
+                <div className="mt-1 text-[11px] text-zinc-500">Create hook text, or paste/drop a video here to copy only its visible text overlay.</div>
+              </div>
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-zinc-600">Import Overlay Text</div>
+                    <div className="mt-1 text-[11px] text-zinc-500">Drop/paste a reference video. Kyros reads the text on screen and creates editable caption blocks.</div>
+                  </div>
+                  {extractingText ? <Spinner size={14} /> : null}
+                </div>
+                <DropZone
+                  label={extractingText ? 'Reading text overlay...' : 'Drop reference video'}
+                  accept="video/*"
+                  file={overlaySourceFile}
+                  onFile={importTextOverlayFromVideo}
+                />
+                {overlaySourceFile && (
+                  <button
+                    type="button"
+                    onClick={() => setOverlaySourceFile(null)}
+                    className="text-[10px] text-zinc-600 transition hover:text-zinc-300"
+                  >
+                    Clear reference video
+                  </button>
+                )}
               </div>
               <div className="flex items-center justify-between">
                 <div className="text-[10px] uppercase tracking-widest text-zinc-600">Captions</div>
@@ -905,18 +1162,27 @@ function VideoComposePage() {
                 <div className="mt-1 text-[11px] text-zinc-500">Preview background music live, line it up by ear, then mix or replace the source audio.</div>
               </div>
               <div className="text-[10px] uppercase tracking-widest text-zinc-600 mb-1">Music Track</div>
-              <DropZone label="Drop audio here" accept="audio/*" file={audioFile} onFile={setAudioFile} />
+              <DropZone label="Drop audio or video here" accept="audio/*,video/*" file={audioFile} onFile={setAudioFile} />
               {!audioFile && (
                 <div className="rounded-xl border border-zinc-800 bg-zinc-900/20 p-3 text-[11px] text-zinc-500">
-                  Add a track to preview music live with the reel before exporting.
+                  Add a track to preview music live with the reel before exporting, or drop a video to use its audio.
                 </div>
               )}
               {audioFile && (
                 <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-3 space-y-3">
-                  <button onClick={() => setReplaceOriginalAudio(v => !v)}
-                    className={`w-full rounded-lg py-1.5 text-[11px] font-medium border transition ${replaceOriginalAudio ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'}`}>
-                    {replaceOriginalAudio ? 'Replace Original' : 'Mix With Original'}
-                  </button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => setReplaceOriginalAudio(v => !v)}
+                      className={`rounded-lg py-1.5 text-[11px] font-medium border transition ${replaceOriginalAudio ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'}`}>
+                      {replaceOriginalAudio ? 'Replace Original' : 'Mix With Original'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearAudio}
+                      className="rounded-lg border border-rose-500/35 bg-rose-500/10 py-1.5 text-[11px] font-medium text-rose-300 transition hover:bg-rose-500/20"
+                    >
+                      Remove Audio
+                    </button>
+                  </div>
                   <div className="text-[10px] text-zinc-600">
                     Segment: {stamp(audioStart)} {'->'} {stamp(audioEnd)} at {stamp(audioOffset)}
                   </div>
@@ -949,6 +1215,26 @@ function VideoComposePage() {
                 <FriendlySlider label="Sharpness" hint="detail" value={sharpness} onChange={setSharpness} min={0} max={2} step={0.05} formatter={(v) => `${Math.round(v * 100)}%`} onReset={() => setSharpness(0)} resetDisabled={Math.abs(sharpness) < 0.0001} />
                 <FriendlySlider label="Vignette" hint="edge focus" value={vignette} onChange={setVignette} min={0} max={1} step={0.01} formatter={(v) => `${Math.round(v * 100)}%`} onReset={() => setVignette(0)} resetDisabled={Math.abs(vignette) < 0.0001} />
                 <FriendlySlider label="Soft Focus" hint="glow" value={blur} onChange={setBlur} min={0} max={4} step={0.1} formatter={(v) => `${v.toFixed(1)}px`} onReset={() => setBlur(0)} resetDisabled={Math.abs(blur) < 0.0001} />
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3 space-y-3">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-zinc-600">Main Clip Framing</div>
+                    <div className="text-[11px] text-zinc-500">Zoom in and nudge the shot until the crop feels right.</div>
+                  </div>
+                  <FriendlySlider label="Zoom" hint="main clip" value={primaryZoom} onChange={setPrimaryZoom} min={1} max={2.5} step={0.01} formatter={(v) => `${v.toFixed(2)}x`} onReset={() => setPrimaryZoom(1)} resetDisabled={Math.abs(primaryZoom - 1) < 0.0001} />
+                  <FriendlySlider label="Horizontal" hint="left to right" value={primaryPanX} onChange={setPrimaryPanX} min={-1} max={1} step={0.01} formatter={(v) => `${v > 0 ? '+' : ''}${Math.round(v * 100)}`} onReset={() => setPrimaryPanX(0)} resetDisabled={Math.abs(primaryPanX) < 0.0001} />
+                  <FriendlySlider label="Vertical" hint="up to down" value={primaryPanY} onChange={setPrimaryPanY} min={-1} max={1} step={0.01} formatter={(v) => `${v > 0 ? '+' : ''}${Math.round(v * 100)}`} onReset={() => setPrimaryPanY(0)} resetDisabled={Math.abs(primaryPanY) < 0.0001} />
+                </div>
+                {videoFile2 ? (
+                  <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3 space-y-3">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-widest text-zinc-600">Second Clip Framing</div>
+                      <div className="text-[11px] text-zinc-500">Tune the appended clip so the export feels matched.</div>
+                    </div>
+                    <FriendlySlider label="Zoom" hint="second clip" value={secondaryZoom} onChange={setSecondaryZoom} min={1} max={2.5} step={0.01} formatter={(v) => `${v.toFixed(2)}x`} onReset={() => setSecondaryZoom(1)} resetDisabled={Math.abs(secondaryZoom - 1) < 0.0001} />
+                    <FriendlySlider label="Horizontal" hint="left to right" value={secondaryPanX} onChange={setSecondaryPanX} min={-1} max={1} step={0.01} formatter={(v) => `${v > 0 ? '+' : ''}${Math.round(v * 100)}`} onReset={() => setSecondaryPanX(0)} resetDisabled={Math.abs(secondaryPanX) < 0.0001} />
+                    <FriendlySlider label="Vertical" hint="up to down" value={secondaryPanY} onChange={setSecondaryPanY} min={-1} max={1} step={0.01} formatter={(v) => `${v > 0 ? '+' : ''}${Math.round(v * 100)}`} onReset={() => setSecondaryPanY(0)} resetDisabled={Math.abs(secondaryPanY) < 0.0001} />
+                  </div>
+                ) : null}
               </div>
             )}
 
@@ -964,6 +1250,7 @@ function VideoComposePage() {
                   <div className="flex justify-between text-zinc-500"><span>Captions</span><span className="text-zinc-200">{clips.length}</span></div>
                   <div className="flex justify-between text-zinc-500"><span>Preset</span><span className="text-zinc-200 capitalize">{preset}</span></div>
                   <div className="flex justify-between text-zinc-500"><span>Style Tweaks</span><span className="text-zinc-200">{[brightness, contrast - 1, saturation - 1, warmth, sharpness, vignette, blur].some(v => Math.abs(v) > 0.0001) ? 'Custom' : 'Default'}</span></div>
+                  <div className="flex justify-between text-zinc-500"><span>Framing</span><span className="text-zinc-200">{[primaryZoom - 1, primaryPanX, primaryPanY, secondaryZoom - 1, secondaryPanX, secondaryPanY].some(v => Math.abs(v) > 0.0001) ? 'Custom' : 'Default'}</span></div>
                   <div className="flex justify-between text-zinc-500"><span>Speed</span><span className="text-zinc-200">{speed.toFixed(2)}x</span></div>
                   <div className="flex justify-between text-zinc-500"><span>Audio</span><span className="text-zinc-200">{audioFile ? (replaceOriginalAudio ? 'Replace' : 'Mix') : 'Original'}</span></div>
                 </div>
@@ -1002,7 +1289,11 @@ function VideoComposePage() {
           <div className="flex-1 min-h-0 flex items-center justify-center bg-[#0d0d0d] relative overflow-hidden">
             {previewUrl ? (
               <div className="relative h-full max-h-full flex items-center justify-center" style={{ aspectRatio: '9 / 16' }}>
-                <video ref={videoRef} src={previewUrl} className="w-full h-full object-cover rounded-2xl cursor-pointer" style={previewFilterStyle} onClick={togglePlay} />
+                {primaryIsImage ? (
+                  <img src={previewUrl} alt="Primary clip preview" className="w-full h-full object-cover rounded-2xl" style={previewFilterStyle} />
+                ) : (
+                  <video ref={videoRef} src={previewUrl} className="w-full h-full object-cover rounded-2xl cursor-pointer" style={previewFilterStyle} onClick={togglePlay} />
+                )}
                 {previewVignetteStrength > 0.01 ? (
                   <div
                     className="absolute inset-0 rounded-2xl pointer-events-none"
@@ -1023,7 +1314,7 @@ function VideoComposePage() {
                   />
                 ))}
                 {/* Play overlay */}
-                {!playing && (
+                {!primaryIsImage && !playing && (
                   <button onClick={togglePlay} className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all hover:bg-black/10 hover:opacity-100">
                     <div className="flex h-16 w-16 items-center justify-center rounded-full border border-white/20 bg-black/55 text-white backdrop-blur-sm shadow-lg">
                       <svg width="18" height="18" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
@@ -1036,12 +1327,12 @@ function VideoComposePage() {
             ) : (
               <div className="flex flex-col items-center justify-center text-center opacity-30" style={{ aspectRatio: '9 / 16', height: '80%' }}>
                 <div className="text-3xl mb-4 font-mono">VIDEO</div>
-                <div className="text-sm text-zinc-400">Add a video in the Media panel to start editing</div>
+                <div className="text-sm text-zinc-400">Add a video or image in the Media panel to start editing</div>
               </div>
             )}
 
             {/* Playback bar overlay */}
-            {videoFile && duration > 0 && (
+            {videoFile && duration > 0 && !primaryIsImage && (
               <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-5 pb-4 pt-10">
                 <div className="flex items-center gap-3">
                   <button
@@ -1139,7 +1430,7 @@ function VideoComposePage() {
                           ))}
                         </div>
                         <div className="absolute inset-0 flex items-center px-2 pointer-events-none">
-                          <span className="text-[10px] text-cyan-200/70 font-medium truncate drop-shadow">{videoFile.name}</span>
+                          <span className="text-[10px] text-cyan-200/70 font-medium truncate drop-shadow">{videoFile.name}{primaryIsImage ? ` · ${imageDuration.toFixed(1)}s` : ''}</span>
                         </div>
                       </DraggableMediaClip>
                     )}
@@ -1155,7 +1446,7 @@ function VideoComposePage() {
                           <div className="absolute inset-0 bg-[repeating-linear-gradient(90deg,rgba(255,255,255,0.08)_0_14px,transparent_14px_28px)]" />
                         </div>
                         <div className="absolute inset-0 flex items-center px-2 pointer-events-none">
-                          <span className="text-[10px] text-cyan-100/75 font-medium truncate drop-shadow">{videoFile2.name}</span>
+                          <span className="text-[10px] text-cyan-100/75 font-medium truncate drop-shadow">{videoFile2.name}{secondaryIsImage ? ` · ${imageDuration2.toFixed(1)}s` : ''}</span>
                         </div>
                       </div>
                     )}
@@ -1276,7 +1567,3 @@ export default function VideoComposePageRoot() {
     </CompositorErrorBoundary>
   );
 }
-
-
-
-

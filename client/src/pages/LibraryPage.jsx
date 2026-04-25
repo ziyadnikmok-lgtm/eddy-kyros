@@ -1,7 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { library as libraryApi, gallery as galleryApi, video as videoApi } from '../services/api';
 import { useApp } from '../context/AppContext';
-import { Btn, Badge, Spinner, Empty, ConfirmDialog, Toggle } from '../components/UI';
+import { Btn, Badge, Spinner, Empty, ConfirmDialog, Toggle, Modal } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
 
 const MEDIA_FILTERS = [
@@ -39,6 +39,24 @@ function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function parseDataUrl(dataUrl) {
+  const match = String(dataUrl || '').match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return null;
+  return {
+    mimeType: match[1],
+    base64: match[2],
+  };
 }
 
 function sanitizeDownloadName(name = 'download') {
@@ -148,6 +166,87 @@ function PromptSnippet({ prompt, notify }) {
   );
 }
 
+async function copyImageFromUrl(url, notify) {
+  try {
+    if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+      throw new Error('Copy image is not supported in this browser');
+    }
+    const response = await fetch(url, { credentials: 'include' });
+    if (!response.ok) throw new Error(`Failed to load image (${response.status})`);
+    const blob = await response.blob();
+    await navigator.clipboard.write([new ClipboardItem({ [blob.type || 'image/png']: blob })]);
+    notify?.('Image copied', 'success');
+  } catch (err) {
+    notify?.(err.message || 'Failed to copy image', 'error');
+  }
+}
+
+function CardActionButton({ tone = 'default', children, ...props }) {
+  const toneClass = tone === 'danger'
+    ? 'text-red-300 hover:bg-red-500/10 hover:text-red-200'
+    : 'text-zinc-200 hover:bg-zinc-800/90 hover:text-white';
+  return (
+    <button
+      type="button"
+      className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${toneClass}`}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
+const LIBRARY_CONTEXT_MENU_WIDTH = 256;
+const LIBRARY_CONTEXT_MENU_HEIGHT = 372;
+const LIBRARY_CONTEXT_MENU_GAP = 10;
+const LIBRARY_CONTEXT_MENU_MARGIN = 12;
+
+function ImageContextMenu({ menu, onClose, onAction }) {
+  useEffect(() => {
+    if (!menu) return undefined;
+    const handlePointerDown = () => onClose();
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleEscape);
+    window.addEventListener('scroll', handlePointerDown, true);
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleEscape);
+      window.removeEventListener('scroll', handlePointerDown, true);
+    };
+  }, [menu, onClose]);
+
+  if (!menu) return null;
+
+  return (
+    <div
+      className="fixed z-[80] w-64 rounded-xl border border-zinc-700/70 bg-zinc-950/98 p-2 shadow-2xl shadow-black/40 backdrop-blur-xl"
+      style={{
+        left: menu.x,
+        top: menu.y,
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <div className="mb-2 border-b border-zinc-800 px-2 pb-2">
+        <p className="truncate text-xs font-medium text-zinc-200">{menu.item.metadata?.filename || 'Image actions'}</p>
+        <p className="text-[11px] text-zinc-500">Open, copy, edit, or send this image somewhere else.</p>
+      </div>
+      <div className="space-y-1">
+        <CardActionButton onClick={() => onAction('open')}>Open preview</CardActionButton>
+        <CardActionButton onClick={() => onAction('copyPrompt')}>Copy prompt</CardActionButton>
+        <CardActionButton onClick={() => onAction('copyImage')}>Copy image</CardActionButton>
+        <CardActionButton onClick={() => onAction('imageEditor')}>Edit in Image Editor</CardActionButton>
+        <CardActionButton onClick={() => onAction('nanoBypass')}>More edit in Nano Bypass</CardActionButton>
+        <CardActionButton onClick={() => onAction('carousel')}>Go to Carousel</CardActionButton>
+        <CardActionButton onClick={() => onAction('download')}>Download</CardActionButton>
+        <CardActionButton tone="danger" onClick={() => onAction('delete')}>Delete</CardActionButton>
+      </div>
+    </div>
+  );
+}
+
 export default function LibraryPage() {
   const { notify, navigateTo, characters } = useApp();
   const { openLightbox, LightboxComponent } = useImageLightbox();
@@ -175,6 +274,9 @@ export default function LibraryPage() {
   const [spoofEnabled, setSpoofEnabled] = useState(true);
   const [bulkDeleteTarget, setBulkDeleteTarget] = useState(false);
   const [visibleCount, setVisibleCount] = useState(24);
+  const [editTarget, setEditTarget] = useState(null);
+  const [editDestinationBusy, setEditDestinationBusy] = useState(false);
+  const [contextMenu, setContextMenu] = useState(null);
   const sentinelRef = useRef(null);
 
   const imageItems = useMemo(() => items.filter((item) => item.mediaType === 'image'), [items]);
@@ -309,6 +411,64 @@ export default function LibraryPage() {
     }
   }, [notify]);
 
+  const handleOpenEditChooser = useCallback((item) => {
+    setEditTarget(item);
+  }, []);
+
+  const handleEditDestination = useCallback(async (destination) => {
+    if (!editTarget) return;
+
+    if (destination === 'imageEditor') {
+      navigateTo('imageEditor', { editId: editTarget.originalId });
+      setEditTarget(null);
+      return;
+    }
+
+    if (destination === 'carousel') {
+      navigateTo('carousel', {
+        recreate: true,
+        sourceImageId: editTarget.originalId,
+        aspectRatio: '4:5',
+      });
+      setEditTarget(null);
+      return;
+    }
+
+    if (destination !== 'nanoBypass') return;
+
+    setEditDestinationBusy(true);
+    try {
+      const response = await fetch(editTarget.downloadUrl || `/api/gallery/${editTarget.originalId}/image`, {
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load image (${response.status})`);
+      }
+
+      const blob = await response.blob();
+      const dataUrl = await blobToDataUrl(blob);
+      const parsed = parseDataUrl(dataUrl);
+      if (!parsed) {
+        throw new Error('Could not prepare this image for Nano Bypass');
+      }
+
+      navigateTo('nanoBypass', {
+        sourceImageBase64: parsed.base64,
+        sourceImageMimeType: parsed.mimeType,
+        sourceImageName:
+          editTarget.metadata?.filename
+          || filenameFromUrl(editTarget.downloadUrl)
+          || `library-${editTarget.originalId}${extensionFromMimeType(parsed.mimeType) || '.png'}`,
+        aspectRatio: editTarget.aspectRatio || 'auto',
+      });
+      setEditTarget(null);
+    } catch (err) {
+      notify(err.message || 'Failed to open image in Nano Bypass', 'error');
+    } finally {
+      setEditDestinationBusy(false);
+    }
+  }, [editTarget, navigateTo, notify]);
+
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return;
     try {
@@ -349,6 +509,115 @@ export default function LibraryPage() {
     }
     anchor.click();
   }, [spoofAvailable, spoofEnabled]);
+
+  const handleContextAction = useCallback(async (action) => {
+    const item = contextMenu?.item;
+    if (!item) return;
+
+    if (action === 'open') {
+      openImage(item);
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'copyPrompt') {
+      try {
+        await navigator.clipboard.writeText(item.prompt || '');
+        notify('Prompt copied', 'success');
+      } catch (err) {
+        notify(err.message || 'Failed to copy prompt', 'error');
+      }
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'copyImage') {
+      await copyImageFromUrl(item.downloadUrl || `/api/gallery/${item.originalId}/image`, notify);
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'download') {
+      handleImageDownload(item);
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'delete') {
+      setDeleteTarget(item);
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'imageEditor') {
+      navigateTo('imageEditor', { editId: item.originalId });
+      setContextMenu(null);
+      return;
+    }
+
+    if (action === 'carousel') {
+      navigateTo('carousel', {
+        recreate: true,
+        sourceImageId: item.originalId,
+        aspectRatio: '4:5',
+      });
+      setContextMenu(null);
+      return;
+    }
+
+    if (action !== 'nanoBypass') return;
+
+    setEditDestinationBusy(true);
+    try {
+      const response = await fetch(item.downloadUrl || `/api/gallery/${item.originalId}/image`, {
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error(`Failed to load image (${response.status})`);
+      const blob = await response.blob();
+      const dataUrl = await blobToDataUrl(blob);
+      const parsed = parseDataUrl(dataUrl);
+      if (!parsed) throw new Error('Could not prepare this image for Nano Bypass');
+      navigateTo('nanoBypass', {
+        sourceImageBase64: parsed.base64,
+        sourceImageMimeType: parsed.mimeType,
+        sourceImageName:
+          item.metadata?.filename
+          || filenameFromUrl(item.downloadUrl)
+          || `library-${item.originalId}${extensionFromMimeType(parsed.mimeType) || '.png'}`,
+        aspectRatio: item.aspectRatio || 'auto',
+      });
+    } catch (err) {
+      notify(err.message || 'Failed to open image in Nano Bypass', 'error');
+    } finally {
+      setEditDestinationBusy(false);
+      setContextMenu(null);
+    }
+  }, [contextMenu, handleImageDownload, navigateTo, notify, openImage]);
+
+  const openContextMenu = useCallback((event, item) => {
+    event.preventDefault();
+    let x = event.clientX + LIBRARY_CONTEXT_MENU_GAP;
+    let y = event.clientY + LIBRARY_CONTEXT_MENU_GAP;
+
+    if (x + LIBRARY_CONTEXT_MENU_WIDTH > window.innerWidth - LIBRARY_CONTEXT_MENU_MARGIN) {
+      x = event.clientX - LIBRARY_CONTEXT_MENU_WIDTH - LIBRARY_CONTEXT_MENU_GAP;
+    }
+
+    if (y + LIBRARY_CONTEXT_MENU_HEIGHT > window.innerHeight - LIBRARY_CONTEXT_MENU_MARGIN) {
+      y = event.clientY - LIBRARY_CONTEXT_MENU_HEIGHT - LIBRARY_CONTEXT_MENU_GAP;
+    }
+
+    x = Math.max(
+      LIBRARY_CONTEXT_MENU_MARGIN,
+      Math.min(x, window.innerWidth - LIBRARY_CONTEXT_MENU_WIDTH - LIBRARY_CONTEXT_MENU_MARGIN),
+    );
+    y = Math.max(
+      LIBRARY_CONTEXT_MENU_MARGIN,
+      Math.min(y, window.innerHeight - LIBRARY_CONTEXT_MENU_HEIGHT - LIBRARY_CONTEXT_MENU_MARGIN),
+    );
+
+    setContextMenu({ item, x, y });
+  }, []);
   const clearFilters = () => {
     setSearchQuery('');
     setSourceFilter('');
@@ -672,17 +941,11 @@ export default function LibraryPage() {
                 notify={notify}
                 onSelect={() => toggleSelection(item.id)}
                 onOpen={() => openImage(item)}
+                onContextMenu={(event) => openContextMenu(event, item)}
                 onFavorite={() => handleImageFavorite(item)}
                 onDelete={() => setDeleteTarget(item)}
                 onDownload={() => handleImageDownload(item)}
-                onRecreate={() => navigateTo('generate', {
-                  recreate: true,
-                  prompt: item.prompt || '',
-                  characterId: item.characterId || '',
-                  aspectRatio: item.aspectRatio || '',
-                  sourceImageId: item.originalId,
-                })}
-                onEdit={() => navigateTo('imageEditor', { editId: item.originalId })}
+                onEdit={() => handleOpenEditChooser(item)}
               />
             ) : (
               <VideoLibraryCard
@@ -721,16 +984,62 @@ export default function LibraryPage() {
         confirmLabel="Delete selected"
       />
 
+      <Modal open={!!editTarget} onClose={() => !editDestinationBusy && setEditTarget(null)} title="Edit This Image">
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-400">
+            Choose where you want to edit this image.
+          </p>
+          <div className="grid gap-3">
+            <button
+              type="button"
+              onClick={() => handleEditDestination('carousel')}
+              disabled={editDestinationBusy}
+              className="rounded-xl border border-zinc-700/60 bg-zinc-900/70 p-4 text-left transition hover:border-blue-500/40 hover:bg-zinc-800/80 disabled:opacity-60"
+            >
+              <p className="text-sm font-semibold text-zinc-100">Carousel</p>
+              <p className="mt-1 text-xs text-zinc-500">Create follow-up slides and variations from this image.</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleEditDestination('nanoBypass')}
+              disabled={editDestinationBusy}
+              className="rounded-xl border border-zinc-700/60 bg-zinc-900/70 p-4 text-left transition hover:border-blue-500/40 hover:bg-zinc-800/80 disabled:opacity-60"
+            >
+              <p className="text-sm font-semibold text-zinc-100">Nano Bypass</p>
+              <p className="mt-1 text-xs text-zinc-500">Load this image into multi-image editing and prompt-based changes.</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleEditDestination('imageEditor')}
+              disabled={editDestinationBusy}
+              className="rounded-xl border border-zinc-700/60 bg-zinc-900/70 p-4 text-left transition hover:border-blue-500/40 hover:bg-zinc-800/80 disabled:opacity-60"
+            >
+              <p className="text-sm font-semibold text-zinc-100">Image Editor</p>
+              <p className="mt-1 text-xs text-zinc-500">Open the built-in editor for filters and saved edit presets.</p>
+            </button>
+          </div>
+          {editDestinationBusy ? (
+            <div className="flex items-center gap-2 text-xs text-zinc-500">
+              <Spinner size={14} />
+              Preparing image...
+            </div>
+          ) : null}
+        </div>
+      </Modal>
+
       <LightboxComponent />
+      <ImageContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} onAction={handleContextAction} />
     </div>
   );
 }
 
-function ImageLibraryCard({ item, bulkMode, selected, onSelect, onOpen, onFavorite, onDelete, onDownload, onRecreate, onEdit, notify }) {
+function ImageLibraryCard({ item, bulkMode, selected, onSelect, onOpen, onFavorite, onDelete, onDownload, onEdit, onContextMenu, notify }) {
   return (
     <div className={`rounded-2xl overflow-hidden bg-zinc-900 border shadow-lg hover:shadow-xl transition-all duration-300 group ${
       selected ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-zinc-800/60'
-    }`}>
+    }`}
+    onContextMenu={bulkMode ? undefined : onContextMenu}
+    >
       <div className="relative bg-zinc-950 overflow-hidden">
         <img
           src={item.previewUrl}
@@ -781,7 +1090,6 @@ function ImageLibraryCard({ item, bulkMode, selected, onSelect, onOpen, onFavori
         ) : null}
         {!bulkMode ? (
           <div className="flex gap-2 flex-wrap">
-            <Btn variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={onRecreate}>Recreate</Btn>
             <Btn variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={onEdit}>Edit</Btn>
             <button type="button" onClick={onDownload} className="inline-flex items-center justify-center rounded-lg border border-zinc-700/60 bg-zinc-800/80 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-zinc-700/80 hover:border-zinc-600">Download</button>
             <Btn variant="danger" className="!px-3 !py-1.5 !text-xs" onClick={onDelete}>Delete</Btn>

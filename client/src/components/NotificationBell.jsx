@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { batch as batchApi } from '../services/api';
+import { batch as batchApi, notifications as notificationsApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 
 function timeAgo(dateStr) {
@@ -13,19 +13,26 @@ function timeAgo(dateStr) {
 export default function NotificationBell() {
   const { notify, navigateTo } = useApp();
   const [notifications, setNotifications] = useState([]);
+  const [adminMessages, setAdminMessages] = useState([]);
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef(null);
   const esRef = useRef(null);
 
-  // Load notifications on mount
+  // Load batch notifications + admin messages on mount
   useEffect(() => {
     batchApi.notifications()
-      .then((data) => { setNotifications(data.data || []); setUnread(data.unread || 0); })
+      .then((data) => { setNotifications(data.data || []); setUnread((u) => u + (data.unread || 0)); })
+      .catch(() => {});
+    notificationsApi.list()
+      .then((data) => {
+        setAdminMessages(data.messages || []);
+        setUnread((u) => u + (data.unread || 0));
+      })
       .catch(() => {});
   }, []);
 
-  // SSE stream for live notifications
+  // SSE stream for live batch notifications
   useEffect(() => {
     let es;
     try {
@@ -37,7 +44,6 @@ export default function NotificationBell() {
           const n = JSON.parse(e.data);
           setNotifications((prev) => [{ ...n, id: `${Date.now()}`, readAt: null, createdAt: new Date().toISOString() }, ...prev].slice(0, 50));
           setUnread((u) => u + 1);
-          // Also fire a toast
           notify(n.message || 'Batch complete', n.status === 'failed' ? 'error' : 'success', 6000);
         } catch {}
       });
@@ -74,7 +80,9 @@ export default function NotificationBell() {
     if (!open && unread > 0) {
       setUnread(0);
       setNotifications((prev) => prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() })));
+      setAdminMessages((prev) => prev.map((m) => ({ ...m, read_at: m.read_at || new Date().toISOString() })));
       batchApi.markNotificationsRead().catch(() => {});
+      notificationsApi.readAll().catch(() => {});
     }
   }
 
@@ -83,6 +91,8 @@ export default function NotificationBell() {
     setUnread(0);
     batchApi.clearNotifications().catch(() => {});
   }
+
+  const totalCount = notifications.length + adminMessages.length;
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -108,26 +118,51 @@ export default function NotificationBell() {
           <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/60">
             <span className="text-sm font-semibold text-zinc-200">Notifications</span>
             {notifications.length > 0 && (
-              <button onClick={handleClear} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">Clear all</button>
+              <button onClick={handleClear} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">Clear batch</button>
             )}
           </div>
 
-          <div className="max-h-80 overflow-y-auto">
-            {notifications.length === 0 ? (
+          <div className="max-h-96 overflow-y-auto">
+            {totalCount === 0 ? (
               <div className="px-4 py-8 text-center text-sm text-zinc-600">No notifications yet</div>
-            ) : notifications.map((n) => (
-              <div
-                key={n.id}
-                onClick={() => { setOpen(false); navigateTo('gallery'); }}
-                className={`px-4 py-3 border-b border-zinc-800/40 cursor-pointer hover:bg-zinc-800/40 transition-colors ${!n.readAt ? 'bg-zinc-800/20' : ''}`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <span className="text-sm text-zinc-200 flex-1">{n.message}</span>
-                  {!n.readAt && <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" />}
-                </div>
-                <div className="text-xs text-zinc-600 mt-1">{timeAgo(n.createdAt)}</div>
-              </div>
-            ))}
+            ) : (
+              <>
+                {/* Admin messages — shown first, styled differently */}
+                {adminMessages.map((m) => (
+                  <div
+                    key={`msg-${m.id}`}
+                    className={`px-4 py-3 border-b border-zinc-800/40 ${!m.read_at ? 'bg-blue-950/20' : ''}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-blue-400">From Kyros Team</span>
+                          {!m.read_at && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" />}
+                        </div>
+                        {m.subject ? <p className="text-sm font-medium text-zinc-100">{m.subject}</p> : null}
+                        <p className="text-sm text-zinc-300 leading-relaxed">{m.body}</p>
+                      </div>
+                    </div>
+                    <div className="text-xs text-zinc-600 mt-1">{timeAgo(m.created_at)}</div>
+                  </div>
+                ))}
+
+                {/* Batch notifications */}
+                {notifications.map((n) => (
+                  <div
+                    key={n.id}
+                    onClick={() => { setOpen(false); navigateTo('gallery'); }}
+                    className={`px-4 py-3 border-b border-zinc-800/40 cursor-pointer hover:bg-zinc-800/40 transition-colors ${!n.readAt ? 'bg-zinc-800/20' : ''}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-sm text-zinc-200 flex-1">{n.message}</span>
+                      {!n.readAt && <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" />}
+                    </div>
+                    <div className="text-xs text-zinc-600 mt-1">{timeAgo(n.createdAt)}</div>
+                  </div>
+                ))}
+              </>
+            )}
           </div>
 
           {notifications.length > 0 && (

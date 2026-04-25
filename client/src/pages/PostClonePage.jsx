@@ -4,7 +4,7 @@ import { useApp } from '../context/AppContext';
 import { cn } from '../lib/utils';
 import { Card, Btn, Input, Badge, Slider, Spinner, Empty, Toggle, Section } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
-import { IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
+import { ASPECT_RATIOS, RESOLUTION_TIERS, IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL, DEFAULT_RESOLUTION_TIER } from '../config/photoModes';
 import { createPersistentPageState, makePersistentJobId, PersistentJobCard } from '../lib/persistentPageState';
 
 const DNA_LABELS = {
@@ -22,6 +22,7 @@ const DNA_LABELS = {
 
 const _cache = {
   inputMode: 'single',
+
   postUrl: '',
   profileUrl: '',
   charId: '',
@@ -33,6 +34,8 @@ const _cache = {
   history: [],
   postLimit: 9,
   availability: null,
+  aspectRatio: '4:5',
+  resolutionTier: DEFAULT_RESOLUTION_TIER,
   imageModel: DEFAULT_IMAGE_MODEL,
 };
 
@@ -63,12 +66,14 @@ export default function PostClonePage() {
   const [loading, setLoading] = useState(false);
 
   const [inputMode, setInputMode] = useState(_cache.inputMode);
-  const [postUrl, setPostUrl] = useState(_cache.postUrl);
+const [postUrl, setPostUrl] = useState(_cache.postUrl);
   const [profileUrl, setProfileUrl] = useState(_cache.profileUrl);
   const [postLimit, setPostLimit] = useState(_cache.postLimit);
   const [charId, setCharId] = useState(_cache.charId);
   const [mode, setMode] = useState(_cache.mode);
   const [cosplayMode, setCosplayMode] = useState(_cache.cosplayMode);
+  const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
+  const [resolutionTier, setResolutionTier] = useState(_cache.resolutionTier);
   const [imageModel, setImageModel] = useState(_cache.imageModel);
   const [result, setResult] = useState(initialStoreState.result);
   const [availability, setAvailability] = useState(_cache.availability);
@@ -90,11 +95,13 @@ export default function PostClonePage() {
   useEffect(() => { loadHistory(); }, []);
 
   useEffect(() => { _cache.inputMode = inputMode; }, [inputMode]);
-  useEffect(() => { _cache.postUrl = postUrl; }, [postUrl]);
+useEffect(() => { _cache.postUrl = postUrl; }, [postUrl]);
   useEffect(() => { _cache.profileUrl = profileUrl; }, [profileUrl]);
   useEffect(() => { _cache.charId = charId; }, [charId]);
   useEffect(() => { _cache.mode = mode; }, [mode]);
   useEffect(() => { _cache.cosplayMode = cosplayMode; }, [cosplayMode]);
+  useEffect(() => { _cache.aspectRatio = aspectRatio; }, [aspectRatio]);
+  useEffect(() => { _cache.resolutionTier = resolutionTier; }, [resolutionTier]);
   useEffect(() => { _cache.result = result; }, [result]);
   useEffect(() => { _cache.fetchedPosts = fetchedPosts; }, [fetchedPosts]);
   useEffect(() => { _cache.selected = selected; }, [selected]);
@@ -240,6 +247,7 @@ export default function PostClonePage() {
       const data = await postCloneApi.fetchProfile({
         profileUrl: profileUrl.trim(),
         postLimit: Math.max(1, Math.min(30, Math.round(postLimit))),
+
       });
       const posts = Array.isArray(data) ? data : [];
       postCloneStore.patch({ fetchedPosts: posts, selected: new Set(posts.map((_, i) => i)), result: [] });
@@ -273,6 +281,7 @@ export default function PostClonePage() {
         summary: `${postsToClone.length} selected post${postsToClone.length === 1 ? '' : 's'}`,
         badges: [
           charId ? { label: chars.find((c) => c.id === charId)?.name || 'Character', color: 'zinc' } : null,
+          { label: `${aspectRatio} · ${resolutionTier}`, color: 'zinc' },
           { label: imageModel, color: 'zinc' },
         ].filter(Boolean),
       },
@@ -284,6 +293,8 @@ export default function PostClonePage() {
         characterId: charId,
         mode,
         cosplayMode,
+        aspectRatio,
+        resolutionTier,
         imageModel,
       });
       postCloneStore.setValue('result', Array.isArray(data) ? data : []);
@@ -314,6 +325,7 @@ export default function PostClonePage() {
         summary: postUrl.trim(),
         badges: [
           charId ? { label: chars.find((c) => c.id === charId)?.name || 'Character', color: 'zinc' } : null,
+          { label: `${aspectRatio} · ${resolutionTier}`, color: 'zinc' },
           { label: imageModel, color: 'zinc' },
         ].filter(Boolean),
       },
@@ -332,6 +344,8 @@ export default function PostClonePage() {
         characterId: charId,
         mode,
         cosplayMode,
+        aspectRatio,
+        resolutionTier,
         imageModel,
       });
       postCloneStore.setValue('result', Array.isArray(data) ? data : []);
@@ -357,8 +371,8 @@ export default function PostClonePage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
-        <div className="lg:col-span-1 space-y-4">
+      <div>
+        <div className="space-y-4">
           <Card className="space-y-4">
             <div className="space-y-2">
               <span className="text-xs text-zinc-400 font-medium block">Input Mode</span>
@@ -400,9 +414,37 @@ export default function PostClonePage() {
                 {cosplayMode && (
                   <p className="text-[10px] text-purple-400/80 -mt-2">Keeps wig color &amp; styling from the source instead of your character's natural hair.</p>
                 )}
-                <div className="flex flex-wrap gap-2">
-                  <Badge color="blue">Locked: 2K</Badge>
-                  <Badge color="blue">Locked: 4:5</Badge>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <span className="text-xs text-zinc-400 font-medium block mb-1.5">Aspect Ratio</span>
+                    <div className="flex flex-wrap gap-2">
+                      {ASPECT_RATIOS.map((ratio) => (
+                        <button
+                          key={ratio}
+                          type="button"
+                          onClick={() => setAspectRatio(ratio)}
+                          className={`rounded-lg px-3 py-1.5 text-xs font-medium transition cursor-pointer ${aspectRatio === ratio ? 'bg-blue-500 text-white' : 'bg-zinc-700/60 text-zinc-200 hover:bg-zinc-600/80'}`}
+                        >
+                          {ratio}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-xs text-zinc-400 font-medium block mb-1.5">Resolution</span>
+                    <div className="flex flex-wrap gap-2">
+                      {RESOLUTION_TIERS.map((tier) => (
+                        <button
+                          key={tier}
+                          type="button"
+                          onClick={() => setResolutionTier(tier)}
+                          className={`rounded-lg px-3 py-1.5 text-xs font-medium transition cursor-pointer ${resolutionTier === tier ? 'bg-blue-500 text-white' : 'bg-zinc-700/60 text-zinc-200 hover:bg-zinc-600/80'}`}
+                        >
+                          {tier}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
                 <div>
                   <span className="text-xs text-zinc-400 font-medium block mb-1.5">Image Model</span>
@@ -469,9 +511,37 @@ export default function PostClonePage() {
                 {cosplayMode && (
                   <p className="text-[10px] text-purple-400/80 -mt-2">Keeps wig color &amp; styling from the source instead of your character's natural hair.</p>
                 )}
-                <div className="flex flex-wrap gap-2">
-                  <Badge color="blue">Locked: 2K</Badge>
-                  <Badge color="blue">Locked: 4:5</Badge>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <span className="text-xs text-zinc-400 font-medium block mb-1.5">Aspect Ratio</span>
+                    <div className="flex flex-wrap gap-2">
+                      {ASPECT_RATIOS.map((ratio) => (
+                        <button
+                          key={ratio}
+                          type="button"
+                          onClick={() => setAspectRatio(ratio)}
+                          className={`rounded-lg px-3 py-1.5 text-xs font-medium transition cursor-pointer ${aspectRatio === ratio ? 'bg-blue-500 text-white' : 'bg-zinc-700/60 text-zinc-200 hover:bg-zinc-600/80'}`}
+                        >
+                          {ratio}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-xs text-zinc-400 font-medium block mb-1.5">Resolution</span>
+                    <div className="flex flex-wrap gap-2">
+                      {RESOLUTION_TIERS.map((tier) => (
+                        <button
+                          key={tier}
+                          type="button"
+                          onClick={() => setResolutionTier(tier)}
+                          className={`rounded-lg px-3 py-1.5 text-xs font-medium transition cursor-pointer ${resolutionTier === tier ? 'bg-blue-500 text-white' : 'bg-zinc-700/60 text-zinc-200 hover:bg-zinc-600/80'}`}
+                        >
+                          {tier}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
                 <div>
                   <span className="text-xs text-zinc-400 font-medium block mb-1.5">Image Model</span>
@@ -603,31 +673,10 @@ export default function PostClonePage() {
               </div>
             )}
           </Card>
+
         </div>
 
-        <div className="lg:col-span-2 space-y-4">
-          {queueItems.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium text-zinc-400">Post Clone Queue</h3>
-                <Badge color={activeQueueCount > 0 ? 'blue' : 'zinc'}>
-                  {activeQueueCount > 0 ? `${activeQueueCount} running` : `${queueItems.length} update${queueItems.length === 1 ? '' : 's'}`}
-                </Badge>
-              </div>
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                {queueItems.map((job) => (
-                  <PersistentJobCard
-                    key={job.id}
-                    job={job}
-                    steps={POST_CLONE_STEPS[job.kind] || POST_CLONE_STEPS.single}
-                    thresholds={POST_CLONE_THRESHOLDS[job.kind] || POST_CLONE_THRESHOLDS.single}
-                    onDismiss={dismissQueueItem}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
+        <div className="space-y-4 mt-4">
           {isProfileSelecting && (
             <Card className="space-y-3">
               <div className="flex items-center justify-between">

@@ -28,6 +28,8 @@ const ALLOWED_MIME_TYPES = [
 const ALLOWED_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp'];
 
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
+const MAX_IMAGE_SIZE_MB = MAX_IMAGE_SIZE / 1024 / 1024;
+const SUPPORTED_FORMATS_TEXT = 'PNG, JPG, or WEBP';
 
 const _characterCache = new Map();
 
@@ -391,7 +393,7 @@ class ReferenceManager {
 
     if (image.buffer.length > MAX_IMAGE_SIZE) {
       throw new AppError(
-        `${label} exceeds maximum size of ${MAX_IMAGE_SIZE / 1024 / 1024}MB`,
+        `${label} is too large. Use a ${SUPPORTED_FORMATS_TEXT} file under ${MAX_IMAGE_SIZE_MB}MB.`,
         400,
         'FILE_TOO_LARGE'
       );
@@ -399,7 +401,7 @@ class ReferenceManager {
 
     if (!ALLOWED_MIME_TYPES.includes(image.mimeType)) {
       throw new AppError(
-        `${label} must be one of: ${ALLOWED_MIME_TYPES.join(', ')}`,
+        `${label} must be ${SUPPORTED_FORMATS_TEXT}. HEIC/HEIF is not supported yet.`,
         400,
         'INVALID_FILE_TYPE'
       );
@@ -421,7 +423,7 @@ class ReferenceManager {
         buffer[0] !== 0x52 || buffer[1] !== 0x49 || buffer[2] !== 0x46 || buffer[3] !== 0x46 ||
         buffer[8] !== 0x57 || buffer[9] !== 0x45 || buffer[10] !== 0x42 || buffer[11] !== 0x50
       ) {
-        throw new AppError(`${label} content does not match declared WebP type`, 400, 'INVALID_FILE_CONTENT');
+        throw new AppError(`${label} looks corrupted or doesn't match the selected file type. Re-export it as ${SUPPORTED_FORMATS_TEXT}.`, 400, 'INVALID_FILE_CONTENT');
       }
       return;
     }
@@ -431,7 +433,7 @@ class ReferenceManager {
 
     for (let i = 0; i < expected.length; i++) {
       if (buffer[i] !== expected[i]) {
-        throw new AppError(`${label} content does not match declared ${mimeType} type`, 400, 'INVALID_FILE_CONTENT');
+        throw new AppError(`${label} looks corrupted or doesn't match the selected file type. Re-export it as ${SUPPORTED_FORMATS_TEXT}.`, 400, 'INVALID_FILE_CONTENT');
       }
     }
   }

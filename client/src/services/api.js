@@ -9,7 +9,7 @@ const LONG_RUNNING_PATHS = [
   '/generate', '/batch', '/tweak',
   '/post-clone', '/reel-copy',
   '/carousel/execute', '/carousel/follow-up',
-  '/scene/recreate', '/pinterest/recreate', '/story/generate',
+  '/scene/recreate', '/scene/analyze', '/pinterest/recreate', '/story/generate',
   '/auto/plan', '/auto/execute',
   '/video/generate', '/reformat',
   '/nsfw-generate', '/photo-match', '/nano-bypass', '/lora-datasets/generate',
@@ -124,6 +124,10 @@ export const keys = {
   getWavespeed: () => request('/keys/wavespeed'),
   setWavespeed: (apiKey) => request('/keys/wavespeed', { method: 'PUT', body: { apiKey } }),
   clearWavespeed: () => request('/keys/wavespeed', { method: 'DELETE' }),
+  getVertex: () => request('/keys/vertex'),
+  setVertex: (credentialsJson) => request('/keys/vertex', { method: 'PUT', body: { credentialsJson } }),
+  clearVertex: () => request('/keys/vertex', { method: 'DELETE' }),
+  setActiveBackend: (backend) => request('/keys/active-backend', { method: 'PUT', body: { backend } }),
   healthCheck: () => request('/keys/health-check'),
   getSpend: () => request('/keys/spend'),
   resetSpend: () => request('/keys/spend/reset', { method: 'POST' }),
@@ -158,10 +162,11 @@ export const video = {
 
 export const videoCompose = {
   compose: (formData) => request('/video-compose', { method: 'POST', body: formData, timeoutMs: LONG_TIMEOUT_MS }),
+  extractTextOverlay: (formData) => request('/video-compose/extract-text-overlay', { method: 'POST', body: formData, timeoutMs: VIDEO_ANALYZE_TIMEOUT_MS }),
 };
 
 export const characters = {
-  list: () => request('/characters'),
+  list: () => request(`/characters?_=${Date.now()}`, { cache: 'no-store' }),
   get: (id) => request(`/characters/${id}`),
   create: (data) => request('/characters', { method: 'POST', body: data }),
   update: (id, data) => request(`/characters/${id}`, { method: 'PATCH', body: data }),
@@ -296,6 +301,11 @@ export const pinterest = {
   recreate: (body) => request('/pinterest/recreate', { method: 'POST', body }),
   recreateVideoFrame: (body) => request('/pinterest/recreate-video-frame', { method: 'POST', body }),
   analyzeVideo: (videoUrl) => request('/pinterest/analyze-video', { method: 'POST', body: { url: videoUrl } }),
+  // Extension push support — feature: 'pinterest' | 'photo-match' | 'scene-recreate' | 'post-clone'
+  push: (url, feature = 'pinterest', imageUrl = null) =>
+    request('/pinterest/push', { method: 'POST', body: { url, feature, imageUrl } }),
+  pending: (feature) =>
+    request(`/pinterest/pending${feature ? `?feature=${encodeURIComponent(feature)}` : ''}`),
 };
 
 export const nanoBypass = {
@@ -468,5 +478,21 @@ export const admin = {
   exportUsersUrl: () => '/api/admin/users/export.csv',
   forceReset: (id) => request(`/admin/users/${id}/force-reset`, { method: 'POST' }),
   deleteUser: (id, note) => request(`/admin/users/${id}`, { method: 'DELETE', body: { note } }),
+  setOwner: (id, grant) => request(`/admin/users/${id}/owner`, { method: 'PATCH', body: { grant } }),
+  userLibraryAll: (id) => request(`/admin/users/${id}/library/all`),
+  sendMessage: (id, subject, body) => request(`/admin/users/${id}/messages`, { method: 'POST', body: { subject, body } }),
+  getUserMessages: (id) => request(`/admin/users/${id}/messages`),
 };
 
+export const notifications = {
+  list: () => request('/notifications'),
+  readAll: () => request('/notifications/read-all', { method: 'POST' }),
+  readOne: (id) => request(`/notifications/${id}/read`, { method: 'POST' }),
+};
+
+// ── X Reply Bot ─────────────────────────────────────────────────────────────
+export const xReply = {
+  status: () => request('/x-reply/status'),
+  start: (body) => request('/x-reply/start', { method: 'POST', body }),
+  stop: () => request('/x-reply/stop', { method: 'POST' }),
+};

@@ -1,6 +1,6 @@
 const { AppError } = require('../middleware/errorHandler');
 const apiKeyManager = require('./apiKeyManager');
-const geminiService = require('./geminiService');
+const geminiService = require('./geminiBackend');
 const referenceManager = require('./referenceManager');
 const promptBuilder = require('./promptBuilder');
 
@@ -28,7 +28,16 @@ class SceneAnalyzer {
     return scene;
   }
 
-  buildRecreationPrompt({ sceneData, characterId, activeReferenceIds, sameBackground = false, samePose = false }) {
+  buildRecreationPrompt({
+    sceneData,
+    characterId,
+    activeReferenceIds,
+    masterPromptOverride = '',
+    sameBackground = false,
+    samePose = false,
+    sameHair = false,
+    sameTattoos = false,
+  }) {
     if (!sceneData || typeof sceneData !== 'object') {
       throw new AppError('sceneData is required', 400, 'VALIDATION_ERROR');
     }
@@ -43,7 +52,7 @@ class SceneAnalyzer {
     const sceneParagraph = this._sceneToDescription(sceneData);
 
     const basePrompt = promptBuilder.buildPrompt({
-      masterPrompt: character.masterPrompt,
+      masterPrompt: String(masterPromptOverride || character.masterPrompt || '').trim(),
       activeReferences: activeRefs,
       userPrompt: sceneParagraph,
     });
@@ -53,13 +62,23 @@ class SceneAnalyzer {
       : null;
 
     const poseLock = samePose
-      ? 'POSE LOCK: EXACTLY replicate the body pose — identical stance, same weight distribution, same arm and hand positions, same head angle. Mirror the pose precisely.'
+      ? 'POSE LOCK: EXACTLY replicate the full body movement and pose — identical stance, same weight distribution, same torso angle, same shoulder line, same hip direction, same arm and hand positions, same leg placement, same neck angle, same head tilt, same chin angle, and same facial facing direction. Mirror the pose and body language precisely.'
       : null;
+
+    const hairRule = sameHair
+      ? 'HAIR LOCK: EXACTLY replicate the source subject\'s visible hair details — same hair color, same hairstyle, same highlights, same parting, same length, same curl/straight texture, and same overall hair silhouette.'
+      : 'HAIR RULE: Do NOT copy the source subject\'s hair color, dye, wig, highlights, or hairstyle. Keep the selected character\'s own hair identity from the references instead.';
+
+    const tattooRule = sameTattoos
+      ? 'TATTOO LOCK: EXACTLY replicate the source subject\'s visible tattoos, body ink, sleeve tattoos, skin markings, and written markings with matching placement and visibility.'
+      : 'TATTOO RULE: Ignore all tattoos, body ink, sleeve tattoos, skin markings, and written markings from the source image. Do NOT recreate or transfer them unless they already exist on the selected character references.';
 
     const sceneSheet = [
       '',
       bgLock,
       poseLock,
+      hairRule,
+      tattooRule,
       '[SCENE DATA]',
       `Camera: ${sceneData.camera || 'as described'}`,
       `Lighting: ${sceneData.lighting || 'as described'}`,

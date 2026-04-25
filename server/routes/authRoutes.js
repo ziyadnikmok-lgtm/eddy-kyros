@@ -18,7 +18,7 @@ function normalizeLogin(value) {
 
 function getUserByLogin(login) {
   return db.prepare(`
-    SELECT *
+    SELECT id, email, username, password_hash, name, verified, is_admin, is_owner, is_banned
     FROM users
     WHERE email = ?
        OR username = ?
@@ -67,23 +67,36 @@ const { sendMail } = require('../utils/mailer');
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
   try {
-    const { email, password, name } = req.body || {};
+    const { email, password, name, ref_code } = req.body || {};
     if (!email || !password || !name) return res.status(400).json({ error: 'email, password and name are required' });
+    if (typeof email !== 'string' || email.length > 254) return res.status(400).json({ error: 'Invalid email' });
+    if (typeof name !== 'string' || name.length > 100) return res.status(400).json({ error: 'Name too long (max 100 chars)' });
+    if (typeof password !== 'string' || password.length > 256) return res.status(400).json({ error: 'Password too long' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return res.status(400).json({ error: 'Invalid email format' });
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
     const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase());
     if (existing) return res.status(409).json({ error: 'Email already registered' });
     const hash = await bcrypt.hash(password, 12);
     const id = uuidv4();
-    const token = uuidv4().replace(/-/g, '');
-    db.prepare('INSERT INTO users (id, email, password_hash, name, verified, verification_token) VALUES (?,?,?,?,?,?)').run(id, email.toLowerCase(), hash, name, 1, null);
+    // Generate unique referral code for new user
+    const crypto = require('crypto');
+    let newCode;
+    let attempts = 0;
+    do { newCode = crypto.randomBytes(5).toString('hex').toUpperCase().slice(0, 8); attempts++; }
+    while (db.prepare('SELECT 1 FROM users WHERE referral_code = ?').get(newCode) && attempts < 10);
+    db.prepare('INSERT INTO users (id, email, password_hash, name, verified, verification_token, referral_code) VALUES (?,?,?,?,?,?,?)').run(id, email.toLowerCase(), hash, name, 1, null, newCode);
     db.prepare('INSERT INTO subscriptions (id, user_id, plan, status) VALUES (?,?,?,?)').run(uuidv4(), id, 'free', 'active');
+    // Record referral if a valid ref_code was provided
+    if (ref_code && typeof ref_code === 'string') {
+      try { require('../services/referralService').recordReferral(id, ref_code.trim()); } catch (_) {}
+    }
     logUsageEvent({
       userId: id,
       eventType: 'auth.registered',
       entityType: 'user',
       entityId: id,
       source: 'auth',
-      payload: { email: email.toLowerCase() },
+      payload: { email: email.toLowerCase(), referred: !!ref_code },
     });
     return res.status(201).json({ success: true, message: 'Registration successful. You can now log in.' });
   } catch (err) {
@@ -135,6 +148,7 @@ router.post('/login', async (req, res) => {
       }
       req.session.userId = user.id;
       req.session.isAdmin = !!user.is_admin;
+      req.session.isOwner = !!user.is_owner;
       if (keepSignedIn) {
         req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000; // 30 days
       }
@@ -147,7 +161,8 @@ router.post('/login', async (req, res) => {
         source: 'auth',
         payload: { keepSignedIn: !!keepSignedIn },
       });
-      return res.json({ success: true, id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan: sub?.plan || 'free' });
+      const plan = (sub?.status === 'active' && sub?.plan) ? sub.plan : 'free';
+      return res.json({ success: true, id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, isOwner: !!user.is_owner, plan });
     });
   } catch (err) {
     log.error('login_failed', { message: err.message });
@@ -177,21 +192,23 @@ router.post('/logout', (req, res) => {
 // GET /api/auth/me
 router.get('/me', (req, res) => {
   if (!req.session || !req.session.userId) return res.status(401).json({ error: 'Not authenticated' });
-  const user = db.prepare('SELECT id, email, name, is_admin FROM users WHERE id = ?').get(req.session.userId);
+  const user = db.prepare('SELECT id, email, name, is_admin, is_owner FROM users WHERE id = ?').get(req.session.userId);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const sub = db.prepare('SELECT plan, status FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(user.id);
-  const plan = sub?.plan || 'free';
+  const plan = (sub?.status === 'active' && sub?.plan) ? sub.plan : 'free';
 
-  // Include usage info when running in hosted mode
+  // Include usage info when running on the hosted web app
   let usageInfo = null;
-  if (process.env.HOSTED) {
-    const { getUsageLast24h, PLAN_LIMITS } = require('../middleware/planLimits');
-    const used = getUsageLast24h(user.id);
-    const limit = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
-    usageInfo = { used, limit: isFinite(limit) ? limit : null, plan };
+  {
+    const { getUsageLast24h, getFreeTrialUsage, PLAN_LIMITS, isHostedRuntime } = require('../middleware/planLimits');
+    if (isHostedRuntime()) {
+      const used = plan === 'free' ? getFreeTrialUsage(user.id) : getUsageLast24h(user.id);
+      const limit = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
+      usageInfo = { used, limit: isFinite(limit) ? limit : null, plan, window: plan === 'free' ? 'trial' : '24h' };
+    }
   }
 
-  res.json({ id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, plan, usageInfo });
+  res.json({ id: user.id, email: user.email, name: user.name, isAdmin: !!user.is_admin, isOwner: !!user.is_owner, plan, usageInfo });
 });
 
 // GET /api/auth/status  (legacy compat)
@@ -202,37 +219,14 @@ router.get('/status', (req, res) => {
 // POST /api/auth/forgot-password
 router.post('/forgot-password', async (req, res) => {
   const { email } = req.body || {};
-  if (!email) return res.status(400).json({ error: 'Email required' });
+  if (!email || typeof email !== 'string' || email.length > 254) return res.status(400).json({ error: 'Email required' });
   const user = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase());
   if (user) {
     const token = uuidv4().replace(/-/g, '');
     const expiry = new Date(Date.now() + 3600000).toISOString();
     db.prepare('UPDATE users SET reset_token = ?, reset_token_expiry = ? WHERE id = ?').run(token, expiry, user.id);
-    const appUrl = (process.env.APP_URL || 'http://localhost:3001').replace(/\/$/, '');
-    const resetLink = `${appUrl}/reset-password?token=${token}`;
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"></head>
-<body style="margin:0;padding:0;background:#09090b;font-family:system-ui,sans-serif;">
-  <div style="max-width:480px;margin:40px auto;background:#111;border:1px solid #222;border-radius:12px;overflow:hidden;">
-    <div style="background:#1a1a2e;padding:20px 28px;border-bottom:1px solid #222;">
-      <span style="color:#60a5fa;font-weight:700;font-size:17px;">Kyros Studio</span>
-    </div>
-    <div style="padding:32px 28px;">
-      <h2 style="color:#f0f0f0;margin:0 0 8px;font-size:20px;">Reset your password</h2>
-      <p style="color:#a0a0c0;margin:0 0 28px;font-size:14px;line-height:1.6;">
-        We received a request to reset the password for your Kyros Studio account.
-        Click the button below to set a new password. This link expires in <strong style="color:#e0e0e0;">1 hour</strong>.
-      </p>
-      <a href="${resetLink}" style="display:inline-block;padding:12px 28px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;">
-        Reset Password
-      </a>
-      <p style="color:#666;font-size:12px;margin:24px 0 0;line-height:1.6;">
-        If you didn't request this, you can safely ignore this email.<br>
-        Or copy this link: <a href="${resetLink}" style="color:#60a5fa;">${resetLink}</a>
-      </p>
-    </div>
-  </div>
-</body></html>`;
-    await sendMail(email, 'Reset your Kyros Studio password', html);
+    const appUrl = process.env.APP_URL || 'http://localhost:3001';
+    await sendMail(email, 'Reset your password', `<p>Click <a href="${appUrl}/reset-password?token=${token}">here</a> to reset your password. Link expires in 1 hour.</p>`);
   }
   res.json({ message: 'If that email is registered you will receive a reset link.' });
 });

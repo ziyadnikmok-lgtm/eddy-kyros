@@ -1,4 +1,4 @@
-const geminiService = require('./geminiService');
+const geminiService = require('./geminiBackend');
 const apiKeyManager = require('./apiKeyManager');
 const { AppError } = require('../middleware/errorHandler');
 const log = require('../utils/logger');
@@ -28,7 +28,7 @@ Keep prompts between 80-200 words. Be specific with details — vague = generic 
 
 async function generatePrompt(sceneDescription, options = {}) {
   const apiKey = apiKeyManager.getActiveKey();
-  if (!apiKey) throw new AppError('No active API key. Add one on the API Keys page.', 400, 'NO_ACTIVE_KEY');
+  if (!apiKey && !apiKeyManager.hasVertexCredentials()) throw new AppError('No active API key. Add one on the API Keys page.', 400, 'NO_ACTIVE_KEY');
 
   const parts = [];
 

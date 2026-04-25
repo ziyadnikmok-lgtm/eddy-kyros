@@ -3,7 +3,10 @@ const bcrypt = require('bcryptjs');
 const crypto = require('node:crypto');
 
 function getJwtSecret() {
-  const base = process.env.ENCRYPTION_SECRET || 'fallback-insecure-secret-change-me';
+  const base = process.env.ENCRYPTION_SECRET;
+  if (!base || base.length < 32) {
+    throw new Error('ENCRYPTION_SECRET must be set to at least 32 characters before using JWT auth');
+  }
   return crypto.createHash('sha256').update(base + ':jwt-auth-v1').digest('hex');
 }
 
@@ -28,12 +31,13 @@ async function verifyCredentials(username, password) {
 function generateToken(username, rememberMe) {
   const secret = getJwtSecret();
   const expiresIn = rememberMe ? '30d' : '24h';
-  return jwt.sign({ auth: true, v: 2, sub: username }, secret, { expiresIn });
+  return jwt.sign({ auth: true, v: 2, sub: username }, secret, { algorithm: 'HS256', expiresIn });
 }
 
 function verifyToken(token) {
   try {
-    return jwt.verify(token, getJwtSecret());
+    // Explicitly allow only HS256 — rejects 'none' and algorithm-confusion attacks
+    return jwt.verify(token, getJwtSecret(), { algorithms: ['HS256'] });
   } catch {
     return null;
   }

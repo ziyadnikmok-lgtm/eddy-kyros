@@ -1,10 +1,11 @@
 'use strict';
 const express = require('express');
+const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
-const { requireAdmin } = require('../middleware/requireAuth');
+const { requireAdmin, requireOwner } = require('../middleware/requireAuth');
 const { logAdminAction } = require('../services/adminAuditLogger');
 const apiKeyManager = require('../services/apiKeyManager');
 const galleryManager = require('../services/galleryManager');
@@ -19,6 +20,7 @@ const PLAN_PRICES = {
   pro: 19,
   unlimited: 49,
 };
+const FREE_TRIAL_LIMIT = 10;
 
 function getCurrentSubscription(userId) {
   return db.prepare(`
@@ -30,6 +32,15 @@ function getCurrentSubscription(userId) {
   `).get(userId) || { plan: 'free', status: 'active', expires_at: null, created_at: null };
 }
 
+function getFreeTrialUsageByUser(userId) {
+  const row = db.prepare(`
+    SELECT COUNT(*) AS total
+    FROM usage_events
+    WHERE user_id = ? AND event_type = 'trial.generation_reserved'
+  `).get(userId);
+  return row?.total || 0;
+}
+
 function getUserSummaryById(userId) {
   return db.prepare(`
     SELECT
@@ -37,6 +48,7 @@ function getUserSummaryById(userId) {
       u.email,
       u.name,
       u.is_admin,
+      u.is_owner,
       u.is_banned,
       u.verified,
       u.created_at,
@@ -86,6 +98,78 @@ function getSupportNotes(userId, limit = 20) {
 }
 
 function getUserContentSnapshot(userId, limit = 12) {
+  const recentRunRows = db.prepare(`
+    SELECT
+      id,
+      feature,
+      provider,
+      model,
+      status,
+      error_code,
+      error_message,
+      output_count,
+      COALESCE(finished_at, started_at) AS created_at
+    FROM generation_runs
+    WHERE user_id = ?
+    ORDER BY datetime(COALESCE(finished_at, started_at)) DESC
+    LIMIT ?
+  `);
+
+  const recentRunTotal = db.prepare(`
+    SELECT COUNT(*) AS total
+    FROM generation_runs
+    WHERE user_id = ?
+  `);
+
+  const recentRunByFeature = db.prepare(`
+    SELECT feature, COUNT(*) AS count
+    FROM generation_runs
+    WHERE user_id = ?
+    GROUP BY feature
+    ORDER BY count DESC, feature ASC
+  `);
+
+  const recentRunCount30d = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM generation_runs
+    WHERE user_id = ? AND datetime(started_at) >= datetime('now', '-30 days')
+  `);
+
+  function buildRunFallback() {
+    const runs = recentRunRows.all(userId, limit);
+    return {
+      mode: 'runs-fallback',
+      note: 'Showing the selected user run history from the shared database backup.',
+      items: runs.map((run) => ({
+        id: run.id,
+        mediaType: run.feature === 'video' ? 'video' : 'image',
+        createdAt: run.created_at,
+        prompt: [run.feature, run.model].filter(Boolean).join(' · ') || 'Generation run',
+        source: run.feature || run.provider || 'generate',
+        aspectRatio: null,
+        status: run.status || 'completed',
+        previewUrl: null,
+        metadata: {
+          model: run.model || null,
+          provider: run.provider || null,
+          outputCount: run.output_count || 0,
+          error: run.error_message || run.error_code || null,
+          isRunFallback: true,
+        },
+      })),
+      total: recentRunTotal.get(userId)?.total || 0,
+      count30d: recentRunCount30d.get(userId)?.count || 0,
+      byFeature: recentRunByFeature.all(userId).map((item) => ({ feature: item.feature, count: item.count })),
+    };
+  }
+
+  // In Electron/local mode the gallery and video history live in one shared app-data folder.
+  // When an admin opens another user's profile there, showing that shared media would leak
+  // the current admin's own library. Fall back to the selected user's run history instead.
+  if (process.env.ELECTRON_USER_DATA && getUserId() && getUserId() !== userId) {
+    return buildRunFallback();
+  }
+
   return runWithUser(userId, () => {
     const images = (galleryManager.list().images || []).map((image) => ({
       id: image.id,
@@ -135,6 +219,8 @@ function getUserContentSnapshot(userId, limit = 12) {
     }).length;
 
     return {
+      mode: 'library',
+      note: null,
       items: allItems.slice(0, limit),
       total: allItems.length,
       count30d,
@@ -165,7 +251,7 @@ function getUserKeySummary(userId) {
   });
 }
 
-function performAdminAction({ adminUserId, targetId, type, plan, note }) {
+function performAdminAction({ adminUserId, targetId, type, plan, note, durationDays }) {
   const target = getUserSummaryById(targetId);
   if (!target) return { error: 'User not found', status: 404 };
 
@@ -188,10 +274,16 @@ function performAdminAction({ adminUserId, targetId, type, plan, note }) {
       if (!['free', 'pro', 'unlimited'].includes(plan)) {
         return { error: 'Invalid plan', status: 400 };
       }
+      let expiresAt = null;
+      if (plan === 'pro') {
+        const parsedDays = Number.isFinite(Number(durationDays)) ? Math.floor(Number(durationDays)) : 30;
+        const safeDays = Math.min(Math.max(parsedDays, 1), 365);
+        expiresAt = new Date(Date.now() + safeDays * 24 * 60 * 60 * 1000).toISOString();
+      }
       db.prepare(`
-        INSERT INTO subscriptions (id, user_id, plan, status)
-        VALUES (lower(hex(randomblob(16))), ?, ?, 'active')
-      `).run(targetId, plan);
+        INSERT INTO subscriptions (id, user_id, plan, status, expires_at)
+        VALUES (lower(hex(randomblob(16))), ?, ?, 'active', ?)
+      `).run(targetId, plan, expiresAt);
       break;
     default:
       return { error: 'Invalid action type', status: 400 };
@@ -276,6 +368,43 @@ router.get('/overview', requireAdmin, (req, res) => {
     LIMIT 8
   `).all();
 
+  const recentActiveUsers = db.prepare(`
+    WITH latest_subscriptions AS (
+      SELECT s1.user_id, s1.plan, s1.status, s1.expires_at
+      FROM subscriptions s1
+      INNER JOIN (
+        SELECT user_id, MAX(datetime(created_at)) AS max_created
+        FROM subscriptions
+        GROUP BY user_id
+      ) latest
+        ON latest.user_id = s1.user_id
+       AND datetime(s1.created_at) = latest.max_created
+    )
+    SELECT
+      u.id,
+      u.email,
+      u.name,
+      COALESCE(ls.plan, 'free') AS plan,
+      MAX(ue.created_at) AS last_active_at,
+      (
+        SELECT COUNT(*)
+        FROM usage_events t
+        WHERE t.user_id = u.id AND t.event_type = 'trial.generation_reserved'
+      ) AS trial_used
+    FROM usage_events ue
+    INNER JOIN users u ON u.id = ue.user_id
+    LEFT JOIN latest_subscriptions ls ON ls.user_id = u.id
+    WHERE ue.user_id IS NOT NULL
+      AND datetime(ue.created_at) >= datetime('now', '-1 day')
+    GROUP BY u.id, u.email, u.name, ls.plan
+    ORDER BY datetime(last_active_at) DESC
+    LIMIT 8
+  `).all().map((row) => ({
+    ...row,
+    trial_limit: FREE_TRIAL_LIMIT,
+    trial_finished: row.plan === 'free' && (row.trial_used || 0) >= FREE_TRIAL_LIMIT,
+  }));
+
   const recentFailures = db.prepare(`
     SELECT gr.id, gr.user_id, u.email, gr.feature, gr.model, gr.error_code, gr.started_at
     FROM generation_runs gr
@@ -302,6 +431,7 @@ router.get('/overview', requireAdmin, (req, res) => {
     },
     billing,
     recentSignups,
+    recentActiveUsers,
     recentFailures,
   });
 });
@@ -476,11 +606,28 @@ router.get('/users', requireAdmin, (req, res) => {
       u.email,
       u.name,
       u.is_admin,
+      u.is_owner,
       u.is_banned,
       u.verified,
       u.created_at,
       COALESCE(ls.plan, 'free') AS plan,
       COALESCE(ls.status, 'active') AS subscription_status,
+      (
+        SELECT COUNT(*)
+        FROM usage_events ue2
+        WHERE ue2.user_id = u.id AND ue2.event_type = 'trial.generation_reserved'
+      ) AS trial_used,
+      ${FREE_TRIAL_LIMIT} AS trial_limit,
+      CASE
+        WHEN COALESCE(ls.plan, 'free') = 'free'
+         AND (
+           SELECT COUNT(*)
+           FROM usage_events ue3
+           WHERE ue3.user_id = u.id AND ue3.event_type = 'trial.generation_reserved'
+         ) >= ${FREE_TRIAL_LIMIT}
+        THEN 1
+        ELSE 0
+      END AS trial_finished,
       (
         SELECT MAX(created_at)
         FROM usage_events ue
@@ -538,6 +685,7 @@ router.get('/users/:id', requireAdmin, (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const subscription = getCurrentSubscription(req.params.id);
+  const freeTrialUsed = getFreeTrialUsageByUser(req.params.id);
   const content = getUserContentSnapshot(req.params.id, 16);
   const keySummary = getUserKeySummary(req.params.id);
 
@@ -575,10 +723,17 @@ router.get('/users/:id', requireAdmin, (req, res) => {
       generation_count_30d: user.generation_count_30d || content.count30d,
       subscription,
       generationByFeature,
+      freeTrial: {
+        used: freeTrialUsed,
+        limit: FREE_TRIAL_LIMIT,
+        finished: (subscription?.plan || 'free') === 'free' && freeTrialUsed >= FREE_TRIAL_LIMIT,
+      },
       recentRuns,
       billingHistory,
       supportNotes: getSupportNotes(req.params.id, 25),
       recentLibraryItems: content.items,
+      recentLibraryMode: content.mode || 'library',
+      recentLibraryNote: content.note || null,
     },
   });
 });
@@ -698,13 +853,14 @@ router.post('/users/:id/support-notes', requireAdmin, (req, res) => {
 
 // POST /api/admin/users/:id/action
 router.post('/users/:id/action', requireAdmin, (req, res) => {
-  const { type, plan, note } = req.body || {};
+  const { type, plan, note, durationDays } = req.body || {};
   const result = performAdminAction({
     adminUserId: req.session.userId,
     targetId: req.params.id,
     type,
     plan,
     note,
+    durationDays,
   });
   if (result.error) return res.status(result.status).json({ error: result.error });
   res.json({ ok: true, user: result.user });
@@ -712,9 +868,9 @@ router.post('/users/:id/action', requireAdmin, (req, res) => {
 
 // PATCH /api/admin/users/:id
 router.patch('/users/:id', requireAdmin, (req, res) => {
-  const { plan, is_banned, is_admin, note } = req.body || {};
+  const { plan, is_banned, is_admin, note, durationDays } = req.body || {};
   if (plan !== undefined) {
-    const result = performAdminAction({ adminUserId: req.session.userId, targetId: req.params.id, type: 'change_plan', plan, note });
+    const result = performAdminAction({ adminUserId: req.session.userId, targetId: req.params.id, type: 'change_plan', plan, note, durationDays });
     if (result.error) return res.status(result.status).json({ error: result.error });
     return res.json({ ok: true, user: result.user });
   }
@@ -729,6 +885,21 @@ router.patch('/users/:id', requireAdmin, (req, res) => {
     return res.json({ ok: true, user: result.user });
   }
   return res.status(400).json({ error: 'No supported fields supplied' });
+});
+
+// PATCH /api/admin/users/:id/owner — grant or revoke owner role (owner-only)
+router.patch('/users/:id/owner', requireOwner, (req, res) => {
+  const { grant } = req.body || {};
+  const targetId = req.params.id;
+  if (targetId === req.session.userId) return res.status(400).json({ error: 'Cannot change your own owner status' });
+  const target = db.prepare('SELECT id, email FROM users WHERE id = ?').get(targetId);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  const newValue = grant ? 1 : 0;
+  db.prepare('UPDATE users SET is_owner = ?, is_admin = ? WHERE id = ?').run(newValue, newValue, targetId);
+  logAdminAction({ adminUserId: req.session.userId, targetUserId: targetId, actionType: grant ? 'grant_owner' : 'revoke_owner' });
+  log.info(grant ? 'owner_granted' : 'owner_revoked', { by: req.session.userId, target: targetId });
+  const updated = db.prepare('SELECT id, email, name, is_admin, is_owner, is_banned, verified FROM users WHERE id = ?').get(targetId);
+  res.json({ ok: true, user: updated });
 });
 
 // GET /api/admin/system  — live server health snapshot
@@ -860,6 +1031,25 @@ router.post('/users/:id/force-reset', requireAdmin, (req, res) => {
   res.json({ ok: true, resetToken: token, resetLink: `${appUrl}/reset-password?token=${token}`, expiresAt: expiry });
 });
 
+// GET /api/admin/db-download — download a copy of the production SQLite database (admin only)
+router.get('/db-download', requireAdmin, (req, res) => {
+  const projectRoot = path.join(__dirname, '..', '..');
+  const WEB_DATA_ROOT = process.env.WEB_DATA_ROOT
+    || (process.env.ELECTRON_USER_DATA ? path.join(process.env.ELECTRON_USER_DATA, 'data') : null)
+    || path.join(projectRoot, 'userdata');
+  const dbPath = path.join(WEB_DATA_ROOT, 'saas.db');
+
+  if (!fs.existsSync(dbPath)) {
+    return res.status(404).json({ error: 'Database file not found at: ' + dbPath });
+  }
+
+  log.info('admin_db_downloaded', { adminId: req.session?.userId });
+  const filename = `saas-backup-${new Date().toISOString().slice(0, 10)}.db`;
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.sendFile(dbPath);
+});
+
 // GET /api/admin/users/:id/delete — hard delete a user account and all their data
 router.delete('/users/:id', requireAdmin, (req, res) => {
   const user = getUserSummaryById(req.params.id);
@@ -869,6 +1059,43 @@ router.delete('/users/:id', requireAdmin, (req, res) => {
   db.prepare('DELETE FROM users WHERE id=?').run(req.params.id);
   log.warn('admin_user_deleted', { adminId: req.session?.userId, targetId: req.params.id, email: user.email });
   res.json({ ok: true, deleted: req.params.id });
+});
+
+// GET /api/admin/users/:id/library/all — full library (no limit)
+router.get('/users/:id/library/all', requireAdmin, (req, res) => {
+  const content = getUserContentSnapshot(req.params.id, 10000);
+  res.json({ ok: true, items: content.items, total: content.total || content.items.length, mode: content.mode });
+});
+
+// POST /api/admin/users/:id/messages — send admin message to user
+router.post('/users/:id/messages', requireAdmin, (req, res) => {
+  const { subject = '', body } = req.body || {};
+  if (!body || !body.trim()) return res.status(400).json({ error: 'body is required' });
+  if (typeof subject !== 'string' || subject.length > 200) return res.status(400).json({ error: 'Subject too long (max 200 chars)' });
+  if (typeof body !== 'string' || body.length > 5000) return res.status(400).json({ error: 'Message too long (max 5000 chars)' });
+  const user = getUserSummaryById(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const id = uuidv4();
+  db.prepare(`
+    INSERT INTO admin_messages (id, user_id, admin_user_id, subject, body)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(id, req.params.id, req.session?.userId || null, subject.trim(), body.trim());
+  logAdminAction({ adminUserId: req.session?.userId, targetUserId: req.params.id, actionType: 'send_message', after: { subject, body }, note: null });
+  log.info('admin_message_sent', { adminId: req.session?.userId, targetId: req.params.id });
+  res.json({ ok: true, id });
+});
+
+// GET /api/admin/users/:id/messages — list messages sent to a user (admin view)
+router.get('/users/:id/messages', requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT m.id, m.subject, m.body, m.created_at, m.read_at, u.email AS admin_email
+    FROM admin_messages m
+    LEFT JOIN users u ON u.id = m.admin_user_id
+    WHERE m.user_id = ?
+    ORDER BY datetime(m.created_at) DESC
+    LIMIT 50
+  `).all(req.params.id);
+  res.json({ ok: true, messages: rows });
 });
 
 module.exports = router;

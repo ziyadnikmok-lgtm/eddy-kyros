@@ -10,7 +10,7 @@ const crypto = require('node:crypto');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const apiKeyManager = require('../services/apiKeyManager');
-const geminiService = require('../services/geminiService');
+const geminiService = require('../services/geminiBackend');
 const sceneAnalyzer = require('../services/sceneAnalyzer');
 const referenceManager = require('../services/referenceManager');
 const imageStore = require('../services/imageStore');
@@ -18,6 +18,7 @@ const galleryManager = require('../services/galleryManager');
 const { resolveDimensions } = require('../services/dimensionResolver');
 const { buildCharacterReferenceImages } = require('./postClone');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const REALISM_DIRECTIVE = require('../utils/realismDirective');
 const ffmpegPath = require('../utils/ffmpeg');
 
@@ -316,7 +317,7 @@ router.post('/analyze', async (req, res, next) => {
 // ---------------------------------------------------------------------------
 // POST /recreate — recreate a Pinterest image with a character identity
 // ---------------------------------------------------------------------------
-router.post('/recreate', async (req, res, next) => {
+router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
   try {
     const { sceneData, characterId, activeReferenceIds, imageModel, sameBackground, samePose } = req.body;
     const { aspectRatio, resolutionTier, width, height } = resolveDimensions(req.body);
@@ -392,7 +393,7 @@ router.post('/recreate', async (req, res, next) => {
 // POST /recreate-video-frame — extract the first frame from a Pinterest video
 // and recreate it with the selected character
 // ---------------------------------------------------------------------------
-router.post('/recreate-video-frame', async (req, res, next) => {
+router.post('/recreate-video-frame', requirePlanCapacity(), async (req, res, next) => {
   let videoPath = null;
   try {
     const { videoUrl, characterId, activeReferenceIds, imageModel } = req.body || {};
@@ -490,9 +491,6 @@ router.post('/analyze-video', async (req, res, next) => {
   }
 
   const apiKey = apiKeyManager.getActiveKey();
-  if (!apiKey) {
-    return res.status(500).json({ error: 'No active Gemini API key' });
-  }
 
   const tmpFile = path.join(os.tmpdir(), `pin-video-${Date.now()}.mp4`);
   let uploadedFileName = null;
@@ -563,4 +561,65 @@ router.post('/analyze-video', async (req, res, next) => {
     try { require('node:fs').unlinkSync(tmpFile); } catch { /* ignore */ }
   }
 });
+
+// ---------------------------------------------------------------------------
+// Extension push/poll — Chrome extension sends a URL here, the Kyros frontend
+// polls /pending to pick it up and auto-load it in the Pinterest page.
+// ---------------------------------------------------------------------------
+
+/** In-memory queue of URLs pushed by the extension. Max 5 entries, TTL 60s. */
+const _pushQueue = [];
+const PUSH_TTL_MS = 60_000;
+
+function pruneQueue() {
+  const now = Date.now();
+  while (_pushQueue.length > 0 && now - _pushQueue[0].ts > PUSH_TTL_MS) {
+    _pushQueue.shift();
+  }
+}
+
+// POST /push — extension calls this with { url, feature, imageUrl }
+// feature: 'pinterest' | 'photo-match' | 'scene-recreate' | 'post-clone'
+router.post('/push', (req, res) => {
+  const { url, feature = 'pinterest', imageUrl } = req.body || {};
+  if (!url || typeof url !== 'string') {
+    return res.status(400).json({ success: false, error: 'url is required' });
+  }
+
+  // Basic Pinterest URL validation
+  const isPinterest =
+    url.includes('pinterest.com/pin/') ||
+    url.includes('pinterest.com/') ||
+    url.includes('pin.it/');
+  if (!isPinterest) {
+    return res.status(400).json({ success: false, error: 'URL must be a Pinterest pin URL' });
+  }
+
+  const VALID_FEATURES = ['pinterest', 'photo-match', 'scene-recreate', 'post-clone'];
+  const resolvedFeature = VALID_FEATURES.includes(feature) ? feature : 'pinterest';
+
+  pruneQueue();
+  if (_pushQueue.length >= 5) _pushQueue.shift(); // cap at 5
+
+  _pushQueue.push({ url, feature: resolvedFeature, imageUrl: imageUrl || null, ts: Date.now() });
+  return res.json({ success: true, queued: _pushQueue.length, feature: resolvedFeature });
+});
+
+// GET /pending — frontend polls this, returns { url, feature, imageUrl } or null
+router.get('/pending', (req, res) => {
+  const { feature } = req.query; // optional: only consume items for this feature
+  pruneQueue();
+  if (_pushQueue.length === 0) {
+    return res.json({ success: true, url: null });
+  }
+  // If feature filter provided, find first matching item
+  let idx = 0;
+  if (feature) {
+    idx = _pushQueue.findIndex((item) => item.feature === feature);
+    if (idx === -1) return res.json({ success: true, url: null });
+  }
+  const item = _pushQueue.splice(idx, 1)[0];
+  return res.json({ success: true, url: item.url, feature: item.feature, imageUrl: item.imageUrl });
+});
+
 module.exports = router;

@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { pushToFeed, pushPending, resolvePending, rejectPending } from '../lib/generationFeed';
 import {
   gallery as galleryApi,
   characters as charApi,
@@ -9,12 +10,14 @@ import { useApp } from '../context/AppContext';
 import { useStepTimer } from '../hooks/useStepTimer';
 import { Card, Btn, Spinner, ImageCard, Empty, Badge, Toggle, StepProgress, CopyBtn } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
-import { RESOLUTION_TIERS, ASPECT_RATIOS_COMPACT as ASPECT_RATIOS, IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
+import { RESOLUTION_TIERS, ASPECT_RATIOS_COMPACT as ASPECT_RATIOS, IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL, DEFAULT_RESOLUTION_TIER } from '../config/photoModes';
 
 const CAROUSEL_MODES = [
   { key: 'follow-up', label: 'Follow-Up' },
   { key: 'polls', label: 'Polls' },
 ];
+
+const DEFAULT_CAROUSEL_ASPECT_RATIO = '4:5';
 
 function mergeJobSnapshots(prevJobs, fetchedJobs, expectedIds) {
   const prevMap = new Map((Array.isArray(prevJobs) ? prevJobs : []).map((job) => [job.jobId, job]));
@@ -41,10 +44,68 @@ function fileToDataUrl(file) {
   });
 }
 
+function resultToSrc(result) {
+  if (!result) return null;
+  if (result.image?.base64Data) {
+    return `data:${result.image.mimeType || 'image/png'};base64,${result.image.base64Data}`;
+  }
+  const galleryId = result.galleryId || result.imageId;
+  return galleryId ? `/api/gallery/${galleryId}/image` : null;
+}
+
+function CarouselResultCard({ title, prompt, status, src, error, onOpen }) {
+  const isDone = status === 'done';
+  const isError = status === 'error';
+
+  return (
+    <Card className="!p-0 overflow-hidden">
+      <div className="relative aspect-[4/5] bg-zinc-950 border-b border-zinc-800/70">
+        {isDone && src ? (
+          <img
+            src={src}
+            alt={title}
+            className="h-full w-full object-cover cursor-pointer transition-transform duration-300 hover:scale-[1.02]"
+            onClick={onOpen}
+          />
+        ) : (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+            <div className={`h-12 w-12 rounded-2xl border ${isError ? 'border-red-500/30 bg-red-500/10' : 'border-zinc-700/60 bg-zinc-800/70'} flex items-center justify-center`}>
+              {isError ? (
+                <span className="text-lg text-red-300">!</span>
+              ) : (
+                <div className="h-5 w-5 rounded-full border-2 border-blue-500/30 border-t-blue-400 animate-spin" />
+              )}
+            </div>
+            <div className="w-24 h-2 rounded-full bg-zinc-800/80 overflow-hidden">
+              {!isError ? <div className="h-full w-1/2 bg-blue-500/50 animate-pulse" /> : null}
+            </div>
+          </div>
+        )}
+        <div className="absolute left-3 top-3">
+          <Badge color={isDone ? 'green' : isError ? 'red' : 'blue'}>
+            {isDone ? 'Ready' : isError ? 'Failed' : 'Generating'}
+          </Badge>
+        </div>
+      </div>
+      <div className="space-y-2 p-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-zinc-100">{title}</p>
+            <p className={`mt-1 text-xs leading-relaxed ${isError ? 'text-red-300/80' : 'text-zinc-500'} line-clamp-3`}>
+              {isError ? error || 'Generation failed' : prompt}
+            </p>
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 const _cache = {
   executeJobIds: [],
   executeJobs: [],
   completedSlides: [],
+  followUpDrafts: [],
   pollJobIds: [],
   pollJobs: [],
   completedPollSlides: [],
@@ -52,8 +113,8 @@ const _cache = {
   selectedImageId: null,
   uploadedImages: [],
   characterId: '',
-  aspectRatio: '4:5',
-  resolutionTier: '2K',
+  aspectRatio: DEFAULT_CAROUSEL_ASPECT_RATIO,
+  resolutionTier: DEFAULT_RESOLUTION_TIER,
   followUpDirection: '',
   followUpMode: 'manual',
   followUpCount: 4,
@@ -73,7 +134,7 @@ export default function CarouselPage() {
   const [uploadedImages, setUploadedImages] = useState(_cache.uploadedImages);
   const [loadingGallery, setLoadingGallery] = useState(true);
 
-  const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
+  const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio || DEFAULT_CAROUSEL_ASPECT_RATIO);
   const [resolutionTier, setResolutionTier] = useState(_cache.resolutionTier);
   const [imageModel, setImageModel] = useState(_cache.imageModel);
   const [kineticMotionBlur, setKineticMotionBlur] = useState(_cache.kineticMotionBlur || 'off');
@@ -85,10 +146,11 @@ export default function CarouselPage() {
   const [executeJobIds, setExecuteJobIds] = useState(_cache.executeJobIds);
   const [executeJobs, setExecuteJobs] = useState(_cache.executeJobs);
   const [completedSlides, setCompletedSlides] = useState(_cache.completedSlides);
+  const [followUpDrafts, setFollowUpDrafts] = useState(_cache.followUpDrafts);
   const [followUpCount, setFollowUpCount] = useState(_cache.followUpCount);
   const [followUpDirection, setFollowUpDirection] = useState(_cache.followUpDirection);
   const [followUpMode, setFollowUpMode] = useState(_cache.followUpMode);
-  const [strictContinuityLock, setStrictContinuityLock] = useState(true);
+  const [strictContinuityLock, setStrictContinuityLock] = useState(false);
   const [useCharacterRefsInFollowUp, setUseCharacterRefsInFollowUp] = useState(false);
 
   const [carouselMode, setCarouselMode] = useState(_cache.carouselMode);
@@ -102,7 +164,7 @@ export default function CarouselPage() {
   const [completedPollSlides, setCompletedPollSlides] = useState(_cache.completedPollSlides);
 
   useEffect(() => { Object.assign(_cache, {
-    executeJobIds, executeJobs, completedSlides, pollJobIds, pollJobs,
+    executeJobIds, executeJobs, completedSlides, followUpDrafts, pollJobIds, pollJobs,
     completedPollSlides, pollResults, selectedImageId, uploadedImages,
     characterId, aspectRatio, resolutionTier, imageModel, followUpDirection,
     followUpMode, followUpCount, carouselMode, pollTopic, pollCount, kineticMotionBlur,
@@ -111,8 +173,7 @@ export default function CarouselPage() {
   useEffect(() => {
     const params = consumePageParams();
     if (params.recreate) {
-      if (params.characterId) setCharacterId(params.characterId);
-      if (params.aspectRatio) setAspectRatio(params.aspectRatio);
+      setAspectRatio(params.aspectRatio || DEFAULT_CAROUSEL_ASPECT_RATIO);
       if (params.sourceImageId) setSelectedImageId(params.sourceImageId);
     }
   }, []);
@@ -124,6 +185,69 @@ export default function CarouselPage() {
     : null;
 
   const isAnyJobRunning = executeJobs.some((job) => job?.status === 'running');
+
+  const pushedToFeedRef = useRef(new Set());
+
+  const followUpCards = useMemo(() => {
+    if (!Array.isArray(followUpDrafts) || followUpDrafts.length === 0) return [];
+
+    const jobsById = new Map((executeJobs || []).map((job) => [job.jobId, job]));
+    return followUpDrafts.map((draft, index) => {
+      const job = draft.jobId ? jobsById.get(draft.jobId) : null;
+      const resultIndex = draft.mode === 'ai' ? 0 : index;
+      const result = job?.results?.find((entry) => entry && entry.index === resultIndex);
+      const src = resultToSrc(result);
+
+      let status = 'pending';
+      let error = '';
+      if (src) {
+        status = 'done';
+      } else if (result?.error) {
+        status = 'error';
+        error = result.error;
+      } else if (job?.status === 'failed') {
+        status = 'error';
+        error = 'Generation failed';
+      } else if (job?.status === 'running' || followUpLoading) {
+        status = 'running';
+      }
+
+      return { ...draft, status, error, src, _result: result };
+    });
+  }, [executeJobs, followUpDrafts, followUpLoading]);
+
+  // Sync followUpCards → generation feed (must be useEffect, not useMemo)
+  useEffect(() => {
+    if (!Array.isArray(followUpCards) || followUpCards.length === 0) return;
+    for (const card of followUpCards) {
+      const pendingId = `carousel-followup-${card.id}`;
+      if (card.status === 'done' && card.src) {
+        const resolveKey = `resolved-${pendingId}`;
+        if (!pushedToFeedRef.current.has(resolveKey)) {
+          pushedToFeedRef.current.add(resolveKey);
+          const feedGalleryId = card._result?.galleryId || card._result?.imageId;
+          if (feedGalleryId) {
+            resolvePending(pendingId, {
+              imageId: feedGalleryId,
+              galleryId: feedGalleryId,
+              mimeType: card._result?.image?.mimeType || 'image/png',
+              prompt: card.prompt || card.title || 'Carousel slide',
+              imageModel: imageModel || '',
+              aspectRatio,
+              resolutionTier,
+              generatedAt: Date.now(),
+            });
+          }
+        }
+      } else if (card.status === 'error') {
+        const rejectKey = `rejected-${pendingId}`;
+        if (!pushedToFeedRef.current.has(rejectKey)) {
+          pushedToFeedRef.current.add(rejectKey);
+          rejectPending(pendingId);
+        }
+      }
+    }
+  }, [followUpCards, imageModel, aspectRatio, resolutionTier]);
 
   useEffect(() => {
     let cancelled = false;
@@ -265,11 +389,30 @@ export default function CarouselPage() {
           } else if (galleryId) {
             additions.push({ _key: key, index: r.index, galleryId });
           }
+          // Push to generation feed
+          if (!pushedToFeedRef.current.has(key)) {
+            pushedToFeedRef.current.add(key);
+            const feedGalleryId = r.galleryId || r.imageId;
+            if (feedGalleryId) {
+              pushToFeed({
+                id: key,
+                status: 'done',
+                imageId: feedGalleryId,
+                galleryId: feedGalleryId,
+                mimeType: r.image?.mimeType || 'image/png',
+                prompt: r.prompt || 'Carousel slide',
+                imageModel: imageModel || '',
+                aspectRatio,
+                resolutionTier,
+                generatedAt: Date.now(),
+              });
+            }
+          }
         }
       }
       return additions.length > 0 ? [...prev, ...additions] : prev;
     });
-  }, [executeJobs]);
+  }, [executeJobs, imageModel, aspectRatio, resolutionTier]);
 
   useEffect(() => {
     setCompletedPollSlides(prev => {
@@ -330,6 +473,28 @@ export default function CarouselPage() {
     setCompletedSlides([]);
     setExecuteJobs([]);
     setExecuteJobIds([]);
+    const promptSummary = followUpDirection.trim() || selectedImage?.prompt || 'Follow-up variation';
+    const draftSeed = Date.now();
+    setFollowUpDrafts(
+      Array.from({ length: countInt }, (_, index) => ({
+        id: `${draftSeed}-${index}`,
+        index,
+        title: followUpMode === 'ai' ? `AI Variation ${index + 1}` : `Variation ${index + 1}`,
+        prompt: followUpMode === 'ai' ? (followUpDirection.trim() || 'AI decides a new framing, pose, and expression from the source image') : promptSummary,
+        mode: followUpMode,
+        jobId: null,
+      })),
+    );
+    // Push pending skeletons immediately so feed shows spinners while generating
+    Array.from({ length: countInt }, (_, index) => {
+      pushPending({
+        id: `carousel-followup-${draftSeed}-${index}`,
+        prompt: promptSummary,
+        imageModel: imageModel || '',
+        aspectRatio,
+        resolutionTier,
+      });
+    });
     setFollowUpLoading(true);
     try {
       const data = await carouselApi.followUp({
@@ -355,9 +520,16 @@ export default function CarouselPage() {
       const returnedJobIds = Array.isArray(data?.jobIds) ? data.jobIds : (data?.jobId ? [data.jobId] : []);
       if (returnedJobIds.length > 0) {
         setExecuteJobIds((prev) => Array.from(new Set([...(prev || []), ...returnedJobIds])));
+        setFollowUpDrafts((prev) => prev.map((draft, index) => ({
+          ...draft,
+          jobId: followUpMode === 'ai'
+            ? (returnedJobIds[index] || draft.jobId)
+            : (returnedJobIds[0] || draft.jobId),
+        })));
       }
       notify('Follow-up generation started', 'success');
     } catch (err) {
+      setFollowUpDrafts([]);
       notify(err.message || 'Failed to start follow-up generation', 'error');
     } finally {
       setFollowUpLoading(false);
@@ -410,8 +582,8 @@ export default function CarouselPage() {
       </div>
 
       {carouselMode === 'follow-up' && (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
-        <div className="lg:col-span-1 space-y-4">
+      <div>
+        <div className="space-y-4">
           <Card className="space-y-3">
             <h3 className="text-sm font-semibold text-zinc-300">Generation Settings</h3>
             <div>
@@ -568,15 +740,31 @@ export default function CarouselPage() {
                 </select>
               </label>
             </div>
-            <label className="text-xs text-zinc-400 block">
-              Direction (optional)
+            <div className="space-y-1.5">
+              <span className="text-xs text-zinc-400 font-medium">Direction (optional)</span>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { label: 'Sexy', prompt: 'Change pose to sexy and facial expression to sexy, and hand placement to sexy' },
+                  { label: 'Playful', prompt: 'Change pose to playful and facial expression to playful, and hand placement to playful' },
+                  { label: 'Cute', prompt: 'Change pose to cute and facial expression to cute, and hand placement to cute' },
+                ].map(({ label, prompt }) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => setFollowUpDirection(prompt)}
+                    className={`rounded-full px-3 py-1 text-xs font-medium transition cursor-pointer border ${followUpDirection === prompt ? 'bg-blue-600 border-blue-500 text-white' : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <input
                 value={followUpDirection}
                 onChange={(e) => setFollowUpDirection(e.target.value)}
                 placeholder={followUpMode === 'ai' ? 'extra guidance for AI variants' : 'new framing + expression'}
-                className="mt-1 w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-500"
+                className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-500"
               />
-            </label>
+            </div>
             <label className="flex items-center gap-2 rounded-lg border border-zinc-700/80 bg-zinc-800/50 px-3 py-2 text-xs text-zinc-300">
               <input
                 type="checkbox"
@@ -584,7 +772,7 @@ export default function CarouselPage() {
                 onChange={(e) => setStrictContinuityLock(e.target.checked)}
                 className="h-4 w-4 accent-blue-500"
               />
-              <span>Strict Continuity Lock (recommended)</span>
+              <span>Strict Continuity Lock</span>
             </label>
             <div className="rounded-lg border border-zinc-700/80 bg-zinc-800/50 px-3 py-2">
               <Toggle
@@ -603,77 +791,12 @@ export default function CarouselPage() {
 
         </div>
 
-        <div className="lg:col-span-2 space-y-4">
-          {followUpLoading && (
-            <StepProgress steps={FOLLOW_STEPS} currentIndex={followStepIndex} elapsedSec={followUpElapsedSec} className="min-h-[360px]" />
-          )}
-
-          {executeJobs.length > 0 && (
-            <Card className="space-y-3 mb-4">
-              <h3 className="text-sm font-semibold text-zinc-300">Live Carousel Jobs</h3>
-              {isAnyJobRunning && <p className="text-xs text-zinc-500 font-mono">{jobsElapsedSec}s elapsed</p>}
-              <div className="space-y-2">
-                {executeJobs.map((job) => {
-                  const errors = (job.results || []).filter(r => r && !r.success && r.error);
-                  return (
-                  <div key={job.jobId} className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2 space-y-1">
-                    <div className="flex items-center justify-between text-xs text-zinc-400">
-                      <span className="font-mono">{job.jobId}</span>
-                      <span>{job.status} — {job.completed} ok / {job.failed} failed / {job.total}</span>
-                    </div>
-                    {errors.length > 0 && (
-                      <div className="text-[10px] text-red-400/80 space-y-0.5 mt-1">
-                        {errors.slice(0, 3).map((e, i) => <p key={i}>#{e.index + 1}: {e.error}</p>)}
-                        {errors.length > 3 && <p>...and {errors.length - 3} more</p>}
-                      </div>
-                    )}
-                  </div>
-                  );
-                })}
-              </div>
-            </Card>
-          )}
-
-          {completedSlides.length === 0 && !isAnyJobRunning ? (
-            <Card className="flex items-center justify-center py-20">
-              <Empty icon="carousel" title="No generated slides yet" subtitle="Use Execute or Follow-up to start jobs" />
-            </Card>
-          ) : (
-            <div className="space-y-4">
-              {completedSlides.length > 0 && (
-                <h3 className="text-sm font-semibold text-zinc-400">Generated Slides ({completedSlides.length})</h3>
-              )}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {completedSlides.map((v, i) => {
-                  const imgSrc = v.image?.base64Data
-                    ? `data:${v.image.mimeType || 'image/png'};base64,${v.image.base64Data}`
-                    : v.galleryId ? `/api/gallery/${v.galleryId}/image` : null;
-                  return (
-                    <ImageCard
-                      key={v._key}
-                      src={imgSrc}
-                      meta={{ identityConfidence: v.image?.validation?.identity_match_score }}
-                      className="animate-in"
-                      onSelect={() => openLightbox(
-                        completedSlides.map((img) => img.image?.base64Data
-                          ? `data:${img.image.mimeType || 'image/png'};base64,${img.image.base64Data}`
-                          : `/api/gallery/${img.galleryId}/image`
-                        ),
-                        i
-                      )}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
       </div>
       )}
 
       {carouselMode === 'polls' && (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
-        <div className="lg:col-span-1 space-y-4">
+      <div>
+        <div className="space-y-4">
           <Card className="space-y-3">
             <h3 className="text-sm font-semibold text-zinc-300">Poll Settings</h3>
             <div>
@@ -682,6 +805,18 @@ export default function CarouselPage() {
                 className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer">
                 <option value="">No character</option>
                 {chars.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <span className="text-xs text-zinc-400 font-medium block mb-1.5">Image Model</span>
+              <select
+                value={imageModel}
+                onChange={(e) => setImageModel(e.target.value)}
+                className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
+              >
+                {IMAGE_MODEL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
               </select>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -755,89 +890,6 @@ export default function CarouselPage() {
           )}
         </div>
 
-        <div className="lg:col-span-2 space-y-4">
-          {pollLoading && (
-            <StepProgress steps={POLL_STEPS} currentIndex={pollStepIndex} elapsedSec={pollElapsedSec} className="min-h-[360px]" />
-          )}
-
-          {pollJobs.length > 0 && (
-            <Card className="space-y-3">
-              <h3 className="text-sm font-semibold text-zinc-300">Poll Image Jobs</h3>
-              {isPollJobRunning && <p className="text-xs text-zinc-500 font-mono">{pollElapsedSec}s</p>}
-              <div className="space-y-2">
-                {pollJobs.map(job => (
-                  <div key={job.jobId} className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
-                    <div className="flex items-center justify-between text-xs text-zinc-400">
-                      <span className="font-mono">{job.jobId}</span>
-                      <span>{job.status} - {job.completed + job.failed}/{job.total}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
-
-          {pollResults?.polls?.length > 0 && completedPollSlides.length > 0 ? (
-            <div className="space-y-6">
-              <h3 className="text-sm font-semibold text-zinc-400">Poll Results ({pollResults.polls.length} questions)</h3>
-              {pollResults.polls.map((poll, pi) => {
-                const imgA = completedPollSlides[pi * 2];
-                const imgB = completedPollSlides[pi * 2 + 1];
-                return (
-                  <Card key={poll.question || pi} className="space-y-3 animate-in">
-                    <div className="text-center">
-                      <p className="text-sm font-semibold text-zinc-200">{poll.question}</p>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <div className="text-center">
-                          <Badge color="blue">{poll.optionA?.label || 'Option A'}</Badge>
-                        </div>
-                        {imgA ? (
-                          <ImageCard
-                            src={imgA.image?.base64Data ? `data:${imgA.image.mimeType || 'image/png'};base64,${imgA.image.base64Data}` : `/api/gallery/${imgA.galleryId}/image`}
-                            className="animate-in"
-                            onSelect={() => openLightbox(
-                              completedPollSlides.map(img => img.image?.base64Data ? `data:${img.image.mimeType || 'image/png'};base64,${img.image.base64Data}` : `/api/gallery/${img.galleryId}/image`),
-                              pi * 2
-                            )}
-                          />
-                        ) : (
-                          <div className="aspect-square rounded-lg bg-zinc-800/60 border border-zinc-700/40 flex items-center justify-center">
-                            <Spinner size={20} />
-                          </div>
-                        )}
-                      </div>
-                      <div className="space-y-2">
-                        <div className="text-center">
-                          <Badge color="purple">{poll.optionB?.label || 'Option B'}</Badge>
-                        </div>
-                        {imgB ? (
-                          <ImageCard
-                            src={imgB.image?.base64Data ? `data:${imgB.image.mimeType || 'image/png'};base64,${imgB.image.base64Data}` : `/api/gallery/${imgB.galleryId}/image`}
-                            className="animate-in"
-                            onSelect={() => openLightbox(
-                              completedPollSlides.map(img => img.image?.base64Data ? `data:${img.image.mimeType || 'image/png'};base64,${img.image.base64Data}` : `/api/gallery/${img.galleryId}/image`),
-                              pi * 2 + 1
-                            )}
-                          />
-                        ) : (
-                          <div className="aspect-square rounded-lg bg-zinc-800/60 border border-zinc-700/40 flex items-center justify-center">
-                            <Spinner size={20} />
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </Card>
-                );
-              })}
-            </div>
-          ) : !pollLoading && (
-            <Card className="flex items-center justify-center py-20">
-              <Empty icon="poll" title="No polls generated yet" subtitle="Enter a topic and generate your first poll carousel" />
-            </Card>
-          )}
-        </div>
       </div>
       )}
 

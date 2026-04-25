@@ -112,11 +112,41 @@ export default function PinterestPage() {
   const [pinResult, setPinResult] = useState(null); // raw klickpin result
   const inputRef = useRef(null);
 
+  // ── Extension handoff (localStorage written before this page loads) ──────
+  const handleFetchRef = useRef(null);
+  useEffect(() => {
+    function consumeHandoff() {
+      try {
+        const raw = localStorage.getItem('kyros_handoff');
+        if (!raw) return;
+        const handoff = JSON.parse(raw);
+        if (handoff.feature !== 'pinterest') return;
+        if (Date.now() - handoff.ts > 60000) return;
+        localStorage.removeItem('kyros_handoff');
+
+        const pinUrl = handoff.pinUrl;
+        if (!pinUrl) return;
+
+        setUrl(pinUrl);
+        setTimeout(() => {
+          if (handleFetchRef.current) handleFetchRef.current(pinUrl);
+        }, 200);
+      } catch { /* ignore */ }
+    }
+
+    consumeHandoff();
+    window.addEventListener('kyros:handoff', consumeHandoff);
+    return () => window.removeEventListener('kyros:handoff', consumeHandoff);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+
   // --- Video state ---
   const [pinVideoUrl, setPinVideoUrl] = useState(null);
   const [videoAnalyzing, setVideoAnalyzing] = useState(false);
   const [klingPrompt, setKlingPrompt] = useState('');
   const [promptCopied, setPromptCopied] = useState(false);
+  const [klingPromptCopied, setKlingPromptCopied] = useState(false);
+  const [firstFramePromptCopied, setFirstFramePromptCopied] = useState(false);
 
   // --- Scene / recreate state (mirroring SceneRecreatePage) ---
   const [showEditScene, setShowEditScene] = useState(false);
@@ -159,8 +189,8 @@ export default function PinterestPage() {
   // -------------------------------------------------------------------------
   // Fetch pin
   // -------------------------------------------------------------------------
-  const handleFetch = useCallback(async () => {
-    const trimmed = url.trim();
+  const handleFetch = useCallback(async (explicitUrl) => {
+    const trimmed = (explicitUrl || url).trim();
     if (!trimmed) return;
     setFetching(true);
     setFetchError('');
@@ -191,10 +221,14 @@ export default function PinterestPage() {
     }
   }, [url]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Keep ref in sync so the polling effect can call handleFetch without stale closure
+  handleFetchRef.current = handleFetch;
+
   const handleKeyDown = useCallback(
     (e) => { if (e.key === 'Enter') handleFetch(); },
     [handleFetch]
   );
+
 
   // -------------------------------------------------------------------------
   // Analyze (image)
@@ -391,7 +425,7 @@ export default function PinterestPage() {
   // -------------------------------------------------------------------------
   return (
     <div className="space-y-6 animate-in">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
+      <div>
 
         {/* ---------------------------------------------------------------- */}
         {/* LEFT COLUMN                                                        */}
@@ -598,14 +632,80 @@ export default function PinterestPage() {
                       <Badge color="zinc">First frame</Badge>
                     </div>
                   </div>
+                  {/* Download video */}
+                  {pinVideoUrl && (
+                    <a
+                      href={pinVideoUrl}
+                      download
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-700/80 bg-zinc-800/50 px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-700/60 transition cursor-pointer"
+                    >
+                      ↓ Download Video
+                    </a>
+                  )}
+
+                  {/* First frame scene prompt */}
+                  {editableScene && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">First Frame Prompt</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(editableScene);
+                            setFirstFramePromptCopied(true);
+                            setTimeout(() => setFirstFramePromptCopied(false), 1500);
+                          }}
+                          className="text-[10px] text-blue-400 hover:text-blue-300 transition cursor-pointer"
+                        >
+                          {firstFramePromptCopied ? 'Copied!' : 'Copy'}
+                        </button>
+                      </div>
+                      <div className="rounded-lg border border-zinc-700/60 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-300 leading-5 max-h-24 overflow-y-auto">
+                        {editableScene}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Kling prompt */}
                   {klingPrompt && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-violet-400">Kling Prompt</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(klingPrompt);
+                            setKlingPromptCopied(true);
+                            setTimeout(() => setKlingPromptCopied(false), 1500);
+                          }}
+                          className="text-[10px] text-violet-400 hover:text-violet-300 transition cursor-pointer"
+                        >
+                          {klingPromptCopied ? 'Copied!' : 'Copy'}
+                        </button>
+                      </div>
+                      <div className="rounded-lg border border-violet-800/40 bg-violet-950/20 px-3 py-2 text-xs text-zinc-200 leading-5 max-h-28 overflow-y-auto">
+                        {klingPrompt}
+                      </div>
+                      <Btn
+                        variant="secondary"
+                        onClick={() => triggerAnalyzeVideo(pinVideoUrl)}
+                        disabled={videoAnalyzing}
+                        className="w-full"
+                      >
+                        {videoAnalyzing ? 'Analyzing…' : 'Re-analyze Video'}
+                      </Btn>
+                    </div>
+                  )}
+                  {!klingPrompt && (
                     <Btn
                       variant="secondary"
                       onClick={() => triggerAnalyzeVideo(pinVideoUrl)}
-                      disabled={videoAnalyzing}
+                      disabled={videoAnalyzing || !pinVideoUrl}
                       className="w-full"
                     >
-                      {videoAnalyzing ? 'Analyzing…' : 'Re-analyze Video'}
+                      {videoAnalyzing ? 'Analyzing…' : 'Analyze for Kling Prompt'}
                     </Btn>
                   )}
                   <Btn onClick={handleVideoRecreate} disabled={!pinVideoUrl || !charId || activeQueueCount > 0} className="w-full">
@@ -676,225 +776,6 @@ export default function PinterestPage() {
           )}
         </div>
 
-        {/* ---------------------------------------------------------------- */}
-        {/* RIGHT COLUMN                                                       */}
-        {/* ---------------------------------------------------------------- */}
-        <div className="lg:col-span-2 space-y-4">
-          {/* Queue */}
-          {queueItems.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium text-zinc-400">Pinterest Recreate Queue</h3>
-                <div className="flex items-center gap-2">
-                  {failedQueueCount > 0 && (
-                    <button type="button" onClick={dismissAllFailed} className="text-[11px] text-red-400/70 hover:text-red-300 cursor-pointer transition">
-                      Dismiss all failed
-                    </button>
-                  )}
-                  <Badge color={activeQueueCount > 0 ? 'blue' : 'zinc'}>
-                    {activeQueueCount > 0 ? `${activeQueueCount} running` : `${queueItems.length} update${queueItems.length === 1 ? '' : 's'}`}
-                  </Badge>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                {queueItems.map((job) => (
-                  <PersistentJobCard
-                    key={job.id}
-                    job={job}
-                    steps={job.kind === 'analyze' ? ANALYZE_STEPS : job.kind === 'video-recreate' ? VIDEO_RECREATE_STEPS : RECREATE_STEPS}
-                    thresholds={job.kind === 'analyze' ? ANALYZE_THRESHOLDS : job.kind === 'video-recreate' ? VIDEO_RECREATE_THRESHOLDS : RECREATE_THRESHOLDS}
-                    onDismiss={dismissQueueItem}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ---- VIDEO PIN UI ---- */}
-          {isVideoPin && pinVideoUrl && (
-            <>
-              {/* Video player card */}
-              <Card className="animate-in !p-3">
-                <p className="text-xs text-violet-400 font-semibold uppercase tracking-[0.12em] mb-3">Video Preview</p>
-                <video
-                  src={pinVideoUrl}
-                  controls
-                  className="w-full rounded-lg max-h-[480px] bg-black"
-                  preload="metadata"
-                />
-              </Card>
-
-              {/* Kling Prompt card */}
-              <Card className="animate-in border border-violet-800/40 bg-violet-950/10">
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <h3 className="text-base font-semibold text-violet-300">Kling 2.6 Prompt</h3>
-                    <p className="text-xs text-zinc-500 mt-0.5">Generated by Gemini video analysis</p>
-                  </div>
-                  {klingPrompt && !videoAnalyzing && (
-                    <button
-                      type="button"
-                      onClick={handleCopyPrompt}
-                      className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer border ${
-                        promptCopied
-                          ? 'bg-violet-600/30 text-violet-200 border-violet-500/50'
-                          : 'bg-violet-900/30 text-violet-300 border-violet-700/50 hover:bg-violet-800/40 hover:text-violet-200'
-                      }`}
-                    >
-                      {promptCopied ? 'Copied!' : 'Copy Prompt'}
-                    </button>
-                  )}
-                </div>
-
-                {videoAnalyzing && (
-                  <div className="flex items-center gap-3 py-8 justify-center">
-                    <div className="h-5 w-5 rounded-full border-2 border-violet-500 border-t-transparent animate-spin" />
-                    <span className="text-sm text-zinc-400">Analyzing video with Gemini…</span>
-                  </div>
-                )}
-
-                {!videoAnalyzing && klingPrompt && (
-                  <div className="rounded-lg border border-violet-800/30 bg-zinc-950/60 p-4">
-                    <p className="text-sm leading-7 text-zinc-200 font-mono whitespace-pre-wrap break-words">{klingPrompt}</p>
-                  </div>
-                )}
-
-                {!videoAnalyzing && !klingPrompt && (
-                  <div className="flex items-center justify-center py-8">
-                    <p className="text-sm text-zinc-500">Waiting for analysis to complete…</p>
-                  </div>
-                )}
-              </Card>
-
-              {!resultImageSrc && activeQueueCount === 0 && (
-                <Card className="flex items-center justify-center py-20">
-                  <Empty
-                    icon={<IconCamera uniqueId="empty-pinterest-video" size={40} aria-hidden />}
-                    title={charId ? 'Ready to recreate first frame' : 'Choose a character'}
-                    subtitle={
-                      charId
-                        ? 'Use Recreate First Frame to run a reel-copy style character recreation from the video.'
-                        : 'Select a character first, then recreate the opening frame of this Pinterest video.'
-                    }
-                  />
-                </Card>
-              )}
-
-              {resultImageSrc && (
-                <>
-                  <Card className="animate-in !p-3">
-                    <ImageCard
-                      base64={result.image?.base64Data}
-                      mimeType={result.image?.mimeType}
-                      meta={{ imageId: result.imageId }}
-                      onSelect={() => resultImageSrc && openLightbox([resultImageSrc], 0)}
-                    />
-                  </Card>
-
-                  {sourceFrameSrc && (
-                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                      <Card className="!p-2">
-                        <p className="text-xs text-zinc-500 mb-2 text-center font-medium">Extracted First Frame</p>
-                        <img
-                          src={sourceFrameSrc}
-                          alt="Extracted first frame"
-                          className="w-full rounded-lg object-contain max-h-96"
-                        />
-                      </Card>
-                      <Card className="!p-2">
-                        <p className="text-xs text-zinc-500 mb-2 text-center font-medium">Character Recreation</p>
-                        <img
-                          src={resultImageSrc}
-                          alt="Character recreation"
-                          className="w-full rounded-lg object-contain max-h-96 cursor-pointer"
-                          onClick={() => resultImageSrc && openLightbox([resultImageSrc], 0)}
-                        />
-                      </Card>
-                    </div>
-                  )}
-                </>
-              )}
-            </>
-          )}
-
-          {/* ---- IMAGE PIN UI ---- */}
-          {!isVideoPin && (
-            <>
-              {/* Empty state */}
-              {!result && activeQueueCount === 0 && (
-                <Card className="flex items-center justify-center py-24">
-                  <Empty
-                    icon={<IconCamera uniqueId="empty-pinterest" size={40} aria-hidden />}
-                    title={sceneData ? 'Ready to recreate' : 'No recreation yet'}
-                    subtitle={
-                      sceneData
-                        ? 'Pin analyzed. Choose a character and hit Recreate Pin.'
-                        : 'Paste a Pinterest URL above. After fetching, the scene is analyzed automatically.'
-                    }
-                  />
-                </Card>
-              )}
-
-              {/* Latest result */}
-              {result && (
-                <Card className="animate-in !p-3">
-                  <ImageCard
-                    base64={result.image?.base64Data}
-                    mimeType={result.image?.mimeType}
-                    meta={{ imageId: result.imageId, identityConfidence: result.image?.validation?.identity_match_score }}
-                    onSelect={() => resultImageSrc && openLightbox([resultImageSrc], 0)}
-                  />
-                </Card>
-              )}
-
-              {/* Side-by-side comparison */}
-              {result && pinImageUrl && (
-                <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                  <Card className="!p-2">
-                    <p className="text-xs text-zinc-500 mb-2 text-center font-medium">Original Pin</p>
-                    <img
-                      src={pinPreviewUrl}
-                      alt="Original"
-                      className="w-full rounded-lg object-contain max-h-96"
-                    />
-                  </Card>
-                  <Card className="!p-2">
-                    <p className="text-xs text-zinc-500 mb-2 text-center font-medium">Recreated</p>
-                    {result.image && (
-                      <img
-                        src={resultImageSrc}
-                        alt="Recreated"
-                        className="w-full rounded-lg object-contain max-h-96 cursor-pointer"
-                        onClick={() => resultImageSrc && openLightbox([resultImageSrc], 0)}
-                      />
-                    )}
-                  </Card>
-                </div>
-              )}
-
-              {/* History */}
-              {history.length > 1 && (
-                <div>
-                  <h3 className="text-sm font-medium text-zinc-400 mb-3">Previous Recreations</h3>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                    {history.slice(1, 9).filter((h) => h?.image?.base64Data).map((h, i) => (
-                      <ImageCard
-                        key={i}
-                        base64={h.image?.base64Data}
-                        mimeType={h.image?.mimeType}
-                        className="!rounded-lg"
-                        onSelect={() => h?.image?.base64Data && openLightbox(
-                          history.slice(1, 9).filter((img) => img?.image?.base64Data).map((img) => `data:${img.image?.mimeType || 'image/png'};base64,${img.image?.base64Data}`),
-                          i
-                        )}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
       </div>
       <LightboxComponent />
     </div>

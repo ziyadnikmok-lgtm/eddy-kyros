@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { pushPending, resolvePending, rejectPending } from '../lib/generationFeed';
 import { nsfwGenerate as api, loraPresets as presetsApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Textarea, Spinner, Badge } from '../components/UI';
@@ -248,6 +249,7 @@ export default function NsfwGeneratePage() {
   const [newPresetName, setNewPresetName] = useState('');
   const [newPresetPath, setNewPresetPath] = useState('');
   const [newPresetScale, setNewPresetScale] = useState(1.0);
+  const [newPresetTrigger, setNewPresetTrigger] = useState('');
   const [varyPrompt, setVaryPrompt] = useState('');
   const [varyStrength, setVaryStrength] = useState(0.6);
   const [presetsLoadedOnce, setPresetsLoadedOnce] = useState(false);
@@ -332,13 +334,17 @@ export default function NsfwGeneratePage() {
   const handleSavePreset = async () => {
     if (!newPresetName.trim() || !newPresetPath.trim()) { notify('Name and LoRA path are required', 'error'); return; }
     try {
-      const created = await presetsApi.create({ name: newPresetName.trim(), path: newPresetPath.trim(), scale: newPresetScale });
+      const created = await presetsApi.create({ name: newPresetName.trim(), path: newPresetPath.trim(), scale: newPresetScale, triggerPrompt: newPresetTrigger.trim() });
       await loadPresets();
       setSelectedPresetId(created.id);
       sync('selectedPresetId', created.id);
       setPresetStrength(created.scale || 1.0);
       sync('presetStrength', created.scale || 1.0);
-      setNewPresetName(''); setNewPresetPath(''); setNewPresetScale(1.0); setShowSavePreset(false);
+      if (created.triggerPrompt) {
+        const next = created.triggerPrompt + (prompt.trim() ? ', ' + prompt.trim() : '');
+        setPrompt(next); sync('prompt', next);
+      }
+      setNewPresetName(''); setNewPresetPath(''); setNewPresetScale(1.0); setNewPresetTrigger(''); setShowSavePreset(false);
       notify('Character LoRA saved and selected', 'success');
     } catch { notify('Failed to save preset', 'error'); }
   };
@@ -375,9 +381,25 @@ export default function NsfwGeneratePage() {
       },
       ...prev.slice(0, 5),
     ]);
+    pushPending({ id: queueId, prompt: finalPrompt, imageModel: 'nsfw-generate', aspectRatio, resolutionTier: '1K' });
     try {
       const data = await api.image({ prompt: finalPrompt, aspectRatio, loras: buildLoras() });
       setCachedQueueItems((prev) => prev.filter((job) => job.id !== queueId));
+      const feedGalleryId = data.galleryId || data.imageId;
+      if (feedGalleryId) {
+        resolvePending(queueId, {
+          imageId: feedGalleryId,
+          galleryId: feedGalleryId,
+          mimeType: data.image?.mimeType || 'image/png',
+          prompt: finalPrompt,
+          imageModel: 'nsfw-generate',
+          aspectRatio,
+          resolutionTier: '1K',
+          generatedAt: Date.now(),
+        });
+      } else {
+        rejectPending(queueId);
+      }
       setCachedResult(data);
       setCachedVariations([]);
       setCachedHistory((h) => {
@@ -386,6 +408,7 @@ export default function NsfwGeneratePage() {
       });
       notify('Image generated!', 'success');
     } catch (err) {
+      rejectPending(queueId);
       setCachedQueueItems((prev) => prev.map((job) => (
         job.id === queueId
           ? { ...job, status: 'error', errorMessage: err?.message || 'Failed to generate image' }
@@ -411,12 +434,17 @@ export default function NsfwGeneratePage() {
       },
       ...prev.slice(0, 5),
     ]);
+    pushPending({ id: queueId, prompt: varPrompt, imageModel: 'nsfw-generate', aspectRatio, resolutionTier: '1K' });
     try {
       const data = await api.vary({
         imageBase64: result.image.base64Data, mimeType: result.image.mimeType,
         prompt: varPrompt, aspectRatio, strength: varyStrength, loras: buildLoras(),
       });
       setCachedQueueItems((prev) => prev.filter((job) => job.id !== queueId));
+      const feedGalleryId = data.galleryId || data.imageId;
+      if (feedGalleryId) {
+        resolvePending(queueId, { imageId: feedGalleryId, galleryId: feedGalleryId, mimeType: data.image?.mimeType || 'image/png', prompt: varPrompt, imageModel: 'nsfw-generate', aspectRatio, resolutionTier: '1K', generatedAt: Date.now() });
+      } else { rejectPending(queueId); }
       setCachedVariations((prev) => [...prev, data]);
       setCachedHistory((h) => {
         const next = [{ imageId: data.imageId, galleryId: data.galleryId || data.imageId, mimeType: data.image?.mimeType, base64: data.image?.base64Data }, ...h].slice(0, 12);
@@ -424,6 +452,7 @@ export default function NsfwGeneratePage() {
       });
       notify('Variation created!', 'success');
     } catch (err) {
+      rejectPending(queueId);
       setCachedQueueItems((prev) => prev.map((job) => (
         job.id === queueId
           ? { ...job, status: 'error', errorMessage: err?.message || 'Failed to create variation' }
@@ -466,7 +495,6 @@ export default function NsfwGeneratePage() {
       sourceImageBase64: img.base64Data,
       sourceImageMimeType: img.mimeType || 'image/png',
       sourceImageName: filename,
-      characterId: resolveCharacterIdFromPreset(selectedPreset, characters),
       aspectRatio,
     };
     writeHandoff(NANO_BYPASS_HANDOFF_KEY, payload);
@@ -476,9 +504,8 @@ export default function NsfwGeneratePage() {
   const recentHistory = history.slice(1, 9).filter((h) => h?.imageId);
 
   return (
-    <div className="flex gap-6 h-full">
-      {/* Left panel — controls */}
-      <div className="w-80 shrink-0 space-y-4 overflow-y-auto pr-2 pb-8">
+    <div>
+      <div className="space-y-4 max-w-sm pb-8">
         <Card className="p-4 space-y-4">
           <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 space-y-2">
             <div className="flex items-center justify-between gap-2">
@@ -536,7 +563,22 @@ export default function NsfwGeneratePage() {
             </div>
             <select
               value={selectedPresetId}
-              onChange={(e) => { setSelectedPresetId(e.target.value); sync('selectedPresetId', e.target.value); setPresetStrength(1.0); sync('presetStrength', 1.0); }}
+              onChange={(e) => {
+              const newId = e.target.value;
+              setSelectedPresetId(newId); sync('selectedPresetId', newId);
+              setPresetStrength(1.0); sync('presetStrength', 1.0);
+              const picked = presets.find((p) => p.id === newId);
+              if (picked?.triggerPrompt) {
+                // Strip previous trigger from prompt if switching presets
+                const prevTrigger = presets.find((p) => p.id === selectedPresetId)?.triggerPrompt || '';
+                let base = prompt.trim();
+                if (prevTrigger && base.startsWith(prevTrigger)) {
+                  base = base.slice(prevTrigger.length).replace(/^,\s*/, '').trim();
+                }
+                const next = picked.triggerPrompt + (base ? ', ' + base : '');
+                setPrompt(next); sync('prompt', next);
+              }
+            }}
               className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-purple-500/70 focus:ring-1 focus:ring-purple-500/20 cursor-pointer"
             >
               <option value="">No character LoRA</option>
@@ -550,6 +592,9 @@ export default function NsfwGeneratePage() {
                   <div className="min-w-0 flex-1">
                     <span className="text-xs text-purple-300 font-medium block truncate">{selectedPreset.name}</span>
                     <span className="text-[10px] text-zinc-500 block truncate">{selectedPreset.path}</span>
+                    {selectedPreset.triggerPrompt && (
+                      <span className="text-[10px] text-purple-400/70 block truncate mt-0.5">Trigger: {selectedPreset.triggerPrompt}</span>
+                    )}
                   </div>
                   <button type="button" onClick={() => handleDeletePreset(selectedPreset.id)} className="text-zinc-500 hover:text-red-400 text-xs ml-2 shrink-0 cursor-pointer" title="Delete preset">&times;</button>
                 </div>
@@ -566,6 +611,7 @@ export default function NsfwGeneratePage() {
               <div className="space-y-2 bg-zinc-800/40 rounded-lg p-3 border border-zinc-700/40">
                 <input type="text" value={newPresetName} onChange={(e) => setNewPresetName(e.target.value)} placeholder="Preset name (e.g. Maria v2)" className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 outline-none focus:border-purple-500/70 placeholder:text-zinc-600" />
                 <input type="text" value={newPresetPath} onChange={(e) => setNewPresetPath(e.target.value)} placeholder="HuggingFace URL or model path" className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 outline-none focus:border-purple-500/70 placeholder:text-zinc-600" />
+                <textarea value={newPresetTrigger} onChange={(e) => setNewPresetTrigger(e.target.value)} placeholder="Trigger prompt (auto-pastes into prompt when selected)" rows={2} className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 outline-none focus:border-purple-500/70 placeholder:text-zinc-600 resize-none" />
                 <div className="flex gap-2 items-center">
                   <div className="flex-1">
                     <input type="number" value={newPresetScale} onChange={(e) => setNewPresetScale(parseFloat(e.target.value) || 0)} min={0} max={4} step={0.1} className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-2 py-2 text-xs text-zinc-100 text-center outline-none focus:border-purple-500/70" />
@@ -646,126 +692,6 @@ export default function NsfwGeneratePage() {
         )}
       </div>
 
-      {/* Right panel — result + variations */}
-      <div className="flex-1 min-w-0 overflow-y-auto pb-8">
-        {queueItems.length > 0 && (
-          <div className="space-y-3 mb-6">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium text-zinc-400">Generation Queue</h3>
-              <Badge color={activeQueueCount > 0 ? 'blue' : 'zinc'}>
-                {activeQueueCount > 0 ? `${activeQueueCount} running` : `${queueItems.length} update${queueItems.length === 1 ? '' : 's'}`}
-              </Badge>
-            </div>
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-              {queueItems.map((job) => (
-                <NsfwQueueCard key={job.id} job={job} onDismiss={dismissQueueItem} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {result?.image ? (
-          <div className="space-y-6">
-            {/* Main result */}
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-zinc-300">Base Image</span>
-              </div>
-              <img
-                src={`data:${result.image.mimeType};base64,${result.image.base64Data}`}
-                alt="Generated"
-                className="max-h-[60vh] w-auto mx-auto rounded-xl cursor-pointer border border-zinc-800/60"
-                onClick={() => openLightbox([`data:${result.image.mimeType};base64,${result.image.base64Data}`])}
-              />
-              <div className="flex items-center gap-2 justify-center">
-                <button type="button" onClick={() => downloadImg(result.image, 'wavespeed_base')} className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-700/60 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-600 transition cursor-pointer">
-                  Download PNG
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openInPhotoMatch(result.image, 'nsfw-base')}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600/90 px-3 py-1.5 text-xs text-white hover:bg-blue-500 transition cursor-pointer"
-                >
-                  Use In Photo Match
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openInNanoBypass(result.image, 'nsfw-base')}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600/90 px-3 py-1.5 text-xs text-white hover:bg-violet-500 transition cursor-pointer"
-                >
-                  Use In Nano
-                </button>
-              </div>
-            </div>
-
-            {/* Variations grid */}
-            {variations.length > 0 && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-purple-300">Variations ({variations.length})</span>
-                  <button type="button" onClick={() => variations.forEach((v, i) => setTimeout(() => downloadImg(v.image, `wavespeed_var${i + 1}`), i * 200))} className="text-xs text-purple-400 hover:text-purple-300 cursor-pointer">Download All</button>
-                </div>
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-                  {variations.map((v, i) => (
-                    <div key={v.imageId || i} className="group relative">
-                      <img
-                        src={`data:${v.image.mimeType};base64,${v.image.base64Data}`}
-                        alt={`Variation ${i + 1}`}
-                        className="w-full rounded-lg border border-zinc-800/60 cursor-pointer hover:border-purple-500/40 transition"
-                        onClick={() => openLightbox([`data:${v.image.mimeType};base64,${v.image.base64Data}`])}
-                      />
-                      <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition">
-                        <div className="flex gap-1">
-                          <button type="button" onClick={() => downloadImg(v.image, `wavespeed_var${i + 1}`)} className="rounded-md bg-black/70 px-2 py-1 text-[10px] text-white backdrop-blur-sm cursor-pointer">Save</button>
-                          <button
-                            type="button"
-                            onClick={() => openInPhotoMatch(v.image, `nsfw-variation-${i + 1}`)}
-                            className="rounded-md bg-blue-600/90 px-2 py-1 text-[10px] text-white backdrop-blur-sm hover:bg-blue-500 cursor-pointer"
-                          >
-                            Photo Match
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openInNanoBypass(v.image, `nsfw-variation-${i + 1}`)}
-                            className="rounded-md bg-violet-600/90 px-2 py-1 text-[10px] text-white backdrop-blur-sm hover:bg-violet-500 cursor-pointer"
-                          >
-                            Nano
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="flex items-center justify-center h-64 text-zinc-500 text-sm">
-            {activeQueueCount > 0 ? <Spinner size={24} /> : 'Enter a prompt and hit Generate'}
-          </div>
-        )}
-
-        {/* History strip */}
-        {recentHistory.length > 0 && (
-          <div className="mt-6">
-            <span className="text-xs text-zinc-400 font-medium block mb-2">Recent</span>
-            <div className="flex gap-2 flex-wrap">
-              {recentHistory.map((h) => (
-                <img
-                  key={h.imageId}
-                  src={h.base64 ? `data:${h.mimeType};base64,${h.base64}` : `/api/gallery/${h.galleryId}/thumbnail`}
-                  alt=""
-                  className="w-16 h-16 rounded-lg object-cover border border-zinc-700/60 cursor-pointer hover:border-zinc-500 transition"
-                  onClick={() => {
-                    const src = h.base64 ? `data:${h.mimeType};base64,${h.base64}` : `/api/gallery/${h.galleryId}/download`;
-                    openLightbox([src]);
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
 
       <LightboxComponent />
     </div>

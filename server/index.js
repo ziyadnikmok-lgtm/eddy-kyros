@@ -82,8 +82,8 @@ const carouselRoute = require('./routes/carousel');
 const reelRoute = require('./routes/reel');
 const reelCopyRoute = require('./routes/reelCopy');
 const postCloneRoute = require('./routes/postClone');
-const pinterestRouter = require('./routes/pinterest');
 const profileCloneRoute = require('./routes/profileClone');
+const pinterestRoute = require('./routes/pinterest');
 const promptKnowledgeRoute = require('./routes/promptKnowledge');
 const availabilityRoute = require('./routes/availability');
 const templatesRouter = require('./routes/templates');
@@ -98,6 +98,7 @@ const backgroundsRouter = require('./routes/backgrounds');
 const videoComposeRouter = require('./routes/videoCompose');
 const photoMatchRouter = require('./routes/photoMatch');
 const nanoBypassRouter = require('./routes/nanoBypass');
+const xReplyRouter = require('./routes/xReply');
 const authRouter = require('./routes/authRoutes');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
@@ -105,7 +106,9 @@ const SqliteStore = require('better-sqlite3-session-store')(session);
 const { router: userKeysRouter } = require('./routes/userKeys');
 const billingRouter = require('./routes/billing');
 const adminRouter = require('./routes/admin');
+const referralRouter = require('./routes/referral');
 const libraryRouter = require('./routes/library');
+const notificationsRouter = require('./routes/notifications');
 const { requireAuth } = require('./middleware/requireAuth');
 const imageStore = require('./services/imageStore');
 const batchGenerator = require('./services/batchGenerator');
@@ -132,7 +135,22 @@ app.set('trust proxy', 1);
 
 // Security headers
 app.use(helmet({
-  contentSecurityPolicy: false, // Disabled — React app loads inline scripts via Vite
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"], // Vite/React needs these
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+      mediaSrc: ["'self'", 'blob:', 'https:'],
+      connectSrc: ["'self'", 'https:'],
+      fontSrc: ["'self'", 'data:', 'https:'],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+      frameAncestors: ["'none'"],
+      upgradeInsecureRequests: [],
+    },
+  },
   crossOriginEmbedderPolicy: false,
 }));
 
@@ -199,7 +217,13 @@ try {
   process.exit(1);
 }
 app.use(compressionMiddleware(cfg.COMPRESSION_MIN_BYTES));
-app.use('/api/auth', authLimiter, authRouter);
+// Apply authLimiter only to mutation endpoints (login, register, forgot-password, reset-password)
+// Read-only status/me checks are excluded — they're called on every page load and don't need brute-force protection
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/forgot-password', authLimiter);
+app.use('/api/auth/reset-password', authLimiter);
+app.use('/api/auth', authRouter);
 
 // One-time admin bootstrap — no auth required, protected by BOOTSTRAP_SECRET env var
 // Secret must be sent in POST body, not query param (query params appear in logs/history)
@@ -218,6 +242,8 @@ app.use(requireAuth);
 app.use('/api/user/keys', userKeysRouter);
 app.use('/api/billing', billingRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/referral', referralRouter);
+app.use('/api/notifications', notificationsRouter);
 
 app.use((req, res, next) => {
   if (req.path === '/api/health') return next();
@@ -288,8 +314,8 @@ app.use('/api/carousel', batchLimiter, carouselRoute);
 app.use('/api/reel', generateLimiter, reelRoute);
 app.use('/api/reel-copy', cloneLimiter, reelCopyRoute);
 app.use('/api/post-clone', cloneLimiter, postCloneRoute);
-app.use('/api/pinterest', generateLimiter, pinterestRouter);
 app.use('/api/profile-clone', cloneLimiter, profileCloneRoute);
+app.use('/api/pinterest', generateLimiter, pinterestRoute);
 app.use('/api/prompt-knowledge', promptKnowledgeRoute);
 app.use('/api/availability', availabilityRoute);
 app.use('/api/templates', templatesRouter);
@@ -304,6 +330,8 @@ app.use('/api/backgrounds', backgroundsRouter);
 app.use('/api/video-compose', generateLimiter, videoComposeRouter);
 app.use('/api/photo-match', generateLimiter, photoMatchRouter);
 app.use('/api/nano-bypass', generateLimiter, nanoBypassRouter);
+app.use('/api/x-reply', xReplyRouter);
+
 
 const { CLIENT_DIST } = require('./paths');
 if (fs.existsSync(CLIENT_DIST)) {
@@ -431,4 +459,3 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 module.exports = app;
-

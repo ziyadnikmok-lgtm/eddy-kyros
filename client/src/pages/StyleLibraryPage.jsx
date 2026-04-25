@@ -458,6 +458,7 @@ function AddAtomModal({ open, onClose, onSave, notify }) {
     setSaving(true);
     try {
       const atom = await api.create({ category, text: text.trim(), tags: tags.split(',').map(t => t.trim()).filter(Boolean), source: { type: 'manual' } });
+      if (!atom?.id) throw new Error('Atom was not saved. Try a more specific description.');
       onSave(atom);
     } catch (err) { notify(err.message, 'error'); }
     finally { setSaving(false); }

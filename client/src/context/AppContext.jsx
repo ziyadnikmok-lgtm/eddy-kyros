@@ -3,7 +3,7 @@ import { characters as charApi } from '../services/api';
 
 const AppContext = createContext(null);
 
-const VALID_PAGE_IDS = new Set(['generate', 'nsfwGenerate', 'batch', 'auto', 'video', 'videoGallery', 'carousel', 'scene', 'reel', 'postClone', 'pinterest', 'styleLibrary', 'promptBuilder', 'profileAnalyzer', 'storyteller', 'loraDataset', 'gallery', 'library', 'imageEditor', 'characters', 'keys', 'billing', 'videoCompose', 'logs', 'photoMatch', 'nanoBypass', 'admin', 'settings']);
+const VALID_PAGE_IDS = new Set(['generate', 'nsfwGenerate', 'batch', 'auto', 'video', 'videoGallery', 'carousel', 'scene', 'reel', 'postClone', 'pinterest', 'styleLibrary', 'promptBuilder', 'profileAnalyzer', 'storyteller', 'loraDataset', 'gallery', 'library', 'imageEditor', 'characters', 'keys', 'billing', 'referral', 'videoCompose', 'logs', 'photoMatch', 'nanoBypass', 'admin', 'settings']);
 
 function pageFromPathname(pathname) {
   const segment = (pathname || '/').replace(/^\/+|\/+$/g, '') || 'generate';
@@ -24,6 +24,7 @@ async function fetchJson(url) {
 
 export function AppProvider({ children }) {
   const [activeKey, setActiveKey] = useState(null);
+  const [vertexActive, setVertexActive] = useState(false);
   const [integrationRefreshToken, setIntegrationRefreshToken] = useState(0);
   const [toasts, setToasts] = useState([]);
   const timers = useRef({});
@@ -99,12 +100,12 @@ export function AppProvider({ children }) {
   }, []);
 
   const value = useMemo(() => ({
-    activeKey, setActiveKey, integrationRefreshToken, refreshIntegrationStatus, toasts, notify, dismissToast,
+    activeKey, setActiveKey, vertexActive, setVertexActive, integrationRefreshToken, refreshIntegrationStatus, toasts, notify, dismissToast,
     page, navigateTo, consumePageParams,
     characters, refreshCharacters,
     sceneMemories, refreshSceneMemories,
     outfits, refreshOutfits,
-  }), [activeKey, setActiveKey, integrationRefreshToken, refreshIntegrationStatus, toasts, notify, dismissToast,
+  }), [activeKey, setActiveKey, vertexActive, setVertexActive, integrationRefreshToken, refreshIntegrationStatus, toasts, notify, dismissToast,
     page, navigateTo, consumePageParams,
     characters, refreshCharacters, sceneMemories, refreshSceneMemories,
     outfits, refreshOutfits]);
@@ -121,4 +122,3 @@ export function useApp() {
   if (!ctx) throw new Error('useApp must be inside AppProvider');
   return ctx;
 }
-

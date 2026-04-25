@@ -3,6 +3,7 @@ const archiver = require('archiver');
 const galleryManager = require('../services/galleryManager');
 const loraDatasetManager = require('../services/loraDatasetManager');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const { initSSE } = require('../utils/sse');
 
 const router = express.Router();
@@ -24,7 +25,15 @@ router.get('/', (_req, res, next) => {
   }
 });
 
-router.post('/generate', (req, res, next) => {
+router.post('/generate', requirePlanCapacity({
+  costResolver: (req) => {
+    const face = Number.parseInt(req.body?.faceCount, 10);
+    const full = Number.parseInt(req.body?.fullBodyCount, 10);
+    const safeFace = Number.isFinite(face) ? Math.min(15, Math.max(1, face)) : 15;
+    const safeFull = Number.isFinite(full) ? Math.min(15, Math.max(1, full)) : 15;
+    return safeFace + safeFull;
+  },
+}), (req, res, next) => {
   try {
     const run = loraDatasetManager.startRun(req.body || {});
     res.status(202).json({ success: true, data: run });

@@ -55,6 +55,49 @@ function _buildGenerationInputSignature(options = {}) {
   return `:refs:${crypto.createHash('sha256').update(summary).digest('hex')}`;
 }
 
+function _resolveVariationSeed(options = {}) {
+  const explicitSeed = Number.parseInt(options.variationSeed ?? options.seed, 10);
+  if (Number.isSafeInteger(explicitSeed) && explicitSeed > 0) return explicitSeed;
+  return crypto.randomInt(1, 2147483647);
+}
+
+function _buildVariationSeedSuffix(seed) {
+  if (!Number.isSafeInteger(seed) || seed <= 0) return '';
+  return `\n\n[INTERNAL VARIATION SEED: ${seed}. Use this only to randomize composition and sampling. Do not render this seed or any text in the image.]`;
+}
+
+function _appendVariationSeedToPrompt(prompt, seed) {
+  const suffix = _buildVariationSeedSuffix(seed);
+  if (!suffix) return prompt;
+  const maxBaseLength = Math.max(0, cfg.PROMPT_MAX_LENGTH - suffix.length);
+  return `${String(prompt || '').trim().slice(0, maxBaseLength)}${suffix}`;
+}
+
+function _appendVariationSeedToParts(parts, seed) {
+  const suffix = _buildVariationSeedSuffix(seed);
+  if (!suffix) return parts;
+
+  const cloned = parts.map((part) => {
+    if (!part || typeof part !== 'object') return part;
+    if (part.inlineData) return { ...part, inlineData: { ...part.inlineData } };
+    return { ...part };
+  });
+
+  for (let index = cloned.length - 1; index >= 0; index -= 1) {
+    if (typeof cloned[index]?.text === 'string') {
+      const maxBaseLength = Math.max(0, cfg.PROMPT_MAX_LENGTH - suffix.length);
+      cloned[index] = {
+        ...cloned[index],
+        text: `${cloned[index].text.trim().slice(0, maxBaseLength)}${suffix}`,
+      };
+      return cloned;
+    }
+  }
+
+  cloned.push({ text: suffix.trim() });
+  return cloned;
+}
+
 function isTransientError(err) {
   const msg = (err && err.message) ? err.message : '';
   return (
@@ -138,9 +181,11 @@ class GeminiService {
     throw new AppError(`Prompt must be ${cfg.PROMPT_MAX_LENGTH.toLocaleString()} characters or fewer`, 400, 'VALIDATION_ERROR');
   }
 
-  const inputSig = _buildGenerationInputSignature(options);
-  const dedupKey = `img:${crypto.createHash('sha256').update(prompt.trim() + (options.aspectRatio || '') + (options.imageSize || '') + inputSig).digest('hex')}`;
-  return dedupRequest(dedupKey, () => this._generateImageInner(apiKey, prompt, options));
+  const variationSeed = _resolveVariationSeed(options);
+  const generationOptions = { ...options, variationSeed };
+  const inputSig = _buildGenerationInputSignature(generationOptions);
+  const dedupKey = `img:${crypto.createHash('sha256').update(prompt.trim() + (options.aspectRatio || '') + (options.imageSize || '') + inputSig + `:seed:${variationSeed}`).digest('hex')}`;
+  return dedupRequest(dedupKey, () => this._generateImageInner(apiKey, prompt, generationOptions));
   }
 
   async _generateImageInner(apiKey, prompt, options) {
@@ -164,7 +209,7 @@ class GeminiService {
     let currentPrompt = prompt;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        const retryPrompt = this._buildRetryPrompt(currentPrompt, attempt);
+        const retryPrompt = this._buildRetryPrompt(_appendVariationSeedToPrompt(currentPrompt, options.variationSeed), attempt);
         const contentParts = this._buildImageGenerationParts(retryPrompt, options);
         const response = await withTimeout(
           genAI.models.generateContent({
@@ -188,7 +233,7 @@ class GeminiService {
           }
           const refCount = contentParts.filter((p) => p.inlineData).length;
           this._trackImageSpend(selectedImageModel, options.imageSize || '2K', refCount, response, options.characterId);
-          return { image: parsed.imageResult, text: parsed.textResult || null, modelUsed: selectedImageModel };
+          return { image: parsed.imageResult, text: parsed.textResult || null, modelUsed: selectedImageModel, seed: options.variationSeed || null };
         }
 
         if (parsed.blockReason || parsed.hasNoParts) {
@@ -218,7 +263,7 @@ class GeminiService {
       } catch (innerErr) {
         if (innerErr instanceof AppError) throw innerErr;
         if (isTransientError(innerErr) && attempt < maxAttempts) {
-          await this._sleep(TRANSIENT_RETRY_BASE_MS * attempt);
+          await this._sleep(Math.min(TRANSIENT_RETRY_BASE_MS * (2 ** (attempt - 1)), 30000));
           continue;
         }
         throw innerErr;
@@ -349,7 +394,7 @@ class GeminiService {
           throw new AppError('inlineData parts must include mimeType and data', 400, 'VALIDATION_ERROR');
         }
       }
-      return options.parts;
+      return _appendVariationSeedToParts(options.parts, options.variationSeed);
     }
 
     const parts = [];
@@ -430,7 +475,7 @@ class GeminiService {
           if (innerErr instanceof AppError) throw innerErr;
           if (isTransientError(innerErr) && attempt <= TRANSIENT_RETRY_COUNT) {
             lastErr = innerErr;
-            await this._sleep(TRANSIENT_RETRY_BASE_MS * attempt);
+            await this._sleep(Math.min(TRANSIENT_RETRY_BASE_MS * (2 ** (attempt - 1)), 30000));
             continue;
           }
           throw innerErr;
@@ -501,10 +546,7 @@ class GeminiService {
       throw new AppError('Image data and mime type required', 400, 'VALIDATION_ERROR');
     }
 
-    try {
-      const genAI = getClient(apiKey);
-
-      const prompt = `Analyze this image and extract scene details as structured JSON. Be concise — no filler, no repetition across fields. Directive tone (NOT "she is"). Return ONLY valid JSON, no markdown fences.
+    const analyzePrompt = `Analyze this image and extract scene details as structured JSON. Be concise — no filler, no repetition across fields. Directive tone (NOT "she is"). Return ONLY valid JSON, no markdown fences.
 
 {
   "environment": "Setting, surfaces, furniture, and notable objects (jewelry, phone, drinks, decor) — all in one concise description. Don't repeat items across fields.",
@@ -518,48 +560,60 @@ class GeminiService {
   "format": "Always describe as iPhone photo. Note the vibe: casual selfie, candid, handheld snapshot, etc. Mention any visible grain, warm/cool tones, or filters. Do NOT say professional, studio, high-ISO, or DSLR."
 }`;
 
-      const response = await withTimeout(
-        genAI.models.generateContent({
-          model: TEXT_MODEL,
-          contents: [{
-            role: 'user',
-            parts: [
-              { inlineData: { mimeType, data: imageBase64 } },
-              { text: prompt },
-            ],
-          }],
-          config: { responseModalities: [Modality.TEXT] },
-        }),
-        TEXT_TIMEOUT_MS,
-        'Gemini image analysis'
-      );
-
-      const parts = response.candidates?.[0]?.content?.parts;
-      if (!parts || parts.length === 0) {
-        throw new AppError('No analysis returned', 502, 'GENERATION_EMPTY');
-      }
-
-      const text = parts.filter((p) => p.text).map((p) => p.text).join('');
-      this._trackTextSpend(response);
-      let cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-
-      let parsed;
+    const maxAttempts = TRANSIENT_RETRY_COUNT + 1;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        parsed = JSON.parse(cleaned);
-      } catch {
-        const match = cleaned.match(/\{[\s\S]*\}/);
-        if (match) {
-          parsed = JSON.parse(match[0]);
-        } else {
-          throw new AppError('Failed to parse scene analysis', 502, 'PARSE_ERROR');
-        }
-      }
+        const genAI = getClient(apiKey);
+        const response = await withTimeout(
+          genAI.models.generateContent({
+            model: TEXT_MODEL,
+            contents: [{
+              role: 'user',
+              parts: [
+                { inlineData: { mimeType, data: imageBase64 } },
+                { text: analyzePrompt },
+              ],
+            }],
+            config: { responseModalities: [Modality.TEXT] },
+          }),
+          TEXT_TIMEOUT_MS,
+          'Gemini image analysis'
+        );
 
-      return parsed;
-    } catch (err) {
-      if (err instanceof AppError) throw err;
-      this._handleApiError(err);
+        const parts = response.candidates?.[0]?.content?.parts;
+        if (!parts || parts.length === 0) {
+          throw new AppError('No analysis returned', 502, 'GENERATION_EMPTY');
+        }
+
+        const text = parts.filter((p) => p.text).map((p) => p.text).join('');
+        this._trackTextSpend(response);
+        let cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+
+        let parsed;
+        try {
+          parsed = JSON.parse(cleaned);
+        } catch {
+          const match = cleaned.match(/\{[\s\S]*\}/);
+          if (match) {
+            parsed = JSON.parse(match[0]);
+          } else {
+            throw new AppError('Failed to parse scene analysis', 502, 'PARSE_ERROR');
+          }
+        }
+
+        return parsed;
+      } catch (err) {
+        if (err instanceof AppError) throw err;
+        if (isTransientError(err) && attempt < maxAttempts) {
+          lastErr = err;
+          await this._sleep(Math.min(TRANSIENT_RETRY_BASE_MS * (2 ** (attempt - 1)), 30000));
+          continue;
+        }
+        this._handleApiError(err);
+      }
     }
+    if (lastErr) this._handleApiError(lastErr);
   }
 
   async analyzeImageWithPrompt(apiKey, imageBase64, mimeType, prompt) {
@@ -786,4 +840,27 @@ GeminiService.IMAGE_MODEL_ALTERNATES = IMAGE_MODEL_ALTERNATES;
 GeminiService.ALLOWED_IMAGE_MODELS = ALLOWED_IMAGE_MODELS;
 GeminiService.TEXT_MODEL = TEXT_MODEL;
 
-module.exports = new GeminiService();
+const _directService = new GeminiService();
+
+/**
+ * Auto-delegate to Vertex AI if credentials are stored in apiKeyManager.
+ * This lets every route that imports geminiService automatically use Vertex
+ * without any route changes — just save Vertex credentials in Settings.
+ */
+module.exports = new Proxy(_directService, {
+  get(target, prop) {
+    if (prop === '__direct') return target;
+    const val = target[prop];
+    if (typeof val !== 'function') return val;
+    return function (...args) {
+      try {
+        const apiKeyManager = require('./apiKeyManager');
+        if (apiKeyManager.shouldUseVertexBackend()) {
+          const vtx = require('./geminiVertexService');
+          if (typeof vtx[prop] === 'function') return vtx[prop](...args);
+        }
+      } catch { /* fall through */ }
+      return val.apply(target, args);
+    };
+  },
+});

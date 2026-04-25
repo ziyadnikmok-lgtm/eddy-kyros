@@ -1,4 +1,6 @@
 import { lazy, Suspense, useState, useEffect, useCallback } from 'react';
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const RegisterPage = lazy(() => import('./pages/RegisterPage'));
 const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
@@ -7,6 +9,7 @@ import { useApp } from './context/AppContext';
 import { Toasts, Spinner } from './components/UI';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { PageErrorBoundary } from './components/ErrorBoundary';
+import GenerationFeedPanel from './components/GenerationFeedPanel';
 import { keys as keysApi } from './services/api';
 import {
   IconBadgeSparkle,
@@ -62,6 +65,7 @@ const PhotoMatchPage = lazy(() => import('./pages/PhotoMatchPage'));
 const NanoBypassPage = lazy(() => import('./pages/NanoBypassPage'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const ReferralPage = lazy(() => import('./pages/ReferralPage'));
 
 const NAV_ICONS = {
   generate: IconBadgeSparkle,
@@ -90,6 +94,7 @@ const NAV_ICONS = {
   logs: IconBulletList,
   photoMatch: IconCrosshairs,
   nanoBypass: IconMagicWandSparkle,
+  referral: IconUsers,
   admin: IconBulletList,
   settings: IconSettingsWrench,
 };
@@ -106,7 +111,7 @@ const NAV_COLORS = {
   videoGallery:   ['#5eead4', '#0d9488'],
   reel:           ['#fdba74', '#ea580c'],
   postClone:      ['#d8b4fe', '#9333ea'],
-  pinterest:      ['#fda4af', '#e11d48'],
+  pinterest:      ['#fda4af', '#ec4899'],
   styleLibrary:   ['#6ee7b7', '#059669'],
   promptBuilder:  ['#a5b4fc', '#4f46e5'],
   profileAnalyzer:['#7dd3fc', '#0284c7'],
@@ -121,6 +126,7 @@ const NAV_COLORS = {
   logs:           ['#fda4af', '#e11d48'],
   photoMatch:     ['#6ee7b7', '#0891b2'],
   nanoBypass:     ['#c4b5fd', '#7c3aed'],
+  referral:       ['#fb923c', '#ea580c'],
   admin:          ['#fcd34d', '#d97706'],
   settings:       ['#94a3b8', '#64748b'],
 };
@@ -130,23 +136,27 @@ const NAV_SECTIONS = [
     label: 'Create',
     items: [
       { id: 'generate', label: 'Generate' },
-      { id: 'nsfwGenerate', label: 'NSFW Generate' },
       { id: 'batch', label: 'Batch' },
       { id: 'video', label: 'Video' },
       { id: 'auto', label: 'Auto Generator' },
     ],
   },
   {
-    label: 'Remix',
+    label: 'Image Remix',
     items: [
-      { id: 'carousel', label: 'Carousel' },
       { id: 'scene', label: 'Scene Recreate' },
-      { id: 'reel', label: 'Reel Copy' },
       { id: 'postClone', label: 'Post Clone' },
-      { id: 'pinterest', label: 'Pinterest DL' },
-      { id: 'videoCompose', label: 'Video Composer' },
+      { id: 'carousel', label: 'Carousel' },
       { id: 'photoMatch', label: 'Photo Match' },
       { id: 'nanoBypass', label: 'Nano Bypass' },
+    ],
+  },
+  {
+    label: 'Video Remix',
+    items: [
+      { id: 'reel', label: 'Reel Copy' },
+      { id: 'pinterest', label: 'Pinterest DL' },
+      { id: 'videoCompose', label: 'Video Composer' },
     ],
   },
   {
@@ -160,14 +170,19 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    label: 'Manage',
+    label: 'Content',
     items: [
       { id: 'library', label: 'Library' },
       { id: 'imageEditor', label: 'Image Editor' },
       { id: 'characters', label: 'Characters' },
+    ],
+  },
+  {
+    label: 'Account',
+    items: [
       { id: 'keys', label: 'API Keys' },
       { id: 'billing', label: 'Billing' },
-      { id: 'admin', label: 'Admin' },
+      { id: 'referral', label: 'Referral' },
       { id: 'settings', label: 'Settings' },
       { id: 'logs', label: 'App Logs' },
     ],
@@ -176,13 +191,32 @@ const NAV_SECTIONS = [
 
 const ALL_NAV_ITEMS = NAV_SECTIONS.flatMap((s) => s.items);
 
-const APP_VERSION = '8.1.0';
+const APP_VERSION = '8.1.3';
+
+const FEED_HIDDEN_PAGES = new Set([
+  'library',
+  'gallery',
+  'videoGallery',
+  'imageEditor',
+  'characters',
+  'keys',
+  'billing',
+  'referral',
+  'settings',
+  'logs',
+]);
+
+// Pages where controls panel is narrow and feed takes the rest of the space
+const FEED_DOMINANT_PAGES = new Set([
+  'generate', 'nsfwGenerate', 'batch', 'video', 'auto',
+  'scene', 'postClone', 'reel', 'carousel', 'photoMatch', 'nanoBypass', 'pinterest',
+]);
 
 function SidebarHeader() {
   return (
-    <header className="flex h-14 items-center gap-2 border-b border-zinc-800/40 px-4">
+    <header className="flex h-[72px] items-center gap-2 border-b border-white/[0.07] px-5">
       <span className="text-sm font-semibold text-zinc-100 tracking-tight">Kyros Studio</span>
-      <span className="inline-flex items-center rounded-full border border-zinc-700/50 bg-zinc-800/60 px-1.5 py-px text-[9px] text-zinc-500 font-mono">
+      <span className="inline-flex items-center rounded-full border border-white/10 bg-white/[0.045] px-1.5 py-px text-[9px] text-zinc-500 font-mono">
         v{APP_VERSION}
       </span>
     </header>
@@ -211,6 +245,7 @@ const PAGE_DESCRIPTIONS = {
   characters: 'Manage character identities and references',
   keys: 'Configure API keys and connections',
   billing: 'View your plan and upgrade your subscription',
+  referral: 'Earn 20% recurring commission for every creator you refer',
   videoCompose: 'Drop a video — add audio and text overlay',
   logs: 'View recent app logs and copy them for support',
   settings: 'Change password, manage your account',
@@ -220,7 +255,7 @@ const PAGE_DESCRIPTIONS = {
 };
 
 const PAGES = {
-  generate: GeneratePage,
+  generate: GenerateTabWrapper,
   nsfwGenerate: NsfwGeneratePage,
   batch: BatchPage,
   carousel: CarouselPage,
@@ -242,6 +277,7 @@ const PAGES = {
   characters: CharactersPage,
   keys: ApiKeysPage,
   billing: BillingPage,
+  referral: ReferralPage,
   videoCompose: VideoComposePage,
   logs: LogsPage,
   photoMatch: PhotoMatchPage,
@@ -258,33 +294,68 @@ function PageFallback() {
   );
 }
 
+function GenerateTabWrapper() {
+  const [tab, setTab] = useState('generate');
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-1 p-1 rounded-lg bg-zinc-900/80 border border-zinc-800/50 w-fit">
+        <button
+          onClick={() => setTab('generate')}
+          className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-150 cursor-pointer ${
+            tab === 'generate'
+              ? 'bg-zinc-800 text-zinc-100 shadow-sm'
+              : 'text-zinc-500 hover:text-zinc-300'
+          }`}
+        >
+          Generate
+        </button>
+        <button
+          onClick={() => setTab('nsfw')}
+          className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-150 cursor-pointer flex items-center gap-1.5 ${
+            tab === 'nsfw'
+              ? 'bg-red-900/60 text-red-300 shadow-sm'
+              : 'text-zinc-500 hover:text-red-400'
+          }`}
+        >
+          <span className="text-[10px]">🔞</span> NSFW
+        </button>
+      </div>
+      <Suspense fallback={<PageFallback />}>
+        {tab === 'generate' ? <GeneratePage key="generate" /> : <NsfwGeneratePage key="nsfw" />}
+      </Suspense>
+    </div>
+  );
+}
+
 function StatusDot({ active, label, sublabel, offLabel, onClick }) {
   const Wrapper = onClick ? 'button' : 'div';
   const clickProps = onClick ? { onClick, type: 'button' } : {};
   if (active) {
     return (
-      <Wrapper className={`flex items-center gap-2 ${onClick ? 'cursor-pointer hover:opacity-80 transition' : ''}`} {...clickProps}>
+      <Wrapper className={`flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/[0.08] px-3 py-1.5 text-xs font-medium text-emerald-300 ${onClick ? 'cursor-pointer hover:border-emerald-300/35 hover:bg-emerald-400/[0.12] transition' : ''}`} {...clickProps}>
         <span className="relative flex h-2 w-2">
           <span className="absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60 animate-ping" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
         </span>
-        <span className="text-xs text-zinc-400 hidden sm:block">{label}</span>
-        {sublabel && <span className="text-[10px] font-mono text-zinc-600 hidden sm:block">{sublabel}</span>}
+        <span className="hidden sm:block">{label}</span>
+        {sublabel && <span className="text-[10px] font-mono text-emerald-200/45 hidden sm:block">{sublabel}</span>}
       </Wrapper>
     );
   }
   return (
-    <Wrapper className={`flex items-center gap-2 ${onClick ? 'cursor-pointer hover:opacity-80 transition' : ''}`} {...clickProps}>
+    <Wrapper className={`flex items-center gap-2 rounded-full border border-red-400/15 bg-red-400/[0.06] px-3 py-1.5 text-xs font-medium text-red-300 ${onClick ? 'cursor-pointer hover:border-red-300/30 hover:bg-red-400/[0.10] transition' : ''}`} {...clickProps}>
       <span className="h-2 w-2 rounded-full bg-red-500" />
-      <span className="text-xs text-zinc-500 hidden sm:block">{offLabel}</span>
+      <span className="hidden sm:block">{offLabel}</span>
     </Wrapper>
   );
 }
 
 function MainApp({ onLogout, currentUser }) {
-  const { activeKey, setActiveKey, integrationRefreshToken, page, navigateTo } = useApp();
+  const { activeKey, setActiveKey, vertexActive, setVertexActive, integrationRefreshToken, page, navigateTo } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [apifyConnected, setApifyConnected] = useState(false);
+  const isFeedDominant = FEED_DOMINANT_PAGES.has(page);
+  const showGenerationFeed = !FEED_HIDDEN_PAGES.has(page);
 
   useEffect(() => {
     if (page === 'admin' && !currentUser?.isAdmin) {
@@ -294,12 +365,13 @@ function MainApp({ onLogout, currentUser }) {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([keysApi.list(), keysApi.getApify()])
-      .then(([data, apify]) => {
+    Promise.all([keysApi.list(), keysApi.getApify(), keysApi.getVertex().catch(() => null)])
+      .then(([data, apify, vtx]) => {
         if (cancelled) return;
         const act = data.find((k) => k.isActive);
         if (act) setActiveKey(act);
         else setActiveKey(null);
+        setVertexActive(!!vtx?.hasVertexCredentials);
         setApifyConnected(!!apify?.hasApifyKey);
       })
       .catch(() => {
@@ -318,42 +390,43 @@ function MainApp({ onLogout, currentUser }) {
   }
 
   const PageComponent = PAGES[page] || GeneratePage;
-  const visibleSections = NAV_SECTIONS.map((section) => ({
-    ...section,
-    items: section.items.filter((item) => item.id !== 'admin' || currentUser?.isAdmin),
-  })).filter((section) => section.items.length > 0);
+  const visibleSections = NAV_SECTIONS.map((section) => ({ ...section }))
+    .filter((section) => section.items.length > 0);
   const visibleNavItems = visibleSections.flatMap((section) => section.items);
-  const currentNav = visibleNavItems.find((n) => n.id === page);
+  const allNavItems = [...visibleNavItems, { id: 'admin', label: 'Admin' }, { id: 'logs', label: 'App Logs' }];
+  const currentNav = allNavItems.find((n) => n.id === page);
 
   return (
     <TooltipPrimitive.Provider delayDuration={200}>
-    <div className="flex h-screen overflow-hidden bg-zinc-950">
+    <div className="relative flex h-screen overflow-hidden bg-[#050608] text-white">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_16%_-12%,rgba(34,211,238,0.15),transparent_30%),radial-gradient(circle_at_86%_4%,rgba(249,115,22,0.10),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.035),transparent_22%)]" />
       {sidebarOpen && (
         <div className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
 
-      <aside className={`fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-zinc-800/50 bg-zinc-900/95 backdrop-blur-md transition-transform duration-250 lg:static lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`fixed inset-y-0 left-0 z-40 flex w-[272px] flex-col border-r border-white/[0.07] bg-[#080a0f]/95 backdrop-blur-2xl transition-transform duration-250 lg:static lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <SidebarHeader />
-        <nav className="flex-1 overflow-y-auto px-3 py-3">
+        <nav className="flex-1 overflow-y-auto px-3 py-4">
           {visibleSections.map((section, sIdx) => (
-            <div key={section.label} className={`mb-1.5 ${sIdx > 0 ? 'pt-3 mt-1' : ''}`}>
+            <div key={section.label} className={`mb-2 ${sIdx > 0 ? 'pt-3 mt-1' : ''}`}>
               <div className="flex items-center gap-2 px-3 py-1.5">
-                <span className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider whitespace-nowrap">{section.label}</span>
-                <div className="flex-1 h-px bg-zinc-800/60" />
+                <span className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.22em] whitespace-nowrap">{section.label}</span>
+                <div className="flex-1 h-px bg-white/[0.06]" />
               </div>
-              <div className="space-y-0.5">
+              <div className="space-y-1">
                 {section.items.map((item) => {
                   const IconComponent = NAV_ICONS[item.id];
                   return (
                     <button key={item.id} onClick={() => { navigateTo(item.id); setSidebarOpen(false); }}
-                      className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150 cursor-pointer group ${
+                      className={`relative flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold transition-all duration-200 cursor-pointer group ${
                         page === item.id
-                          ? 'bg-blue-600/12 text-blue-400 shadow-[inset_2px_0_0_0_#3b82f6]'
-                          : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200 hover:translate-x-0.5'
+                          ? 'bg-cyan-400/[0.105] text-cyan-200 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.16),0_14px_35px_rgba(8,145,178,0.10)]'
+                          : 'text-zinc-500 hover:bg-white/[0.055] hover:text-zinc-100'
                       }`}>
+                      {page === item.id && <span className="absolute left-0 top-1/2 h-7 w-1 -translate-y-1/2 rounded-r-full bg-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.85)]" />}
                       {IconComponent ? (
                         <span
-                          className={`flex items-center justify-center w-5 transition-all duration-150 ${page === item.id ? 'opacity-100' : 'opacity-50 group-hover:opacity-80'}`}
+                          className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all duration-150 ${page === item.id ? 'bg-cyan-300/12 opacity-100' : 'bg-white/[0.045] opacity-55 group-hover:opacity-85'}`}
                           style={{
                             '--nc-gradient-1-color-1': (NAV_COLORS[item.id] || ['#a5b4fc','#6366f1'])[0],
                             '--nc-gradient-1-color-2': (NAV_COLORS[item.id] || ['#a5b4fc','#6366f1'])[1],
@@ -371,10 +444,69 @@ function MainApp({ onLogout, currentUser }) {
           ))}
         </nav>
 
-        <div className="border-t border-zinc-800/40 px-4 py-3 flex items-center justify-between">
-          <div>
-            <div className="text-[10px] text-zinc-600 font-mono">{currentUser?.isAdmin ? 'Admin Session' : 'Signed In'}</div>
-            <div className="text-[10px] text-zinc-500 truncate max-w-[120px]">{currentUser?.email || 'Unknown user'}</div>
+        {currentUser?.isAdmin && (
+          <div className="px-3 pb-1 border-t border-zinc-800/30 pt-2">
+            <button
+              onClick={() => { navigateTo('admin'); setSidebarOpen(false); }}
+              className={`flex w-full items-center gap-3 rounded-lg px-3 py-1.5 text-xs font-medium transition-all duration-150 cursor-pointer group ${
+                page === 'admin'
+                  ? 'bg-amber-600/10 text-amber-400 shadow-[inset_2px_0_0_0_#d97706]'
+                  : 'text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800/40'
+              }`}
+            >
+              {NAV_ICONS.admin && (
+                <span className="flex items-center justify-center w-4 opacity-50 group-hover:opacity-70" style={{ '--nc-gradient-1-color-1': NAV_COLORS.admin[0], '--nc-gradient-1-color-2': NAV_COLORS.admin[1] }}>
+                  <NAV_ICONS.admin uniqueId="nav-admin-bottom" size={16} aria-hidden />
+                </span>
+              )}
+              Admin
+            </button>
+          </div>
+        )}
+
+        {currentUser?.usageInfo?.plan === 'free' && currentUser.usageInfo.limit != null && (
+          <div className="px-4 py-3 border-t border-white/[0.07]">
+            {currentUser.usageInfo.used >= currentUser.usageInfo.limit ? (
+              <div className="rounded-lg bg-red-950/40 border border-red-800/30 p-3 text-center">
+                <p className="text-[11px] font-semibold text-red-400 mb-1">Free trial used up</p>
+                <p className="text-[10px] text-zinc-500 mb-2">Upgrade to keep generating</p>
+                <button onClick={() => navigateTo('billing')}
+                  className="w-full rounded-md bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-medium py-1.5 transition cursor-pointer">
+                  Upgrade to Pro
+                </button>
+              </div>
+            ) : (
+              <div>
+                <div className="flex justify-between mb-1">
+                  <span className="text-[10px] text-zinc-500">Free trial</span>
+                  <span className="text-[10px] text-zinc-500 font-mono">{currentUser.usageInfo.used}/{currentUser.usageInfo.limit}</span>
+                </div>
+                <div className="h-1 rounded-full bg-zinc-800 overflow-hidden">
+                  <div className="h-full rounded-full bg-blue-500 transition-all"
+                    style={{ width: `${Math.min(100, (currentUser.usageInfo.used / currentUser.usageInfo.limit) * 100)}%` }} />
+                </div>
+                <p className="text-[9px] text-zinc-600 mt-1">{currentUser.usageInfo.limit - currentUser.usageInfo.used} generations left</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="border-t border-white/[0.07] px-4 py-3 flex items-center justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 mb-0.5">
+              {currentUser?.isOwner ? (
+                <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-yellow-900/50 text-yellow-300 border border-yellow-600/40">Owner</span>
+              ) : currentUser?.isAdmin ? (
+                <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-400 border border-amber-700/30">Admin</span>
+              ) : currentUser?.plan === 'unlimited' ? (
+                <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-violet-900/40 text-violet-300 border border-violet-700/30">Unlimited</span>
+              ) : currentUser?.plan === 'pro' ? (
+                <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300 border border-blue-700/30">Pro</span>
+              ) : (
+                <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 border border-zinc-700/30">Free Trial</span>
+              )}
+            </div>
+            <div className="text-[10px] text-zinc-500 truncate max-w-[145px]">{currentUser?.email || 'Unknown user'}</div>
           </div>
           <button
             onClick={handleLogout}
@@ -387,32 +519,35 @@ function MainApp({ onLogout, currentUser }) {
       </aside>
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex h-14 items-center justify-between border-b border-zinc-800/40 bg-zinc-900/60 backdrop-blur-md px-4 lg:px-6 shrink-0">
+        <header className="flex h-[72px] items-center justify-between border-b border-white/[0.07] bg-[#090b10]/88 backdrop-blur-2xl px-4 lg:px-6 shrink-0">
           <div className="flex items-center gap-3">
             <button className="lg:hidden text-zinc-400 hover:text-zinc-200 p-1 cursor-pointer" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 5h14M3 10h14M3 15h14" /></svg>
             </button>
             <div>
-              <h2 className="text-sm font-semibold text-zinc-300 capitalize">{currentNav?.label || 'Studio'}</h2>
+              <h2 className="text-lg font-black tracking-tight text-zinc-100 capitalize">{currentNav?.label || 'Studio'}</h2>
               {PAGE_DESCRIPTIONS[page] && <p className="text-[10px] text-zinc-500 hidden sm:block">{PAGE_DESCRIPTIONS[page]}</p>}
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            <StatusDot active={!!activeKey} label={activeKey?.name} sublabel={activeKey?.maskedKey} offLabel="No API key" onClick={() => navigateTo('keys')} />
+            <StatusDot active={!!activeKey || vertexActive} label={activeKey?.name || (vertexActive ? 'Vertex AI' : null)} sublabel={activeKey?.maskedKey || (vertexActive ? 'GCP backend' : null)} offLabel="No API key" onClick={() => navigateTo('keys')} />
             <StatusDot active={apifyConnected} label="Apify connected" offLabel="Apify not set" onClick={() => navigateTo('keys')} />
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 lg:p-6 safe-bottom ambient-glow">
-          <div className="relative mx-auto max-w-6xl">
-            <PageErrorBoundary pageKey={page}>
-              <Suspense fallback={<PageFallback />}>
-                <PageComponent key={page} />
-              </Suspense>
-            </PageErrorBoundary>
-          </div>
-        </main>
+        <div className="flex flex-1 overflow-hidden">
+          <main className={`${isFeedDominant ? 'w-[430px] xl:w-[460px] 2xl:w-[500px] shrink-0 overflow-y-auto overflow-x-hidden safe-bottom ambient-glow border-r border-white/[0.07] bg-white/[0.015] p-3 lg:p-5' : `flex-1 overflow-y-auto overflow-x-hidden safe-bottom ambient-glow ${showGenerationFeed ? 'border-r border-white/[0.07]' : ''} p-3 sm:p-4 lg:p-6`}`}>
+            <div className={`relative ${isFeedDominant ? 'max-w-none' : 'mx-auto max-w-6xl'}`}>
+              <PageErrorBoundary pageKey={page}>
+                <Suspense fallback={<PageFallback />}>
+                  <PageComponent key={page} />
+                </Suspense>
+              </PageErrorBoundary>
+            </div>
+          </main>
+          {showGenerationFeed && <GenerationFeedPanel mode={isFeedDominant ? 'workspace' : 'rail'} />}
+        </div>
       </div>
 
       <Toasts />
@@ -427,19 +562,55 @@ const AuthSuspense = ({ children }) => (
   </Suspense>
 );
 
+const AUTH_PATHS = {
+  landing: '/',
+  login: '/login',
+  register: '/register',
+  'forgot-password': '/forgot-password',
+  'reset-password': '/reset-password',
+  'verify-email': '/verify-email',
+};
+
+function getAuthPageFromLocation() {
+  if (typeof window === 'undefined') return 'landing';
+  const params = new URLSearchParams(window.location.search);
+  const { pathname } = window.location;
+  if (pathname === AUTH_PATHS['verify-email'] && params.get('token')) return 'verify-email';
+  if (pathname === AUTH_PATHS['reset-password'] && params.get('token')) return 'reset-password';
+  if (pathname === AUTH_PATHS.login) return 'login';
+  if (pathname === AUTH_PATHS.register) return 'register';
+  if (pathname === AUTH_PATHS['forgot-password']) return 'forgot-password';
+  return 'landing';
+}
+
+function syncAuthLocation(page, { replace = false } = {}) {
+  if (typeof window === 'undefined') return;
+  const nextPath = AUTH_PATHS[page] || AUTH_PATHS.landing;
+  const nextUrl = new URL(window.location.href);
+  nextUrl.pathname = nextPath;
+  if (page !== 'reset-password' && page !== 'verify-email') {
+    nextUrl.search = '';
+  }
+  const nextHref = `${nextUrl.pathname}${nextUrl.search}`;
+  const currentHref = `${window.location.pathname}${window.location.search}`;
+  if (nextHref === currentHref) return;
+  window.history[replace ? 'replaceState' : 'pushState']({}, '', nextHref);
+}
+
 // Auth states: 'loading' | 'authenticated' | 'unauthenticated'
 export default function App() {
   const isPublicPreviewHost =
     typeof window !== 'undefined' && window.location.hostname.endsWith('trycloudflare.com');
   const [authState, setAuthState] = useState('loading');
-  const [authPage, setAuthPage] = useState(() => {
-    if (typeof window === 'undefined') return 'landing';
-    const params = new URLSearchParams(window.location.search);
-    if (window.location.pathname === '/verify-email' && params.get('token')) return 'verify-email';
-    if (window.location.pathname === '/reset-password' && params.get('token')) return 'reset-password';
-    return 'landing';
-  });
+  const [authPage, setAuthPage] = useState(getAuthPageFromLocation);
   const [currentUser, setCurrentUser] = useState(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const handlePopState = () => setAuthPage(getAuthPageFromLocation());
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   useEffect(() => {
     if (isPublicPreviewHost) {
@@ -496,7 +667,16 @@ export default function App() {
   }
 
   if (authState === 'unauthenticated') {
-    const navigate = (page) => setAuthPage(page);
+    const navigate = (page, options) => {
+      setAuthPage(page);
+      syncAuthLocation(page, options);
+    };
+    if (authPage === 'login') {
+      return <AuthSuspense><LandingPage initialAuthModal="login" onNavigate={navigate} /></AuthSuspense>;
+    }
+    if (authPage === 'register') {
+      return <AuthSuspense><LandingPage initialAuthModal="register" onNavigate={navigate} /></AuthSuspense>;
+    }
     if (authPage === 'forgot-password') {
       return <AuthSuspense><ForgotPasswordPage onNavigate={navigate} /></AuthSuspense>;
     }
@@ -518,5 +698,10 @@ export default function App() {
     );
   }
 
-  return <MainApp currentUser={currentUser} onLogout={() => { setCurrentUser(null); setAuthState('unauthenticated'); setAuthPage('landing'); }} />;
+  return <MainApp currentUser={currentUser} onLogout={() => {
+    setCurrentUser(null);
+    setAuthState('unauthenticated');
+    setAuthPage('landing');
+    syncAuthLocation('landing', { replace: true });
+  }} />;
 }

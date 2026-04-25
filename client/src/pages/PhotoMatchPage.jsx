@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { pushPending, resolvePending, rejectPending } from '../lib/generationFeed';
 import { photoMatch as photoMatchApi, characters as charApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Badge, ImageCard, Empty } from '../components/UI';
@@ -184,6 +185,41 @@ export default function PhotoMatchPage() {
     notify('Loaded image from NSFW Generate', 'success');
   }, [applyFile, consumePageParams, notify]);
 
+  // ── Extension handoff (localStorage written before this page loads) ──────
+  useEffect(() => {
+    async function consumeHandoff() {
+      try {
+        const raw = localStorage.getItem('kyros_handoff');
+        if (!raw) return;
+        const handoff = JSON.parse(raw);
+        if (handoff.feature !== 'photo-match') return;
+        if (Date.now() - handoff.ts > 60000) return; // ignore if >60s old
+        localStorage.removeItem('kyros_handoff');
+
+        const imageUrl = handoff.pinImage;
+        if (!imageUrl) return;
+
+        notify('Loading pin image…', 'info');
+        const proxyUrl = `/api/pinterest/proxy?url=${encodeURIComponent(imageUrl)}`;
+        const resp = await fetch(proxyUrl);
+        if (!resp.ok) throw new Error(`Proxy ${resp.status}`);
+        const blob = await resp.blob();
+        const ext  = blob.type.split('/')[1] || 'jpg';
+        applyFile(new File([blob], `pin.${ext}`, { type: blob.type }));
+        notify('Pin image auto-loaded ⚡ Choose a character and generate!', 'success');
+      } catch (err) {
+        notify(`Could not load pin: ${err.message}`, 'error');
+      }
+    }
+
+    // Run immediately (data may already be there)
+    consumeHandoff();
+
+    // Also listen for the extension's custom event (fires right after write)
+    window.addEventListener('kyros:handoff', consumeHandoff);
+    return () => window.removeEventListener('kyros:handoff', consumeHandoff);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Paste from clipboard (Ctrl+V)
   useEffect(() => {
     const onPaste = (e) => {
@@ -223,6 +259,7 @@ export default function PhotoMatchPage() {
     if (!charId) { notify('Select a character', 'error'); return; }
 
     const queueId = makePersistentJobId('photo-match');
+    pushPending({ id: queueId, prompt: exactRecreate ? 'Exact Recreate' : 'Photo Match', imageModel: imageModel || '', aspectRatio, resolutionTier });
     photoMatchStore.setValue('queueItems', (prev) => [
       {
         id: queueId,
@@ -261,8 +298,20 @@ export default function PhotoMatchPage() {
       photoMatchStore.setValue('result', data);
       photoMatchStore.setValue('history', (prev) => [data, ...prev].slice(0, 12));
       photoMatchStore.setValue('queueItems', (prev) => prev.filter((job) => job.id !== queueId));
+      resolvePending(queueId, {
+        imageId: data.imageId,
+        galleryId: data.galleryId || data.imageId,
+        mimeType: data.image?.mimeType,
+        prompt: exactRecreate ? 'Exact Recreate' : 'Photo Match',
+        imageModel: imageModel || '',
+        aspectRatio,
+        resolutionTier,
+        generatedAt: Date.now(),
+        characterId: charId || null,
+      });
       notify(exactRecreate ? 'Exact recreate finished!' : 'Photo matched!', 'success');
     } catch (err) {
+      rejectPending(queueId);
       photoMatchStore.setValue('queueItems', (prev) => prev.map((job) => (
         job.id === queueId ? { ...job, status: 'error', errorMessage: err?.message || 'Photo match failed' } : job
       )));
@@ -272,10 +321,10 @@ export default function PhotoMatchPage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
+      <div className="max-w-md">
 
-        {/* LEFT PANEL */}
-        <div className="lg:col-span-1 space-y-4">
+        {/* CONTROLS */}
+        <div className="space-y-4">
 
           {/* Upload / Paste */}
           <Card className="space-y-3">
@@ -429,110 +478,6 @@ export default function PhotoMatchPage() {
               }
             </Btn>
           </Card>
-        </div>
-
-        {/* RIGHT PANEL */}
-        <div className="lg:col-span-2 space-y-4">
-          {queueItems.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium text-zinc-400">Photo Match Queue</h3>
-                <Badge color={activeQueueCount > 0 ? 'blue' : 'zinc'}>
-                  {activeQueueCount > 0 ? `${activeQueueCount} running` : `${queueItems.length} update${queueItems.length === 1 ? '' : 's'}`}
-                </Badge>
-              </div>
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                {queueItems.map((job) => (
-                  <PersistentJobCard
-                    key={job.id}
-                    job={job}
-                    steps={RECREATE_STEPS}
-                    thresholds={RECREATE_THRESHOLDS}
-                    onDismiss={dismissQueueItem}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {!result && activeQueueCount === 0 && (
-            <Card className="flex items-center justify-center py-24">
-              <Empty
-                icon={<IconImage uniqueId="empty-pm" size={40} aria-hidden />}
-                title="No result yet"
-                subtitle="Paste or upload a reference image, choose a character, then use Flexible Match or Exact Recreate"
-              />
-            </Card>
-          )}
-
-          {result && (
-            <Card className="animate-in !p-3">
-              <ImageCard
-                base64={result.image?.base64Data}
-                mimeType={result.image?.mimeType}
-                meta={{ imageId: result.imageId }}
-                onSelect={() => result.image?.base64Data && openLightbox([`data:${result.image.mimeType || 'image/png'};base64,${result.image.base64Data}`], 0)}
-              />
-            </Card>
-          )}
-
-          {result && preview && (
-            <div className="grid grid-cols-2 gap-4">
-              <Card className="!p-2">
-                <p className="text-xs text-zinc-500 mb-2 text-center font-medium">Reference</p>
-                <img src={preview} alt="Reference" className="w-full rounded-lg object-contain max-h-80" />
-                <div className="mt-2 flex gap-1.5 justify-center flex-wrap">
-                  <span className="text-[10px] font-semibold rounded-full px-2 py-0.5 bg-blue-500/20 text-blue-400 border border-blue-500/30">BG {bgStrength}%</span>
-                  <span className="text-[10px] font-semibold rounded-full px-2 py-0.5 bg-purple-500/20 text-purple-400 border border-purple-500/30">Pose {poseStrength}%</span>
-                </div>
-              </Card>
-              <Card className="!p-2">
-                <p className="text-xs text-zinc-500 mb-2 text-center font-medium">Generated</p>
-                {result.image && (
-                  <img
-                    src={`data:${result.image.mimeType};base64,${result.image.base64Data}`}
-                    alt="Generated"
-                    className="w-full rounded-lg object-contain max-h-80 cursor-pointer"
-                    onClick={() => result.image?.base64Data && openLightbox([`data:${result.image.mimeType || 'image/png'};base64,${result.image.base64Data}`], 0)}
-                  />
-                )}
-              </Card>
-            </div>
-          )}
-
-          {result?.sceneData && (
-            <Card className="animate-in">
-              <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">Detected Scene</h4>
-              <div className="flex flex-wrap gap-1.5">
-                {Object.entries(result.sceneData).filter(([, v]) => v).map(([k, v]) => (
-                  <div key={k} className="flex items-start gap-1.5">
-                    <Badge color="zinc">{k}</Badge>
-                    <span className="text-xs text-zinc-400 max-w-xs">{v}</span>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
-
-          {history.length > 1 && (
-            <div>
-              <h3 className="text-sm font-medium text-zinc-400 mb-3">Previous Results</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                {history.slice(1, 9).filter(h => h?.image?.base64Data).map((h, i) => (
-                  <ImageCard
-                    key={i}
-                    base64={h.image.base64Data}
-                    mimeType={h.image.mimeType}
-                    className="!rounded-lg"
-                    onSelect={() => openLightbox(
-                      history.slice(1, 9).filter(img => img?.image?.base64Data).map(img => `data:${img.image.mimeType || 'image/png'};base64,${img.image.base64Data}`),
-                      i
-                    )}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
 

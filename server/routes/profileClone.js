@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('node:fs');
 const path = require('node:path');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const { asText } = require('../utils/helpers');
 const log = require('../utils/logger');
 const apiKeyManager = require('../services/apiKeyManager');
@@ -14,15 +15,25 @@ const router = express.Router();
 const { TEMP_DIR } = require('../paths');
 const RECREATE_TIMEOUT_MS = 15 * 60_000;
 
-router.post('/', async (req, res, next) => {
+router.post('/', requirePlanCapacity({
+  costResolver: (req) => {
+    const postLimit = Number(req.body?.postLimit);
+    return Number.isInteger(postLimit) && postLimit > 0 ? Math.max(1, Math.min(20, postLimit)) : 5;
+  },
+}), async (req, res, next) => {
   try {
-    const { profileUrl, characterId, postLimit = 5, mode = 'exact', apifyApiKey, imageModel } = req.body || {};
+    const {
+      profileUrl, characterId, postLimit = 5, mode = 'exact', apifyApiKey, imageModel,
+      aspectRatio = '4:5', resolutionTier = '2K',
+    } = req.body || {};
     const data = await postCloneRoute.handleClone({
       url: profileUrl,
       characterId,
       mode: (typeof mode === 'string' ? mode.trim().toLowerCase() : 'exact') || 'exact',
       apifyApiKey,
       imageModel,
+      aspectRatio,
+      resolutionTier,
       postLimit: Math.max(1, Math.min(20, Number(postLimit) || 5)),
       profileMode: true,
     });
@@ -37,14 +48,15 @@ router.post('/fetch', async (req, res, next) => {
     const { profileUrl, postLimit = 9, apifyApiKey } = req.body || {};
     const cleanUrl = asText(profileUrl);
     if (!cleanUrl || !/^https?:\/\//i.test(cleanUrl)) {
-      throw new AppError('A valid Instagram profile URL is required', 400, 'VALIDATION_ERROR');
+      throw new AppError('A valid profile URL is required', 400, 'VALIDATION_ERROR');
     }
 
     const limit = Math.max(1, Math.min(30, Number(postLimit) || 9));
+
     const items = await postCloneRoute.runPostActor({
       url: cleanUrl,
       limit,
-      apifyToken: apifyApiKey,
+      apifyToken: apifyApiKey || apiKeyManager.getApifyKey(),
     });
 
     const posts = postCloneRoute.normalizePostsFromItems(items);
@@ -74,6 +86,7 @@ router.post('/fetch', async (req, res, next) => {
         imageUrls: p.imageUrls || [],
         slideCount: rawSlideCount > 1 ? rawSlideCount : (p.imageUrls || []).length,
         thumbnail: thumbFilenames[i] || '',
+        platform: 'instagram',
       };
     });
 
@@ -84,9 +97,17 @@ router.post('/fetch', async (req, res, next) => {
   }
 });
 
-router.post('/recreate', async (req, res, next) => {
+router.post('/recreate', requirePlanCapacity({
+  costResolver: (req) => {
+    const posts = Array.isArray(req.body?.posts) ? req.body.posts.length : 0;
+    return posts > 0 ? Math.min(posts, 20) : 1;
+  },
+}), async (req, res, next) => {
   try {
-    const { posts, characterId, mode = 'exact', cosplayMode = false, imageModel } = req.body || {};
+    const {
+      posts, characterId, mode = 'exact', cosplayMode = false, imageModel,
+      aspectRatio = '4:5', resolutionTier = '2K',
+    } = req.body || {};
 
     if (!Array.isArray(posts) || posts.length === 0) {
       throw new AppError('"posts" array is required and must not be empty', 400, 'VALIDATION_ERROR');
@@ -147,6 +168,8 @@ router.post('/recreate', async (req, res, next) => {
             baseReferenceImages,
             tempFiles,
             imageModel,
+            aspectRatio,
+            resolutionTier,
           }).then((processed) => ({ ok: true, idx, processed }))
             .catch((err) => {
               log.warn('profile_clone_post_failed', { index: idx + 1, total: selected.length, message: err.message });

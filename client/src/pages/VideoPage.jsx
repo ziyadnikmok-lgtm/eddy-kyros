@@ -4,6 +4,7 @@ import { useApp } from '../context/AppContext';
 import { usePoll } from '../hooks/usePoll';
 import { Card, Btn, Slider, Badge, Spinner, Empty, Section, StepProgress, ConfirmDialog } from '../components/UI';
 import { VIDEO_MODELS } from '../config/photoModes';
+import { pushPending, resolvePending, rejectPending } from '../lib/generationFeed';
 
 const MODEL_MAP = Object.fromEntries(VIDEO_MODELS.map((m) => [m.id, m]));
 const IS_MOTION = (id) => id === 'kling-v2.6-motion' || id === 'kling-v2.6-motion-pro';
@@ -69,6 +70,8 @@ export default function VideoPage() {
   const [result, setResult] = useState(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const startTimeRef = useRef(null);
+  const feedQueueIdRef = useRef(null);
+  const feedQueueMetaRef = useRef(null);
 
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -132,11 +135,30 @@ export default function VideoPage() {
       stopPolling();
       setLoading(false);
       setResult(pollData);
+      if (feedQueueIdRef.current) {
+        const feedMeta = feedQueueMetaRef.current || {};
+        resolvePending(feedQueueIdRef.current, {
+          isVideo: true,
+          videoUrl: pollData.localFilename ? videoApi.fileUrl(pollData.localFilename) : (pollData.outputs?.[0] || pollData.videoUrl || ''),
+          prompt: feedMeta.prompt || 'Video generation',
+          imageModel: feedMeta.imageModel || model,
+          aspectRatio: feedMeta.aspectRatio || '9:16',
+          resolutionTier: feedMeta.resolutionTier || `${duration}s`,
+          generatedAt: Date.now(),
+        });
+        feedQueueIdRef.current = null;
+        feedQueueMetaRef.current = null;
+      }
       fetchHistory();
       notify('Video generation complete!', 'success');
     } else if (pollData.status === 'failed') {
       stopPolling();
       setLoading(false);
+      if (feedQueueIdRef.current) {
+        rejectPending(feedQueueIdRef.current);
+        feedQueueIdRef.current = null;
+        feedQueueMetaRef.current = null;
+      }
       notify(pollData.error || 'Video generation failed', 'error');
       fetchHistory();
     }
@@ -145,6 +167,11 @@ export default function VideoPage() {
   useEffect(() => {
     if (!polling && loading && taskId && pollData?.status !== 'failed' && pollData?.status !== 'completed') {
       setLoading(false);
+      if (feedQueueIdRef.current) {
+        rejectPending(feedQueueIdRef.current);
+        feedQueueIdRef.current = null;
+        feedQueueMetaRef.current = null;
+      }
       notify('Lost connection to video task — check history later', 'error');
     }
   }, [polling, loading, taskId, notify, pollData]);
@@ -223,6 +250,22 @@ export default function VideoPage() {
     setLoading(true);
     setResult(null);
     setTaskId(null);
+    const feedQueueId = `video-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    feedQueueIdRef.current = feedQueueId;
+    feedQueueMetaRef.current = {
+      prompt: prompt.trim() || 'Video generation',
+      imageModel: modelInfo?.label || model,
+      aspectRatio: aspectRatio || '9:16',
+      resolutionTier: resolution || `${duration}s`,
+    };
+    pushPending({
+      id: feedQueueId,
+      prompt: feedQueueMetaRef.current.prompt,
+      imageModel: feedQueueMetaRef.current.imageModel,
+      aspectRatio: feedQueueMetaRef.current.aspectRatio,
+      resolutionTier: feedQueueMetaRef.current.resolutionTier,
+      isVideo: true,
+    });
 
     try {
       const body = { model };
@@ -277,6 +320,9 @@ export default function VideoPage() {
       const res = await videoApi.generate(body);
       if (res.status === 'failed') {
         setLoading(false);
+        rejectPending(feedQueueId);
+        feedQueueIdRef.current = null;
+        feedQueueMetaRef.current = null;
         notify(IS_VEO(model) ? 'Veo returned an error - try again or pick a different model' : 'WaveSpeed returned an error - try again or pick a different model', 'error');
         fetchHistory();
         return;
@@ -285,6 +331,9 @@ export default function VideoPage() {
       startPolling();
     } catch (err) {
       setLoading(false);
+      rejectPending(feedQueueId);
+      feedQueueIdRef.current = null;
+      feedQueueMetaRef.current = null;
       notify(err.message || 'Failed to start video generation', 'error');
     }
   };
@@ -311,9 +360,9 @@ export default function VideoPage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left column: Controls */}
-        <div className="lg:col-span-2 space-y-4">
+      <div>
+        {/* Controls */}
+        <div className="space-y-4">
           {/* Source Image */}
           <Card className="space-y-3">
             <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">
@@ -637,118 +686,6 @@ export default function VideoPage() {
           </Btn>
         </div>
 
-        {/* Right column: Result + History */}
-        <div className="space-y-4">
-          {/* Progress */}
-          {loading && (
-            <StepProgress steps={STEPS} currentIndex={stepIndex} elapsedSec={elapsedSec} />
-          )}
-
-          {/* Result */}
-          {result && (result.localFilename || result.outputs?.length > 0) && (
-            <Card className="space-y-3">
-              <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">Result</h3>
-              {result.localFilename ? (
-                <>
-                  <video
-                    src={videoApi.fileUrl(result.localFilename)}
-                    controls
-                    autoPlay
-                    loop
-                    className="w-full rounded-lg border border-zinc-700/60"
-                  />
-                  <div className="flex items-center gap-2">
-                    <a
-                      href={videoApi.fileUrl(result.localFilename)}
-                      download
-                      className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700/60 transition-colors"
-                    >
-                      Download
-                    </a>
-                    <Btn variant="ghost" onClick={() => { setResult(null); setTaskId(null); }}>
-                      Generate Again
-                    </Btn>
-                  </div>
-                </>
-              ) : result.outputs?.length > 0 ? (
-                <>
-                  <video
-                    src={result.outputs[0]}
-                    controls
-                    autoPlay
-                    loop
-                    className="w-full rounded-lg border border-zinc-700/60"
-                  />
-                  <div className="flex items-center gap-2">
-                    <a
-                      href={result.outputs[0]}
-                      download
-                      className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700/60 transition-colors"
-                    >
-                      Download
-                    </a>
-                    <Btn variant="ghost" onClick={() => { setResult(null); setTaskId(null); }}>
-                      Generate Again
-                    </Btn>
-                  </div>
-                </>
-              ) : null}
-              {result.timings?.inference && (
-                <p className="text-[10px] text-zinc-600">Generated in {(result.timings.inference / 1000).toFixed(1)}s</p>
-              )}
-            </Card>
-          )}
-
-          {/* No result yet */}
-          {!loading && !result && (
-            <Card className="flex items-center justify-center py-12">
-              <Empty icon="video" title="No video yet" subtitle="Configure settings and click Generate" />
-            </Card>
-          )}
-
-          {/* History */}
-          <Card className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">History</h3>
-              <Btn variant="ghost" onClick={fetchHistory} disabled={historyLoading} className="text-xs">
-                {historyLoading ? <Spinner size={14} /> : 'Refresh'}
-              </Btn>
-            </div>
-
-            {history.length === 0 ? (
-              <p className="text-xs text-zinc-500 py-2">No videos generated yet.</p>
-            ) : (
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {history.map((h) => (
-                  <div key={h.id} className="flex items-center gap-3 rounded-lg border border-zinc-700/30 bg-zinc-800/30 px-3 py-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <Badge color={h.status === 'completed' ? 'green' : h.status === 'failed' ? 'red' : 'blue'}>
-                          {h.status}
-                        </Badge>
-                        <span className="text-[10px] text-zinc-600">{MODEL_MAP[h.model]?.label || h.model}</span>
-                      </div>
-                      {h.prompt && <p className="text-xs text-zinc-500 truncate mt-0.5">{h.prompt}</p>}
-                      <p className="text-[10px] text-zinc-600 mt-0.5">{new Date(h.createdAt).toLocaleString()}</p>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {h.filename && (
-                        <a href={videoApi.fileUrl(h.filename)} download
-                          className="text-xs text-zinc-500 hover:text-zinc-300 px-1.5 py-1 rounded hover:bg-zinc-700/50 transition-colors">
-                          DL
-                        </a>
-                      )}
-                      <button onClick={() => setDeleteTarget(h.id)}
-                        className="text-xs text-zinc-600 hover:text-red-400 px-1.5 py-1 rounded hover:bg-zinc-700/50 transition-colors cursor-pointer">
-                        ×
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-        </div>
       </div>
 
       <ConfirmDialog

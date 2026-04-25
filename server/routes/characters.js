@@ -2,10 +2,21 @@ const express = require('express');
 const referenceManager = require('../services/referenceManager');
 const { AppError } = require('../middleware/errorHandler');
 const { parseImageUpload } = require('../middleware/upload');
+const { createMultipartParser } = require('../middleware/multipartParser');
+const cfg = require('../config');
 
 const router = express.Router();
+const parseCharacterUpload = createMultipartParser({
+  maxBytes: cfg.MAX_MULTIPART_BYTES,
+});
 
-router.post('/', parseImageUpload, (req, res, next) => {
+router.use((_req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  next();
+});
+
+router.post('/', parseCharacterUpload, parseImageUpload, (req, res, next) => {
   try {
     const { name, masterPrompt } = req.body;
 
@@ -91,7 +102,7 @@ router.get('/:id/primary-images/:index', (req, res, next) => {
   }
 });
 
-router.post('/:id/primary-images', parseImageUpload, (req, res, next) => {
+router.post('/:id/primary-images', parseCharacterUpload, parseImageUpload, (req, res, next) => {
   try {
     const character = referenceManager.addPrimaryImage(req.params.id, {
       buffer: req.imageUpload.buffer,
@@ -117,7 +128,7 @@ router.delete('/:id/primary-images/:index', (req, res, next) => {
   }
 });
 
-router.post('/:id/references', parseImageUpload, (req, res, next) => {
+router.post('/:id/references', parseCharacterUpload, parseImageUpload, (req, res, next) => {
   try {
     const { category, overridePrompt } = req.body;
 

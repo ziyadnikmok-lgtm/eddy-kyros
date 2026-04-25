@@ -10,6 +10,7 @@ const videoHistory = require('../services/videoHistoryStore');
 const galleryManager = require('../services/galleryManager');
 const apiKeyManager = require('../services/apiKeyManager');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const { createMultipartParser } = require('../middleware/multipartParser');
 const { UPLOADS_DIR } = require('../paths');
 const { logUsageEvent, startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
@@ -32,7 +33,7 @@ const router = express.Router();
 const VIDEO_DIR = path.join(UPLOADS_DIR, 'videos');
 const parseMultipartIfNeeded = createMultipartParser({ maxBytes: 200 * 1024 * 1024 });
 
-router.post('/generate', parseMultipartIfNeeded, async (req, res, next) => {
+router.post('/generate', parseMultipartIfNeeded, requirePlanCapacity(), async (req, res, next) => {
   let runId = null;
   try {
     const {
@@ -82,6 +83,9 @@ router.post('/generate', parseMultipartIfNeeded, async (req, res, next) => {
         throw new AppError('Veo requires at least a prompt or source image', 400, 'VALIDATION_ERROR');
       }
       const apiKey = apiKeyManager.getActiveKey();
+      if (!apiKey) {
+        throw new AppError('Video generation requires a Gemini API key. Go to API Keys and add one — Vertex AI is not supported for video.', 400, 'GEMINI_KEY_REQUIRED');
+      }
       const operation = await geminiVideo.createVideoOperation(apiKey, {
         model,
         prompt: prompt ? String(prompt).slice(0, 2500) : '',
@@ -248,6 +252,7 @@ router.get('/:taskId/status', async (req, res, next) => {
     const entry = videoHistory.findByTaskId(taskId);
     if (entry?.provider === 'gemini') {
       const apiKey = apiKeyManager.getActiveKey();
+      if (!apiKey) throw new AppError('Gemini API key required to check video status.', 400, 'GEMINI_KEY_REQUIRED');
       const result = await geminiVideo.getVideoOperation(apiKey, entry.operationName);
 
       if (!result.done) {

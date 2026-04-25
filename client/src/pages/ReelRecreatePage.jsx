@@ -250,8 +250,8 @@ export default function ReelRecreatePage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
-        <div className="lg:col-span-1 space-y-4">
+      <div>
+        <div className="space-y-4">
           <Card className="space-y-4">
             <Input
               label={hasLocalVideo ? 'Instagram Reel URL (optional)' : 'Instagram Reel URL'}
@@ -433,139 +433,6 @@ export default function ReelRecreatePage() {
           </Card>
         </div>
 
-        <div className="lg:col-span-2 space-y-4">
-          {queueItems.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium text-zinc-400">Reel Queue</h3>
-                <Badge color={activeQueueCount > 0 ? 'blue' : 'zinc'}>
-                  {activeQueueCount > 0 ? `${activeQueueCount} running` : `${queueItems.length} update${queueItems.length === 1 ? '' : 's'}`}
-                </Badge>
-              </div>
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                {queueItems.map((job) => (
-                  <PersistentJobCard
-                    key={job.id}
-                    job={job}
-                    steps={job.kind === 'cached'
-                      ? ['Reusing cached source frames', 'Analyzing scenes with Gemini', 'Recreating source frames']
-                      : job.kind === 'upload'
-                        ? ['Using local uploaded video', 'Extracting source frames', 'Recreating with selected character']
-                        : ['Getting reel video from Apify', 'Extracting source frames', 'Recreating with selected character']}
-                    thresholds={job.kind === 'cached' ? [2, 8] : [35, 45]}
-                    onDismiss={dismissQueueItem}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {!result && activeQueueCount === 0 && (
-            <Card className="min-h-[360px] flex items-center justify-center">
-              <Empty icon={<IconVideo uniqueId="empty-reel" size={40} aria-hidden />} title="No reel processed yet" subtitle="Paste a reel URL or upload a local video to start" />
-            </Card>
-          )}
-
-          {result && (
-            <Card className="space-y-3">
-              <h3 className="text-sm font-semibold text-zinc-300">Source Frames (from Reel)</h3>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <p className="text-xs text-zinc-500 mb-2">First Frame</p>
-                  {firstFrameSrc ? (
-                    <img src={firstFrameSrc} alt="First frame" className="w-full rounded-lg cursor-pointer" onClick={() => openLightbox([firstFrameSrc], 0)} />
-                  ) : <div className="rounded-lg border border-zinc-700/80 p-4 text-xs text-zinc-500">Unavailable</div>}
-                </div>
-                <div>
-                  <p className="text-xs text-zinc-500 mb-2">Last Frame</p>
-                  {lastFrameSrc ? (
-                    <img src={lastFrameSrc} alt="Last frame" className="w-full rounded-lg cursor-pointer" onClick={() => openLightbox([lastFrameSrc], 0)} />
-                  ) : <div className="rounded-lg border border-zinc-700/80 p-4 text-xs text-zinc-500">Unavailable</div>}
-                </div>
-              </div>
-            </Card>
-          )}
-
-          {result?.recreations && (
-            <Card className="space-y-3">
-              <h3 className="text-sm font-semibold text-zinc-300">Recreated with Character</h3>
-              <div className="grid grid-cols-2 gap-3">
-                <ImageCard
-                  base64={result?.recreations?.first?.image?.base64Data}
-                  mimeType={result?.recreations?.first?.image?.mimeType}
-                  onSelect={() => {
-                    const base64 = result?.recreations?.first?.image?.base64Data;
-                    const mime = result?.recreations?.first?.image?.mimeType || 'image/png';
-                    if (base64) openLightbox([`data:${mime};base64,${base64}`], 0);
-                  }}
-                />
-                <ImageCard
-                  base64={result?.recreations?.last?.image?.base64Data}
-                  mimeType={result?.recreations?.last?.image?.mimeType}
-                  onSelect={() => {
-                    const base64 = result?.recreations?.last?.image?.base64Data;
-                    const mime = result?.recreations?.last?.image?.mimeType || 'image/png';
-                    if (base64) openLightbox([`data:${mime};base64,${base64}`], 0);
-                  }}
-                />
-              </div>
-
-              {(result.recreations.first?.prompt || result.recreations.last?.prompt) && (
-                <details className="group">
-                  <summary className="text-xs text-zinc-500 cursor-pointer hover:text-zinc-300 transition select-none">
-                    Show Gemini Prompts
-                  </summary>
-                  <div className="mt-2 space-y-3">
-                    {result.recreations.first?.prompt && (
-                      <div>
-                        <p className="text-[11px] font-medium text-zinc-400 mb-1">First Frame Prompt</p>
-                        <pre className="text-[10px] text-zinc-500 bg-zinc-900/80 border border-zinc-800 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto">{result.recreations.first.prompt}</pre>
-                      </div>
-                    )}
-                    {result.recreations.last?.prompt && (
-                      <div>
-                        <p className="text-[11px] font-medium text-zinc-400 mb-1">Last Frame Prompt</p>
-                        <pre className="text-[10px] text-zinc-500 bg-zinc-900/80 border border-zinc-800 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto">{result.recreations.last.prompt}</pre>
-                      </div>
-                    )}
-                  </div>
-                </details>
-              )}
-            </Card>
-          )}
-
-          {recreationHistory.length > 1 && (
-            <div>
-              <h3 className="text-sm font-medium text-zinc-400 mb-3">Previous Recreations</h3>
-              <div className="space-y-3">
-                {recreationHistory.slice(1, 6).map((rec, i) => (
-                  <div key={i} className="grid grid-cols-2 gap-3">
-                    <ImageCard
-                      base64={rec?.first?.image?.base64Data}
-                      mimeType={rec?.first?.image?.mimeType}
-                      className="!rounded-lg"
-                      onSelect={() => {
-                        const b = rec?.first?.image?.base64Data;
-                        const m = rec?.first?.image?.mimeType || 'image/png';
-                        if (b) openLightbox([`data:${m};base64,${b}`], 0);
-                      }}
-                    />
-                    <ImageCard
-                      base64={rec?.last?.image?.base64Data}
-                      mimeType={rec?.last?.image?.mimeType}
-                      className="!rounded-lg"
-                      onSelect={() => {
-                        const b = rec?.last?.image?.base64Data;
-                        const m = rec?.last?.image?.mimeType || 'image/png';
-                        if (b) openLightbox([`data:${m};base64,${b}`], 0);
-                      }}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
       </div>
       <LightboxComponent />
     </div>
