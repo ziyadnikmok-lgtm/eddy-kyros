@@ -2,11 +2,13 @@ const express = require('express');
 const fs = require('node:fs');
 const sharp = require('sharp');
 const apiKeyManager = require('../services/apiKeyManager');
-const geminiService = require('../services/geminiService');
+const geminiService = require('../services/geminiBackend');
 const log = require('../utils/logger');
 const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
+const { logUsageEvent, startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
 
 const router = express.Router();
 
@@ -50,7 +52,8 @@ function loadImageData(imageId) {
   return null;
 }
 
-router.post('/', async (req, res, next) => {
+router.post('/', requirePlanCapacity(), async (req, res, next) => {
+  let runId = null;
   try {
     const { imageId, targetRatio, imageBase64, imageMimeType } = req.body || {};
 
@@ -78,6 +81,13 @@ router.post('/', async (req, res, next) => {
     const reformatPrompt = `Reformat this image to ${RATIO_LABELS[targetRatio]} aspect ratio by naturally extending the scene outward. Expand the background, environment, and surroundings beyond the current frame edges to fill the new canvas. Keep the subject, character, face, clothing, lighting, color grading, and style completely unchanged — only extend the image, never crop or modify the existing content.`;
 
     const apiKey = apiKeyManager.getActiveKey();
+    runId = startGenerationRun({
+      userId: req.session?.userId,
+      feature: 'reformat',
+      provider: 'gemini',
+      model: null,
+    });
+
     const result = await geminiService.generateImage(apiKey, reformatPrompt, {
       aspectRatio: targetRatio,
       imageSize: '2K',
@@ -129,7 +139,21 @@ router.post('/', async (req, res, next) => {
         createdAt: new Date().toISOString(),
       },
     });
+
+    finishGenerationRun(runId, {
+      status: 'succeeded',
+      outputCount: 1,
+      provider: 'gemini',
+      model: result.modelUsed || null,
+    });
   } catch (err) {
+    finishGenerationRun(runId, {
+      status: 'failed',
+      outputCount: 0,
+      errorCode: err.code || err.name || 'UNKNOWN',
+      errorMessage: err.message || 'Reformat failed',
+      provider: 'gemini',
+    });
     next(err);
   }
 });

@@ -1,6 +1,6 @@
 const express = require('express');
 const apiKeyManager = require('../services/apiKeyManager');
-const geminiService = require('../services/geminiService');
+const geminiService = require('../services/geminiBackend');
 const sceneAnalyzer = require('../services/sceneAnalyzer');
 const referenceManager = require('../services/referenceManager');
 const imageStore = require('../services/imageStore');
@@ -8,6 +8,8 @@ const galleryManager = require('../services/galleryManager');
 const { resolveDimensions } = require('../services/dimensionResolver');
 const { buildCharacterReferenceImages } = require('./postClone');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
+const { logUsageEvent, startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
 const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 const router = express.Router();
@@ -43,9 +45,20 @@ router.post('/analyze', async (req, res, next) => {
   }
 });
 
-router.post('/recreate', async (req, res, next) => {
+router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
+  let runId = null;
   try {
-    const { sceneData, characterId, activeReferenceIds, imageModel, sameBackground, samePose } = req.body;
+    const {
+      sceneData,
+      characterId,
+      activeReferenceIds,
+      masterPromptOverride,
+      imageModel,
+      sameBackground,
+      samePose,
+      sameHair,
+      sameTattoos,
+    } = req.body;
     const { aspectRatio, resolutionTier, width, height } = resolveDimensions(req.body);
 
     if (!sceneData || typeof sceneData !== 'object') {
@@ -59,11 +72,29 @@ router.post('/recreate', async (req, res, next) => {
       sceneData,
       characterId,
       activeReferenceIds,
+      masterPromptOverride,
       sameBackground: !!sameBackground,
       samePose: !!samePose,
+      sameHair: !!sameHair,
+      sameTattoos: !!sameTattoos,
     });
 
     const apiKey = apiKeyManager.getActiveKey();
+    runId = startGenerationRun({
+      userId: req.session?.userId,
+      feature: 'scene-recreate',
+      provider: 'gemini',
+      model: imageModel || null,
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.started',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'scene-recreate',
+      payload: { feature: 'scene-recreate', model: imageModel || null, characterId },
+    });
+
     const activeRefs = referenceManager.getActiveReferences(
       characterId,
       Array.isArray(activeReferenceIds) ? activeReferenceIds : null
@@ -91,19 +122,35 @@ router.post('/recreate', async (req, res, next) => {
       source: 'generate',
     });
 
-    galleryManager.save({
+    const galleryEntry = galleryManager.save({
       base64Data: result.image.base64Data,
       mimeType: result.image.mimeType,
-      prompt: 'Scene recreation',
+      prompt: recreationPrompt,
       source: 'scene-recreate',
       characterId,
       aspectRatio: aspectRatio || null,
+    });
+
+    finishGenerationRun(runId, {
+      status: 'succeeded',
+      outputCount: 1,
+      provider: 'gemini',
+      model: result.modelUsed || imageModel || null,
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.succeeded',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'scene-recreate',
+      payload: { feature: 'scene-recreate', imageId: stored.imageId, galleryId: galleryEntry?.id },
     });
 
     res.json({
       success: true,
       data: {
         imageId: stored.imageId,
+        galleryId: galleryEntry?.id || null,
         image: { mimeType: result.image.mimeType, base64Data: result.image.base64Data },
         text: result.text,
         dimensions: { aspectRatio, resolutionTier, width, height },
@@ -111,6 +158,21 @@ router.post('/recreate', async (req, res, next) => {
       },
     });
   } catch (err) {
+    finishGenerationRun(runId, {
+      status: 'failed',
+      outputCount: 0,
+      errorCode: err.code || err.name || 'UNKNOWN',
+      errorMessage: err.message || 'Scene recreate failed',
+      provider: 'gemini',
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.failed',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'scene-recreate',
+      payload: { feature: 'scene-recreate', errorCode: err.code || err.name, message: err.message },
+    });
     next(err);
   }
 });

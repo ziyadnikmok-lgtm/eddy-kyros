@@ -8,6 +8,7 @@ const execFileAsync = promisify(execFile);
 const ffmpegPath = require('../utils/ffmpeg');
 const { ApifyClient } = require('apify-client');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const { createMultipartParser } = require('../middleware/multipartParser');
 const { sharedHttpsAgent } = require('../utils/httpAgent');
 const { asText } = require('../utils/helpers');
@@ -16,11 +17,12 @@ const cfg = require('../config');
 const apiKeyManager = require('../services/apiKeyManager');
 const referenceManager = require('../services/referenceManager');
 const sceneAnalyzer = require('../services/sceneAnalyzer');
-const geminiService = require('../services/geminiService');
+const geminiService = require('../services/geminiBackend');
 const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
 const { checkPostAvailability } = require('../services/instagramAvailabilityService');
 const logger = require('../utils/logger');
+const { logUsageEvent, startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
 const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 const router = express.Router();
@@ -450,7 +452,7 @@ async function recreateFrame({
   galleryManager.save({
     base64Data: generated.image.base64Data,
     mimeType: generated.image.mimeType,
-    prompt: 'Reel Copy Frame Recreation',
+    prompt: prompt,
     source: 'reel-copy',
     characterId,
     aspectRatio: '9:16',
@@ -466,11 +468,12 @@ async function recreateFrame({
   };
 }
 
-router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
+router.post('/', parseMultipartIfNeeded, requirePlanCapacity({ cost: 2 }), async (req, res, next) => {
   let videoPath = '';
   let firstPath = '';
   let lastPath = '';
   const deadline = Date.now() + ROUTE_TIMEOUT_MS;
+  let runId = null;
   try {
     const { reelUrl, characterId, apifyApiKey, activeReferenceIds: clientRefIds, imageModel } = req.body || {};
     const uploadedVideo = req.file && req.file.buffer ? req.file : null;
@@ -524,6 +527,21 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
     const activeReferenceIds = activeRefs.map((r) => r.id);
     const referenceImages = buildCharacterReferenceImages(characterId, activeRefs);
     const apiKey = apiKeyManager.getActiveKey();
+
+    runId = startGenerationRun({
+      userId: req.session?.userId,
+      feature: 'reel-copy',
+      provider: 'gemini',
+      model: imageModel || null,
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.started',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'reel-copy',
+      payload: { feature: 'reel-copy', characterId },
+    });
 
     if (cleanUrl && !uploadedVideo && !hasProvidedFrames) {
       const availability = await checkPostAvailability(cleanUrl, { apifyToken: apifyApiKey });
@@ -714,7 +732,37 @@ router.post('/', parseMultipartIfNeeded, async (req, res, next) => {
         generatedAt: new Date().toISOString(),
       },
     });
+
+    finishGenerationRun(runId, {
+      status: 'succeeded',
+      outputCount: 2,
+      provider: 'gemini',
+      model: imageModel || null,
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.succeeded',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'reel-copy',
+      payload: { feature: 'reel-copy', imageCount: 2 },
+    });
   } catch (err) {
+    finishGenerationRun(runId, {
+      status: 'failed',
+      outputCount: 0,
+      errorCode: err.code || err.name || 'UNKNOWN',
+      errorMessage: err.message || 'Reel copy failed',
+      provider: 'gemini',
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.failed',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'reel-copy',
+      payload: { feature: 'reel-copy', errorCode: err.code || err.name, message: err.message },
+    });
     if (err instanceof AppError) return next(err);
     next(new AppError('Reel copy failed', 500, 'REEL_COPY_ERROR'));
   } finally {

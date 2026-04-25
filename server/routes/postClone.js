@@ -4,17 +4,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 const axios = require('axios');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const { asText } = require('../utils/helpers');
 const { sharedHttpsAgent } = require('../utils/httpAgent');
 const { buildLoginCookies } = require('../utils/instagramCookies');
 const apiKeyManager = require('../services/apiKeyManager');
 const referenceManager = require('../services/referenceManager');
-const geminiService = require('../services/geminiService');
+const geminiService = require('../services/geminiBackend');
 const galleryManager = require('../services/galleryManager');
 const postCloneHistoryStore = require('../services/postCloneHistoryStore');
 const styleFocusStore = require('../services/styleFocusStore');
 const { checkPostAvailability } = require('../services/instagramAvailabilityService');
 const log = require('../utils/logger');
+const { logUsageEvent, startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
 
 const {
   TEMP_DIR, THUMB_DIR, ensureTempDir, ensureThumbDir, cacheThumbnail,
@@ -38,7 +40,7 @@ const PROFILE_ROUTE_TIMEOUT_MS = 15 * 60_000;
 
 async function processOneSlide({
   post, i, apiKey, character, activeRefs, mode, cosplayMode = false, baseReferenceImages,
-  characterId, tempFiles, firstSlideOriginal, firstSlideRecreated, imageModel,
+  characterId, tempFiles, firstSlideOriginal, firstSlideRecreated, imageModel, aspectRatio = '4:5', resolutionTier = '2K',
 }) {
   const rawUrl = post.imageUrls[i];
   const imageUrl = await resolveDownloadableImageUrl(rawUrl);
@@ -97,14 +99,19 @@ async function processOneSlide({
     generationPrompt = buildGenerationPrompt({ character, activeRefs, mode, cosplayMode, structured, isDelta: false });
   }
 
-  const generated = await geminiService.generateImage(apiKey, generationPrompt, { aspectRatio: '4:5', imageSize: '2K', referenceImages, model: imageModel });
+  const generated = await geminiService.generateImage(apiKey, generationPrompt, {
+    aspectRatio,
+    imageSize: resolutionTier,
+    referenceImages,
+    model: imageModel,
+  });
   const galleryEntry = galleryManager.save({
     base64Data: generated.image.base64Data,
     mimeType: generated.image.mimeType,
-    prompt: structured.full_prompt || 'Post Clone recreation',
+    prompt: generationPrompt || structured.full_prompt || 'Post Clone recreation',
     source: 'post-clone',
     characterId,
-    aspectRatio: '4:5',
+    aspectRatio: aspectRatio || null,
     seed: null,
   });
 
@@ -117,12 +124,12 @@ async function processOneSlide({
   };
 }
 
-async function processPostClone({ post, characterId, mode, cosplayMode = false, apiKey, character, activeRefs, baseReferenceImages, tempFiles, imageModel }) {
+async function processPostClone({ post, characterId, mode, cosplayMode = false, apiKey, character, activeRefs, baseReferenceImages, tempFiles, imageModel, aspectRatio = '4:5', resolutionTier = '2K' }) {
   const recreatedImages = [];
   const originalImages = [];
   const galleryIds = [];
   const isCarousel = post.type === 'carousel' && post.imageUrls.length > 1;
-  const slideArgs = { post, apiKey, character, activeRefs, mode, cosplayMode, baseReferenceImages, characterId, tempFiles, imageModel };
+  const slideArgs = { post, apiKey, character, activeRefs, mode, cosplayMode, baseReferenceImages, characterId, tempFiles, imageModel, aspectRatio, resolutionTier };
 
   let firstSlideOriginal = null;
   let firstSlideRecreated = null;
@@ -172,7 +179,7 @@ async function processPostClone({ post, characterId, mode, cosplayMode = false, 
 
 // ── Main handler ───────────────────────────────────────────────────────────────
 
-async function handleClone({ url, characterId, mode, cosplayMode = false, postLimit = 1, apifyApiKey, profileMode = false, imageModel }) {
+async function handleClone({ url, characterId, mode, cosplayMode = false, postLimit = 1, apifyApiKey, profileMode = false, imageModel, aspectRatio = '4:5', resolutionTier = '2K' }) {
   const deadline = Date.now() + (profileMode ? PROFILE_ROUTE_TIMEOUT_MS : ROUTE_TIMEOUT_MS);
   const cleanUrl = asText(url);
   if (!cleanUrl || !isHttpUrl(cleanUrl)) throw new AppError('A valid Instagram URL is required', 400, 'VALIDATION_ERROR');
@@ -257,7 +264,7 @@ async function handleClone({ url, characterId, mode, cosplayMode = false, postLi
       const settled = await Promise.all(
         batch.map((post, bi) => {
           const idx = batchStart + bi;
-          return processPostClone({ post, characterId, mode, cosplayMode, apiKey, character, activeRefs, baseReferenceImages, tempFiles, imageModel })
+          return processPostClone({ post, characterId, mode, cosplayMode, apiKey, character, activeRefs, baseReferenceImages, tempFiles, imageModel, aspectRatio, resolutionTier })
             .then((processed) => ({ ok: true, idx, processed }))
             .catch((postErr) => {
               log.warn('post_clone_post_failed', { index: idx + 1, total: selected.length, message: postErr.message });
@@ -298,12 +305,76 @@ async function handleClone({ url, characterId, mode, cosplayMode = false, postLi
 
 // ── Routes ─────────────────────────────────────────────────────────────────────
 
-router.post('/', async (req, res, next) => {
+router.post('/', requirePlanCapacity(), async (req, res, next) => {
+  let runId = null;
   try {
-    const { postUrl, characterId, mode = 'exact', cosplayMode = false, apifyApiKey, imageModel } = req.body || {};
-    const data = await handleClone({ url: postUrl, characterId, mode: asText(mode).toLowerCase() || 'exact', cosplayMode: !!cosplayMode, apifyApiKey, imageModel, postLimit: 1, profileMode: false });
+    const {
+      postUrl, characterId, mode = 'exact', cosplayMode = false, apifyApiKey, imageModel,
+      aspectRatio = '4:5', resolutionTier = '2K',
+    } = req.body || {};
+
+    const cleanUrl = asText(postUrl);
+    const cleanMode = asText(mode).toLowerCase() || 'exact';
+    runId = startGenerationRun({
+      userId: req.session?.userId,
+      feature: 'post-clone',
+      provider: 'gemini',
+      model: imageModel || null,
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.started',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'post-clone',
+      payload: { feature: 'post-clone', mode: cleanMode, characterId },
+    });
+
+    const data = await handleClone({
+      url: cleanUrl,
+      characterId,
+      mode: cleanMode,
+      cosplayMode: !!cosplayMode,
+      apifyApiKey: apifyApiKey || apiKeyManager.getApifyKey(),
+      imageModel,
+      aspectRatio,
+      resolutionTier,
+      postLimit: 1,
+      profileMode: false,
+    });
+    const totalImages = Array.isArray(data) ? data.reduce((n, r) => n + (r.recreatedImages?.length || 0), 0) : 0;
+    finishGenerationRun(runId, {
+      status: 'succeeded',
+      outputCount: totalImages,
+      provider: 'gemini',
+      model: imageModel || null,
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.succeeded',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'post-clone',
+      payload: { feature: 'post-clone', imageCount: totalImages },
+    });
     res.json({ success: true, data });
-  } catch (err) { next(err); }
+  } catch (err) {
+    finishGenerationRun(runId, {
+      status: 'failed',
+      outputCount: 0,
+      errorCode: err.code || err.name || 'UNKNOWN',
+      errorMessage: err.message || 'Post clone failed',
+      provider: 'gemini',
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.failed',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'post-clone',
+      payload: { feature: 'post-clone', errorCode: err.code || err.name, message: err.message },
+    });
+    next(err); }
 });
 
 router.get('/style-focus', (_req, res, next) => {

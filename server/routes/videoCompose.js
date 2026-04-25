@@ -10,6 +10,10 @@ const { AppError } = require('../middleware/errorHandler');
 const { createMultipartParser } = require('../middleware/multipartParser');
 const { TEMP_DIR, UPLOADS_DIR } = require('../paths');
 const videoHistory = require('../services/videoHistoryStore');
+const apiKeyManager = require('../services/apiKeyManager');
+const geminiService = require('../services/geminiBackend');
+const directGeminiService = require('../services/geminiService');
+const { startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
 
 const router = express.Router();
 const parseMultipart = createMultipartParser({ maxBytes: 500 * 1024 * 1024 });
@@ -32,6 +36,34 @@ function safeTempExtension(filename, fallback) {
   return /^[a-z0-9.]+$/.test(rawExt) ? rawExt : fallback;
 }
 
+function isImageUpload(file) {
+  if (!file) return false;
+  const type = String(file.mimetype || file.type || '').toLowerCase();
+  const ext = safeTempExtension(file.originalname || file.filename || '', '').toLowerCase();
+  return type.startsWith('image/') || ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'].includes(ext);
+}
+
+async function buildStillVideoFromImage({
+  inputPath,
+  outputPath,
+  durationSeconds,
+  width = 1080,
+  height = 1920,
+}) {
+  const safeDuration = Math.max(0.1, Number(durationSeconds) || 5);
+  await execFileAsync(ffmpegPath, [
+    '-y',
+    '-loop', '1',
+    '-i', inputPath,
+    '-t', safeDuration.toFixed(3),
+    '-vf', `fps=30,scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1,format=yuv420p`,
+    '-c:v', 'libx264',
+    '-pix_fmt', 'yuv420p',
+    '-an',
+    outputPath,
+  ], { timeout: 2 * 60_000 });
+}
+
 function clampNumber(value, min, max, fallback) {
   const num = Number(value);
   if (!Number.isFinite(num)) return fallback;
@@ -40,10 +72,14 @@ function clampNumber(value, min, max, fallback) {
 
 function escapeAssText(text = '') {
   return String(text)
-    .replace(/\\/g, '\\\\')
-    .replace(/\{/g, '\\{')
-    .replace(/\}/g, '\\}')
-    .replace(/\r?\n/g, '\\N');
+    .replace(/\\r\\n|\\n|\\r/g, '\n')
+    .replace(/\r\n|\r/g, '\n')
+    .split('\n')
+    .map((line) => line
+      .replace(/\\/g, '\\\\')
+      .replace(/\{/g, '\\{')
+      .replace(/\}/g, '\\}'))
+    .join('\\N');
 }
 
 function assAlignmentFor(position = 'bottom') {
@@ -171,6 +207,80 @@ async function probeVideoInfo(videoPath) {
   return { width: 1080, height: 1920, durationSeconds: null, hasAudio: false };
 }
 
+async function extractOverlayFrames(videoPath, token, count = 4) {
+  const framePattern = path.join(TEMP_DIR, `vc_overlay_${token}_%02d.jpg`);
+  await execFileAsync(ffmpegPath, [
+    '-y',
+    '-i', videoPath,
+    '-vf', `fps=1,scale=720:-1:force_original_aspect_ratio=decrease`,
+    '-frames:v', String(count),
+    framePattern,
+  ], { timeout: 60_000 });
+
+  const frames = [];
+  for (let i = 1; i <= count; i += 1) {
+    const framePath = path.join(TEMP_DIR, `vc_overlay_${token}_${String(i).padStart(2, '0')}.jpg`);
+    const buffer = await fs.readFile(framePath).catch(() => null);
+    if (buffer?.length) {
+      frames.push({ path: framePath, mimeType: 'image/jpeg', base64Data: buffer.toString('base64') });
+    }
+  }
+  return frames;
+}
+
+function parseOverlayTextResponse(rawText, timelineDuration) {
+  const cleaned = String(rawText || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  let parsed = null;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) {
+      try { parsed = JSON.parse(match[0]); } catch { parsed = null; }
+    }
+  }
+  const sourceClips = Array.isArray(parsed?.clips) ? parsed.clips : [];
+  const maxDuration = Math.max(0.1, Number(timelineDuration) || 6);
+  return sourceClips
+    .map((clip, index) => {
+      const text = String(clip?.text || '').replace(/\\n/g, '\n').trim();
+      if (!text) return null;
+      const start = clampNumber(clip?.start, 0, Math.max(0, maxDuration - 0.1), Math.min(index * 2, maxDuration - 0.1));
+      const end = clampNumber(clip?.end, start + 0.1, maxDuration, Math.min(maxDuration, start + 2));
+      return {
+        text,
+        start,
+        end,
+        position: ['top', 'center', 'bottom'].includes(clip?.position) ? clip.position : 'center',
+        fontSize: Math.round(clampNumber(clip?.fontSize, 16, 160, 64)),
+      };
+    })
+    .filter(Boolean);
+}
+
+async function analyzeOverlayFramesWithFallback(apiKey, frames, prompt) {
+  try {
+    return await geminiService.analyzeImagesWithPrompt(
+      apiKey,
+      frames.map((frame) => ({ mimeType: frame.mimeType, base64Data: frame.base64Data })),
+      prompt,
+    );
+  } catch (err) {
+    const canFallbackToGeminiKey = Boolean(apiKey);
+    const shouldFallback = ['INVALID_CREDENTIALS', 'CONFIG_ERROR', 'NO_VERTEX_CREDENTIALS'].includes(err.code);
+    if (!canFallbackToGeminiKey || !shouldFallback || !apiKeyManager.shouldUseVertexBackend()) {
+      throw err;
+    }
+
+    console.warn('[video-compose] Vertex overlay extraction failed; falling back to active Gemini API key:', err.message);
+    return directGeminiService.__direct.analyzeImagesWithPrompt(
+      apiKey,
+      frames.map((frame) => ({ mimeType: frame.mimeType, base64Data: frame.base64Data })),
+      prompt,
+    );
+  }
+}
+
 // Compute the combined CSS sepia × hue-rotate colour matrix for cool warmth.
 function _coolMatrix(sepiaAmt, hueDeg) {
   const s = sepiaAmt;
@@ -204,6 +314,11 @@ function buildVideoFilter({
   sharpness,
   vignette,
   subtitlePath,
+  sourceWidth,
+  sourceHeight,
+  zoom,
+  panX,
+  panY,
 }) {
   const preset = FILTER_PRESETS[presetId] || FILTER_PRESETS.none;
   const finalBrightness = Math.max(-1, Math.min(1, preset.brightness + brightness));
@@ -218,6 +333,9 @@ function buildVideoFilter({
   if (Math.abs(speed - 1) > 0.0001) {
     filters.push(`setpts=${(1 / speed).toFixed(6)}*PTS`);
   }
+
+  const framingChain = buildFramingChain(sourceWidth, sourceHeight, zoom, panX, panY);
+  if (framingChain) filters.push(framingChain);
 
   // Brightness — CSS brightness(factor) multiplies RGB values.  FFmpeg
   // eq=brightness is *additive* and washes highlights.  Using eq=gamma
@@ -297,10 +415,77 @@ function buildNormalizeVideoChain(width, height) {
   return `fps=30,scale=${safeWidth}:${safeHeight}:force_original_aspect_ratio=increase,crop=${safeWidth}:${safeHeight},setsar=1,format=yuv420p`;
 }
 
+function buildFramingChain(width, height, zoom, panX, panY) {
+  const safeWidth = Math.max(16, Math.round(width || 1080));
+  const safeHeight = Math.max(16, Math.round(height || 1920));
+  const safeZoom = clampNumber(zoom, 1, 2.5, 1);
+  const safePanX = clampNumber(panX, -1, 1, 0);
+  const safePanY = clampNumber(panY, -1, 1, 0);
+
+  if (Math.abs(safeZoom - 1) < 0.0001 && Math.abs(safePanX) < 0.0001 && Math.abs(safePanY) < 0.0001) {
+    return '';
+  }
+
+  const scaledWidth = Math.max(safeWidth, Math.round((safeWidth * safeZoom) / 2) * 2);
+  const scaledHeight = Math.max(safeHeight, Math.round((safeHeight * safeZoom) / 2) * 2);
+  const xRatio = ((safePanX + 1) / 2).toFixed(4);
+  const yRatio = ((safePanY + 1) / 2).toFixed(4);
+
+  return `scale=${scaledWidth}:${scaledHeight},crop=${safeWidth}:${safeHeight}:(iw-ow)*${xRatio}:(ih-oh)*${yRatio}`;
+}
+
+router.post('/extract-text-overlay', parseMultipart, async (req, res, next) => {
+  const tmpFiles = [];
+  try {
+    const videoFile = req.files?.video;
+    if (!videoFile?.buffer) throw new AppError('video file is required', 400, 'VALIDATION_ERROR');
+
+    await fs.mkdir(TEMP_DIR, { recursive: true });
+    const token = crypto.randomUUID();
+    const ext = safeTempExtension(videoFile.originalname || videoFile.filename || 'overlay.mp4', '.mp4');
+    const videoPath = path.join(TEMP_DIR, `vc_overlay_source_${token}${ext}`);
+    tmpFiles.push(videoPath);
+    await fs.writeFile(videoPath, videoFile.buffer);
+
+    const timelineDuration = clampNumber(req.body?.timelineDuration, 0.1, 60 * 60, 6);
+    const frames = await extractOverlayFrames(videoPath, token, 4);
+    tmpFiles.push(...frames.map((frame) => frame.path));
+    if (frames.length === 0) {
+      throw new AppError('Could not read frames from video', 400, 'VIDEO_FRAME_ERROR');
+    }
+
+    const prompt = `You are extracting ONLY visible text overlays/captions from a short social video.
+Look at these frames and ignore people, background, UI, watermarks, usernames, logos, subtitles from apps, and interface text.
+Return ONLY valid JSON with this shape:
+{
+  "clips": [
+    { "text": "line 1\\nline 2", "start": 0, "end": 2.5, "position": "top|center|bottom", "fontSize": 64 }
+  ]
+}
+Rules:
+- Preserve line breaks exactly when the overlay is stacked on multiple lines.
+- If one overlay has a list, keep it as multiple lines in a single text string.
+- Use approximate timing across a ${timelineDuration.toFixed(1)} second target timeline.
+- If no overlay text exists, return {"clips":[]}.`;
+
+    const apiKey = apiKeyManager.getActiveKey();
+    const text = await analyzeOverlayFramesWithFallback(apiKey, frames, prompt);
+    const clips = parseOverlayTextResponse(text, timelineDuration);
+    res.json({ success: true, data: { clips } });
+  } catch (err) {
+    next(err);
+  } finally {
+    await Promise.all(tmpFiles.map(async (filePath) => {
+      try { await fs.unlink(filePath); } catch {}
+    }));
+  }
+});
+
 router.post('/', parseMultipart, async (req, res, next) => {
   const tmpFiles = [];
   let outputPath = null;
   let completed = false;
+  let runId = null;
   try {
     const videoFile = req.files?.video;
     const secondVideoFile = req.files?.video2;
@@ -319,9 +504,17 @@ router.post('/', parseMultipart, async (req, res, next) => {
     const warmth = clampNumber(req.body?.warmth, -0.3, 0.3, 0);
     const sharpness = clampNumber(req.body?.sharpness, 0, 2, 0);
     const vignette = clampNumber(req.body?.vignette, 0, 1, 0);
+    const primaryZoom = clampNumber(req.body?.primaryZoom, 1, 2.5, 1);
+    const primaryPanX = clampNumber(req.body?.primaryPanX, -1, 1, 0);
+    const primaryPanY = clampNumber(req.body?.primaryPanY, -1, 1, 0);
+    const secondaryZoom = clampNumber(req.body?.secondaryZoom, 1, 2.5, 1);
+    const secondaryPanX = clampNumber(req.body?.secondaryPanX, -1, 1, 0);
+    const secondaryPanY = clampNumber(req.body?.secondaryPanY, -1, 1, 0);
     const musicVolume = clampNumber(req.body?.musicVolume, 0, 2, 1);
     const originalAudioVolume = clampNumber(req.body?.originalAudioVolume, 0, 2, 1);
     const replaceOriginalAudio = String(req.body?.replaceOriginalAudio || '').toLowerCase() === 'true';
+    const imageDuration = clampNumber(req.body?.imageDuration, 0.1, 60, 5);
+    const imageDuration2 = clampNumber(req.body?.imageDuration2, 0.1, 60, 5);
 
     await fs.mkdir(TEMP_DIR, { recursive: true });
     await fs.mkdir(VIDEO_DIR, { recursive: true });
@@ -336,6 +529,18 @@ router.post('/', parseMultipart, async (req, res, next) => {
 
     await fs.writeFile(videoPath, videoFile.buffer);
 
+    let primaryProbeSourcePath = videoPath;
+    if (isImageUpload(videoFile)) {
+      const primaryStillPath = path.join(TEMP_DIR, `vc_video_${token}_still.mp4`);
+      tmpFiles.push(primaryStillPath);
+      await buildStillVideoFromImage({
+        inputPath: videoPath,
+        outputPath: primaryStillPath,
+        durationSeconds: imageDuration,
+      });
+      primaryProbeSourcePath = primaryStillPath;
+    }
+
     let secondVideoPath = null;
     let secondProbe = null;
     if (secondVideoFile?.buffer) {
@@ -343,6 +548,16 @@ router.post('/', parseMultipart, async (req, res, next) => {
       secondVideoPath = path.join(TEMP_DIR, `vc_video2_${token}${secondExt}`);
       tmpFiles.push(secondVideoPath);
       await fs.writeFile(secondVideoPath, secondVideoFile.buffer);
+      if (isImageUpload(secondVideoFile)) {
+        const secondStillPath = path.join(TEMP_DIR, `vc_video2_${token}_still.mp4`);
+        tmpFiles.push(secondStillPath);
+        await buildStillVideoFromImage({
+          inputPath: secondVideoPath,
+          outputPath: secondStillPath,
+          durationSeconds: imageDuration2,
+        });
+        secondVideoPath = secondStillPath;
+      }
       secondProbe = await probeVideoInfo(secondVideoPath);
     }
 
@@ -356,7 +571,7 @@ router.post('/', parseMultipart, async (req, res, next) => {
       audioProbe = await probeVideoInfo(audioPath);
     }
 
-    const probe = await probeVideoInfo(videoPath);
+    const probe = await probeVideoInfo(primaryProbeSourcePath);
     const sourceDuration = probe.durationSeconds || null;
     const trimStart = clampNumber(req.body?.trimStart, 0, sourceDuration ?? 60 * 60, 0);
     const trimEndFallback = sourceDuration && sourceDuration > 0 ? sourceDuration : trimStart + 10;
@@ -390,7 +605,7 @@ router.post('/', parseMultipart, async (req, res, next) => {
       }), 'utf8');
     }
 
-    const ffmpegArgs = ['-y', '-ss', trimStart.toFixed(3), '-t', trimmedDuration.toFixed(3), '-i', videoPath];
+    const ffmpegArgs = ['-y', '-ss', trimStart.toFixed(3), '-t', trimmedDuration.toFixed(3), '-i', primaryProbeSourcePath];
     if (secondVideoPath && secondTrimmedDuration > 0) {
       ffmpegArgs.push('-t', secondTrimmedDuration.toFixed(3), '-i', secondVideoPath);
     }
@@ -407,6 +622,11 @@ router.post('/', parseMultipart, async (req, res, next) => {
       sharpness,
       vignette,
       subtitlePath,
+      sourceWidth: probe.width,
+      sourceHeight: probe.height,
+      zoom: primaryZoom,
+      panX: primaryPanX,
+      panY: primaryPanY,
     });
     const hasVideoFilter = Boolean(videoFilter);
 
@@ -416,7 +636,8 @@ router.post('/', parseMultipart, async (req, res, next) => {
     const hasSecondAudio = !!secondProbe?.hasAudio;
 
     if (hasSecondVideo) {
-      const normalizeChain = buildNormalizeVideoChain(probe.width, probe.height);
+      const normalizeChainPrimary = [buildNormalizeVideoChain(probe.width, probe.height), buildFramingChain(probe.width, probe.height, primaryZoom, primaryPanX, primaryPanY)].filter(Boolean).join(',');
+      const normalizeChainSecondary = [buildNormalizeVideoChain(probe.width, probe.height), buildFramingChain(probe.width, probe.height, secondaryZoom, secondaryPanX, secondaryPanY)].filter(Boolean).join(',');
       const normalizeAudioChain = 'aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo';
       const speedVideoFilter = Math.abs(speed - 1) > 0.0001 ? `setpts=${(1 / speed).toFixed(6)}*PTS,` : '';
       const postVideoFilter = buildVideoFilter({
@@ -430,15 +651,20 @@ router.post('/', parseMultipart, async (req, res, next) => {
         sharpness,
         vignette,
         subtitlePath,
+        sourceWidth: probe.width,
+        sourceHeight: probe.height,
+        zoom: 1,
+        panX: 0,
+        panY: 0,
       });
 
       const musicInputIndex = audioPath ? 2 : null;
       const complexParts = [
-        `[0:v]${normalizeChain}[v0]`,
+        `[0:v]${normalizeChainPrimary}[v0]`,
         hasOriginalAudio
           ? `[0:a]atrim=start=0:end=${trimmedDuration.toFixed(3)},asetpts=PTS-STARTPTS,${normalizeAudioChain}[a0]`
           : `anullsrc=channel_layout=stereo:sample_rate=44100,atrim=start=0:end=${trimmedDuration.toFixed(3)},${normalizeAudioChain}[a0]`,
-        `[1:v]${normalizeChain}[v1]`,
+        `[1:v]${normalizeChainSecondary}[v1]`,
         hasSecondAudio
           ? `[1:a]atrim=start=0:end=${secondTrimmedDuration.toFixed(3)},asetpts=PTS-STARTPTS,${normalizeAudioChain}[a1]`
           : `anullsrc=channel_layout=stereo:sample_rate=44100,atrim=start=0:end=${secondTrimmedDuration.toFixed(3)},${normalizeAudioChain}[a1]`,
@@ -587,6 +813,19 @@ router.post('/', parseMultipart, async (req, res, next) => {
       generateAudio: !replaceOriginalAudio,
     });
 
+    runId = startGenerationRun({
+      userId: req.session?.userId,
+      feature: 'video-compose',
+      provider: 'composer',
+      model: 'video-compose',
+    });
+    finishGenerationRun(runId, {
+      status: 'succeeded',
+      outputCount: 1,
+      provider: 'composer',
+      model: 'video-compose',
+    });
+
     res.json({
       success: true,
       data: {
@@ -609,6 +848,13 @@ router.post('/', parseMultipart, async (req, res, next) => {
     });
     completed = true;
   } catch (err) {
+    finishGenerationRun(runId, {
+      status: 'failed',
+      outputCount: 0,
+      errorCode: err.code || err.name || 'UNKNOWN',
+      errorMessage: err.message || 'Video compose failed',
+      provider: 'composer',
+    });
     next(err);
   } finally {
     await Promise.all(tmpFiles.map(async (filePath) => {

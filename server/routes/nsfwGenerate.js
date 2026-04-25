@@ -4,13 +4,16 @@ const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
 const apiKeyManager = require('../services/apiKeyManager');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const log = require('../utils/logger');
+const { logUsageEvent, startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
 
 const router = express.Router();
 
 const VALID_ASPECT_RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '4:5', '5:4', '3:2', '2:3'];
 
-router.post('/', async (req, res, next) => {
+router.post('/', requirePlanCapacity(), async (req, res, next) => {
+  let runId = null;
   try {
     const { prompt, aspectRatio, loras } = req.body;
 
@@ -23,6 +26,21 @@ router.post('/', async (req, res, next) => {
     const parsedLoras = Array.isArray(loras)
       ? loras.filter((l) => l && typeof l.path === 'string' && l.path.trim())
       : [];
+
+    runId = startGenerationRun({
+      userId: req.session?.userId,
+      feature: 'nsfw-generate',
+      provider: 'wavespeed',
+      model: null,
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.started',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'nsfw-generate',
+      payload: { feature: 'nsfw-generate', aspectRatio: finalAspectRatio },
+    });
 
     const result = await wavespeedService.generateImage(prompt.trim(), {
       aspectRatio: finalAspectRatio,
@@ -55,6 +73,21 @@ router.post('/', async (req, res, next) => {
 
     try { apiKeyManager.addExternalSpend(0.01, 'nsfw-image'); } catch (e) { log.warn('nsfw_spend_track_failed', { error: e.message }); }
 
+    finishGenerationRun(runId, {
+      status: 'succeeded',
+      outputCount: 1,
+      provider: 'wavespeed',
+      model: result.modelUsed || null,
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.succeeded',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'nsfw-generate',
+      payload: { feature: 'nsfw-generate', imageId: stored.imageId, galleryId: galleryEntry.id },
+    });
+
     res.json({
       success: true,
       data: {
@@ -66,12 +99,28 @@ router.post('/', async (req, res, next) => {
       },
     });
   } catch (err) {
+    finishGenerationRun(runId, {
+      status: 'failed',
+      outputCount: 0,
+      errorCode: err.code || err.name || 'UNKNOWN',
+      errorMessage: err.message || 'NSFW generation failed',
+      provider: 'wavespeed',
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.failed',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'nsfw-generate',
+      payload: { feature: 'nsfw-generate', errorCode: err.code || err.name, message: err.message },
+    });
     next(err);
   }
 });
 
 // ── Img2Img variation ──────────────────────────────────────────
-router.post('/vary', async (req, res, next) => {
+router.post('/vary', requirePlanCapacity(), async (req, res, next) => {
+  let runId = null;
   try {
     const { imageBase64, mimeType, prompt, aspectRatio, strength, loras } = req.body;
 
@@ -86,6 +135,13 @@ router.post('/vary', async (req, res, next) => {
     const parsedLoras = Array.isArray(loras)
       ? loras.filter((l) => l && typeof l.path === 'string' && l.path.trim())
       : [];
+
+    runId = startGenerationRun({
+      userId: req.session?.userId,
+      feature: 'nsfw-vary',
+      provider: 'wavespeed',
+      model: null,
+    });
 
     const result = await wavespeedService.generateImg2Img(
       imageBase64,
@@ -124,6 +180,13 @@ router.post('/vary', async (req, res, next) => {
 
     try { apiKeyManager.addExternalSpend(0.01, 'nsfw-image'); } catch (e) { log.warn('nsfw_spend_track_failed', { error: e.message }); }
 
+    finishGenerationRun(runId, {
+      status: 'succeeded',
+      outputCount: 1,
+      provider: 'wavespeed',
+      model: result.modelUsed || null,
+    });
+
     res.json({
       success: true,
       data: {
@@ -135,6 +198,13 @@ router.post('/vary', async (req, res, next) => {
       },
     });
   } catch (err) {
+    finishGenerationRun(runId, {
+      status: 'failed',
+      outputCount: 0,
+      errorCode: err.code || err.name || 'UNKNOWN',
+      errorMessage: err.message || 'NSFW variation failed',
+      provider: 'wavespeed',
+    });
     next(err);
   }
 });

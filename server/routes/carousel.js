@@ -4,10 +4,14 @@ const { AppError } = require('../middleware/errorHandler');
 const { asText } = require('../utils/helpers');
 const referenceManager = require('../services/referenceManager');
 const apiKeyManager = require('../services/apiKeyManager');
-const geminiService = require('../services/geminiService');
+const geminiService = require('../services/geminiBackend');
 const carouselPlannerService = require('../services/carouselPlannerService');
 const batchGenerator = require('../services/batchGenerator');
 const imageStore = require('../services/imageStore');
+const {
+  requirePlanCapacity,
+} = require('../middleware/planLimits');
+const { logUsageEvent, startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
 const {
   resolveActiveReferenceIds,
   startMultiBatches,
@@ -36,7 +40,14 @@ router.post('/plan', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/execute', async (req, res, next) => {
+router.post('/execute', requirePlanCapacity({
+  costResolver: (req) => {
+    const slideCount = Number(req.body?.slideCount);
+    if (Number.isInteger(slideCount) && slideCount > 0) return slideCount;
+    const plannedSlides = Array.isArray(req.body?.plan?.slides) ? req.body.plan.slides.length : 0;
+    return plannedSlides > 0 ? plannedSlides : 5;
+  },
+}), async (req, res, next) => {
   try {
     const { narrative, plan, characterId, activeReferenceIds, slideCount = 5, allowOutfitChanges = false, kineticMotionBlur = 'off', aspectRatio, resolutionTier, imageModel } = req.body || {};
     if (!characterId || typeof characterId !== 'string') throw new AppError('"characterId" is required', 400, 'VALIDATION_ERROR');
@@ -68,6 +79,27 @@ router.post('/execute', async (req, res, next) => {
     });
 
     const jobIds = startMultiBatches(entries, { aspectRatio: finalAspectRatio, imageSize: finalImageSize, imageModel, gallerySource: 'carousel' }, { characterId, activeReferenceIds: resolvedActiveReferenceIds });
+    const runId = startGenerationRun({
+      userId: req.session?.userId,
+      feature: 'carousel',
+      provider: 'gemini',
+      model: imageModel || null,
+    });
+    finishGenerationRun(runId, {
+      status: 'succeeded',
+      outputCount: entries.length,
+      provider: 'gemini',
+      model: imageModel || null,
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.started',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'carousel',
+      payload: { feature: 'carousel', slideCount: entries.length },
+    });
+
     res.status(202).json({
       success: true,
       data: {
@@ -79,7 +111,12 @@ router.post('/execute', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/follow-up', async (req, res, next) => {
+router.post('/follow-up', requirePlanCapacity({
+  costResolver: (req) => {
+    const count = Number(req.body?.count);
+    return Number.isInteger(count) && count > 0 ? count : 4;
+  },
+}), async (req, res, next) => {
   try {
     const { imageId, imageBase64, mimeType, characterId, activeReferenceIds, count = 4, direction = '', followUpMode = 'manual', strictContinuityLock = true, useCharacterRefsInFollowUp = false, aspectRatio, resolutionTier, imageModel } = req.body || {};
     if ((!imageId || typeof imageId !== 'string') && (!imageBase64 || typeof imageBase64 !== 'string')) throw new AppError('Provide "imageId" or "imageBase64"', 400, 'VALIDATION_ERROR');
@@ -126,7 +163,13 @@ router.post('/follow-up', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/polls', async (req, res, next) => {
+router.post('/polls', requirePlanCapacity({
+  costResolver: (req) => {
+    const pollCount = Number(req.body?.pollCount);
+    const safePollCount = Math.max(1, Math.min(5, Number.isInteger(pollCount) ? pollCount : 3));
+    return safePollCount * 2;
+  },
+}), async (req, res, next) => {
   try {
     const { topic, characterId, activeReferenceIds, pollCount = 3, aspectRatio, resolutionTier, imageModel } = req.body || {};
     if (!topic || typeof topic !== 'string' || topic.trim().length === 0) throw new AppError('"topic" is required', 400, 'VALIDATION_ERROR');
@@ -168,6 +211,19 @@ router.post('/polls', async (req, res, next) => {
     }
 
     const jobIds = startMultiBatches(entries, { aspectRatio: finalAspectRatio, imageSize: finalImageSize, imageModel, gallerySource: 'carousel' }, { characterId: characterId || null, activeReferenceIds: resolvedActiveReferenceIds });
+    const pollRunId = startGenerationRun({
+      userId: req.session?.userId,
+      feature: 'carousel-polls',
+      provider: 'gemini',
+      model: imageModel || null,
+    });
+    finishGenerationRun(pollRunId, {
+      status: 'succeeded',
+      outputCount: entries.length,
+      provider: 'gemini',
+      model: imageModel || null,
+    });
+
     res.status(202).json({ success: true, data: { polls, jobIds, totalImages: entries.length, formatLock: { aspectRatio: finalAspectRatio, imageSize: finalImageSize } } });
   } catch (err) { next(err); }
 });

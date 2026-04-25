@@ -5,13 +5,24 @@ const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
 const log = require('../utils/logger');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
+const { startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
 const { createMultipartParser } = require('../middleware/multipartParser');
 const { initSSE } = require('../utils/sse');
 
 const router = express.Router();
 const parseMultipartIfNeeded = createMultipartParser({ maxBytes: 50 * 1024 * 1024 });
 
-router.post('/', parseMultipartIfNeeded, (req, res, next) => {
+router.post('/', parseMultipartIfNeeded, requirePlanCapacity({
+  costResolver: (req) => {
+    let config = req.body?.config;
+    if (typeof config === 'string') {
+      try { config = JSON.parse(config); } catch { config = null; }
+    }
+    const count = Number(config?.count);
+    return Number.isInteger(count) && count > 0 ? count : 1;
+  },
+}), (req, res, next) => {
   try {
     let { mode, config } = req.body || {};
     if (typeof config === 'string') {
@@ -142,6 +153,18 @@ router.post('/', parseMultipartIfNeeded, (req, res, next) => {
       imageSize: finalImageSize,
       imageModel,
     });
+    const runId = startGenerationRun({
+      userId: req.session?.userId,
+      feature: `batch-${mode}`,
+      provider: 'gemini',
+      model: imageModel || null,
+    });
+    finishGenerationRun(runId, {
+      status: 'succeeded',
+      outputCount: job.total || 1,
+      provider: 'gemini',
+      model: imageModel || null,
+    });
     res.status(202).json({ success: true, data: job });
   } catch (err) {
     next(err);
@@ -250,7 +273,7 @@ router.delete('/:jobId', (req, res, next) => {
 });
 
 // --- Quality Score Picks endpoint ---
-const geminiService = require('../services/geminiService');
+const geminiService = require('../services/geminiBackend');
 const apiKeyManager = require('../services/apiKeyManager');
 
 const SCORE_CONCURRENCY = 3;

@@ -2,18 +2,21 @@
 const express = require('express');
 const sharp = require('sharp');
 const apiKeyManager = require('../services/apiKeyManager');
-const geminiService = require('../services/geminiService');
+const geminiService = require('../services/geminiBackend');
 const sceneAnalyzer = require('../services/sceneAnalyzer');
 const referenceManager = require('../services/referenceManager');
 const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
 const log = require('../utils/logger');
+const { logUsageEvent, startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
 const { resolveDimensions } = require('../services/dimensionResolver');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 const router = express.Router();
-const PHOTO_MATCH_REF_MAX_DIMENSION = 1024;
+const PHOTO_MATCH_REF_MAX_DIMENSION = 896;
+const PHOTO_MATCH_IDENTITY_MAX_DIMENSION = 2048; // keep character identity refs higher res than the scene blueprint
 const ANALYSIS_FALLBACK_CODES = new Set(['GEMINI_TRANSIENT', 'GEMINI_ERROR', 'PARSE_ERROR', 'GENERATION_EMPTY']);
 
 function bgStrengthInstruction(strength) {
@@ -46,9 +49,9 @@ function framingInstruction(exactMode) {
 
 function expressionInstruction(exactMode) {
   if (exactMode) {
-    return 'EXACTLY REPLICATE the expression, gaze direction, head tilt, hair placement, and overall attitude from the source image.';
+    return 'EXACTLY REPLICATE the expression, gaze direction, and overall attitude from the source image. Do NOT copy the facial structure, skin tone, hair color, hairline, or hair style of the person in the source image — use the character identity references only.';
   }
-  return 'keep the expression, gaze, and head position close to the source image.';
+  return 'keep the expression, gaze, and head position close to the source image. Do NOT copy the facial structure, skin tone, hair color, hairline, or hair style of the person in the source image — use the character identity references only.';
 }
 
 async function optimizeInlineImage(base64Data, mimeType) {
@@ -70,57 +73,102 @@ async function optimizeInlineImage(base64Data, mimeType) {
   }
 }
 
-async function buildPhotoMatchIdentityImages(characterId, activeRefs) {
-  const primary = referenceManager.getPrimaryImages(characterId)[0];
-  if (primary?.buffer?.length) {
-    const optimized = await optimizeInlineImage(primary.buffer.toString('base64'), primary.mimeType);
-    return optimized ? [optimized] : [];
+async function optimizeIdentityImage(base64Data, mimeType) {
+  if (!base64Data || typeof base64Data !== 'string') return null;
+  if (!mimeType || typeof mimeType !== 'string' || !mimeType.startsWith('image/')) return null;
+  try {
+    const resized = await sharp(Buffer.from(base64Data, 'base64'))
+      .rotate()
+      .resize(PHOTO_MATCH_IDENTITY_MAX_DIMENSION, PHOTO_MATCH_IDENTITY_MAX_DIMENSION, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 88 })
+      .toBuffer();
+    return { mimeType: 'image/jpeg', base64Data: resized.toString('base64') };
+  } catch {
+    return { mimeType, base64Data };
   }
-
-  const firstActiveRef = Array.isArray(activeRefs) && activeRefs.length > 0 ? activeRefs[0] : null;
-  if (!firstActiveRef) return [];
-
-  const data = referenceManager.getReferenceImage(characterId, firstActiveRef.id);
-  if (!data?.buffer?.length) return [];
-  const optimized = await optimizeInlineImage(data.buffer.toString('base64'), data.mimeType);
-  return optimized ? [optimized] : [];
 }
 
-function buildPhotoMatchParts({ sourceImage, identityImages, prompt, exactMode = false }) {
-  const parts = [
-    {
-      text: exactMode
-        ? '[SOURCE PHOTO]\nUse this uploaded image as an exact reconstruction blueprint. Recreate the same framing, outfit, background, expression, lighting, hair placement, and pose as closely as possible while transferring only the target character identity.'
-        : '[SOURCE PHOTO]\nUse this uploaded image as the exact scene blueprint. Match its composition, framing, outfit, background, lighting, expression, and overall vibe according to the strength controls.',
-    },
-    {
-      inlineData: {
-        mimeType: sourceImage.mimeType,
-        data: sourceImage.base64Data,
-      },
-    },
-  ];
+async function buildPhotoMatchIdentityImages(characterId, activeRefs) {
+  const results = [];
 
-  if (Array.isArray(identityImages) && identityImages.length > 0) {
-    parts.push({
-      text: '[CHARACTER IDENTITY REFERENCES]\nUse these images only for face, body identity, skin tone, and recognizable subject features. Do not copy their scene or outfit unless the prompt explicitly says to.',
-    });
-    for (const ref of identityImages) {
-      parts.push({
-        inlineData: {
-          mimeType: ref.mimeType,
-          data: ref.base64Data,
-        },
-      });
+  // Primary image(s) first — higher res for identity
+  const primaries = referenceManager.getPrimaryImages(characterId);
+  for (const primary of primaries) {
+    if (!primary?.buffer?.length) continue;
+    const optimized = await optimizeIdentityImage(primary.buffer.toString('base64'), primary.mimeType);
+    if (optimized) results.push(optimized);
+  }
+
+  // All active reference images
+  if (Array.isArray(activeRefs)) {
+    for (const ref of activeRefs) {
+      const data = referenceManager.getReferenceImage(characterId, ref.id);
+      if (!data?.buffer?.length) continue;
+      const optimized = await optimizeIdentityImage(data.buffer.toString('base64'), data.mimeType);
+      if (optimized) results.push(optimized);
     }
   }
+
+  // Allow up to 5 identity images so multi-primary characters keep stronger identity lock.
+  return results.slice(0, 5);
+}
+
+function buildPhotoMatchParts({ sourceImage, identityImages, characterName, prompt, exactMode = false }) {
+  const parts = [];
+  const refCount = Array.isArray(identityImages) ? identityImages.length : 0;
+  const sourceNum = refCount + 1;
+  const name = characterName || 'the character';
+
+  // Build ref label e.g. "Image 1", "Images 1 and 2", "Images 1, 2 and 3"
+  const refLabel = refCount === 0 ? null
+    : refCount === 1 ? 'Image 1'
+    : refCount === 2 ? 'Images 1 and 2'
+    : `Images 1, ${Array.from({ length: refCount - 2 }, (_, i) => i + 2).join(', ')} and ${refCount}`;
+
+  // --- CHARACTER REFS FIRST ---
+  if (refCount > 0) {
+    parts.push({
+      text: [
+        `[${refLabel} — ${name.toUpperCase()} REFERENCE PHOTOS]`,
+        `These ${refCount === 1 ? 'is' : 'are'} the character reference ${refCount === 1 ? 'photo' : 'photos'} for ${name}.`,
+        `Copy from ${refLabel}:`,
+        `- Face (exact likeness, not approximate)`,
+        `- Skin tone and facial structure`,
+        `- Body shape and breast size/volume (match exactly)`,
+        `- Hair color and style`,
+        `- Makeup`,
+        `These identity traits are locked and override anything seen in the scene image.`,
+        `Do NOT copy the scene, background, or outfit from ${refLabel}.`,
+      ].join('\n'),
+    });
+    for (const ref of identityImages) {
+      parts.push({ inlineData: { mimeType: ref.mimeType, data: ref.base64Data } });
+    }
+  }
+
+  // --- SOURCE PHOTO LAST ---
+  parts.push({
+    text: [
+      `[Image ${sourceNum} — SCENE TO RECREATE]`,
+      exactMode
+        ? `Recreate this photo exactly: same outfit, background, lighting, pose, expression, framing.`
+        : `Use this photo as the scene blueprint: match outfit, background, lighting, pose, and composition.`,
+      refLabel
+        ? `Replace the person in this photo with ${name} from ${refLabel}.`
+        : `The person should be ${name}.`,
+      `Do NOT copy from Image ${sourceNum}: face, facial structure, skin tone, body shape, breast size, hair color, hair style, or tattoos.`,
+      `Image ${sourceNum} is a scene-only reference, not an identity reference.`,
+    ].join('\n'),
+  });
+  parts.push({ inlineData: { mimeType: sourceImage.mimeType, data: sourceImage.base64Data } });
 
   parts.push({ text: prompt.trim() });
   return parts;
 }
 
 // POST /api/photo-match/recreate
-router.post('/recreate', async (req, res, next) => {
+router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
+  let runId = null;
   try {
     const {
       image, mimeType, characterId, activeReferenceIds,
@@ -178,8 +226,8 @@ router.post('/recreate', async (req, res, next) => {
     if (sceneData.composition)  sceneParts.push(`Composition: ${sceneData.composition}`);
     if (sceneData.mood)         sceneParts.push(`Mood: ${sceneData.mood}`);
     if (sceneData.pose)         sceneParts.push(`Pose reference: ${sceneData.pose}`);
-    if (sceneData.expression)   sceneParts.push(`Expression: ${sceneData.expression}`);
-    if (sceneData.outfit)       sceneParts.push(`Outfit: ${sceneData.outfit}`);
+    // Intentionally exclude sceneData.expression and sceneData.outfit — those describe
+    // the source person's body/face which we do NOT want to copy onto the character
     const activeRefNotes = (activeRefs || [])
       .map((ref) => {
         const note = typeof ref?.overridePrompt === 'string' ? ref.overridePrompt.trim() : '';
@@ -189,53 +237,77 @@ router.post('/recreate', async (req, res, next) => {
       })
       .filter(Boolean);
 
+    const refCount = identityImages.length;
+    const sourceNum = refCount + 1;
+    const refLabel = refCount === 0 ? null
+      : refCount === 1 ? 'Image 1'
+      : refCount === 2 ? 'Images 1 and 2'
+      : `Images 1–${refCount}`;
+    const sourceRef = `Image ${sourceNum}`;
+    const name = character.name;
+
     const prompt = [
+      // Core task
       exactMode
-        ? `Create one photorealistic exact recreation of the uploaded photo using ${character.name}'s identity.`
-        : `Create one photorealistic matched image of ${character.name}.`,
-      exactMode
-        ? 'Use the uploaded source photo as a strict blueprint. Preserve the same shot, clothing, environment, pose, expression, lighting, and composition.'
-        : 'Use the uploaded source photo as the scene and styling blueprint.',
-      'Use the character identity references only for identity preservation.',
-      'Return exactly one image and no text.',
+        ? `Recreate ${sourceRef} exactly. Replace the person with ${name}.`
+        : `Create a photorealistic image of ${name} in the scene from ${sourceRef}.`,
       '',
-      '[BACKGROUND — strength ' + bg + '%]',
-      bgInstruction + '.',
+      // Who is the person
+      refLabel
+        ? `WHO: ${name} — take face, facial structure, body shape, breast volume, hair color, hair style, skin tone, and makeup from ${refLabel}. Match exactly as shown.`
+        : `WHO: ${name} — ${character.masterPrompt || ''}`,
       '',
-      '[POSE — strength ' + pose + '%]',
-      poseInstruction + '.',
+      `IDENTITY PRIORITY: if anything in the scene image conflicts with the character references, the character references always win for face, skin, body shape, breast volume, hair, and makeup.`,
+      `Treat the uploaded scene image only as a blueprint for environment, outfit, framing, pose, and expression.`,
       '',
-      '[OUTFIT]',
-      outfitInstruction(exactMode),
+      // What to copy from scene
+      `SCENE (from ${sourceRef}): ${bgInstruction}. ${poseInstruction}. ${outfitInstruction(exactMode)} ${framingInstruction(exactMode)} ${expressionInstruction(exactMode)}`,
       '',
-      '[FRAMING]',
-      framingInstruction(exactMode),
+      // Hard rules
+      `RULES:`,
+      `- Do NOT copy face, facial structure, body shape, breast size, hair color, skin tone, or tattoos from ${sourceRef}`,
+      `- The person in the output is ${name} only`,
+      `- The output must clearly look like ${name}, even if the source image person looks very different`,
+      `- If needed, sacrifice source-person likeness completely to preserve ${name}'s identity`,
+      exactMode ? `- Do not change outfit, background, crop, camera angle, or scene layout` : null,
       '',
-      '[EXPRESSION]',
-      expressionInstruction(exactMode),
+      // Scene analysis context
+      sceneParts.length > 0 ? `SCENE DETAILS:\n${sceneParts.join('\n')}` : null,
       '',
-      sceneParts.length > 0 ? '[SCENE ANALYSIS]' : null,
-      ...sceneParts,
-      sceneParts.length > 0 ? '' : null,
-      activeRefNotes.length > 0 ? '[ACTIVE REFERENCE DETAILS]' : null,
-      ...activeRefNotes,
-      activeRefNotes.length > 0 ? '' : null,
-      '[IDENTITY]',
-      character.masterPrompt || '',
+      // Active ref notes (per-ref overrides)
+      activeRefNotes.length > 0 ? `CHARACTER NOTES:\n${activeRefNotes.join('\n')}` : null,
       '',
-      exactMode ? '[DO NOT CHANGE]\nDo not invent a new outfit, new background, new pose, new crop, new camera angle, new expression, or new scene layout.' : null,
-      exactMode ? '' : null,
+      // Identity / master prompt (only if refs exist, otherwise already used above)
+      refLabel && character.masterPrompt ? `ADDITIONAL IDENTITY: ${character.masterPrompt}` : null,
+      '',
+      'Return exactly one image. No text.',
       REALISM_DIRECTIVE,
     ].filter((s) => s != null).join('\n');
 
     const parts = buildPhotoMatchParts({
       sourceImage,
       identityImages,
+      characterName: name,
       prompt,
       exactMode,
     });
 
     const apiKey = apiKeyManager.getActiveKey();
+    runId = startGenerationRun({
+      userId: req.session?.userId,
+      feature: 'photo-match',
+      provider: 'gemini',
+      model: imageModel || null,
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.started',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'photo-match',
+      payload: { feature: 'photo-match', model: imageModel || null, characterId },
+    });
+
     const result = await geminiService.generateImage(apiKey, prompt, {
       aspectRatio,
       imageSize: resolutionTier,
@@ -257,13 +329,28 @@ router.post('/recreate', async (req, res, next) => {
       source: 'photo-match',
     });
 
-    galleryManager.save({
+    const galleryEntry = galleryManager.save({
       base64Data: result.image.base64Data,
       mimeType: result.image.mimeType,
-      prompt: 'Photo match',
+      prompt: prompt,
       source: 'photo-match',
       characterId,
       aspectRatio: aspectRatio || null,
+    });
+
+    finishGenerationRun(runId, {
+      status: 'succeeded',
+      outputCount: 1,
+      provider: 'gemini',
+      model: result.modelUsed || imageModel || null,
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.succeeded',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'photo-match',
+      payload: { feature: 'photo-match', imageId: stored.imageId, galleryId: galleryEntry?.id },
     });
 
     res.json({
@@ -277,6 +364,21 @@ router.post('/recreate', async (req, res, next) => {
       },
     });
   } catch (err) {
+    finishGenerationRun(runId, {
+      status: 'failed',
+      outputCount: 0,
+      errorCode: err.code || err.name || 'UNKNOWN',
+      errorMessage: err.message || 'Photo match failed',
+      provider: 'gemini',
+    });
+    logUsageEvent({
+      userId: req.session?.userId,
+      eventType: 'generation.failed',
+      entityType: 'generation_run',
+      entityId: runId,
+      source: 'photo-match',
+      payload: { feature: 'photo-match', errorCode: err.code || err.name, message: err.message },
+    });
     next(err);
   }
 });
