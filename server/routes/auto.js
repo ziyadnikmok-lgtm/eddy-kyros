@@ -231,8 +231,8 @@ router.post('/plan', async (req, res, next) => {
     const result = await validateAndPlan(req.body);
     const { planned } = result;
     if (req.body && req.body.execute) {
+      ({ reservationIds } = reservePlanCapacity(req, res, planned.imageEntries.length || 1, '/api/auto/plan'));
       const data = executePlannedEntries(planned, result);
-      ({ reservationIds } = reservePlanCapacity(req, res, data.totalImages, '/api/auto/plan'));
       return res.status(202).json({ success: true, data });
     }
     res.json({ success: true, data: planned.days });
@@ -269,8 +269,8 @@ router.post('/execute', async (req, res, next) => {
       },
     });
 
+    ({ reservationIds } = reservePlanCapacity(req, res, planned.imageEntries.length || 1, '/api/auto/execute'));
     const data = executePlannedEntries(planned, result);
-    ({ reservationIds } = reservePlanCapacity(req, res, data.totalImages, '/api/auto/execute'));
     for (const day of planned.days) autoPlanStore.markDayExecuted(savedPlan.id, day.day, data.jobIds);
     const autoRunId = startGenerationRun({
       userId: req.session?.userId,

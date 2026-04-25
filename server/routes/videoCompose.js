@@ -14,6 +14,7 @@ const apiKeyManager = require('../services/apiKeyManager');
 const geminiService = require('../services/geminiBackend');
 const directGeminiService = require('../services/geminiService');
 const { startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 
 const router = express.Router();
 const parseMultipart = createMultipartParser({ maxBytes: 500 * 1024 * 1024 });
@@ -481,7 +482,7 @@ Rules:
   }
 });
 
-router.post('/', parseMultipart, async (req, res, next) => {
+router.post('/', parseMultipart, requirePlanCapacity(), async (req, res, next) => {
   const tmpFiles = [];
   let outputPath = null;
   let completed = false;

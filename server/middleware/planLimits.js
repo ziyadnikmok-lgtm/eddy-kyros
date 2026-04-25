@@ -44,7 +44,7 @@ function getUsageLast24h(userId) {
   const row = db.prepare(`
     SELECT SUM(output_count) AS total
     FROM generation_runs
-    WHERE user_id = ? AND status IN ('completed','partial')
+    WHERE user_id = ? AND status IN ('succeeded','completed','partial')
       AND datetime(started_at) >= datetime('now', '-1 day')
   `).get(userId);
   return row?.total || 0;

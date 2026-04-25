@@ -1,10 +1,11 @@
 const express = require('express');
 const carouselStoryteller = require('../services/carouselStoryteller');
 const { AppError } = require('../middleware/errorHandler');
+const { requirePlanCapacity } = require('../middleware/planLimits');
 
 const router = express.Router();
 
-router.post('/generate', async (req, res, next) => {
+router.post('/generate', requirePlanCapacity(), async (req, res, next) => {
   try {
     const validRatios = ['1:1', '16:9', '9:16', '4:3', '3:4', '4:5'];
     const validSizes = ['1K', '2K', '4K'];

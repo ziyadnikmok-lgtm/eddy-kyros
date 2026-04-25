@@ -305,7 +305,12 @@ async function handleClone({ url, characterId, mode, cosplayMode = false, postLi
 
 // ── Routes ─────────────────────────────────────────────────────────────────────
 
-router.post('/', requirePlanCapacity(), async (req, res, next) => {
+router.post('/', requirePlanCapacity({
+  costResolver: (req) => {
+    const limit = Number(req.body?.postLimit);
+    return Number.isInteger(limit) && limit > 0 ? limit : 1;
+  },
+}), async (req, res, next) => {
   let runId = null;
   try {
     const {
