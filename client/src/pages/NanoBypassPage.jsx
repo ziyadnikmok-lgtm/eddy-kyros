@@ -12,7 +12,7 @@ const IMAGE_SIZES = ['1K', '2K'];
 
 const LOCKED_MODEL = { id: 'flash', label: 'Flash 3.1', sublabel: 'gemini-3.1-flash', color: 'bg-blue-600 hover:bg-blue-500' };
 const NANO_BYPASS_HANDOFF_KEY = 'kyros.nanoBypass.handoff';
-const INITIAL_IMAGE_SLOT_COUNT = 12;
+const INITIAL_IMAGE_SLOT_COUNT = 3;
 
 const _cache = {
   prompt: '',
@@ -174,8 +174,10 @@ function ImageSlot({ index, image, onAddMany, onRemove }) {
 
   return (
     <div
-      className={`relative rounded-xl border-2 border-dashed transition cursor-pointer group
-        ${image ? 'border-zinc-600/60' : 'border-zinc-700/50 hover:border-zinc-500/60'}`}
+      className={`relative overflow-hidden rounded-2xl border transition cursor-pointer group
+        ${image
+          ? 'border-zinc-600/60 bg-zinc-950 shadow-lg shadow-black/20'
+          : 'border-dashed border-zinc-700/60 bg-zinc-950/45 hover:border-cyan-400/60 hover:bg-cyan-500/[0.04]'}`}
       style={{ aspectRatio: '1/1' }}
       onDrop={handleDrop}
       onDragOver={(e) => e.preventDefault()}
@@ -194,13 +196,14 @@ function ImageSlot({ index, image, onAddMany, onRemove }) {
       />
       {image ? (
         <>
-          <img src={image.preview} alt="" className="w-full h-full object-cover rounded-xl" />
+          <img src={image.preview} alt="" className="w-full h-full object-cover" />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-black/10 opacity-80" />
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onRemove(index); }}
-            className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-black/70 text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer"
+            className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-black/75 text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer"
           >×</button>
-          <div className="absolute bottom-1.5 left-1.5 bg-black/60 rounded-md px-1.5 py-0.5 text-[9px] text-zinc-300">
+          <div className="absolute bottom-1.5 left-1.5 bg-black/65 rounded-md px-1.5 py-0.5 text-[9px] text-zinc-200">
             {image.autoCharacterRef ? 'REF' : `IMG ${index + 1}`}
           </div>
           {image.referenceLabel && (
@@ -210,12 +213,30 @@ function ImageSlot({ index, image, onAddMany, onRemove }) {
           )}
         </>
       ) : (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-zinc-600">
-          <span className="text-2xl">+</span>
-          <span className="text-[10px]">Image {index + 1}</span>
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-zinc-500 transition group-hover:text-cyan-200">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full border border-zinc-700/70 bg-zinc-900/80 text-xl shadow-inner shadow-white/5 transition group-hover:border-cyan-400/50 group-hover:bg-cyan-400/10">+</span>
+          <span className="text-[10px] font-medium">Image {index + 1}</span>
         </div>
       )}
     </div>
+  );
+}
+
+function AddImageSlot({ onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group relative overflow-hidden rounded-2xl border border-cyan-400/25 bg-gradient-to-br from-cyan-500/15 via-blue-500/10 to-zinc-950 p-3 text-left transition hover:border-cyan-300/60 hover:from-cyan-400/20 hover:shadow-lg hover:shadow-cyan-950/30"
+      style={{ aspectRatio: '1/1' }}
+    >
+      <div className="absolute -right-8 -top-8 h-20 w-20 rounded-full bg-cyan-300/10 blur-2xl transition group-hover:bg-cyan-300/20" />
+      <div className="relative flex h-full flex-col items-center justify-center gap-2 text-center">
+        <span className="flex h-10 w-10 items-center justify-center rounded-full border border-cyan-300/40 bg-cyan-300/10 text-2xl font-light text-cyan-100 transition group-hover:scale-105">+</span>
+        <span className="text-[11px] font-semibold text-cyan-100">Add more</span>
+        <span className="text-[9px] leading-tight text-cyan-100/55">Unlimited slots</span>
+      </div>
+    </button>
   );
 }
 
@@ -539,22 +560,14 @@ export default function NanoBypassPage() {
           {/* Images grid */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-zinc-400 font-medium">Images ({activeImages.length})</span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={addImageSlot}
-                  className="text-[10px] font-medium text-blue-300 hover:text-blue-200"
-                >
-                  Add slot
-                </button>
-                <span className="text-[10px] text-zinc-600">Paste/drop multiple</span>
-              </div>
+              <span className="text-xs text-zinc-300 font-semibold">Images ({activeImages.length})</span>
+              <span className="text-[10px] text-zinc-600">Paste/drop multiple</span>
             </div>
             <div className="grid grid-cols-3 gap-2">
               {images.map((img, i) => (
                 <ImageSlot key={i} index={i} image={img} onAddMany={handleAddMany} onRemove={handleRemove} />
               ))}
+              <AddImageSlot onClick={addImageSlot} />
             </div>
           </div>
 
