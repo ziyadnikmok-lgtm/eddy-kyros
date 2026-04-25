@@ -12,7 +12,7 @@ const IMAGE_SIZES = ['1K', '2K'];
 
 const LOCKED_MODEL = { id: 'flash', label: 'Flash 3.1', sublabel: 'gemini-3.1-flash', color: 'bg-blue-600 hover:bg-blue-500' };
 const NANO_BYPASS_HANDOFF_KEY = 'kyros.nanoBypass.handoff';
-const INITIAL_IMAGE_SLOT_COUNT = 5;
+const INITIAL_IMAGE_SLOT_COUNT = 12;
 
 const _cache = {
   prompt: '',
