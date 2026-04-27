@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { library as libraryApi, gallery as galleryApi, video as videoApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { Btn, Badge, Spinner, Empty, ConfirmDialog, Toggle, Modal } from '../components/UI';
@@ -181,25 +181,39 @@ async function copyImageFromUrl(url, notify) {
   }
 }
 
-function CardActionButton({ tone = 'default', children, ...props }) {
+function ContextMenuItem({ icon, label, tone = 'default', shortcut, ...props }) {
   const toneClass = tone === 'danger'
-    ? 'text-red-300 hover:bg-red-500/10 hover:text-red-200'
-    : 'text-zinc-200 hover:bg-zinc-800/90 hover:text-white';
+    ? 'text-red-400/80 hover:bg-red-500/10 hover:text-red-300'
+    : 'text-zinc-300 hover:bg-white/[0.06] hover:text-white';
   return (
     <button
       type="button"
-      className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${toneClass}`}
+      className={`group/item flex w-full items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-left text-[13px] font-medium transition-all duration-150 cursor-pointer ${toneClass}`}
       {...props}
     >
-      {children}
+      {icon && <span className="flex h-4 w-4 shrink-0 items-center justify-center text-zinc-500 transition-colors group-hover/item:text-inherit">{icon}</span>}
+      <span className="flex-1 truncate">{label}</span>
+      {shortcut && <span className="text-[10px] text-zinc-600 font-mono">{shortcut}</span>}
     </button>
   );
 }
 
-const LIBRARY_CONTEXT_MENU_WIDTH = 256;
-const LIBRARY_CONTEXT_MENU_HEIGHT = 372;
+const LIBRARY_CONTEXT_MENU_WIDTH = 240;
+const LIBRARY_CONTEXT_MENU_HEIGHT = 380;
 const LIBRARY_CONTEXT_MENU_GAP = 10;
 const LIBRARY_CONTEXT_MENU_MARGIN = 12;
+
+/* Inline SVG icons for context menu */
+const ctxIcons = {
+  eye: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
+  clipboard: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>,
+  image: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>,
+  edit: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+  zap: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
+  grid: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>,
+  download: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+  trash: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
+};
 
 function ImageContextMenu({ menu, onClose, onAction }) {
   useEffect(() => {
@@ -220,28 +234,65 @@ function ImageContextMenu({ menu, onClose, onAction }) {
 
   if (!menu) return null;
 
+  /* Build a clean display name: prefer source label, then character, then a short ID. Never show a raw UUID. */
+  const source = menu.item.source;
+  const sourceLabel = {
+    'generate': 'Generated Image',
+    'batch': 'Batch Image',
+    'carousel': 'Carousel Image',
+    'scene-recreate': 'Scene Recreate',
+    'post-clone': 'Post Clone',
+    'reel-copy': 'Reel Copy',
+    'reel-recreate': 'Reel Recreate',
+    'tweak': 'Tweaked Image',
+    'nano-bypass': 'Nano Bypass',
+    'nano-bypass-experimental': 'Nano Bypass',
+    'photo-match': 'Photo Match',
+  }[source] || 'Image';
+
+  const dateStr = menu.item.createdAt
+    ? new Date(menu.item.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : '';
+
+  const badges = [
+    menu.item.aspectRatio,
+    menu.item.metadata?.resolutionTier,
+    menu.item.metadata?.imageModel,
+  ].filter(Boolean);
+
   return (
     <div
-      className="fixed z-[80] w-64 rounded-xl border border-zinc-700/70 bg-zinc-950/98 p-2 shadow-2xl shadow-black/40 backdrop-blur-xl"
+      className="fixed z-[80] rounded-2xl border border-zinc-700/50 bg-zinc-900/[0.97] p-1.5 shadow-2xl shadow-black/50 backdrop-blur-2xl"
       style={{
+        width: LIBRARY_CONTEXT_MENU_WIDTH,
         left: menu.x,
         top: menu.y,
       }}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <div className="mb-2 border-b border-zinc-800 px-2 pb-2">
-        <p className="truncate text-xs font-medium text-zinc-200">{menu.item.metadata?.filename || 'Image actions'}</p>
-        <p className="text-[11px] text-zinc-500">Open, copy, edit, or send this image somewhere else.</p>
+      {/* Header */}
+      <div className="mb-1 rounded-xl bg-zinc-800/50 px-3 py-2.5">
+        <p className="text-[13px] font-semibold text-zinc-100 truncate">{sourceLabel}</p>
+        <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+          {dateStr && <span className="text-[10px] text-zinc-500">{dateStr}</span>}
+          {badges.map((b, i) => (
+            <span key={i} className="rounded-md bg-zinc-700/50 px-1.5 py-0.5 text-[9px] font-medium text-zinc-400">{b}</span>
+          ))}
+        </div>
       </div>
-      <div className="space-y-1">
-        <CardActionButton onClick={() => onAction('open')}>Open preview</CardActionButton>
-        <CardActionButton onClick={() => onAction('copyPrompt')}>Copy prompt</CardActionButton>
-        <CardActionButton onClick={() => onAction('copyImage')}>Copy image</CardActionButton>
-        <CardActionButton onClick={() => onAction('imageEditor')}>Edit in Image Editor</CardActionButton>
-        <CardActionButton onClick={() => onAction('nanoBypass')}>More edit in Nano Bypass</CardActionButton>
-        <CardActionButton onClick={() => onAction('carousel')}>Go to Carousel</CardActionButton>
-        <CardActionButton onClick={() => onAction('download')}>Download</CardActionButton>
-        <CardActionButton tone="danger" onClick={() => onAction('delete')}>Delete</CardActionButton>
+
+      {/* Actions */}
+      <div className="py-0.5">
+        <ContextMenuItem icon={ctxIcons.eye} label="Open preview" onClick={() => onAction('open')} />
+        <ContextMenuItem icon={ctxIcons.clipboard} label="Copy prompt" onClick={() => onAction('copyPrompt')} />
+        <ContextMenuItem icon={ctxIcons.image} label="Copy image" onClick={() => onAction('copyImage')} />
+        <div className="my-1 border-t border-zinc-800/80 mx-2" />
+        <ContextMenuItem icon={ctxIcons.edit} label="Edit in Image Editor" onClick={() => onAction('imageEditor')} />
+        <ContextMenuItem icon={ctxIcons.zap} label="Nano Bypass" onClick={() => onAction('nanoBypass')} />
+        <ContextMenuItem icon={ctxIcons.grid} label="Go to Carousel" onClick={() => onAction('carousel')} />
+        <div className="my-1 border-t border-zinc-800/80 mx-2" />
+        <ContextMenuItem icon={ctxIcons.download} label="Download" onClick={() => onAction('download')} />
+        <ContextMenuItem icon={ctxIcons.trash} label="Delete" tone="danger" onClick={() => onAction('delete')} />
       </div>
     </div>
   );

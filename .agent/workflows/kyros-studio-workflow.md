@@ -8,9 +8,9 @@ description: Kyros Studio project workflow — folder rules, testing, and GitHub
 
 | Folder | Role |
 |---|---|
-| `/Users/admin/Downloads/ai-content-studio-saas-main` | ✅ Active working folder — all edits happen here |
-| `/Users/admin/Downloads/copy kyros` | 🔒 Personal backup only — never push from here |
-| `/Users/admin/Downloads/ai-content-studio-saas-upstream` | 🚀 Clean GitHub-connected push folder |
+| `/Users/admin/ai-content-studio-saas-main` | ✅ Active working folder — all edits happen here |
+| `/Users/admin/copy kyros` | 🔒 Personal backup only — never push from here |
+| `/Users/admin/ai-content-studio-saas-upstream` | 🚀 Clean GitHub-connected push folder |
 
 ## Rules
 
@@ -28,7 +28,7 @@ description: Kyros Studio project workflow — folder rules, testing, and GitHub
 - Run the Electron app from the main project folder:
 
 ```bash
-cd /Users/admin/Downloads/ai-content-studio-saas-main
+cd /Users/admin/ai-content-studio-saas-main
 node electron/launch.js
 ```
 

@@ -333,14 +333,15 @@ app.whenReady().then(async () => {
   // Set REMOTE_URL in the userData .env or as an env var to enable.
   // Example:  REMOTE_URL=https://kyros.yourdomain.com
   const envPath = path.join(userDataPath, '.env');
+  const forceLocalMode = process.env.KYROS_FORCE_LOCAL === '1';
   let remoteUrl = process.env.REMOTE_URL;
-  if (!remoteUrl && fs.existsSync(envPath)) {
+  if (!forceLocalMode && !remoteUrl && fs.existsSync(envPath)) {
     const envContent = fs.readFileSync(envPath, 'utf8');
     const match = envContent.match(/^REMOTE_URL=(.+)$/m);
     if (match) remoteUrl = match[1].trim();
   }
 
-  if (remoteUrl) {
+  if (remoteUrl && !forceLocalMode) {
     console.log(`[electron] REMOTE_URL mode — loading ${remoteUrl}`);
     serverPort = null;
     mainWindow = new BrowserWindow({
@@ -353,6 +354,10 @@ app.whenReady().then(async () => {
     mainWindow.webContents.on('did-finish-load', () => console.log('[electron] remote window loaded'));
     mainWindow.on('closed', () => { mainWindow = null; });
     return;
+  }
+
+  if (forceLocalMode) {
+    console.log('[electron] KYROS_FORCE_LOCAL=1 — skipping REMOTE_URL mode');
   }
 
   ensureUserData();

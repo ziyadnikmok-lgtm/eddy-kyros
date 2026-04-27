@@ -1,11 +1,8 @@
-[phases.setup]
-aptPkgs = ['python3', 'make', 'g++']
-
 [phases.install]
-cmds = ['cd ai-content-studio-saas-main && npm install']
+cmds = ['npm install', 'cd client && npm install']
 
 [phases.build]
-cmds = ['echo "Skipping client build; using tracked ai-content-studio-saas-main/client/dist"']
+cmds = ['cd client && npm run build']
 dependsOn = ['install']
 
 [variables]
@@ -13,5 +10,4 @@ NODE_ENV = 'production'
 HOST = '0.0.0.0'
 
 [start]
-cmd = 'node ai-content-studio-saas-main/server/index.js'
-
+cmd = 'node server/index.js'

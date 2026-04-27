@@ -1,7 +1,0 @@
-<svg xmlns='http://www.w3.org/2000/svg' width='176' height='44' viewBox='0 0 176 44'>
-<defs><g id='f'><rect x='4' y='2' width='36' height='40' rx='6' fill='#2d1e3e'/><rect x='10' y='8' width='24' height='18' fill='#f0c9a7'/><rect x='10' y='8' width='24' height='5' fill='#2a2a2a'/><rect x='13' y='15' width='3' height='3' fill='#1b1b1b'/><rect x='28' y='15' width='3' height='3' fill='#1b1b1b'/><rect x='14' y='21' width='10' height='2' fill='#8b4d3b'/><rect x='12' y='27' width='20' height='11' fill='#b24444'/></g></defs>
-<g transform='translate(0,0)'><use href='#f'/></g>
-<g transform='translate(44,0)'><use href='#f'/><rect x='20' y='27' width='2' height='11' fill='#9f3a3a'/></g>
-<g transform='translate(88,0)'><use href='#f'/><rect x='18' y='27' width='2' height='11' fill='#9f3a3a'/></g>
-<g transform='translate(132,0)'><use href='#f'/><rect x='16' y='27' width='2' height='11' fill='#9f3a3a'/></g>
-</svg>

@@ -2,12 +2,14 @@
 node_modules/
 
 # Build output
-client/dist/
+# client/dist/ — tracked so Dokploy serves without a build step
 scripts/seed-data/
 
-# Environment
+# Environment — never commit real secrets
 .env
 .env.*
+!.env.example
+build/.env
 
 # Encrypted keys
 server/data/keys.enc

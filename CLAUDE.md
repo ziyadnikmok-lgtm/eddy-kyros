@@ -136,8 +136,8 @@ client/src/
 # 2. If client changed — build
 pnpm --dir client run build
 
-# 3. Restart local app
-pkill -f "Kyros Studio" 2>/dev/null; pkill -f "electron" 2>/dev/null; sleep 1; open "/Users/admin/Kyros Studio Local.command"
+# 3. Restart local app (ALWAYS use this — it always works)
+pkill -f "Kyros Studio" 2>/dev/null; pkill -f "electron" 2>/dev/null; sleep 1; open /Applications/kyros.command
 
 # 4. Test locally
 # 5. Push only when user asks

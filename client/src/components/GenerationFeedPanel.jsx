@@ -483,36 +483,71 @@ function ViewModePanel({ layoutMode, setLayoutMode, imageSize, setImageSize, edi
   );
 }
 
+/* Inline SVG icons for feed context menu */
+const feedCtxIcons = {
+  eye: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
+  clipboard: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>,
+  image: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>,
+  edit: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+  zap: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
+  grid: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>,
+  download: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+};
+
+function FeedContextMenuItem({ icon, label, tone = 'default', ...props }) {
+  const toneClass = tone === 'danger'
+    ? 'text-red-400/80 hover:bg-red-500/10 hover:text-red-300'
+    : 'text-zinc-300 hover:bg-white/[0.06] hover:text-white';
+  return (
+    <button
+      type="button"
+      className={`group/item flex w-full items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-left text-[13px] font-medium transition-all duration-150 cursor-pointer ${toneClass}`}
+      {...props}
+    >
+      {icon && <span className="flex h-4 w-4 shrink-0 items-center justify-center text-zinc-500 transition-colors group-hover/item:text-inherit">{icon}</span>}
+      <span className="flex-1 truncate">{label}</span>
+    </button>
+  );
+}
+
 function ActionMenu({ x, y, item, onAction, onClose }) {
+  const badges = [
+    item.aspectRatio,
+    item.resolutionTier,
+    item.imageModel,
+  ].filter(Boolean);
+
+  const timeStr = item.generatedAt ? formatFeedTime(item.generatedAt) : '';
+
   return (
     <div
-      className="fixed z-50 w-[240px] rounded-2xl border border-zinc-800/80 bg-[#111214] p-2 shadow-[0_24px_80px_rgba(0,0,0,0.55)]"
+      className="fixed z-50 w-60 rounded-2xl border border-zinc-700/50 bg-zinc-900/[0.97] p-1.5 shadow-2xl shadow-black/50 backdrop-blur-2xl"
       style={{ left: x, top: y }}
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
     >
-      <div className="border-b border-zinc-800/70 px-3 py-2">
-        <p className="line-clamp-2 text-sm font-medium text-white">{item.prompt || 'Generated image'}</p>
-        <p className="mt-1 text-[11px] text-zinc-500">Choose the next edit flow for this result.</p>
+      {/* Header */}
+      <div className="mb-1 rounded-xl bg-zinc-800/50 px-3 py-2.5">
+        <p className="text-[13px] font-semibold text-zinc-100 line-clamp-1">{item.isVideo ? 'Video' : 'Generated Image'}</p>
+        <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+          {timeStr && <span className="text-[10px] text-zinc-500">{timeStr}</span>}
+          {badges.map((b, i) => (
+            <span key={i} className="rounded-md bg-zinc-700/50 px-1.5 py-0.5 text-[9px] font-medium text-zinc-400">{b}</span>
+          ))}
+        </div>
       </div>
-      <div className="space-y-1 p-2">
-        <button type="button" onClick={() => onAction('open', item)} className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-zinc-300 transition hover:bg-zinc-800/80 hover:text-white">
-          Open preview
-        </button>
-        <button type="button" onClick={() => onAction('imageEditor', item)} className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-zinc-300 transition hover:bg-zinc-800/80 hover:text-white">
-          Edit in Image Editor
-        </button>
-        <button type="button" onClick={() => onAction('nanoBypass', item)} className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-zinc-300 transition hover:bg-zinc-800/80 hover:text-white">
-          More edit in Nano Bypass
-        </button>
-        <button type="button" onClick={() => onAction('carousel', item)} className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-zinc-300 transition hover:bg-zinc-800/80 hover:text-white">
-          Go to Carousel
-        </button>
-      </div>
-      <div className="border-t border-zinc-800/70 px-3 py-2">
-        <button type="button" onClick={onClose} className="text-xs text-zinc-500 transition hover:text-zinc-300">
-          Close
-        </button>
+
+      {/* Actions */}
+      <div className="py-0.5">
+        <FeedContextMenuItem icon={feedCtxIcons.eye} label="Open preview" onClick={() => onAction('open', item)} />
+        <FeedContextMenuItem icon={feedCtxIcons.clipboard} label="Copy prompt" onClick={() => onAction('copyPrompt', item)} />
+        <FeedContextMenuItem icon={feedCtxIcons.image} label="Copy image" onClick={() => onAction('copyImage', item)} />
+        <div className="my-1 border-t border-zinc-800/80 mx-2" />
+        <FeedContextMenuItem icon={feedCtxIcons.edit} label="Edit in Image Editor" onClick={() => onAction('imageEditor', item)} />
+        <FeedContextMenuItem icon={feedCtxIcons.zap} label="Nano Bypass" onClick={() => onAction('nanoBypass', item)} />
+        <FeedContextMenuItem icon={feedCtxIcons.grid} label="Go to Carousel" onClick={() => onAction('carousel', item)} />
+        <div className="my-1 border-t border-zinc-800/80 mx-2" />
+        <FeedContextMenuItem icon={feedCtxIcons.download} label="Download" onClick={() => onAction('download', item)} />
       </div>
     </div>
   );
@@ -618,7 +653,7 @@ export default function GenerationFeedPanel({ mode = 'rail' }) {
     event.preventDefault();
     event.stopPropagation();
     const width = 240;
-    const height = 248;
+    const height = 380;
     const x = Math.max(12, Math.min(event.clientX, window.innerWidth - width - 12));
     const y = Math.max(12, Math.min(event.clientY, window.innerHeight - height - 12));
     setContextMenu({ item, x, y });
@@ -631,6 +666,40 @@ export default function GenerationFeedPanel({ mode = 'rail' }) {
 
     if (action === 'open') {
       handleOpenImage(item);
+      return;
+    }
+
+    if (action === 'copyPrompt') {
+      try {
+        await navigator.clipboard.writeText(item.prompt || '');
+        notify('Prompt copied', 'success');
+      } catch (err) {
+        notify(err.message || 'Failed to copy prompt', 'error');
+      }
+      return;
+    }
+
+    if (action === 'copyImage') {
+      try {
+        if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+          throw new Error('Copy image is not supported in this browser');
+        }
+        const response = await fetch(galleryApi.imageUrl(targetId), { credentials: 'include' });
+        if (!response.ok) throw new Error(`Failed to load image (${response.status})`);
+        const blob = await response.blob();
+        await navigator.clipboard.write([new ClipboardItem({ [blob.type || 'image/png']: blob })]);
+        notify('Image copied', 'success');
+      } catch (err) {
+        notify(err.message || 'Failed to copy image', 'error');
+      }
+      return;
+    }
+
+    if (action === 'download') {
+      const a = document.createElement('a');
+      a.href = galleryApi.imageUrl(targetId);
+      a.download = buildActionFilename(item);
+      a.click();
       return;
     }
 
