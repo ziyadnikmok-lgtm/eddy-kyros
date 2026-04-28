@@ -337,7 +337,7 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       samePose: !!samePose,
     });
 
-    const apiKey = apiKeyManager.getActiveKey();
+    const apiKey = apiKeyManager.getActiveKeyOrNull();
     const activeRefs = referenceManager.getActiveReferences(
       characterId,
       Array.isArray(activeReferenceIds) ? activeReferenceIds : null
@@ -417,7 +417,7 @@ router.post('/recreate-video-frame', requirePlanCapacity(), async (req, res, nex
       samePose: true,
     });
 
-    const apiKey = apiKeyManager.getActiveKey();
+    const apiKey = apiKeyManager.getActiveKeyOrNull();
     const activeRefs = referenceManager.getActiveReferences(
       characterId,
       Array.isArray(activeReferenceIds) ? activeReferenceIds : null
@@ -490,7 +490,7 @@ router.post('/analyze-video', async (req, res, next) => {
     return res.status(400).json({ error: 'url is required' });
   }
 
-  const apiKey = apiKeyManager.getActiveKey();
+  const apiKey = apiKeyManager.getActiveKeyOrNull();
 
   const tmpFile = path.join(os.tmpdir(), `pin-video-${Date.now()}.mp4`);
   let uploadedFileName = null;

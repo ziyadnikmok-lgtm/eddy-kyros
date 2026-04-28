@@ -80,7 +80,7 @@ router.post('/', requirePlanCapacity(), async (req, res, next) => {
 
     const reformatPrompt = `Reformat this image to ${RATIO_LABELS[targetRatio]} aspect ratio by naturally extending the scene outward. Expand the background, environment, and surroundings beyond the current frame edges to fill the new canvas. Keep the subject, character, face, clothing, lighting, color grading, and style completely unchanged — only extend the image, never crop or modify the existing content.`;
 
-    const apiKey = apiKeyManager.getActiveKey();
+    const apiKey = apiKeyManager.getActiveKeyOrNull();
     runId = startGenerationRun({
       userId: req.session?.userId,
       feature: 'reformat',

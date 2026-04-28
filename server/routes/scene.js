@@ -79,7 +79,7 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       sameTattoos: !!sameTattoos,
     });
 
-    const apiKey = apiKeyManager.getActiveKey();
+    const apiKey = apiKeyManager.getActiveKeyOrNull();
     runId = startGenerationRun({
       userId: req.session?.userId,
       feature: 'scene-recreate',

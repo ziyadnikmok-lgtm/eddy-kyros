@@ -526,7 +526,7 @@ router.post('/', parseMultipartIfNeeded, requirePlanCapacity({ cost: 2 }), async
     const activeRefs = referenceManager.getActiveReferences(characterId, normalizedClientRefIds && normalizedClientRefIds.length > 0 ? normalizedClientRefIds : null);
     const activeReferenceIds = activeRefs.map((r) => r.id);
     const referenceImages = buildCharacterReferenceImages(characterId, activeRefs);
-    const apiKey = apiKeyManager.getActiveKey();
+    const apiKey = apiKeyManager.getActiveKeyOrNull();
 
     runId = startGenerationRun({
       userId: req.session?.userId,

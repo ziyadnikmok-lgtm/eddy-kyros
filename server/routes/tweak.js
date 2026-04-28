@@ -121,7 +121,7 @@ router.post('/', parseMultipartIfNeeded, requirePlanCapacity(), async (req, res,
       });
     }
 
-    const apiKey = apiKeyManager.getActiveKey();
+    const apiKey = apiKeyManager.getActiveKeyOrNull();
     const finalPrompt = `${tweakPrompt}\n\n${REALISM_DIRECTIVE}`;
     const result = await geminiService.generateImage(apiKey, finalPrompt, {
       aspectRatio,

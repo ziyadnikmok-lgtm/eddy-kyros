@@ -85,7 +85,7 @@ router.post('/recreate', requirePlanCapacity({ cost: 2 }), async (req, res, next
 
     referenceManager.getCharacter(characterId);
     const refIds = normalizeRefIds(activeReferenceIds);
-    const apiKey = apiKeyManager.getActiveKey();
+    const apiKey = apiKeyManager.getActiveKeyOrNull();
     const activeRefs = referenceManager.getActiveReferences(characterId, refIds);
     const charRefImages = buildCharacterReferenceImages(characterId, activeRefs);
 

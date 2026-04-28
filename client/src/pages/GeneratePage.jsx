@@ -1052,9 +1052,9 @@ export default function GeneratePage() {
                 )}
               </div>
 
-              <div className="flex items-center justify-between rounded-xl border border-zinc-800/70 bg-zinc-900/60 px-3 py-2.5">
+              <div className={`flex items-center justify-between rounded-xl border px-3 py-2.5 ${enhanceEnabled ? 'border-amber-500/30 bg-amber-500/[0.04]' : 'border-zinc-800/70 bg-zinc-900/60'}`}>
                 <Toggle checked={enhanceEnabled} onChange={setEnhanceEnabled} label="AI Prompt Assist" />
-                <span className="text-[10px] text-zinc-500">{enhanceEnabled ? 'On' : 'Off'}</span>
+                <span className="text-[10px] text-zinc-500">{enhanceEnabled ? <span className="text-amber-400/80">2× API calls</span> : 'Off'}</span>
               </div>
 
               <div className="space-y-3 rounded-2xl border border-zinc-800/80 bg-zinc-900/45 p-3">

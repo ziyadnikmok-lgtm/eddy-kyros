@@ -189,7 +189,7 @@ async function handleClone({ url, characterId, mode, cosplayMode = false, postLi
   const character = referenceManager.getCharacter(characterId);
   const activeRefs = referenceManager.getActiveReferences(characterId, null);
   const baseReferenceImages = buildCharacterReferenceImages(characterId, activeRefs);
-  const apiKey = apiKeyManager.getActiveKey();
+  const apiKey = apiKeyManager.getActiveKeyOrNull();
 
   const tempFiles = [];
   ensureTempDir();

@@ -469,7 +469,7 @@ Rules:
 - Use approximate timing across a ${timelineDuration.toFixed(1)} second target timeline.
 - If no overlay text exists, return {"clips":[]}.`;
 
-    const apiKey = apiKeyManager.getActiveKey();
+    const apiKey = apiKeyManager.getActiveKeyOrNull();
     const text = await analyzeOverlayFramesWithFallback(apiKey, frames, prompt);
     const clips = parseOverlayTextResponse(text, timelineDuration);
     res.json({ success: true, data: { clips } });

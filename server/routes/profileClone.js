@@ -132,7 +132,7 @@ router.post('/recreate', requirePlanCapacity({
 
     const character = referenceManager.getCharacter(characterId);
     const activeRefs = referenceManager.getActiveReferences(characterId, null);
-    const apiKey = apiKeyManager.getActiveKey();
+    const apiKey = apiKeyManager.getActiveKeyOrNull();
 
     const baseReferenceImages = postCloneRoute.buildCharacterReferenceImages(characterId, activeRefs);
 

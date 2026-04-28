@@ -30,7 +30,7 @@ router.post('/start', async (req, res) => {
     }
   }
 
-  const apiKey = apiKeyManager.getActiveKey();
+  const apiKey = apiKeyManager.getActiveKeyOrNull();
 
   const cleanAccounts = accounts.map((a) => a.replace(/^@/, '').trim()).filter(Boolean);
 

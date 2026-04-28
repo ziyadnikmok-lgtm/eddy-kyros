@@ -189,7 +189,7 @@ router.post('/polls', requirePlanCapacity({
 
     const pollPrompt = `You generate "This or That" engagement poll content for Instagram carousels.\n\nTopic: ${topic.trim()}\n\nTask:\n- Generate exactly ${safePollCount} poll questions.\n- Each poll has a question and two contrasting visual options (A and B).\n- Each option needs a short label (2-5 words) and a detailed image generation prompt.\n- Image prompts should describe the same person in contrasting scenarios/styles/settings.\n- Keep the same single female subject identity across all prompts.\n- Make prompts vivid and specific for AI image generation.\n- No couples, no male interaction.\n- Mirror selfies are allowed only when the setting plausibly supports a real mirror/reflection.\n- Do not place random mirror reflections in outdoor scenes.\n${characterPromptLockRules}\n\nReturn JSON only:\n{\n  "polls": [\n    {\n      "question": "Which vibe are you?",\n      "optionA": { "label": "Beach Day", "prompt": "detailed image prompt for option A..." },\n      "optionB": { "label": "City Night", "prompt": "detailed image prompt for option B..." }\n    }\n  ]\n}`;
 
-    const apiKey = apiKeyManager.getActiveKey();
+    const apiKey = apiKeyManager.getActiveKeyOrNull();
     let parsed = null;
     try {
       const raw = await geminiService.generateText(apiKey, pollPrompt, { temperature: 0.6, responseMimeType: 'application/json' });

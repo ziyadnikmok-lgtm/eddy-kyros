@@ -163,7 +163,7 @@ router.get('/analyze', async (req, res) => {
     return res.end();
   }
 
-  const apiKey = apiKeyManager.getActiveKey();
+  const apiKey = apiKeyManager.getActiveKeyOrNull();
 
   let closed = false;
   req.on('close', () => { closed = true; });

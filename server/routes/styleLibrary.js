@@ -188,7 +188,7 @@ router.post('/suggest', async (req, res, next) => {
       return res.status(400).json({ success: false, error: { message: 'atomIds required' } });
     }
 
-    const apiKey = apiKeyManager.getActiveKey();
+    const apiKey = apiKeyManager.getActiveKeyOrNull();
 
     const currentAtoms = atomIds.map(id => {
       try { return styleLibrary.getAtom(id); } catch { return null; }

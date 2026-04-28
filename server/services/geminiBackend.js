@@ -67,8 +67,10 @@ module.exports = new Proxy({}, {
         const out = val.apply(svc, args);
         if (!out || typeof out.then !== 'function') return out;
         return out.catch(async (err) => {
-          // Global fallback: if active backend is Vertex and request is rate limited,
+          // Fallback: if active backend is Vertex and request is rate limited,
           // retry once through direct Gemini API key (if user has one saved).
+          // NOTE: This is intentional fallback — we log it clearly so the user
+          // knows Vertex was rate-limited and Gemini key was used instead.
           if (!_isVertexService(svc) || !_isRateLimitError(err)) {
             throw err;
           }
@@ -88,15 +90,16 @@ module.exports = new Proxy({}, {
           try {
             const retryArgs = [...args];
             retryArgs[0] = fallbackKey;
-            log.warn('vertex_rate_limited_fallback_to_gemini_key', { method: String(prop) });
+            log.warn('vertex_rate_limited_fallback_to_gemini_key', {
+              method: String(prop),
+              note: 'Vertex hit rate limit (429). Retrying with saved Gemini API key. To prevent this, remove Gemini keys if you only want Vertex.',
+            });
             return await fallbackFn.apply(geminiService, retryArgs);
           } catch {
             throw err;
           }
         });
       } catch (err) {
-        // Global fallback: if active backend is Vertex and request is rate limited,
-        // retry once through direct Gemini API key (if user has one saved).
         throw err;
       }
     };

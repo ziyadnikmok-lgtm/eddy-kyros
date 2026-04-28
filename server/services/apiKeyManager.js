@@ -837,6 +837,16 @@ class ApiKeyManager {
     log.info('spend_backfill', { keyId: entry.id, imageCount, textCallsEstimate, totalSpendUsd: entry.totalSpendUsd });
   }
 
+  /**
+   * Safe key getter for routes that use geminiBackend (which handles Vertex internally).
+   * Returns the active Gemini API key, or null if Vertex is the selected backend.
+   * Unlike getActiveKey(), this will NOT throw when Vertex is active and no Gemini key exists.
+   */
+  getActiveKeyOrNull() {
+    if (this.shouldUseVertexBackend()) return null;
+    return this.getActiveKey();
+  }
+
   _saveStore() {
     atomicWriteJSON(this._dataFile, this._store);
   }

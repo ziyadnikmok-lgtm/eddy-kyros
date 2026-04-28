@@ -292,7 +292,7 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       exactMode,
     });
 
-    const apiKey = apiKeyManager.getActiveKey();
+    const apiKey = apiKeyManager.getActiveKeyOrNull();
     runId = startGenerationRun({
       userId: req.session?.userId,
       feature: 'photo-match',

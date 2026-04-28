@@ -298,7 +298,7 @@ router.post('/:jobId/score-picks', async (req, res, next) => {
       return res.json({ success: true, data: { scores: [], message: 'No images to score' } });
     }
 
-    const apiKey = apiKeyManager.getActiveKey();
+    const apiKey = apiKeyManager.getActiveKeyOrNull();
     const scores = [];
 
     // Score in parallel with concurrency cap

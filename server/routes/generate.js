@@ -240,7 +240,7 @@ router.post('/', requirePlanCapacity(), async (req, res, next) => {
       payload: { feature: 'generate', model: imageModel || null, aspectRatio: finalAspectRatio },
     });
 
-    const apiKey = apiKeyManager.getActiveKey();
+    const apiKey = apiKeyManager.getActiveKeyOrNull();
     const result = await geminiService.generateImage(apiKey, finalPrompt, {
       aspectRatio: finalAspectRatio,
       imageSize: finalImageSize,
@@ -334,7 +334,7 @@ router.post('/enhance-prompt', async (req, res, next) => {
       return res.json({ success: true, data: { original: prompt || '', enhanced: prompt || '', changed: false } });
     }
 
-    const apiKey = apiKeyManager.getActiveKey();
+    const apiKey = apiKeyManager.getActiveKeyOrNull();
     const enhanced = await geminiService.enhancePrompt(apiKey, prompt.trim(), {
       characterName: characterName || null,
       characterId: characterId || null,
