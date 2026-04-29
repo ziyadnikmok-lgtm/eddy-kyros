@@ -76,9 +76,7 @@ const INITIAL_STATE = {
   expressionMode: 'none',
   useSceneMode: false,
   sceneMode: 'none',
-  useExtraReference: false,
-  extraReference: null,
-  extraReferencePreview: '',
+  referenceImages: [],
   specificOutfitRef: null,
   specificItemRef: null,
   specificSceneRef: null,
@@ -416,10 +414,9 @@ export default function GeneratePage() {
   const {
     prompt, aspectRatio, resolutionTier,
     imageModel,
-    useCharacter, selectedCharId, selectedChar,
+    useCharacter, selectedCharId, selectedChar, referenceImages,
     sceneMemoryId, outfitId, cameraProfileId, poseMode,
     useExpressionMode, expressionMode, useSceneMode, sceneMode,
-    useExtraReference, extraReference, extraReferencePreview,
     specificOutfitRef, specificItemRef, specificSceneRef,
   } = state;
   const [result, setResult] = useState(_cache.result);
@@ -612,14 +609,8 @@ export default function GeneratePage() {
       cancelled = true;
     };
   }, [selectedCharId, chars]);
-  useEffect(() => {
-    if (!useExtraReference) {
-      update({ extraReference: null, extraReferencePreview: '' });
-    }
-  }, [useExtraReference]);
-
   const getSaveableConfig = () => {
-    const { selectedChar, extraReference, extraReferencePreview, specificOutfitRef, specificItemRef, specificSceneRef, ...saveable } = state;
+    const { selectedChar, referenceImages: _imgs, specificOutfitRef, specificItemRef, specificSceneRef, ...saveable } = state;
     return saveable;
   };
 
@@ -766,9 +757,6 @@ export default function GeneratePage() {
       const activeRefIds = selectedChar?.references?.filter((r) => r.isActive).map((r) => r.id);
       if (activeRefIds?.length) body.activeReferenceIds = activeRefIds;
     }
-    if (useExtraReference && extraReference?.image) {
-      body.extraReferenceImage = extraReference;
-    }
     const typedRefs = [
       specificOutfitRef
         ? { ...specificOutfitRef, referenceType: 'outfit', note: specificOutfitRef.note || 'Outfit reference' }
@@ -780,14 +768,24 @@ export default function GeneratePage() {
         ? { ...specificSceneRef, referenceType: 'scene', note: specificSceneRef.note || 'Background/scene reference' }
         : null,
     ].filter(Boolean);
-    if (typedRefs.length > 0) {
-      body.customReferenceImages = typedRefs.map((ref) => ({
+    const allCustomRefs = [
+      ...referenceImages.map((img) => ({
+        image: img.image,
+        mimeType: img.mimeType,
+        name: img.name || 'reference',
+        referenceType: 'scene',
+        note: '',
+      })),
+      ...typedRefs.map((ref) => ({
         image: ref.image,
         mimeType: ref.mimeType,
         name: ref.name,
         referenceType: ref.referenceType,
         note: ref.note || '',
-      }));
+      })),
+    ];
+    if (allCustomRefs.length > 0) {
+      body.customReferenceImages = allCustomRefs;
     }
     try {
       const data = await genApi.image(body);
@@ -823,7 +821,7 @@ export default function GeneratePage() {
     }
   };
 
-  const applyExtraReferenceFile = async (file, successMessage = 'Image added to Generate') => {
+  const addReferenceImage = async (file) => {
     if (!file) return;
     if (!file.type?.startsWith('image/')) {
       notify('Please use an image file', 'error');
@@ -831,34 +829,33 @@ export default function GeneratePage() {
     }
     try {
       const dataUrl = await fileToDataUrl(file);
-      update({
-        useExtraReference: true,
-        extraReference: { image: dataUrl, mimeType: file.type, name: file.name },
-        extraReferencePreview: dataUrl,
-      });
-      notify(successMessage, 'success');
+      const newImg = { id: `ref-${Date.now()}-${Math.random().toString(36).slice(2)}`, image: dataUrl, mimeType: file.type, name: file.name, preview: dataUrl };
+      update((prev) => ({ referenceImages: [...(prev.referenceImages || []), newImg] }));
     } catch {
       notify('Failed to read image', 'error');
     }
+  };
+
+  const removeReferenceImage = (id) => {
+    update((prev) => ({ referenceImages: (prev.referenceImages || []).filter((img) => img.id !== id) }));
   };
 
   useEffect(() => {
     const onPaste = (event) => {
       const pastedFile = getClipboardImageFile(event);
       if (!pastedFile) return;
-      applyExtraReferenceFile(pastedFile, 'Pasted image into Generate');
+      addReferenceImage(pastedFile);
     };
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
   }, []);
 
-  const handleExtraReferenceUpload = async (event) => {
-    const file = event.target.files?.[0];
-    try {
-      await applyExtraReferenceFile(file, 'Image added to Generate');
-    } finally {
-      event.target.value = '';
+  const handleReferenceImageUpload = async (event) => {
+    const files = Array.from(event.target.files || []);
+    for (const file of files) {
+      await addReferenceImage(file);
     }
+    event.target.value = '';
   };
 
   const handleSpecificReferenceUpload = async (event, refType) => {
@@ -953,17 +950,7 @@ export default function GeneratePage() {
                 </select>
               </div>
 
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => update({ useCharacter: !useCharacter })}
-                  className={`rounded-xl border px-3 py-3 text-left transition cursor-pointer ${
-                    useCharacter ? 'border-blue-500/50 bg-blue-500/10 text-blue-200' : 'border-zinc-800/80 bg-zinc-900/70 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
-                  }`}
-                >
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.12em]">Character</div>
-                  <div className="mt-1 text-xs">{useCharacter ? (selectedChar?.name || 'Enabled') : 'Off'}</div>
-                </button>
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => setShowAtomPicker(true)}
@@ -994,61 +981,35 @@ export default function GeneratePage() {
               </div>
 
               <div
-                className={`rounded-2xl border p-3 transition ${
-                  useExtraReference
-                    ? 'border-cyan-500/35 bg-cyan-500/[0.06]'
-                    : 'border-zinc-800/80 bg-zinc-900/45'
-                }`}
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  applyExtraReferenceFile(event.dataTransfer.files?.[0], 'Dropped image into Generate');
-                }}
+                className={`rounded-2xl border p-3 transition ${referenceImages.length > 0 ? 'border-cyan-500/25 bg-cyan-500/[0.04]' : 'border-zinc-800/80 bg-zinc-900/45'}`}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => { e.preventDefault(); Array.from(e.dataTransfer.files).forEach((f) => addReferenceImage(f)); }}
               >
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Image Input</div>
-                    <div className="mt-1 text-xs text-zinc-400">
-                      Paste, drop, or upload an image, then write what to change.
-                    </div>
-                  </div>
-                  <Toggle checked={useExtraReference} onChange={(v) => update({ useExtraReference: v })} label={null} />
+                <div className="mb-2.5 flex items-center justify-between gap-2">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Image Input</div>
+                  {referenceImages.length > 0 && (
+                    <button type="button" onClick={() => update({ referenceImages: [] })} className="text-[10px] text-zinc-500 hover:text-zinc-300 cursor-pointer transition">Clear all</button>
+                  )}
                 </div>
-
-                {useExtraReference && (
-                  <div className="space-y-2">
-                    <label className="flex min-h-28 cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-dashed border-cyan-500/30 bg-zinc-950/60 transition hover:border-cyan-400/60">
-                      {extraReferencePreview ? (
-                        <div className="flex w-full items-center gap-3 p-2">
-                          <img src={extraReferencePreview} alt="Generate input" className="h-24 w-20 rounded-lg border border-zinc-700/80 object-cover" />
-                          <div className="min-w-0 flex-1">
-                            <div className="text-sm font-medium text-zinc-100">Image ready</div>
-                            <div className="mt-1 truncate text-xs text-zinc-500">{extraReference?.name || 'Pasted image'}</div>
-                            <div className="mt-2 text-[11px] leading-relaxed text-cyan-300/80">
-                              {useCharacter && selectedCharId
-                                ? 'Kyros will keep your selected character and use this image for scene/composition.'
-                                : 'Kyros will use this as the base image and apply your prompt edits.'}
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="px-4 py-5 text-center">
-                          <div className="text-sm font-medium text-zinc-200">Add image to modify</div>
-                          <div className="mt-1 text-xs text-zinc-500">Ctrl+V, drag here, or click to browse</div>
-                        </div>
-                      )}
-                      <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleExtraReferenceUpload} />
-                    </label>
-                    {extraReference && (
+                <div className="flex flex-wrap gap-2">
+                  {referenceImages.map((img) => (
+                    <div key={img.id} className="group relative h-[72px] w-[72px] flex-shrink-0 overflow-hidden rounded-xl border border-zinc-700/80 bg-zinc-950">
+                      <img src={img.preview} alt={img.name} className="h-full w-full object-cover" />
                       <button
                         type="button"
-                        onClick={() => update({ useExtraReference: false, extraReference: null, extraReferencePreview: '' })}
-                        className="text-xs text-zinc-400 hover:text-zinc-200 cursor-pointer"
-                      >
-                        Remove image input
-                      </button>
-                    )}
-                  </div>
+                        onClick={() => removeReferenceImage(img.id)}
+                        className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/75 text-[11px] text-zinc-300 opacity-0 transition hover:bg-black hover:text-white group-hover:opacity-100 cursor-pointer"
+                      >✕</button>
+                    </div>
+                  ))}
+                  <label className="flex h-[72px] w-[72px] flex-shrink-0 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-zinc-700/70 bg-zinc-900/60 text-zinc-500 transition hover:border-cyan-500/50 hover:text-cyan-400">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    <span className="text-[9px] font-medium uppercase tracking-wider">Add</span>
+                    <input type="file" accept="image/png,image/jpeg,image/webp" multiple className="hidden" onChange={handleReferenceImageUpload} />
+                  </label>
+                </div>
+                {referenceImages.length === 0 && (
+                  <p className="mt-2 text-[10px] text-zinc-600">Paste, drag, or click Add — supports unlimited images</p>
                 )}
               </div>
 
@@ -1057,93 +1018,76 @@ export default function GeneratePage() {
                 <span className="text-[10px] text-zinc-500">{enhanceEnabled ? <span className="text-amber-400/80">2× API calls</span> : 'Off'}</span>
               </div>
 
-              <div className="space-y-3 rounded-2xl border border-zinc-800/80 bg-zinc-900/45 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Character Lock</div>
-                    <div className="mt-1 text-xs text-zinc-400">Use identity references automatically.</div>
-                  </div>
-                  <Toggle checked={useCharacter} onChange={(v) => update({ useCharacter: v })} label={null} />
+              <div className="space-y-2.5 rounded-2xl border border-zinc-800/80 bg-zinc-900/45 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Character</div>
+                  {selectedCharId && (
+                    <button
+                      type="button"
+                      onClick={() => update({ useCharacter: false, selectedCharId: '', selectedChar: null })}
+                      className="text-[10px] text-zinc-500 hover:text-zinc-300 cursor-pointer transition"
+                    >
+                      Clear
+                    </button>
+                  )}
                 </div>
 
-                {useCharacter && (
-                  <div className="space-y-3">
-                    <select
-                      value={selectedCharId}
-                      onChange={(e) => handleCharacterSelect(e.target.value)}
-                      className="w-full rounded-xl border border-zinc-700/80 bg-zinc-950/80 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/20 cursor-pointer"
-                    >
-                      <option value="">Select character...</option>
-                      {chars.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
-
-                    {selectedChar?.references?.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {selectedChar.references.map((r) => (
-                          <Badge key={r.id} color={r.isActive ? 'blue' : 'zinc'}>{r.category}</Badge>
-                        ))}
-                      </div>
-                    )}
-
-                    {characterReferencePreviewItems.length > 0 && (
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[11px] font-medium text-zinc-400">Loaded references</span>
-                          <span className="text-[10px] text-zinc-500">{characterReferencePreviewItems.length} active</span>
-                        </div>
-                        <div className="grid grid-cols-4 gap-2">
-                          {characterReferencePreviewItems.map((item, index) => (
-                            <button
-                              key={item.key}
-                              type="button"
-                              onClick={() => openLightbox(characterReferencePreviewItems.map((entry) => entry.src), index)}
-                              className="relative aspect-square overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-950/80 transition hover:border-zinc-500 cursor-pointer"
-                              title={item.label}
-                            >
-                              <img src={item.src} alt={item.label} className="h-full w-full object-cover" loading="lazy" />
-                              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4">
-                                <span className="block truncate text-[10px] text-zinc-200">{item.label}</span>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="space-y-2 rounded-xl border border-zinc-800/70 bg-zinc-950/60 p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Character + Image Input</div>
-                          <div className="mt-1 text-[11px] text-zinc-500">The image input above becomes scene/composition while this character stays locked.</div>
-                        </div>
-                        <Toggle checked={useExtraReference} onChange={(v) => update({ useExtraReference: v })} label={null} />
-                      </div>
-
-                      {useExtraReference && (
-                        <>
-                          <label className="flex h-28 cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-dashed border-zinc-700/80 bg-zinc-900/50 transition hover:border-zinc-500">
-                            {extraReferencePreview ? (
-                              <img src={extraReferencePreview} alt="Extra reference" className="max-h-full max-w-full object-contain" />
-                            ) : (
-                              <div className="text-center">
-                                <div className="text-zinc-300 text-sm">Add or paste scene image</div>
-                                <div className="text-zinc-500 text-xs mt-1">Same input slot as above</div>
+                {chars.length === 0 ? (
+                  <p className="text-[11px] text-zinc-600 py-1">No characters yet — create one in Characters.</p>
+                ) : (
+                  <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+                    {chars.map((c) => {
+                      const isSelected = selectedCharId === c.id;
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => handleCharacterSelect(isSelected ? '' : c.id)}
+                          className={`group flex-shrink-0 flex flex-col items-center gap-1.5 rounded-xl border p-2 transition cursor-pointer ${
+                            isSelected
+                              ? 'border-blue-500/60 bg-blue-500/10 shadow-[0_0_12px_rgba(59,130,246,0.15)]'
+                              : 'border-zinc-800/70 bg-zinc-900/60 hover:border-zinc-600/80 hover:bg-zinc-800/60'
+                          }`}
+                        >
+                          <div className={`relative h-12 w-12 overflow-hidden rounded-lg border transition ${isSelected ? 'border-blue-400/50' : 'border-zinc-700/60 group-hover:border-zinc-600'}`}>
+                            <img
+                              src={charApi.primaryImageUrl(c.id, 0)}
+                              alt={c.name}
+                              className="h-full w-full object-cover"
+                              loading="lazy"
+                              onError={(e) => { e.target.style.display = 'none'; e.target.parentNode.classList.add('bg-zinc-800', 'flex', 'items-center', 'justify-center'); }}
+                            />
+                            {isSelected && (
+                              <div className="absolute inset-0 flex items-center justify-center bg-blue-500/20">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                               </div>
                             )}
-                            <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleExtraReferenceUpload} />
-                          </label>
-                          {extraReference && (
-                            <button
-                              type="button"
-                              onClick={() => update({ useExtraReference: false, extraReference: null, extraReferencePreview: '' })}
-                              className="text-xs text-zinc-400 hover:text-zinc-200 cursor-pointer"
-                            >
-                              Remove image input
-                            </button>
-                          )}
-                        </>
-                      )}
-                    </div>
+                          </div>
+                          <span className={`max-w-[56px] truncate text-[10px] font-medium transition ${isSelected ? 'text-blue-300' : 'text-zinc-400 group-hover:text-zinc-200'}`}>
+                            {c.name}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {selectedChar && characterReferencePreviewItems.length > 0 && (
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {characterReferencePreviewItems.map((item, index) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => openLightbox(characterReferencePreviewItems.map((e) => e.src), index)}
+                        className="relative aspect-square overflow-hidden rounded-lg border border-zinc-700/50 bg-zinc-950 transition hover:border-zinc-500 cursor-pointer"
+                        title={item.label}
+                      >
+                        <img src={item.src} alt={item.label} className="h-full w-full object-cover" loading="lazy" />
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-1 pb-0.5 pt-3">
+                          <span className="block truncate text-[9px] text-zinc-300">{item.label}</span>
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
