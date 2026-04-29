@@ -13,6 +13,8 @@ const videoHistory = require('../services/videoHistoryStore');
 const batchGenerator = require('../services/batchGenerator');
 const { runWithUser } = require('../userContext');
 const log = require('../utils/logger');
+const referenceManager = require('../services/referenceManager');
+const { WEB_DATA_ROOT } = require('../paths');
 
 const router = express.Router();
 const PLAN_PRICES = {
@@ -21,6 +23,28 @@ const PLAN_PRICES = {
   unlimited: 49,
 };
 const FREE_TRIAL_LIMIT = 10;
+
+function getCharacterCount(userId) {
+  if (process.env.ELECTRON_USER_DATA) return 0;
+  const charDir = path.join(WEB_DATA_ROOT, String(userId), 'characters');
+  if (!fs.existsSync(charDir)) return 0;
+  try {
+    return fs.readdirSync(charDir, { withFileTypes: true }).filter((e) => e.isDirectory()).length;
+  } catch { return 0; }
+}
+
+function getCharactersForUser(userId) {
+  return runWithUser(userId, () => {
+    try {
+      const chars = referenceManager.listCharacters();
+      return chars.map((c) => ({
+        id: c.id,
+        name: c.name,
+        thumbUrl: `/api/admin/users/${userId}/characters/${encodeURIComponent(c.id)}/thumb`,
+      }));
+    } catch { return []; }
+  });
+}
 
 function getCurrentSubscription(userId) {
   return db.prepare(`
@@ -642,13 +666,32 @@ router.get('/users', requireAdmin, (req, res) => {
         SELECT MAX(started_at)
         FROM generation_runs gr
         WHERE gr.user_id = u.id
-      ) AS last_generation_at
+      ) AS last_generation_at,
+      (
+        SELECT COUNT(*)
+        FROM generation_runs gr
+        WHERE gr.user_id = u.id
+      ) AS generation_count_total,
+      (
+        SELECT COUNT(*)
+        FROM user_api_keys k
+        WHERE k.user_id = u.id
+      ) AS connected_key_count,
+      (
+        SELECT COUNT(*)
+        FROM referral_commissions rc
+        WHERE rc.referrer_id = u.id
+      ) AS referral_count
     FROM users u
     LEFT JOIN latest_subscriptions ls ON ls.user_id = u.id
     ${whereSql}
     ORDER BY datetime(u.created_at) DESC
     LIMIT ? OFFSET ?
-  `).all(...params, limit, offset);
+  `).all(...params, limit, offset).map((u) => ({
+    ...u,
+    has_api_key: (u.connected_key_count || 0) > 0,
+    character_count: getCharacterCount(u.id),
+  }));
 
   const total = db.prepare(`
     WITH latest_subscriptions AS (
@@ -714,6 +757,12 @@ router.get('/users/:id', requireAdmin, (req, res) => {
     LIMIT 12
   `).all(req.params.id);
 
+  const referralCount = db.prepare(`
+    SELECT COUNT(*) AS total FROM referral_commissions WHERE referrer_id = ?
+  `).get(req.params.id)?.total || 0;
+
+  const characters = getCharactersForUser(req.params.id);
+
   res.json({
     user: {
       ...user,
@@ -721,6 +770,9 @@ router.get('/users/:id', requireAdmin, (req, res) => {
       connected_keys: keySummary.items,
       generation_count_total: user.generation_count_total || content.total,
       generation_count_30d: user.generation_count_30d || content.count30d,
+      referral_count: referralCount,
+      character_count: characters.length,
+      characters,
       subscription,
       generationByFeature,
       freeTrial: {
@@ -744,6 +796,23 @@ router.get('/users/:id/library/image/:imageId', requireAdmin, (req, res) => {
     const { filePath, mimeType } = galleryManager.getFilePath(req.params.imageId);
     res.type(mimeType);
     return res.sendFile(filePath);
+  });
+});
+
+// GET /api/admin/users/:id/characters/:charId/thumb
+router.get('/users/:id/characters/:charId/thumb', requireAdmin, (req, res) => {
+  return runWithUser(req.params.id, () => {
+    try {
+      const images = referenceManager.getPrimaryImages(req.params.charId);
+      if (!images.length || !images[0]?.buffer?.length) {
+        return res.status(404).json({ error: 'No primary image' });
+      }
+      res.set('Content-Type', images[0].mimeType || 'image/png');
+      res.set('Cache-Control', 'private, max-age=300');
+      return res.send(images[0].buffer);
+    } catch {
+      return res.status(404).json({ error: 'Character not found' });
+    }
   });
 });
 

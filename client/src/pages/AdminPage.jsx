@@ -33,6 +33,19 @@ function planColor(plan) {
   return 'zinc';
 }
 
+function computeScore(user) {
+  const daysSince = user.last_active_at
+    ? (Date.now() - new Date(user.last_active_at).getTime()) / 86400000
+    : 999;
+  const total = user.generation_count_total || 0;
+  const d30 = user.generation_count_30d || 0;
+  if (user.has_api_key && d30 > 0) return { label: 'Hot', color: 'green' };
+  if (d30 > 0) return { label: 'Active', color: 'blue' };
+  if (total > 0 && daysSince > 7) return { label: 'Churn', color: 'red' };
+  if (total > 0) return { label: 'Warm', color: 'yellow' };
+  return { label: 'New', color: 'zinc' };
+}
+
 function percent(part, whole) {
   if (!whole) return '0%';
   return `${Math.round((part / whole) * 100)}%`;
@@ -612,10 +625,14 @@ function UsersTab({ notify }) {
             <thead className="text-left text-zinc-500">
               <tr className="border-b border-zinc-800/60">
                 <th className="py-3 pr-3 font-medium">User</th>
+                <th className="py-3 pr-3 font-medium">Joined</th>
                 <th className="py-3 pr-3 font-medium">Plan</th>
-                <th className="py-3 pr-3 font-medium">Trial</th>
                 <th className="py-3 pr-3 font-medium">Last Active</th>
-                <th className="py-3 pr-3 font-medium">30D Runs</th>
+                <th className="py-3 pr-3 font-medium text-right">30D / Total</th>
+                <th className="py-3 pr-3 font-medium text-center">Key</th>
+                <th className="py-3 pr-3 font-medium text-center">Chars</th>
+                <th className="py-3 pr-3 font-medium text-center">Refs</th>
+                <th className="py-3 pr-3 font-medium">Score</th>
                 <th className="py-3 font-medium">State</th>
               </tr>
             </thead>
@@ -630,18 +647,23 @@ function UsersTab({ notify }) {
                     <div className="font-medium text-zinc-100">{user.email}</div>
                     <div className="text-xs text-zinc-500">{user.name || 'No name'}</div>
                   </td>
+                  <td className="py-3 pr-3 text-xs text-zinc-400">{formatDateShort(user.created_at)}</td>
                   <td className="py-3 pr-3"><Badge color={planColor(user.plan)}>{user.plan || 'free'}</Badge></td>
-                  <td className="py-3 pr-3">
-                    {(user.plan || 'free') === 'free' ? (
-                      user.trial_finished
-                        ? <Badge color="red">Finished</Badge>
-                        : <Badge color="blue">{user.trial_used || 0}/{user.trial_limit || 10}</Badge>
-                    ) : (
-                      <span className="text-xs text-zinc-600">—</span>
-                    )}
-                  </td>
                   <td className="py-3 pr-3 text-xs text-zinc-400">{formatDate(user.last_active_at)}</td>
-                  <td className="py-3 pr-3">{user.generation_count_30d || 0}</td>
+                  <td className="py-3 pr-3 text-right text-sm">
+                    <span className="text-zinc-200">{user.generation_count_30d || 0}</span>
+                    <span className="text-zinc-600"> / {user.generation_count_total || 0}</span>
+                  </td>
+                  <td className="py-3 pr-3 text-center">
+                    {user.has_api_key
+                      ? <span className="text-green-400 text-lg leading-none">●</span>
+                      : <span className="text-zinc-700 text-lg leading-none">○</span>}
+                  </td>
+                  <td className="py-3 pr-3 text-center text-sm text-zinc-300">{user.character_count || 0}</td>
+                  <td className="py-3 pr-3 text-center text-sm text-zinc-300">{user.referral_count || 0}</td>
+                  <td className="py-3 pr-3">
+                    {(() => { const s = computeScore(user); return <Badge color={s.color}>{s.label}</Badge>; })()}
+                  </td>
                   <td className="py-3">
                     <div className="flex flex-wrap gap-1">
                       {user.is_owner ? <Badge color="amber">Owner</Badge> : user.is_admin ? <Badge color="yellow">Admin</Badge> : null}
@@ -680,7 +702,7 @@ function UsersTab({ notify }) {
         ) : (
           <div className="space-y-6">
             {/* Key stats */}
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-4 grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
               <MetricCard label="Plan" value={selectedUser.subscription?.plan || 'free'} sublabel={selectedUser.subscription?.status || 'active'} />
               <MetricCard
                 label="Free Trial"
@@ -695,6 +717,10 @@ function UsersTab({ notify }) {
               <MetricCard label="Keys" value={selectedUser.connected_key_count || 0} sublabel="Connected provider keys" />
               <MetricCard label="Total Runs" value={selectedUser.generation_count_total || 0} sublabel={`${selectedUser.generation_count_30d || 0} in 30d`} />
               <MetricCard label="Last Active" value={selectedUser.last_active_at ? formatDateShort(selectedUser.last_active_at) : 'Never'} sublabel={formatDate(selectedUser.last_active_at)} />
+              <MetricCard label="Joined" value={formatDateShort(selectedUser.created_at)} sublabel="Signup date" />
+              <MetricCard label="Referrals" value={selectedUser.referral_count || 0} sublabel="Users referred" />
+              <MetricCard label="Characters" value={selectedUser.character_count || 0} sublabel="Characters created" />
+              {(() => { const s = computeScore(selectedUser); return <MetricCard label="Score" value={s.label} sublabel="Conversion signal" accent={s.color === 'green' ? 'text-green-400' : s.color === 'red' ? 'text-red-400' : s.color === 'yellow' ? 'text-yellow-400' : s.color === 'blue' ? 'text-blue-400' : 'text-zinc-400'} />; })()}
             </div>
 
             {/* Actions */}
@@ -752,6 +778,41 @@ function UsersTab({ notify }) {
                 )) : <Empty icon="plan" title="No billing history" subtitle="" />}
               </Card>
             </div>
+
+            {/* Characters */}
+            <Card className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-zinc-200">
+                  Characters
+                  {selectedUser.character_count > 0 && (
+                    <span className="ml-2 text-xs font-normal text-zinc-500">({selectedUser.character_count})</span>
+                  )}
+                </h3>
+                {selectedUser.referral_count > 0 && (
+                  <span className="text-xs text-zinc-500">{selectedUser.referral_count} referral{selectedUser.referral_count !== 1 ? 's' : ''}</span>
+                )}
+              </div>
+              {selectedUser.characters?.length ? (
+                <div className="flex flex-wrap gap-3">
+                  {selectedUser.characters.map((char) => (
+                    <div key={char.id} className="flex flex-col items-center gap-1.5 w-20">
+                      <div className="w-16 h-16 rounded-xl overflow-hidden border border-zinc-700/60 bg-zinc-800/60 flex items-center justify-center">
+                        <img
+                          src={char.thumbUrl}
+                          alt={char.name}
+                          className="w-full h-full object-cover"
+                          onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextSibling.style.display = 'flex'; }}
+                        />
+                        <div className="hidden w-full h-full items-center justify-center text-zinc-600 text-xs text-center">No img</div>
+                      </div>
+                      <span className="text-[10px] text-zinc-400 text-center leading-tight line-clamp-2 w-full">{char.name}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <Empty icon="user" title="No characters created" subtitle="" />
+              )}
+            </Card>
 
             <Card className="space-y-4">
               <div className="flex items-center justify-between gap-3">
