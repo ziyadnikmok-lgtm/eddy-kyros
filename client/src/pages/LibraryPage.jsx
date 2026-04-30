@@ -199,9 +199,8 @@ function ContextMenuItem({ icon, label, tone = 'default', shortcut, ...props }) 
 }
 
 const LIBRARY_CONTEXT_MENU_WIDTH = 240;
-const LIBRARY_CONTEXT_MENU_HEIGHT = 380;
-const LIBRARY_CONTEXT_MENU_GAP = 10;
-const LIBRARY_CONTEXT_MENU_MARGIN = 12;
+const LIBRARY_CONTEXT_MENU_GAP = 6;
+const LIBRARY_CONTEXT_MENU_MARGIN = 8;
 
 /* Inline SVG icons for context menu */
 const ctxIcons = {
@@ -216,6 +215,9 @@ const ctxIcons = {
 };
 
 function ImageContextMenu({ menu, onClose, onAction }) {
+  const menuRef = useRef(null);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+
   useEffect(() => {
     if (!menu) return undefined;
     const handlePointerDown = () => onClose();
@@ -231,6 +233,33 @@ function ImageContextMenu({ menu, onClose, onAction }) {
       window.removeEventListener('scroll', handlePointerDown, true);
     };
   }, [menu, onClose]);
+
+  // Reposition after render so we use the actual measured height
+  useEffect(() => {
+    if (!menu || !menuRef.current) return;
+    const rect = menuRef.current.getBoundingClientRect();
+    const menuH = rect.height;
+    const menuW = LIBRARY_CONTEXT_MENU_WIDTH;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    let x = menu.rawX + LIBRARY_CONTEXT_MENU_GAP;
+    let y = menu.rawY + LIBRARY_CONTEXT_MENU_GAP;
+
+    // Flip left if overflows right
+    if (x + menuW > vw - LIBRARY_CONTEXT_MENU_MARGIN) {
+      x = menu.rawX - menuW - LIBRARY_CONTEXT_MENU_GAP;
+    }
+    // Flip up if overflows bottom
+    if (y + menuH > vh - LIBRARY_CONTEXT_MENU_MARGIN) {
+      y = menu.rawY - menuH - LIBRARY_CONTEXT_MENU_GAP;
+    }
+
+    x = Math.max(LIBRARY_CONTEXT_MENU_MARGIN, Math.min(x, vw - menuW - LIBRARY_CONTEXT_MENU_MARGIN));
+    y = Math.max(LIBRARY_CONTEXT_MENU_MARGIN, Math.min(y, vh - menuH - LIBRARY_CONTEXT_MENU_MARGIN));
+
+    setPos({ x, y });
+  }, [menu]);
 
   if (!menu) return null;
 
@@ -262,11 +291,12 @@ function ImageContextMenu({ menu, onClose, onAction }) {
 
   return (
     <div
+      ref={menuRef}
       className="fixed z-[80] rounded-2xl border border-zinc-700/50 bg-zinc-900/[0.97] p-1.5 shadow-2xl shadow-black/50 backdrop-blur-2xl"
       style={{
         width: LIBRARY_CONTEXT_MENU_WIDTH,
-        left: menu.x,
-        top: menu.y,
+        left: pos.x,
+        top: pos.y,
       }}
       onPointerDown={(event) => event.stopPropagation()}
     >
@@ -647,27 +677,9 @@ export default function LibraryPage() {
 
   const openContextMenu = useCallback((event, item) => {
     event.preventDefault();
-    let x = event.clientX + LIBRARY_CONTEXT_MENU_GAP;
-    let y = event.clientY + LIBRARY_CONTEXT_MENU_GAP;
-
-    if (x + LIBRARY_CONTEXT_MENU_WIDTH > window.innerWidth - LIBRARY_CONTEXT_MENU_MARGIN) {
-      x = event.clientX - LIBRARY_CONTEXT_MENU_WIDTH - LIBRARY_CONTEXT_MENU_GAP;
-    }
-
-    if (y + LIBRARY_CONTEXT_MENU_HEIGHT > window.innerHeight - LIBRARY_CONTEXT_MENU_MARGIN) {
-      y = event.clientY - LIBRARY_CONTEXT_MENU_HEIGHT - LIBRARY_CONTEXT_MENU_GAP;
-    }
-
-    x = Math.max(
-      LIBRARY_CONTEXT_MENU_MARGIN,
-      Math.min(x, window.innerWidth - LIBRARY_CONTEXT_MENU_WIDTH - LIBRARY_CONTEXT_MENU_MARGIN),
-    );
-    y = Math.max(
-      LIBRARY_CONTEXT_MENU_MARGIN,
-      Math.min(y, window.innerHeight - LIBRARY_CONTEXT_MENU_HEIGHT - LIBRARY_CONTEXT_MENU_MARGIN),
-    );
-
-    setContextMenu({ item, x, y });
+    // Store the raw click coordinates — the ImageContextMenu component will
+    // measure itself after rendering and reposition to stay in viewport.
+    setContextMenu({ item, rawX: event.clientX, rawY: event.clientY });
   }, []);
   const clearFilters = () => {
     setSearchQuery('');

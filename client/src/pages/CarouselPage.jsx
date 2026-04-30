@@ -458,6 +458,32 @@ export default function CarouselPage() {
     }
   };
 
+  // Clipboard paste support — paste images from anywhere (Ctrl+V / Cmd+V)
+  useEffect(() => {
+    const handlePaste = async (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (!item.type.startsWith('image/')) continue;
+        const file = item.getAsFile();
+        if (!file) continue;
+        try {
+          const src = await fileToDataUrl(file);
+          const tempId = `paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          const uploaded = { id: tempId, src, prompt: 'Pasted image', source: 'paste' };
+          setUploadedImages((prev) => [uploaded, ...prev]);
+          setSelectedImageId(tempId);
+          notify('Image pasted', 'success');
+        } catch {
+          notify('Failed to paste image', 'error');
+        }
+        break; // only handle the first image
+      }
+    };
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [notify]);
+
   const handleFollowUpCarousel = async () => {
     if (!selectedImageId) {
       notify('Select a base image first', 'error');
@@ -582,10 +608,11 @@ export default function CarouselPage() {
       </div>
 
       {carouselMode === 'follow-up' && (
-      <div>
-        <div className="space-y-4">
-          <Card className="space-y-3">
-            <h3 className="text-sm font-semibold text-zinc-300">Generation Settings</h3>
+      <Card className="space-y-5">
+        {/* ── Settings row ── */}
+        <div>
+          <h3 className="text-sm font-semibold text-zinc-300 mb-3">Generation Settings</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <span className="text-xs text-zinc-400 font-medium block mb-1.5">Character</span>
               <select
@@ -604,7 +631,6 @@ export default function CarouselPage() {
                 </div>
               )}
             </div>
-
             <div>
               <span className="text-xs text-zinc-400 font-medium block mb-1.5">Image Model</span>
               <select
@@ -617,7 +643,9 @@ export default function CarouselPage() {
                 ))}
               </select>
             </div>
+          </div>
 
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
             <div>
               <span className="text-xs text-zinc-400 font-medium block mb-2">Resolution Tier</span>
               <div className="flex flex-wrap gap-2">
@@ -632,7 +660,6 @@ export default function CarouselPage() {
                 ))}
               </div>
             </div>
-
             <div>
               <span className="text-xs text-zinc-400 font-medium block mb-2">Aspect Ratio</span>
               <div className="flex flex-wrap gap-1.5">
@@ -647,7 +674,6 @@ export default function CarouselPage() {
                 ))}
               </div>
             </div>
-
             <div>
               <span className="text-xs text-zinc-400 font-medium block mb-1.5">Kinetic Motion Blur</span>
               <select
@@ -660,138 +686,149 @@ export default function CarouselPage() {
                 <option value="more">More (strong)</option>
               </select>
             </div>
-          </Card>
-
-          <Card className="space-y-4">
-            <h3 className="text-sm font-semibold text-zinc-300">Follow-Up Source Image</h3>
-            {loadingGallery ? (
-              <div className="py-8 text-center text-sm text-zinc-500">Loading gallery images...</div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 auto-rows-[160px] gap-2 max-h-[55vh] overflow-y-auto pr-1">
-                <label className="group relative flex w-full h-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-zinc-700/80 bg-zinc-900/70 text-zinc-400 transition hover:border-blue-500/70 hover:bg-zinc-800/80 hover:text-zinc-200">
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    className="hidden"
-                    onChange={handleUpload}
-                  />
-                  <div className="text-center">
-                    <div className="text-2xl leading-none">+</div>
-                    <div className="mt-1 text-xs">Upload Image</div>
-                  </div>
-                </label>
-                {selectableImages.map((img) => {
-                  const isSelected = selectedImageId === img.id;
-                  const src = img.src || `/api/gallery/${img.id}/thumb`;
-                  return (
-                    <button
-                      key={img.id}
-                      type="button"
-                      onClick={() => setSelectedImageId(img.id)}
-                      className={`group relative w-full h-full overflow-hidden rounded-xl border bg-zinc-950 transition duration-200 hover:scale-[1.02] hover:shadow-[0_0_24px_rgba(59,130,246,0.2)] ${isSelected ? 'border-2 border-blue-500 shadow-[0_0_18px_rgba(59,130,246,0.35)]' : 'border-zinc-800'}`}
-                    >
-                      <img src={src} alt="" className="h-full w-full object-cover" loading="lazy" />
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {selectedImageSrc && (
-              <div className="rounded-lg overflow-hidden border border-zinc-700/40">
-                <img
-                  src={selectedImageSrc}
-                  alt="Selected base"
-                  className="w-full aspect-[4/5] sm:aspect-video object-cover"
-                  loading="lazy"
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => openLightbox([selectedImageSrc], 0)}
-                />
-                <div className="px-3 py-2 bg-zinc-900/50">
-                  <p className="text-[11px] text-zinc-500 line-clamp-2">
-                    {selectedImage?.prompt || 'Selected gallery image'}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-2">
-              <label className="text-xs text-zinc-400">
-                Follow-Up Count
-                <select
-                  value={followUpCount}
-                  onChange={(e) => setFollowUpCount(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-500"
-                >
-                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
-                    <option key={n} value={n}>{n}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-xs text-zinc-400">
-                Follow-Up Mode
-                <select
-                  value={followUpMode}
-                  onChange={(e) => setFollowUpMode(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-500"
-                >
-                  <option value="manual">Manual</option>
-                  <option value="ai">AI Analyze + Unique</option>
-                </select>
-              </label>
-            </div>
-            <div className="space-y-1.5">
-              <span className="text-xs text-zinc-400 font-medium">Direction (optional)</span>
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  { label: 'Sexy', prompt: 'Change pose to sexy and facial expression to sexy, and hand placement to sexy' },
-                  { label: 'Playful', prompt: 'Change pose to playful and facial expression to playful, and hand placement to playful' },
-                  { label: 'Cute', prompt: 'Change pose to cute and facial expression to cute, and hand placement to cute' },
-                ].map(({ label, prompt }) => (
-                  <button
-                    key={label}
-                    type="button"
-                    onClick={() => setFollowUpDirection(prompt)}
-                    className={`rounded-full px-3 py-1 text-xs font-medium transition cursor-pointer border ${followUpDirection === prompt ? 'bg-blue-600 border-blue-500 text-white' : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100'}`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <input
-                value={followUpDirection}
-                onChange={(e) => setFollowUpDirection(e.target.value)}
-                placeholder={followUpMode === 'ai' ? 'extra guidance for AI variants' : 'new framing + expression'}
-                className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-500"
-              />
-            </div>
-            <label className="flex items-center gap-2 rounded-lg border border-zinc-700/80 bg-zinc-800/50 px-3 py-2 text-xs text-zinc-300">
-              <input
-                type="checkbox"
-                checked={strictContinuityLock}
-                onChange={(e) => setStrictContinuityLock(e.target.checked)}
-                className="h-4 w-4 accent-blue-500"
-              />
-              <span>Strict Continuity Lock</span>
-            </label>
-            <div className="rounded-lg border border-zinc-700/80 bg-zinc-800/50 px-3 py-2">
-              <Toggle
-                checked={useCharacterRefsInFollowUp}
-                onChange={setUseCharacterRefsInFollowUp}
-                label="Use Character Refs in Follow-Up"
-              />
-            </div>
-            <Btn onClick={handleFollowUpCarousel} disabled={followUpLoading || !selectedImageId} className="w-full">
-              {followUpLoading ? <><Spinner size={14} /> Starting...</> : `${followUpMode === 'ai' ? 'AI Follow-up' : 'Follow-up'} · ~$${(followUpCount * 0.10).toFixed(2)}`}
-            </Btn>
-            {followUpLoading && (
-              <div className="text-[11px] text-zinc-500">{followUpElapsedSec}s elapsed</div>
-            )}
-          </Card>
-
+          </div>
         </div>
 
-      </div>
+        {/* ── Divider ── */}
+        <div className="border-t border-zinc-800/60" />
+
+        {/* ── Source Image ── */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-zinc-300">Source Image</h3>
+            <span className="text-[10px] text-zinc-500">Ctrl+V to paste from clipboard</span>
+          </div>
+          {loadingGallery ? (
+            <div className="py-8 text-center text-sm text-zinc-500">Loading gallery images...</div>
+          ) : (
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 auto-rows-[120px] gap-2 max-h-[40vh] overflow-y-auto pr-1">
+              <label className="group relative flex w-full h-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-zinc-700/80 bg-zinc-900/70 text-zinc-400 transition hover:border-blue-500/70 hover:bg-zinc-800/80 hover:text-zinc-200">
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={handleUpload}
+                />
+                <div className="text-center">
+                  <div className="text-2xl leading-none">+</div>
+                  <div className="mt-1 text-[10px]">Upload / Paste</div>
+                </div>
+              </label>
+              {selectableImages.map((img) => {
+                const isSelected = selectedImageId === img.id;
+                const src = img.src || `/api/gallery/${img.id}/thumb`;
+                return (
+                  <button
+                    key={img.id}
+                    type="button"
+                    onClick={() => setSelectedImageId(img.id)}
+                    className={`group relative w-full h-full overflow-hidden rounded-xl border bg-zinc-950 transition duration-200 hover:scale-[1.02] hover:shadow-[0_0_24px_rgba(59,130,246,0.2)] ${isSelected ? 'border-2 border-blue-500 shadow-[0_0_18px_rgba(59,130,246,0.35)]' : 'border-zinc-800'}`}
+                  >
+                    <img src={src} alt="" className="h-full w-full object-cover" loading="lazy" />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {selectedImageSrc && (
+            <div className="rounded-lg overflow-hidden border border-zinc-700/40">
+              <img
+                src={selectedImageSrc}
+                alt="Selected base"
+                className="w-full aspect-[4/5] sm:aspect-video object-cover"
+                loading="lazy"
+                style={{ cursor: 'pointer' }}
+                onClick={() => openLightbox([selectedImageSrc], 0)}
+              />
+              <div className="px-3 py-2 bg-zinc-900/50">
+                <p className="text-[11px] text-zinc-500 line-clamp-2">
+                  {selectedImage?.prompt || 'Selected gallery image'}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── Divider ── */}
+        <div className="border-t border-zinc-800/60" />
+
+        {/* ── Follow-Up Controls ── */}
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-xs text-zinc-400">
+              Follow-Up Count
+              <select
+                value={followUpCount}
+                onChange={(e) => setFollowUpCount(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-500"
+              >
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs text-zinc-400">
+              Follow-Up Mode
+              <select
+                value={followUpMode}
+                onChange={(e) => setFollowUpMode(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-500"
+              >
+                <option value="manual">Manual</option>
+                <option value="ai">AI Analyze + Unique</option>
+              </select>
+            </label>
+          </div>
+          <div className="space-y-1.5">
+            <span className="text-xs text-zinc-400 font-medium">Direction (optional)</span>
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { label: 'Sexy', prompt: 'Change pose to sexy and facial expression to sexy, and hand placement to sexy' },
+                { label: 'Playful', prompt: 'Change pose to playful and facial expression to playful, and hand placement to playful' },
+                { label: 'Cute', prompt: 'Change pose to cute and facial expression to cute, and hand placement to cute' },
+              ].map(({ label, prompt }) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => setFollowUpDirection(prompt)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition cursor-pointer border ${followUpDirection === prompt ? 'bg-blue-600 border-blue-500 text-white' : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <input
+              value={followUpDirection}
+              onChange={(e) => setFollowUpDirection(e.target.value)}
+              placeholder={followUpMode === 'ai' ? 'extra guidance for AI variants' : 'new framing + expression'}
+              className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-500"
+            />
+          </div>
+          <label className="flex items-center gap-2 rounded-lg border border-zinc-700/80 bg-zinc-800/50 px-3 py-2 text-xs text-zinc-300">
+            <input
+              type="checkbox"
+              checked={strictContinuityLock}
+              onChange={(e) => setStrictContinuityLock(e.target.checked)}
+              className="h-4 w-4 accent-blue-500"
+            />
+            <span>Strict Continuity Lock</span>
+          </label>
+          <div className="rounded-lg border border-zinc-700/80 bg-zinc-800/50 px-3 py-2">
+            <Toggle
+              checked={useCharacterRefsInFollowUp}
+              onChange={setUseCharacterRefsInFollowUp}
+              label="Use Character Refs in Follow-Up"
+            />
+          </div>
+          <Btn onClick={handleFollowUpCarousel} disabled={followUpLoading || !selectedImageId} className="w-full">
+            {followUpLoading ? <><Spinner size={14} /> Starting...</> : `${followUpMode === 'ai' ? 'AI Follow-up' : 'Follow-up'} · ~$${(followUpCount * 0.10).toFixed(2)}`}
+          </Btn>
+          {followUpLoading && (
+            <div className="text-[11px] text-zinc-500">{followUpElapsedSec}s elapsed</div>
+          )}
+        </div>
+      </Card>
       )}
 
       {carouselMode === 'polls' && (
