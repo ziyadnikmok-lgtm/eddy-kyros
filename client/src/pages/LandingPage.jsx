@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 
 const TELEGRAM_URL = 'https://t.me/Kyros_Studio';
+const DISCORD_URL = 'https://discord.gg/sYMNpMDASe';
 
 // ─── Design System — Noir + Hot Coral ──────────────────────────────────────────
 const DS = {
@@ -705,6 +706,11 @@ export default function LandingPage({ onNavigate, initialAuthModal = null }) {
                 Start for Free
                 <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-1" />
               </button>
+              <a href={DISCORD_URL} target="_blank" rel="noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-full px-6 py-3.5 text-sm font-medium transition hover:text-white"
+                style={{ color: DS.textMuted, border: `1px solid ${DS.border}`, fontFamily: DS.body }}>
+                Join Discord <ArrowUpRight className="h-3.5 w-3.5" />
+              </a>
               <a href={TELEGRAM_URL} target="_blank" rel="noreferrer"
                 className="inline-flex items-center gap-1.5 rounded-full px-6 py-3.5 text-sm font-medium transition hover:text-white"
                 style={{ color: DS.textMuted, border: `1px solid ${DS.border}`, fontFamily: DS.body }}>
@@ -1096,6 +1102,11 @@ export default function LandingPage({ onNavigate, initialAuthModal = null }) {
                 {label}
               </button>
             ))}
+            <a href={DISCORD_URL} target="_blank" rel="noreferrer"
+              className="text-xs uppercase tracking-widest transition-colors hover:text-white"
+              style={{ color: DS.textSubtle, fontFamily: DS.display }}>
+              Discord
+            </a>
             <a href={TELEGRAM_URL} target="_blank" rel="noreferrer"
               className="text-xs uppercase tracking-widest transition-colors hover:text-white"
               style={{ color: DS.textSubtle, fontFamily: DS.display }}>
