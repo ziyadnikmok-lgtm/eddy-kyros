@@ -332,7 +332,6 @@ app.use('/api/photo-match', generateLimiter, photoMatchRouter);
 app.use('/api/nano-bypass', generateLimiter, nanoBypassRouter);
 app.use('/api/x-reply', xReplyRouter);
 
-
 const { CLIENT_DIST } = require('./paths');
 if (fs.existsSync(CLIENT_DIST)) {
   app.use(express.static(CLIENT_DIST, {

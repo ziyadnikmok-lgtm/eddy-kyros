@@ -17,6 +17,41 @@ const LONG_RUNNING_PATHS = [
 
 const EXTRA_LONG_PATHS = ['/profile-clone'];
 
+const USAGE_MUTATION_PATHS = [
+  '/generate',
+  '/batch',
+  '/tweak',
+  '/post-clone',
+  '/reel-copy',
+  '/carousel/execute',
+  '/carousel/follow-up',
+  '/carousel/polls',
+  '/scene/recreate',
+  '/pinterest/recreate',
+  '/story/generate',
+  '/auto/plan',
+  '/auto/execute',
+  '/auto/plans/',
+  '/video/generate',
+  '/video-compose',
+  '/reformat',
+  '/nsfw-generate',
+  '/photo-match',
+  '/nano-bypass',
+  '/lora-datasets/generate',
+  '/profile-clone',
+];
+
+function affectsUsage(path, method) {
+  if (method === 'GET') return false;
+  return USAGE_MUTATION_PATHS.some((prefix) => path === prefix || path.startsWith(`${prefix}/`) || path.startsWith(prefix));
+}
+
+function notifyUsageChanged(detail = {}) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('kyros:usage-changed', { detail }));
+}
+
 function getTimeoutForPath(path, method) {
   if (method === 'GET') return DEFAULT_TIMEOUT_MS;
   if (path.startsWith('/pinterest/analyze-video')) return VIDEO_ANALYZE_TIMEOUT_MS;
@@ -58,6 +93,7 @@ async function request(path, options = {}) {
 
 async function _fetchOnce(path, method, body, externalSignal, timeoutMs, cache) {
   const resolvedTimeout = timeoutMs || getTimeoutForPath(path, method);
+  const shouldRefreshUsage = affectsUsage(path, method);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), resolvedTimeout);
 
@@ -90,7 +126,13 @@ async function _fetchOnce(path, method, body, externalSignal, timeoutMs, cache) 
       const err = new Error(msg);
       err.code = json?.error?.code || 'UNKNOWN';
       err.status = res.status;
+      if (shouldRefreshUsage && err.code === 'PLAN_LIMIT_EXCEEDED') {
+        notifyUsageChanged({ path, status: res.status, code: err.code });
+      }
       throw err;
+    }
+    if (shouldRefreshUsage) {
+      notifyUsageChanged({ path, status: res.status });
     }
     return json?.data ?? json;
   } catch (err) {
@@ -296,20 +338,39 @@ export const photoMatch = {
 
 export const pinterest = {
   fetch: (body) => request('/pinterest', { method: 'POST', body }),
+  push: (urlOrBody, feature = 'pinterest', imageUrl = null) => {
+    const body = typeof urlOrBody === 'string'
+      ? { url: urlOrBody, feature, imageUrl }
+      : urlOrBody;
+    return request('/pinterest/push', { method: 'POST', body });
+  },
+  pending: (params = {}) => {
+    if (typeof params === 'string') {
+      return request(`/pinterest/pending${params ? `?feature=${encodeURIComponent(params)}` : ''}`);
+    }
+    const qs = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null && value !== '') qs.set(key, String(value));
+    }
+    const query = qs.toString();
+    return request(`/pinterest/pending${query ? `?${query}` : ''}`);
+  },
   proxyUrl: (url) => `${BASE}/pinterest/proxy?url=${encodeURIComponent(url)}`,
   analyze: (image, mimeType) => request('/pinterest/analyze', { method: 'POST', body: { image, mimeType } }),
   recreate: (body) => request('/pinterest/recreate', { method: 'POST', body }),
   recreateVideoFrame: (body) => request('/pinterest/recreate-video-frame', { method: 'POST', body }),
   analyzeVideo: (videoUrl) => request('/pinterest/analyze-video', { method: 'POST', body: { url: videoUrl } }),
-  // Extension push support — feature: 'pinterest' | 'photo-match' | 'scene-recreate' | 'post-clone'
-  push: (url, feature = 'pinterest', imageUrl = null) =>
-    request('/pinterest/push', { method: 'POST', body: { url, feature, imageUrl } }),
-  pending: (feature) =>
-    request(`/pinterest/pending${feature ? `?feature=${encodeURIComponent(feature)}` : ''}`),
 };
 
 export const nanoBypass = {
   edit: (body) => request('/nano-bypass/edit', { method: 'POST', body }),
+};
+
+
+export const xReply = {
+  start: (body) => request('/x-reply/start', { method: 'POST', body }),
+  stop: () => request('/x-reply/stop', { method: 'POST' }),
+  status: () => request('/x-reply/status'),
 };
 
 export const niches = {
@@ -482,17 +543,18 @@ export const admin = {
   userLibraryAll: (id) => request(`/admin/users/${id}/library/all`),
   sendMessage: (id, subject, body) => request(`/admin/users/${id}/messages`, { method: 'POST', body: { subject, body } }),
   getUserMessages: (id) => request(`/admin/users/${id}/messages`),
+  referrals: () => request('/admin/referrals'),
+  markReferralPaid: (id, notes) => request(`/referral/admin/mark-paid/${id}`, { method: 'POST', body: { notes } }),
+  mrrTrend: () => request('/admin/analytics/mrr-trend'),
+  trialFunnel: () => request('/admin/analytics/trial-funnel'),
+  newVsReturning: () => request('/admin/analytics/new-vs-returning'),
+  featureStickiness: () => request('/admin/analytics/feature-stickiness'),
+  geo: () => request('/admin/analytics/geo'),
+  bulkMessage: (userIds, subject, body) => request('/admin/users/bulk-message', { method: 'POST', body: { userIds, subject, body } }),
 };
 
 export const notifications = {
   list: () => request('/notifications'),
   readAll: () => request('/notifications/read-all', { method: 'POST' }),
   readOne: (id) => request(`/notifications/${id}/read`, { method: 'POST' }),
-};
-
-// ── X Reply Bot ─────────────────────────────────────────────────────────────
-export const xReply = {
-  status: () => request('/x-reply/status'),
-  start: (body) => request('/x-reply/start', { method: 'POST', body }),
-  stop: () => request('/x-reply/stop', { method: 'POST' }),
 };

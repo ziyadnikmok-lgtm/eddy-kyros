@@ -38,7 +38,17 @@ class ApiKeyManager {
     return this._userStores.get(userId);
   }
 
+  /** Test/back-compat hook: replace the current user's in-memory store. */
+  set _store(store) {
+    const userId = getUserId() || '__anon__';
+    this._userStores.set(userId, store);
+  }
+
   /** Migrate old global spend data to the active key entry (one-time) */
+  _migrateGlobalSpend() {
+    this._migrateGlobalSpendFor(this._store);
+  }
+
   _migrateGlobalSpendFor(store) {
     if (typeof store.totalSpendUsd === 'number' && store.totalSpendUsd > 0) {
       const entry = store.activeKeyId ? store.keys.find(k => k.id === store.activeKeyId) : null;

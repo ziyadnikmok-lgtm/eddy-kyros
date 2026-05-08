@@ -33,19 +33,6 @@ function planColor(plan) {
   return 'zinc';
 }
 
-function computeScore(user) {
-  const daysSince = user.last_active_at
-    ? (Date.now() - new Date(user.last_active_at).getTime()) / 86400000
-    : 999;
-  const total = user.generation_count_total || 0;
-  const d30 = user.generation_count_30d || 0;
-  if (user.has_api_key && d30 > 0) return { label: 'Hot', color: 'green' };
-  if (d30 > 0) return { label: 'Active', color: 'blue' };
-  if (total > 0 && daysSince > 7) return { label: 'Churn', color: 'red' };
-  if (total > 0) return { label: 'Warm', color: 'yellow' };
-  return { label: 'New', color: 'zinc' };
-}
-
 function percent(part, whole) {
   if (!whole) return '0%';
   return `${Math.round((part / whole) * 100)}%`;
@@ -70,7 +57,7 @@ function BarCell({ value, max, color = 'bg-blue-500' }) {
 
 // ── Tabs ───────────────────────────────────────────────────────────────────────
 
-const TABS = ['Overview', 'Analytics', 'Users', 'System'];
+const TABS = ['Overview', 'Analytics', 'Users', 'Referrals', 'System'];
 
 function TabBar({ active, onChange }) {
   return (
@@ -293,18 +280,37 @@ function AnalyticsTab() {
   const [retention, setRetention] = useState(null);
   const [featureTrend, setFeatureTrend] = useState(null);
   const [signups, setSignups] = useState(null);
+  const [mrrTrend, setMrrTrend] = useState(null);
+  const [trialFunnel, setTrialFunnel] = useState(null);
+  const [newVsReturning, setNewVsReturning] = useState(null);
+  const [featureStickiness, setFeatureStickiness] = useState(null);
+  const [geo, setGeo] = useState(null);
   const [loading, setLoading] = useState(true);
   const { notify } = useApp();
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    Promise.all([adminApi.retention(), adminApi.featureTrend(), adminApi.signupsByDay()])
-      .then(([r, f, s]) => {
+    Promise.all([
+      adminApi.retention(),
+      adminApi.featureTrend(),
+      adminApi.signupsByDay(),
+      adminApi.mrrTrend(),
+      adminApi.trialFunnel(),
+      adminApi.newVsReturning(),
+      adminApi.featureStickiness(),
+      adminApi.geo(),
+    ])
+      .then(([r, f, s, mrr, tf, nvr, fs, g]) => {
         if (cancelled) return;
         setRetention(r.cohorts || []);
         setFeatureTrend(f.rows || []);
         setSignups(s.rows || []);
+        setMrrTrend(mrr.rows || []);
+        setTrialFunnel(tf.rows || []);
+        setNewVsReturning(nvr.rows || []);
+        setFeatureStickiness(fs.rows || []);
+        setGeo(g.rows || []);
       })
       .catch((err) => notify(err.message || 'Analytics load failed', 'error'))
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -399,6 +405,164 @@ function AnalyticsTab() {
         )}
       </Card>
 
+      {/* MRR Trend */}
+      <Card className="space-y-4">
+        <h2 className="text-sm font-semibold text-zinc-200">MRR Trend (New Subscriptions)</h2>
+        {!mrrTrend?.length ? <Empty icon="plan" title="No subscription data yet" subtitle="" /> : (() => {
+          // Aggregate by month
+          const months = [...new Set(mrrTrend.map(r => r.month))].sort();
+          const byMonth = {};
+          for (const r of mrrTrend) {
+            if (!byMonth[r.month]) byMonth[r.month] = { month: r.month, new_subs: 0, new_mrr: 0 };
+            byMonth[r.month].new_subs += r.new_subs;
+            byMonth[r.month].new_mrr += r.new_mrr;
+          }
+          return (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="text-left text-zinc-500">
+                  <tr className="border-b border-zinc-800/60">
+                    <th className="py-2.5 pr-4 font-medium">Month</th>
+                    <th className="py-2.5 pr-4 font-medium">Plan</th>
+                    <th className="py-2.5 pr-4 font-medium text-right">New Subs</th>
+                    <th className="py-2.5 font-medium text-right">New MRR</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {mrrTrend.map((row, i) => (
+                    <tr key={`${row.month}-${row.plan}-${i}`} className="border-b border-zinc-900/80 text-zinc-300">
+                      <td className="py-2 pr-4 text-xs text-zinc-400 font-mono">{row.month}</td>
+                      <td className="py-2 pr-4"><Badge color={planColor(row.plan)}>{row.plan}</Badge></td>
+                      <td className="py-2 pr-4 text-right tabular-nums">{row.new_subs}</td>
+                      <td className="py-2 text-right tabular-nums text-green-400">${row.new_mrr}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()}
+      </Card>
+
+      {/* Trial Funnel */}
+      <Card className="space-y-4">
+        <h2 className="text-sm font-semibold text-zinc-200">Trial → Paid Funnel (30D)</h2>
+        {!trialFunnel?.length ? <Empty icon="plan" title="No signup data in last 30 days" subtitle="" /> : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="text-left text-zinc-500">
+                <tr className="border-b border-zinc-800/60">
+                  <th className="py-2.5 pr-4 font-medium">Day</th>
+                  <th className="py-2.5 pr-4 font-medium text-right">Signups</th>
+                  <th className="py-2.5 pr-4 font-medium text-right">Activated</th>
+                  <th className="py-2.5 pr-4 font-medium text-right">Trial Exhausted</th>
+                  <th className="py-2.5 font-medium text-right">Converted</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trialFunnel.map((row) => (
+                  <tr key={row.day} className="border-b border-zinc-900/80 text-zinc-300">
+                    <td className="py-2 pr-4 text-xs text-zinc-400">{row.day}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums">{row.new_signups}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums text-blue-400">{row.activated}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums text-yellow-400">{row.trial_exhausted}</td>
+                    <td className="py-2 text-right tabular-nums text-green-400">{row.converted}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {/* New vs Returning */}
+      <Card className="space-y-4">
+        <h2 className="text-sm font-semibold text-zinc-200">New vs Returning Daily Active (30D)</h2>
+        {!newVsReturning?.length ? <Empty icon="plan" title="No activity data in last 30 days" subtitle="" /> : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="text-left text-zinc-500">
+                <tr className="border-b border-zinc-800/60">
+                  <th className="py-2.5 pr-4 font-medium">Day</th>
+                  <th className="py-2.5 pr-4 font-medium text-right">New Users</th>
+                  <th className="py-2.5 font-medium text-right">Returning Users</th>
+                </tr>
+              </thead>
+              <tbody>
+                {newVsReturning.map((row) => (
+                  <tr key={row.day} className="border-b border-zinc-900/80 text-zinc-300">
+                    <td className="py-2 pr-4 text-xs text-zinc-400">{row.day}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums text-green-400">{row.new_users}</td>
+                    <td className="py-2 text-right tabular-nums text-blue-400">{row.returning_users}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {/* Feature Stickiness */}
+      <Card className="space-y-4">
+        <div>
+          <h2 className="text-sm font-semibold text-zinc-200">Feature Stickiness (D7/D14/D30)</h2>
+          <p className="text-xs text-zinc-500 mt-1">% of users who returned to each feature after first use</p>
+        </div>
+        {!featureStickiness?.length ? <Empty icon="plan" title="Not enough data yet" subtitle="" /> : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="text-left text-zinc-500">
+                <tr className="border-b border-zinc-800/60">
+                  <th className="py-2.5 pr-4 font-medium">Feature</th>
+                  <th className="py-2.5 pr-4 font-medium text-right">Total Users</th>
+                  <th className="py-2.5 pr-4 font-medium text-right">D7 %</th>
+                  <th className="py-2.5 pr-4 font-medium text-right">D14 %</th>
+                  <th className="py-2.5 font-medium text-right">D30 %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {featureStickiness.map((row) => (
+                  <tr key={row.feature} className="border-b border-zinc-900/80 text-zinc-300">
+                    <td className="py-2.5 pr-4 font-medium">{row.feature}</td>
+                    <td className="py-2.5 pr-4 text-right tabular-nums">{row.total_users}</td>
+                    <td className="py-2.5 pr-4 text-right tabular-nums">
+                      {row.total_users > 0 ? <span className={row.d7_users / row.total_users >= 0.3 ? 'text-green-400' : 'text-zinc-400'}>{Math.round((row.d7_users / row.total_users) * 100)}%</span> : <span className="text-zinc-600">—</span>}
+                    </td>
+                    <td className="py-2.5 pr-4 text-right tabular-nums">
+                      {row.total_users > 0 ? <span className={row.d14_users / row.total_users >= 0.3 ? 'text-green-400' : 'text-zinc-400'}>{Math.round((row.d14_users / row.total_users) * 100)}%</span> : <span className="text-zinc-600">—</span>}
+                    </td>
+                    <td className="py-2.5 text-right tabular-nums">
+                      {row.total_users > 0 ? <span className={row.d30_users / row.total_users >= 0.3 ? 'text-green-400' : 'text-zinc-400'}>{Math.round((row.d30_users / row.total_users) * 100)}%</span> : <span className="text-zinc-600">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {/* Geo / Email Domain Breakdown */}
+      <Card className="space-y-4">
+        <h2 className="text-sm font-semibold text-zinc-200">Email Domain Breakdown</h2>
+        {!geo?.length ? <Empty icon="plan" title="No user data" subtitle="" /> : (() => {
+          const maxCount = Math.max(...geo.map(r => r.user_count), 1);
+          return (
+            <div className="space-y-2">
+              {geo.map((row) => (
+                <div key={row.domain} className="flex items-center gap-3">
+                  <div className="w-40 text-xs text-zinc-400 truncate font-mono">{row.domain}</div>
+                  <div className="flex-1 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                    <div className="h-full rounded-full bg-blue-500" style={{ width: `${Math.round((row.user_count / maxCount) * 100)}%` }} />
+                  </div>
+                  <div className="w-8 text-right text-xs text-zinc-300 tabular-nums">{row.user_count}</div>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+      </Card>
+
       {/* Feature trend heatmap */}
       <Card className="space-y-4">
         <div>
@@ -475,6 +639,11 @@ function UsersTab({ notify }) {
   const [msgBody, setMsgBody] = useState('');
   const [msgSending, setMsgSending] = useState(false);
   const [sentMessages, setSentMessages] = useState([]);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkSubject, setBulkSubject] = useState('');
+  const [bulkBody, setBulkBody] = useState('');
+  const [bulkSending, setBulkSending] = useState(false);
+  const [showBulkModal, setShowBulkModal] = useState(false);
 
   const filters = useMemo(() => ({
     page: pagination.page, limit: pagination.limit, query, plan, status, role,
@@ -607,7 +776,7 @@ function UsersTab({ notify }) {
         <Select className="w-36" value={plan} onChange={(e) => { setPagination((p) => ({ ...p, page: 1 })); setPlan(e.target.value); }}
           options={[{ value: '', label: 'All plans' }, { value: 'free', label: 'Free' }, { value: 'pro', label: 'Pro' }, { value: 'unlimited', label: 'Unlimited' }]} />
         <Select className="w-36" value={status} onChange={(e) => { setPagination((p) => ({ ...p, page: 1 })); setStatus(e.target.value); }}
-          options={[{ value: '', label: 'All status' }, { value: 'active', label: 'Active' }, { value: 'banned', label: 'Banned' }, { value: 'verified', label: 'Verified' }, { value: 'unverified', label: 'Unverified' }]} />
+          options={[{ value: '', label: 'All status' }, { value: 'active', label: 'Active' }, { value: 'banned', label: 'Banned' }, { value: 'verified', label: 'Verified' }, { value: 'unverified', label: 'Unverified' }, { value: 'dead_trial', label: 'Dead Trial' }]} />
         <Select className="w-36" value={role} onChange={(e) => { setPagination((p) => ({ ...p, page: 1 })); setRole(e.target.value); }}
           options={[{ value: '', label: 'All roles' }, { value: 'admin', label: 'Admins' }, { value: 'member', label: 'Members' }]} />
         <a
@@ -619,20 +788,80 @@ function UsersTab({ notify }) {
         </a>
       </div>
 
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 rounded-lg border border-blue-800/60 bg-blue-900/20 px-4 py-2.5">
+          <span className="text-sm text-blue-300">{selectedIds.size} selected</span>
+          <Btn variant="secondary" className="text-xs px-2 py-1" onClick={() => setShowBulkModal(true)}>
+            Send Message
+          </Btn>
+          <Btn variant="ghost" className="text-xs px-2 py-1" onClick={() => setSelectedIds(new Set())}>
+            Clear
+          </Btn>
+        </div>
+      )}
+
+      <Modal open={showBulkModal} onClose={() => setShowBulkModal(false)} title={`Send to ${selectedIds.size} users`}>
+        <div className="space-y-4">
+          <Input label="Subject" value={bulkSubject} onChange={(e) => setBulkSubject(e.target.value)} placeholder="Message subject" />
+          <div className="flex flex-col gap-1.5 text-sm">
+            <label className="text-zinc-400 text-sm">Message</label>
+            <textarea
+              className="rounded-lg border border-zinc-700/60 bg-zinc-900/50 px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none transition-all resize-y min-h-[100px]"
+              value={bulkBody}
+              onChange={(e) => setBulkBody(e.target.value)}
+              placeholder="Your message..."
+            />
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Btn variant="secondary" onClick={() => setShowBulkModal(false)}>Cancel</Btn>
+            <Btn
+              disabled={bulkSending || !bulkBody.trim()}
+              onClick={async () => {
+                setBulkSending(true);
+                try {
+                  const r = await adminApi.bulkMessage([...selectedIds], bulkSubject, bulkBody);
+                  notify(`Sent to ${r.sent} users`, 'success');
+                  setShowBulkModal(false);
+                  setSelectedIds(new Set());
+                  setBulkSubject('');
+                  setBulkBody('');
+                } catch (err) {
+                  notify(err.message || 'Send failed', 'error');
+                } finally {
+                  setBulkSending(false);
+                }
+              }}
+            >
+              {bulkSending ? 'Sending…' : 'Send Message'}
+            </Btn>
+          </div>
+        </div>
+      </Modal>
+
       <Card>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="text-left text-zinc-500">
               <tr className="border-b border-zinc-800/60">
+                <th className="py-3 pr-3 w-8">
+                  <input
+                    type="checkbox"
+                    className="rounded"
+                    checked={selectedIds.size === users.length && users.length > 0}
+                    onChange={(e) => {
+                      if (e.target.checked) setSelectedIds(new Set(users.map(u => u.id)));
+                      else setSelectedIds(new Set());
+                    }}
+                  />
+                </th>
                 <th className="py-3 pr-3 font-medium">User</th>
-                <th className="py-3 pr-3 font-medium">Joined</th>
                 <th className="py-3 pr-3 font-medium">Plan</th>
+                <th className="py-3 pr-3 font-medium">Trial</th>
                 <th className="py-3 pr-3 font-medium">Last Active</th>
-                <th className="py-3 pr-3 font-medium text-right">30D / Total</th>
-                <th className="py-3 pr-3 font-medium text-center">Key</th>
-                <th className="py-3 pr-3 font-medium text-center">Chars</th>
-                <th className="py-3 pr-3 font-medium text-center">Refs</th>
-                <th className="py-3 pr-3 font-medium">Score</th>
+                <th className="py-3 pr-3 font-medium">30D Runs</th>
+                <th className="py-3 pr-3 font-medium">Total Runs</th>
+                <th className="py-3 pr-3 font-medium">Last Feature</th>
+                <th className="py-3 pr-3 font-medium">Referred By</th>
                 <th className="py-3 font-medium">State</th>
               </tr>
             </thead>
@@ -643,26 +872,43 @@ function UsersTab({ notify }) {
                   className="border-b border-zinc-900/80 text-zinc-300 hover:bg-zinc-900/40 cursor-pointer transition-colors"
                   onClick={() => setSelectedUserId(user.id)}
                 >
+                  <td className="py-3 pr-3" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      className="rounded"
+                      checked={selectedIds.has(user.id)}
+                      onChange={(e) => {
+                        const next = new Set(selectedIds);
+                        if (e.target.checked) next.add(user.id);
+                        else next.delete(user.id);
+                        setSelectedIds(next);
+                      }}
+                    />
+                  </td>
                   <td className="py-3 pr-3">
                     <div className="font-medium text-zinc-100">{user.email}</div>
                     <div className="text-xs text-zinc-500">{user.name || 'No name'}</div>
                   </td>
-                  <td className="py-3 pr-3 text-xs text-zinc-400">{formatDateShort(user.created_at)}</td>
                   <td className="py-3 pr-3"><Badge color={planColor(user.plan)}>{user.plan || 'free'}</Badge></td>
-                  <td className="py-3 pr-3 text-xs text-zinc-400">{formatDate(user.last_active_at)}</td>
-                  <td className="py-3 pr-3 text-right text-sm">
-                    <span className="text-zinc-200">{user.generation_count_30d || 0}</span>
-                    <span className="text-zinc-600"> / {user.generation_count_total || 0}</span>
-                  </td>
-                  <td className="py-3 pr-3 text-center">
-                    {user.has_api_key
-                      ? <span className="text-green-400 text-lg leading-none">●</span>
-                      : <span className="text-zinc-700 text-lg leading-none">○</span>}
-                  </td>
-                  <td className="py-3 pr-3 text-center text-sm text-zinc-300">{user.character_count || 0}</td>
-                  <td className="py-3 pr-3 text-center text-sm text-zinc-300">{user.referral_count || 0}</td>
                   <td className="py-3 pr-3">
-                    {(() => { const s = computeScore(user); return <Badge color={s.color}>{s.label}</Badge>; })()}
+                    {(user.plan || 'free') === 'free' ? (
+                      user.trial_finished
+                        ? <Badge color="red">Dead Trial</Badge>
+                        : <Badge color="blue">{user.trial_used || 0}/{user.trial_limit || 10}</Badge>
+                    ) : (
+                      <span className="text-xs text-zinc-600">—</span>
+                    )}
+                  </td>
+                  <td className="py-3 pr-3 text-xs text-zinc-400">{formatDate(user.last_active_at)}</td>
+                  <td className="py-3 pr-3">{user.generation_count_30d || 0}</td>
+                  <td className="py-3 pr-3 tabular-nums">{user.total_run_count || 0}</td>
+                  <td className="py-3 pr-3">
+                    {user.last_feature_used ? (
+                      <span className="text-xs text-zinc-300 font-mono">{user.last_feature_used}</span>
+                    ) : <span className="text-zinc-600 text-xs">—</span>}
+                  </td>
+                  <td className="py-3 pr-3 text-xs text-zinc-500 max-w-[120px] truncate">
+                    {user.referred_by_email || '—'}
                   </td>
                   <td className="py-3">
                     <div className="flex flex-wrap gap-1">
@@ -702,7 +948,7 @@ function UsersTab({ notify }) {
         ) : (
           <div className="space-y-6">
             {/* Key stats */}
-            <div className="grid gap-4 grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <MetricCard label="Plan" value={selectedUser.subscription?.plan || 'free'} sublabel={selectedUser.subscription?.status || 'active'} />
               <MetricCard
                 label="Free Trial"
@@ -717,10 +963,6 @@ function UsersTab({ notify }) {
               <MetricCard label="Keys" value={selectedUser.connected_key_count || 0} sublabel="Connected provider keys" />
               <MetricCard label="Total Runs" value={selectedUser.generation_count_total || 0} sublabel={`${selectedUser.generation_count_30d || 0} in 30d`} />
               <MetricCard label="Last Active" value={selectedUser.last_active_at ? formatDateShort(selectedUser.last_active_at) : 'Never'} sublabel={formatDate(selectedUser.last_active_at)} />
-              <MetricCard label="Joined" value={formatDateShort(selectedUser.created_at)} sublabel="Signup date" />
-              <MetricCard label="Referrals" value={selectedUser.referral_count || 0} sublabel="Users referred" />
-              <MetricCard label="Characters" value={selectedUser.character_count || 0} sublabel="Characters created" />
-              {(() => { const s = computeScore(selectedUser); return <MetricCard label="Score" value={s.label} sublabel="Conversion signal" accent={s.color === 'green' ? 'text-green-400' : s.color === 'red' ? 'text-red-400' : s.color === 'yellow' ? 'text-yellow-400' : s.color === 'blue' ? 'text-blue-400' : 'text-zinc-400'} />; })()}
             </div>
 
             {/* Actions */}
@@ -778,41 +1020,6 @@ function UsersTab({ notify }) {
                 )) : <Empty icon="plan" title="No billing history" subtitle="" />}
               </Card>
             </div>
-
-            {/* Characters */}
-            <Card className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-zinc-200">
-                  Characters
-                  {selectedUser.character_count > 0 && (
-                    <span className="ml-2 text-xs font-normal text-zinc-500">({selectedUser.character_count})</span>
-                  )}
-                </h3>
-                {selectedUser.referral_count > 0 && (
-                  <span className="text-xs text-zinc-500">{selectedUser.referral_count} referral{selectedUser.referral_count !== 1 ? 's' : ''}</span>
-                )}
-              </div>
-              {selectedUser.characters?.length ? (
-                <div className="flex flex-wrap gap-3">
-                  {selectedUser.characters.map((char) => (
-                    <div key={char.id} className="flex flex-col items-center gap-1.5 w-20">
-                      <div className="w-16 h-16 rounded-xl overflow-hidden border border-zinc-700/60 bg-zinc-800/60 flex items-center justify-center">
-                        <img
-                          src={char.thumbUrl}
-                          alt={char.name}
-                          className="w-full h-full object-cover"
-                          onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextSibling.style.display = 'flex'; }}
-                        />
-                        <div className="hidden w-full h-full items-center justify-center text-zinc-600 text-xs text-center">No img</div>
-                      </div>
-                      <span className="text-[10px] text-zinc-400 text-center leading-tight line-clamp-2 w-full">{char.name}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <Empty icon="user" title="No characters created" subtitle="" />
-              )}
-            </Card>
 
             <Card className="space-y-4">
               <div className="flex items-center justify-between gap-3">
@@ -1089,6 +1296,249 @@ function UsersTab({ notify }) {
   );
 }
 
+// ── Referrals tab ──────────────────────────────────────────────────────────────
+
+function ReferralsTab({ notify }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState('pending');
+  const [markingId, setMarkingId] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const d = await adminApi.referrals();
+      setData(d);
+    } catch (err) {
+      notify(err.message || 'Failed to load referrals', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [notify]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function handleMarkPaid(id) {
+    setMarkingId(id);
+    try {
+      await adminApi.markReferralPaid(id);
+      notify('Commission marked as paid', 'success');
+      await load();
+    } catch (err) {
+      notify(err.message || 'Failed to mark paid', 'error');
+    } finally {
+      setMarkingId(null);
+    }
+  }
+
+  if (loading) return <div className="flex justify-center py-24"><Spinner size={32} /></div>;
+
+  const { summary, leaderboard, commissions } = data || {};
+  const filteredCommissions = statusFilter === 'all'
+    ? (commissions || [])
+    : (commissions || []).filter((c) => c.status === statusFilter);
+
+  return (
+    <div className="space-y-6">
+      {(data?.payoutRequests?.length > 0) && (
+        <Card className="border-yellow-800/60 bg-yellow-900/10 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-yellow-300">
+              Payout Requests
+              <span className="ml-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-yellow-500 text-black text-xs font-bold">{data.payoutRequests.length}</span>
+            </h2>
+          </div>
+          <div className="space-y-2">
+            {data.payoutRequests.map((req) => (
+              <div key={req.referrer_id} className="flex items-center justify-between rounded-lg border border-yellow-800/40 bg-yellow-950/30 px-3 py-2.5">
+                <div>
+                  <div className="text-sm font-medium text-zinc-200">{req.referrer_email}</div>
+                  <div className="text-xs text-zinc-400 mt-0.5">
+                    via <span className="font-medium">{req.method}</span> to: <span className="font-mono text-yellow-300">{req.wallet}</span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="font-bold text-yellow-400 tabular-nums">${req.total_pending_usd.toFixed(2)}</div>
+                  <div className="text-xs text-zinc-500">{formatDateShort(req.requested_at)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Active Referrers" value={summary?.totalReferrers ?? 0} sublabel="Users with referral activity" />
+        <MetricCard label="Total Conversions" value={summary?.totalConversions ?? 0} sublabel="Paid upgrades from referrals" accent="text-green-400" />
+        <MetricCard label="Pending Payout" value={`$${(summary?.pendingTotal ?? 0).toFixed(2)}`} sublabel="Commissions awaiting payment" accent="text-yellow-400" />
+        <MetricCard label="Total Paid Out" value={`$${(summary?.paidTotal ?? 0).toFixed(2)}`} sublabel="All-time commissions paid" accent="text-blue-400" />
+      </div>
+
+      <Card className="space-y-4">
+        <h2 className="text-sm font-semibold text-zinc-200">Top Referrers</h2>
+        {!leaderboard?.length ? (
+          <Empty icon="user" title="No referral activity yet" subtitle="Users appear here when they refer someone who signs up." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="text-left text-zinc-500">
+                <tr className="border-b border-zinc-800/60">
+                  <th className="py-2.5 pr-3 font-medium w-8">#</th>
+                  <th className="py-2.5 pr-4 font-medium">Email</th>
+                  <th className="py-2.5 pr-4 font-medium">Code</th>
+                  <th className="py-2.5 pr-4 font-medium text-right">Signups</th>
+                  <th className="py-2.5 pr-4 font-medium text-right">Conversions</th>
+                  <th className="py-2.5 pr-4 font-medium text-right">Conv. Rate</th>
+                  <th className="py-2.5 pr-4 font-medium text-right">Pending</th>
+                  <th className="py-2.5 font-medium text-right">Paid</th>
+                </tr>
+              </thead>
+              <tbody>
+                {leaderboard.map((row, i) => (
+                  <tr key={row.id} className="border-b border-zinc-900/80 text-zinc-300">
+                    <td className="py-2.5 pr-3 text-zinc-500 text-xs tabular-nums">{i + 1}</td>
+                    <td className="py-2.5 pr-4 max-w-[200px] truncate">{row.email}</td>
+                    <td className="py-2.5 pr-4">
+                      <span className="font-mono text-xs bg-zinc-800 px-2 py-0.5 rounded text-zinc-300">{row.referral_code || '—'}</span>
+                    </td>
+                    <td className="py-2.5 pr-4 text-right tabular-nums">{row.total_signups}</td>
+                    <td className="py-2.5 pr-4 text-right">
+                      <Badge color={row.conversions > 0 ? 'green' : 'zinc'}>{row.conversions}</Badge>
+                    </td>
+                    <td className="py-2.5 pr-4 text-right text-xs">
+                      {row.total_signups > 0
+                        ? <span className={row.conversions / row.total_signups >= 0.3 ? 'text-green-400' : 'text-zinc-400'}>
+                            {Math.round((row.conversions / row.total_signups) * 100)}%
+                          </span>
+                        : <span className="text-zinc-600">—</span>
+                      }
+                    </td>
+                    <td className="py-2.5 pr-4 text-right tabular-nums text-yellow-400">
+                      {row.pending_usd > 0 ? `$${(+row.pending_usd).toFixed(2)}` : '—'}
+                    </td>
+                    <td className="py-2.5 text-right tabular-nums text-green-400">
+                      {row.paid_usd > 0 ? `$${(+row.paid_usd).toFixed(2)}` : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {data?.monthlyHistory?.length > 0 && (
+        <Card className="space-y-4">
+          <h2 className="text-sm font-semibold text-zinc-200">Monthly Commission History</h2>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="text-left text-zinc-500">
+                <tr className="border-b border-zinc-800/60">
+                  <th className="py-2.5 pr-4 font-medium">Month</th>
+                  <th className="py-2.5 pr-4 font-medium">Earned</th>
+                  <th className="py-2.5 pr-4 font-medium">Paid</th>
+                  <th className="py-2.5 font-medium">Count</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.monthlyHistory.map((row) => {
+                  const maxEarned = Math.max(...data.monthlyHistory.map(r => r.earned), 1);
+                  return (
+                    <tr key={row.month} className="border-b border-zinc-900/80 text-zinc-300">
+                      <td className="py-2.5 pr-4 text-xs text-zinc-400 font-mono">{row.month}</td>
+                      <td className="py-2.5 pr-4">
+                        <div className="flex items-center gap-2">
+                          <div className="h-1.5 w-20 rounded-full bg-zinc-800 overflow-hidden">
+                            <div className="h-full rounded-full bg-yellow-500" style={{ width: `${Math.round((row.earned / maxEarned) * 100)}%` }} />
+                          </div>
+                          <span className="text-yellow-400 tabular-nums text-xs">${row.earned.toFixed(2)}</span>
+                        </div>
+                      </td>
+                      <td className="py-2.5 pr-4 text-green-400 tabular-nums text-xs">${row.paid.toFixed(2)}</td>
+                      <td className="py-2.5 text-zinc-400 tabular-nums">{row.count}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      <Card className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-zinc-200">
+            Commissions
+            {filteredCommissions.length > 0 && (
+              <span className="ml-2 text-xs font-normal text-zinc-500">({filteredCommissions.length})</span>
+            )}
+          </h2>
+          <div className="flex gap-1 rounded-lg border border-zinc-800/60 p-0.5">
+            {['pending', 'paid', 'all'].map((s) => (
+              <button
+                key={s}
+                onClick={() => setStatusFilter(s)}
+                className={`px-3 py-1 text-xs rounded-md font-medium transition-colors capitalize ${
+                  statusFilter === s ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+        {!filteredCommissions.length ? (
+          <Empty icon="plan" title={statusFilter === 'pending' ? 'No pending commissions' : 'No commissions found'} subtitle="" />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="text-left text-zinc-500">
+                <tr className="border-b border-zinc-800/60">
+                  <th className="py-2.5 pr-4 font-medium">Referrer</th>
+                  <th className="py-2.5 pr-4 font-medium">Referee</th>
+                  <th className="py-2.5 pr-4 font-medium">Plan</th>
+                  <th className="py-2.5 pr-4 font-medium">Amount</th>
+                  <th className="py-2.5 pr-4 font-medium">Date</th>
+                  <th className="py-2.5 pr-4 font-medium">Status</th>
+                  <th className="py-2.5 font-medium" />
+                </tr>
+              </thead>
+              <tbody>
+                {filteredCommissions.map((row) => (
+                  <tr key={row.id} className="border-b border-zinc-900/80 text-zinc-300">
+                    <td className="py-2.5 pr-4 text-xs max-w-[150px] truncate">{row.referrer_email}</td>
+                    <td className="py-2.5 pr-4 text-xs max-w-[150px] truncate">{row.referee_email}</td>
+                    <td className="py-2.5 pr-4"><Badge color={planColor(row.plan)}>{row.plan}</Badge></td>
+                    <td className="py-2.5 pr-4 font-semibold text-green-400 tabular-nums">${(+row.amount_usd).toFixed(2)}</td>
+                    <td className="py-2.5 pr-4 text-xs text-zinc-400">{formatDateShort(row.created_at)}</td>
+                    <td className="py-2.5 pr-4">
+                      <Badge color={row.status === 'paid' ? 'green' : row.status === 'pending' ? 'yellow' : 'zinc'}>
+                        {row.status}
+                      </Badge>
+                    </td>
+                    <td className="py-2.5">
+                      {row.status === 'pending' && (
+                        <Btn
+                          variant="secondary"
+                          className="text-xs px-2 py-1"
+                          onClick={() => handleMarkPaid(row.id)}
+                          disabled={markingId === row.id}
+                        >
+                          {markingId === row.id ? '…' : 'Mark Paid'}
+                        </Btn>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 // ── System tab ─────────────────────────────────────────────────────────────────
 
 function SystemTab() {
@@ -1236,6 +1686,7 @@ export default function AdminPage() {
       )}
       {tab === 'Analytics' && <AnalyticsTab />}
       {tab === 'Users' && <UsersTab notify={notify} />}
+      {tab === 'Referrals' && <ReferralsTab notify={notify} />}
       {tab === 'System' && <SystemTab />}
     </div>
   );

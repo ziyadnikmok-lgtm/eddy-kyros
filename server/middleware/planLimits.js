@@ -50,13 +50,36 @@ function getUsageLast24h(userId) {
   return row?.total || 0;
 }
 
-function getFreeTrialUsage(userId) {
+function getReservedFreeTrialUsage(userId) {
   const row = db.prepare(`
     SELECT COUNT(*) AS total
     FROM usage_events
     WHERE user_id = ? AND event_type = 'trial.generation_reserved'
   `).get(userId);
   return row?.total || 0;
+}
+
+function getSuccessfulGenerationUsage(userId) {
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(
+      CASE
+        WHEN COALESCE(output_count, 0) > 0 THEN output_count
+        ELSE 1
+      END
+    ), 0) AS total
+    FROM generation_runs
+    WHERE user_id = ?
+      AND status IN ('succeeded', 'completed', 'partial')
+  `).get(userId);
+  return row?.total || 0;
+}
+
+function getFreeTrialUsage(userId) {
+  if (!userId) return 0;
+  return Math.max(
+    getReservedFreeTrialUsage(userId),
+    getSuccessfulGenerationUsage(userId),
+  );
 }
 
 function inferGenerationCost(req, options = {}) {
@@ -171,4 +194,15 @@ function requirePlanCapacity(options = {}) {
   };
 }
 
-module.exports = { requirePlanCapacity, getCurrentPlan, getUsageLast24h, getFreeTrialUsage, reserveFreeTrialUsage, releaseFreeTrialUsage, PLAN_LIMITS, isHostedRuntime };
+module.exports = {
+  requirePlanCapacity,
+  getCurrentPlan,
+  getUsageLast24h,
+  getFreeTrialUsage,
+  getReservedFreeTrialUsage,
+  getSuccessfulGenerationUsage,
+  reserveFreeTrialUsage,
+  releaseFreeTrialUsage,
+  PLAN_LIMITS,
+  isHostedRuntime,
+};

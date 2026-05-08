@@ -464,12 +464,18 @@ function MainApp({ onLogout, currentUser }) {
           </div>
         )}
 
-        {currentUser?.usageInfo?.plan === 'free' && currentUser.usageInfo.limit != null && (
+        {currentUser?.usageInfo?.plan === 'free' && currentUser.usageInfo.limit != null && (() => {
+          const used = Math.max(0, Number(currentUser.usageInfo.used) || 0);
+          const limit = Math.max(1, Number(currentUser.usageInfo.limit) || 10);
+          const displayUsed = Math.min(used, limit);
+          const remaining = Math.max(0, limit - used);
+          const isFinished = used >= limit;
+          return (
           <div className="px-4 py-3 border-t border-white/[0.07]">
-            {currentUser.usageInfo.used >= currentUser.usageInfo.limit ? (
+            {isFinished ? (
               <div className="rounded-lg bg-red-950/40 border border-red-800/30 p-3 text-center">
-                <p className="text-[11px] font-semibold text-red-400 mb-1">Free trial used up</p>
-                <p className="text-[10px] text-zinc-500 mb-2">Upgrade to keep generating</p>
+                <p className="text-[11px] font-semibold text-red-400 mb-1">Free limit reached</p>
+                <p className="text-[10px] text-zinc-500 mb-2">You used {displayUsed}/{limit} generations</p>
                 <button onClick={() => navigateTo('billing')}
                   className="w-full rounded-md bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-medium py-1.5 transition cursor-pointer">
                   Upgrade to Pro
@@ -479,17 +485,18 @@ function MainApp({ onLogout, currentUser }) {
               <div>
                 <div className="flex justify-between mb-1">
                   <span className="text-[10px] text-zinc-500">Free trial</span>
-                  <span className="text-[10px] text-zinc-500 font-mono">{currentUser.usageInfo.used}/{currentUser.usageInfo.limit}</span>
+                  <span className="text-[10px] text-zinc-500 font-mono">{displayUsed}/{limit}</span>
                 </div>
                 <div className="h-1 rounded-full bg-zinc-800 overflow-hidden">
                   <div className="h-full rounded-full bg-blue-500 transition-all"
-                    style={{ width: `${Math.min(100, (currentUser.usageInfo.used / currentUser.usageInfo.limit) * 100)}%` }} />
+                    style={{ width: `${Math.min(100, (displayUsed / limit) * 100)}%` }} />
                 </div>
-                <p className="text-[9px] text-zinc-600 mt-1">{currentUser.usageInfo.limit - currentUser.usageInfo.used} generations left</p>
+                <p className="text-[9px] text-zinc-600 mt-1">{remaining} generations left</p>
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
 
         <div className="border-t border-white/[0.07] px-4 py-3 flex items-center justify-between">
           <div className="min-w-0">
@@ -605,6 +612,29 @@ export default function App() {
   const [authPage, setAuthPage] = useState(getAuthPageFromLocation);
   const [currentUser, setCurrentUser] = useState(null);
 
+  const refreshCurrentUser = useCallback(async ({ silent = false } = {}) => {
+    if (isPublicPreviewHost) return null;
+    try {
+      const res = await fetch('/api/auth/me', { credentials: 'include', cache: 'no-store' });
+      if (!res.ok) {
+        if (!silent) {
+          setCurrentUser(null);
+          setAuthState('unauthenticated');
+        }
+        return null;
+      }
+      const data = await res.json();
+      setCurrentUser(data);
+      return data;
+    } catch {
+      if (!silent) {
+        setCurrentUser(null);
+        setAuthState('unauthenticated');
+      }
+      return null;
+    }
+  }, [isPublicPreviewHost]);
+
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
     const handlePopState = () => setAuthPage(getAuthPageFromLocation());
@@ -636,27 +666,33 @@ export default function App() {
     if (isPublicPreviewHost) return;
     if (authState !== 'authenticated') return;
     let cancelled = false;
-    fetch('/api/auth/me', { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (cancelled) return;
-        if (!data) {
-          setCurrentUser(null);
-          setAuthState('unauthenticated');
-          return;
-        }
-        setCurrentUser(data);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setCurrentUser(null);
-          setAuthState('unauthenticated');
-        }
-      });
+    refreshCurrentUser().then((data) => {
+      if (cancelled || data) return;
+      setCurrentUser(null);
+      setAuthState('unauthenticated');
+    });
     return () => {
       cancelled = true;
     };
-  }, [authState, isPublicPreviewHost]);
+  }, [authState, isPublicPreviewHost, refreshCurrentUser]);
+
+  useEffect(() => {
+    if (isPublicPreviewHost || authState !== 'authenticated') return undefined;
+    let refreshTimer = null;
+    const scheduleRefresh = () => {
+      window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => {
+        refreshCurrentUser({ silent: true });
+      }, 250);
+    };
+    window.addEventListener('kyros:usage-changed', scheduleRefresh);
+    window.addEventListener('focus', scheduleRefresh);
+    return () => {
+      window.clearTimeout(refreshTimer);
+      window.removeEventListener('kyros:usage-changed', scheduleRefresh);
+      window.removeEventListener('focus', scheduleRefresh);
+    };
+  }, [authState, isPublicPreviewHost, refreshCurrentUser]);
 
   if (authState === 'loading') {
     return (

@@ -850,6 +850,7 @@ const _directService = new GeminiService();
 module.exports = new Proxy(_directService, {
   get(target, prop) {
     if (prop === '__direct') return target;
+    if (prop === 'constructor') return target.constructor;
     const val = target[prop];
     if (typeof val !== 'function') return val;
     return function (...args) {

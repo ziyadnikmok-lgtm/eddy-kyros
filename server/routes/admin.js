@@ -13,8 +13,7 @@ const videoHistory = require('../services/videoHistoryStore');
 const batchGenerator = require('../services/batchGenerator');
 const { runWithUser } = require('../userContext');
 const log = require('../utils/logger');
-const referenceManager = require('../services/referenceManager');
-const { WEB_DATA_ROOT } = require('../paths');
+const { getFreeTrialUsage } = require('../middleware/planLimits');
 
 const router = express.Router();
 const PLAN_PRICES = {
@@ -23,28 +22,6 @@ const PLAN_PRICES = {
   unlimited: 49,
 };
 const FREE_TRIAL_LIMIT = 10;
-
-function getCharacterCount(userId) {
-  if (process.env.ELECTRON_USER_DATA) return 0;
-  const charDir = path.join(WEB_DATA_ROOT, String(userId), 'characters');
-  if (!fs.existsSync(charDir)) return 0;
-  try {
-    return fs.readdirSync(charDir, { withFileTypes: true }).filter((e) => e.isDirectory()).length;
-  } catch { return 0; }
-}
-
-function getCharactersForUser(userId) {
-  return runWithUser(userId, () => {
-    try {
-      const chars = referenceManager.listCharacters();
-      return chars.map((c) => ({
-        id: c.id,
-        name: c.name,
-        thumbUrl: `/api/admin/users/${userId}/characters/${encodeURIComponent(c.id)}/thumb`,
-      }));
-    } catch { return []; }
-  });
-}
 
 function getCurrentSubscription(userId) {
   return db.prepare(`
@@ -57,12 +34,7 @@ function getCurrentSubscription(userId) {
 }
 
 function getFreeTrialUsageByUser(userId) {
-  const row = db.prepare(`
-    SELECT COUNT(*) AS total
-    FROM usage_events
-    WHERE user_id = ? AND event_type = 'trial.generation_reserved'
-  `).get(userId);
-  return row?.total || 0;
+  return getFreeTrialUsage(userId);
 }
 
 function getUserSummaryById(userId) {
@@ -608,6 +580,28 @@ router.get('/users', requireAdmin, (req, res) => {
   if (status === 'active') clauses.push('u.is_banned = 0');
   if (status === 'verified') clauses.push('u.verified = 1');
   if (status === 'unverified') clauses.push('u.verified = 0');
+  if (status === 'dead_trial') {
+    clauses.push(`(
+      COALESCE(ls.plan, 'free') = 'free'
+      AND (
+        MAX(
+          (
+            SELECT COUNT(*) FROM usage_events ue3
+            WHERE ue3.user_id = u.id AND ue3.event_type = 'trial.generation_reserved'
+          ),
+          (
+            SELECT COALESCE(SUM(
+              CASE
+                WHEN COALESCE(gr3.output_count, 0) > 0 THEN gr3.output_count
+                ELSE 1
+              END
+            ), 0)
+            FROM generation_runs gr3
+            WHERE gr3.user_id = u.id AND gr3.status IN ('succeeded','completed','partial')
+          )
+        ) >= ${FREE_TRIAL_LIMIT}
+    )`);
+  }
   if (plan) clauses.push('COALESCE(ls.plan, \'free\') = ?');
   if (plan) params.push(plan);
 
@@ -668,30 +662,29 @@ router.get('/users', requireAdmin, (req, res) => {
         WHERE gr.user_id = u.id
       ) AS last_generation_at,
       (
-        SELECT COUNT(*)
-        FROM generation_runs gr
-        WHERE gr.user_id = u.id
-      ) AS generation_count_total,
+        SELECT gr_last.feature FROM generation_runs gr_last
+        WHERE gr_last.user_id = u.id
+        ORDER BY datetime(gr_last.started_at) DESC LIMIT 1
+      ) AS last_feature_used,
       (
-        SELECT COUNT(*)
-        FROM user_api_keys k
-        WHERE k.user_id = u.id
-      ) AS connected_key_count,
-      (
-        SELECT COUNT(*)
-        FROM referral_commissions rc
-        WHERE rc.referrer_id = u.id
-      ) AS referral_count
+        SELECT COUNT(*) FROM generation_runs gr_total
+        WHERE gr_total.user_id = u.id
+      ) AS total_run_count,
+      (SELECT rb.email FROM users rb WHERE rb.id = u.referred_by) AS referred_by_email
     FROM users u
     LEFT JOIN latest_subscriptions ls ON ls.user_id = u.id
     ${whereSql}
     ORDER BY datetime(u.created_at) DESC
     LIMIT ? OFFSET ?
-  `).all(...params, limit, offset).map((u) => ({
-    ...u,
-    has_api_key: (u.connected_key_count || 0) > 0,
-    character_count: getCharacterCount(u.id),
-  }));
+  `).all(...params, limit, offset).map((user) => {
+    const trialUsed = getFreeTrialUsageByUser(user.id);
+    return {
+      ...user,
+      trial_used: trialUsed,
+      trial_limit: FREE_TRIAL_LIMIT,
+      trial_finished: user.plan === 'free' && trialUsed >= FREE_TRIAL_LIMIT ? 1 : 0,
+    };
+  });
 
   const total = db.prepare(`
     WITH latest_subscriptions AS (
@@ -757,12 +750,6 @@ router.get('/users/:id', requireAdmin, (req, res) => {
     LIMIT 12
   `).all(req.params.id);
 
-  const referralCount = db.prepare(`
-    SELECT COUNT(*) AS total FROM referral_commissions WHERE referrer_id = ?
-  `).get(req.params.id)?.total || 0;
-
-  const characters = getCharactersForUser(req.params.id);
-
   res.json({
     user: {
       ...user,
@@ -770,9 +757,6 @@ router.get('/users/:id', requireAdmin, (req, res) => {
       connected_keys: keySummary.items,
       generation_count_total: user.generation_count_total || content.total,
       generation_count_30d: user.generation_count_30d || content.count30d,
-      referral_count: referralCount,
-      character_count: characters.length,
-      characters,
       subscription,
       generationByFeature,
       freeTrial: {
@@ -796,23 +780,6 @@ router.get('/users/:id/library/image/:imageId', requireAdmin, (req, res) => {
     const { filePath, mimeType } = galleryManager.getFilePath(req.params.imageId);
     res.type(mimeType);
     return res.sendFile(filePath);
-  });
-});
-
-// GET /api/admin/users/:id/characters/:charId/thumb
-router.get('/users/:id/characters/:charId/thumb', requireAdmin, (req, res) => {
-  return runWithUser(req.params.id, () => {
-    try {
-      const images = referenceManager.getPrimaryImages(req.params.charId);
-      if (!images.length || !images[0]?.buffer?.length) {
-        return res.status(404).json({ error: 'No primary image' });
-      }
-      res.set('Content-Type', images[0].mimeType || 'image/png');
-      res.set('Cache-Control', 'private, max-age=300');
-      return res.send(images[0].buffer);
-    } catch {
-      return res.status(404).json({ error: 'Character not found' });
-    }
   });
 });
 
@@ -1058,6 +1025,133 @@ router.get('/analytics/signups-by-day', requireAdmin, (req, res) => {
   res.json({ rows });
 });
 
+// GET /api/admin/analytics/mrr-trend
+router.get('/analytics/mrr-trend', requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT
+      strftime('%Y-%m', s.created_at) as month,
+      s.plan,
+      COUNT(*) as new_subs,
+      COUNT(*) * CASE WHEN s.plan = 'pro' THEN 19 WHEN s.plan = 'unlimited' THEN 49 ELSE 0 END as new_mrr
+    FROM subscriptions s
+    WHERE s.plan IN ('pro', 'unlimited') AND s.status = 'active'
+    GROUP BY strftime('%Y-%m', s.created_at), s.plan
+    ORDER BY month ASC
+    LIMIT 24
+  `).all();
+  res.json({ rows });
+});
+
+// GET /api/admin/analytics/trial-funnel
+router.get('/analytics/trial-funnel', requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    WITH trial_data AS (
+      SELECT
+        u.id,
+        date(u.created_at) as day,
+        (SELECT COUNT(*) FROM usage_events ue WHERE ue.user_id = u.id AND ue.event_type = 'trial.generation_reserved') as trial_used,
+        CASE WHEN ls.plan IN ('pro','unlimited') AND ls.status = 'active' THEN 1 ELSE 0 END as converted
+      FROM users u
+      LEFT JOIN (
+        SELECT s1.user_id, s1.plan, s1.status
+        FROM subscriptions s1
+        JOIN (SELECT user_id, MAX(datetime(created_at)) as mc FROM subscriptions GROUP BY user_id) x
+          ON x.user_id = s1.user_id AND datetime(s1.created_at) = x.mc
+      ) ls ON ls.user_id = u.id
+      WHERE datetime(u.created_at) >= datetime('now', '-30 days')
+    )
+    SELECT
+      day,
+      COUNT(*) as new_signups,
+      SUM(CASE WHEN trial_used > 0 THEN 1 ELSE 0 END) as activated,
+      SUM(CASE WHEN trial_used >= ${FREE_TRIAL_LIMIT} THEN 1 ELSE 0 END) as trial_exhausted,
+      SUM(converted) as converted
+    FROM trial_data
+    GROUP BY day
+    ORDER BY day ASC
+  `).all();
+  res.json({ rows });
+});
+
+// GET /api/admin/analytics/new-vs-returning
+router.get('/analytics/new-vs-returning', requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    WITH active_days AS (
+      SELECT DISTINCT date(ue.created_at) as day, ue.user_id
+      FROM usage_events ue
+      WHERE ue.user_id IS NOT NULL AND datetime(ue.created_at) >= datetime('now', '-30 days')
+    )
+    SELECT
+      ad.day,
+      COUNT(DISTINCT CASE WHEN date(u.created_at) = ad.day THEN ad.user_id END) as new_users,
+      COUNT(DISTINCT CASE WHEN date(u.created_at) < ad.day THEN ad.user_id END) as returning_users
+    FROM active_days ad
+    JOIN users u ON u.id = ad.user_id
+    GROUP BY ad.day
+    ORDER BY ad.day ASC
+  `).all();
+  res.json({ rows });
+});
+
+// GET /api/admin/analytics/feature-stickiness
+router.get('/analytics/feature-stickiness', requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    WITH first_use AS (
+      SELECT user_id, feature, MIN(date(started_at)) as first_day
+      FROM generation_runs
+      WHERE datetime(started_at) >= datetime('now', '-60 days')
+      GROUP BY user_id, feature
+    ),
+    usage_days AS (
+      SELECT user_id, feature, date(started_at) as used_day
+      FROM generation_runs
+      WHERE datetime(started_at) >= datetime('now', '-60 days')
+      GROUP BY user_id, feature, date(started_at)
+    )
+    SELECT
+      f.feature,
+      COUNT(DISTINCT f.user_id) as total_users,
+      COUNT(DISTINCT CASE WHEN CAST(julianday(u.used_day) - julianday(f.first_day) AS INTEGER) BETWEEN 5 AND 9 THEN f.user_id END) as d7_users,
+      COUNT(DISTINCT CASE WHEN CAST(julianday(u.used_day) - julianday(f.first_day) AS INTEGER) BETWEEN 12 AND 16 THEN f.user_id END) as d14_users,
+      COUNT(DISTINCT CASE WHEN CAST(julianday(u.used_day) - julianday(f.first_day) AS INTEGER) BETWEEN 27 AND 31 THEN f.user_id END) as d30_users
+    FROM first_use f
+    LEFT JOIN usage_days u ON u.user_id = f.user_id AND u.feature = f.feature AND u.used_day > f.first_day
+    GROUP BY f.feature
+    ORDER BY total_users DESC
+    LIMIT 15
+  `).all();
+  res.json({ rows });
+});
+
+// GET /api/admin/analytics/geo
+router.get('/analytics/geo', requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT
+      SUBSTR(email, INSTR(email, '@') + 1) as domain,
+      COUNT(*) as user_count
+    FROM users
+    WHERE email LIKE '%@%'
+    GROUP BY SUBSTR(email, INSTR(email, '@') + 1)
+    ORDER BY user_count DESC
+    LIMIT 20
+  `).all();
+  res.json({ rows });
+});
+
+// POST /api/admin/users/bulk-message
+router.post('/users/bulk-message', requireAdmin, (req, res) => {
+  const { userIds, subject, body } = req.body || {};
+  if (!Array.isArray(userIds) || !userIds.length) return res.status(400).json({ error: 'userIds required' });
+  if (!body?.trim()) return res.status(400).json({ error: 'body required' });
+  const insert = db.prepare('INSERT INTO admin_messages (id, user_id, admin_user_id, subject, body) VALUES (?,?,?,?,?)');
+  const adminId = req.session?.userId;
+  let sent = 0;
+  for (const uid of userIds.slice(0, 200)) {
+    try { insert.run(uuidv4(), uid, adminId, subject || 'Message from Admin', body); sent++; } catch {}
+  }
+  res.json({ ok: true, sent });
+});
+
 // GET /api/admin/users/export.csv — download all users as CSV
 router.get('/users/export.csv', requireAdmin, (req, res) => {
   const rows = db.prepare(`
@@ -1152,6 +1246,109 @@ router.post('/users/:id/messages', requireAdmin, (req, res) => {
   logAdminAction({ adminUserId: req.session?.userId, targetUserId: req.params.id, actionType: 'send_message', after: { subject, body }, note: null });
   log.info('admin_message_sent', { adminId: req.session?.userId, targetId: req.params.id });
   res.json({ ok: true, id });
+});
+
+// GET /api/admin/referrals — comprehensive referral dashboard data
+router.get('/referrals', requireAdmin, (req, res) => {
+  try {
+    const totalReferrers = db.prepare(
+      'SELECT COUNT(DISTINCT referrer_id) as n FROM referral_commissions'
+    ).get()?.n ?? 0;
+
+    const totalConversions = db.prepare(
+      'SELECT COUNT(*) as n FROM referral_commissions'
+    ).get()?.n ?? 0;
+
+    const pendingTotal = db.prepare(
+      "SELECT COALESCE(SUM(amount_usd),0) as t FROM referral_commissions WHERE status = 'pending'"
+    ).get()?.t ?? 0;
+
+    const paidTotal = db.prepare(
+      "SELECT COALESCE(SUM(amount_usd),0) as t FROM referral_commissions WHERE status = 'paid'"
+    ).get()?.t ?? 0;
+
+    const leaderboard = db.prepare(`
+      SELECT u.id, u.email, u.referral_code,
+        COUNT(DISTINCT referred.id) as total_signups,
+        COUNT(DISTINCT rc.id) as conversions,
+        COALESCE(SUM(CASE WHEN rc.status = 'pending' THEN rc.amount_usd ELSE 0 END), 0) as pending_usd,
+        COALESCE(SUM(CASE WHEN rc.status = 'paid' THEN rc.amount_usd ELSE 0 END), 0) as paid_usd
+      FROM users u
+      LEFT JOIN users referred ON referred.referred_by = u.id
+      LEFT JOIN referral_commissions rc ON rc.referrer_id = u.id
+      WHERE u.referral_code IS NOT NULL
+        AND (referred.id IS NOT NULL OR rc.id IS NOT NULL)
+      GROUP BY u.id
+      ORDER BY conversions DESC, total_signups DESC
+      LIMIT 50
+    `).all();
+
+    const commissions = db.prepare(`
+      SELECT rc.id, rc.amount_usd, rc.plan, rc.status, rc.created_at, rc.paid_at, rc.notes,
+             r.email as referrer_email,
+             e.email as referee_email
+      FROM referral_commissions rc
+      JOIN users r ON r.id = rc.referrer_id
+      JOIN users e ON e.id = rc.referee_id
+      ORDER BY rc.created_at DESC
+      LIMIT 300
+    `).all();
+
+    // Payout requests: distinct referrers who have pending commissions with payout notes
+    const payoutRequests = db.prepare(`
+      SELECT DISTINCT
+        r.id as referrer_id,
+        r.email as referrer_email,
+        rc.notes,
+        COALESCE(SUM(rc.amount_usd), 0) as total_pending_usd,
+        MAX(rc.created_at) as requested_at
+      FROM referral_commissions rc
+      JOIN users r ON r.id = rc.referrer_id
+      WHERE rc.status = 'pending' AND rc.notes LIKE 'Payout requested%'
+      GROUP BY r.id
+      ORDER BY total_pending_usd DESC
+    `).all().map(r => ({
+      ...r,
+      total_pending_usd: +parseFloat(r.total_pending_usd).toFixed(2),
+      wallet: (r.notes || '').replace(/^Payout requested via \S+ to:\s*/, '').trim(),
+      method: (r.notes || '').match(/via (\S+)/)?.[1] || 'crypto',
+    }));
+
+    // Monthly commission history (last 12 months)
+    const monthlyHistory = db.prepare(`
+      SELECT
+        strftime('%Y-%m', created_at) as month,
+        COALESCE(SUM(amount_usd), 0) as earned,
+        COALESCE(SUM(CASE WHEN status = 'paid' THEN amount_usd ELSE 0 END), 0) as paid,
+        COUNT(*) as count
+      FROM referral_commissions
+      GROUP BY strftime('%Y-%m', created_at)
+      ORDER BY month ASC
+      LIMIT 12
+    `).all().map(r => ({
+      ...r,
+      earned: +parseFloat(r.earned).toFixed(2),
+      paid: +parseFloat(r.paid).toFixed(2),
+    }));
+
+    res.json({
+      ok: true,
+      summary: {
+        totalReferrers,
+        totalConversions,
+        pendingTotal: +parseFloat(pendingTotal).toFixed(2),
+        paidTotal: +parseFloat(paidTotal).toFixed(2),
+        pendingPayoutCount: payoutRequests.length,
+      },
+      leaderboard,
+      commissions,
+      payoutRequests,
+      monthlyHistory,
+    });
+  } catch (e) {
+    log.error('Admin referrals error', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // GET /api/admin/users/:id/messages — list messages sent to a user (admin view)
