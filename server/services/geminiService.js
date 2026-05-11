@@ -199,6 +199,7 @@ class GeminiService {
       imageConfig: {
         aspectRatio: options.aspectRatio || "1:1",
         imageSize: options.imageSize || "2K",
+        safetySetting: 'BLOCK_NONE',
       },
     };
     if (MINIMAL_THINKING_IMAGE_MODELS.has(selectedImageModel)) {
@@ -207,10 +208,17 @@ class GeminiService {
 
     const maxAttempts = 3;
     let currentPrompt = prompt;
+    // When the caller passes a pre-built parts array (Photo Match, Scene Recreate,
+    // Nano Bypass etc.) _buildImageGenerationParts ignores the retry prompt entirely.
+    // Track currentParts separately so we can sanitize text parts on retry too.
+    let currentParts = Array.isArray(options.parts) && options.parts.length > 0
+      ? options.parts
+      : null;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
+        const retryOptions = currentParts ? { ...options, parts: currentParts } : options;
         const retryPrompt = this._buildRetryPrompt(_appendVariationSeedToPrompt(currentPrompt, options.variationSeed), attempt);
-        const contentParts = this._buildImageGenerationParts(retryPrompt, options);
+        const contentParts = this._buildImageGenerationParts(retryPrompt, retryOptions);
         const response = await withTimeout(
           genAI.models.generateContent({
             model: selectedImageModel,
@@ -240,7 +248,12 @@ class GeminiService {
           const reason = parsed.blockReason ? 'safety_block' : parsed.isImageOther ? 'IMAGE_OTHER' : 'empty_response';
           console.warn(`[gemini] attempt ${attempt}/${maxAttempts} failed: ${reason}`);
           if (attempt < maxAttempts) {
-            currentPrompt = this._sanitizePromptForRetry(currentPrompt, attempt);
+            if (currentParts) {
+              // Sanitize text parts in the parts array (prompt-only sanitization was dead here)
+              currentParts = this._sanitizePartsForRetry(currentParts, attempt);
+            } else {
+              currentPrompt = this._sanitizePromptForRetry(currentPrompt, attempt);
+            }
             await this._sleep(500 * attempt);
             continue;
           }
@@ -331,6 +344,18 @@ class GeminiService {
     console.log(`[gemini] sanitized prompt for retry attempt ${attempt + 1} (${prompt.length} → ${text.length} chars)`);
     return text;
   }
+
+  /**
+   * Sanitize text parts within a parts array on retry.
+   * Applies the same word-swap logic as _sanitizePromptForRetry to every text part.
+   */
+  _sanitizePartsForRetry(parts, attempt) {
+    return parts.map((part) => {
+      if (!part || typeof part.text !== 'string') return part;
+      return { ...part, text: this._sanitizePromptForRetry(part.text, attempt) };
+    });
+  }
+
 
   _parseImageResponse(response) {
     const firstCandidate = Array.isArray(response?.candidates) ? response.candidates[0] : null;

@@ -200,15 +200,34 @@ router.post('/edit', express.json({ limit: '100mb' }), requirePlanCapacity(), as
     }
     parts.push({ text: effectivePrompt });
 
-    const generated = await geminiBackend.generateImage(apiKey, effectivePrompt, {
-      parts,
-      model: modelId,
-      aspectRatio: aspectRatio !== 'auto' ? aspectRatio : undefined,
-      imageSize,
-      temperature,
-      characterId: characterId || undefined,
-    });
-    const b64Result = generated?.image?.base64Data;
+    // Nano Bypass has its own retry + safety logic via callGemini().
+    // For Vertex (GCP-auth) we fall back to geminiBackend which handles auth internally.
+    // For the direct Gemini API path we call callGemini() directly so that:
+    //   • BLOCK_ONLY_HIGH safety settings are actually applied
+    //   • The 3-attempt progressive retry (incl. safety-strip on attempt 3) fires
+    //   • The temperature slider from the UI is actually honoured
+    let b64Result;
+    if (useVertexBackend) {
+      const generated = await geminiBackend.generateImage('', effectivePrompt, {
+        parts,
+        model: modelId,
+        aspectRatio: aspectRatio !== 'auto' ? aspectRatio : undefined,
+        imageSize,
+        temperature,
+        characterId: characterId || undefined,
+      });
+      b64Result = generated?.image?.base64Data;
+    } else {
+      b64Result = await callGemini(
+        apiKey,
+        modelId,
+        parts,
+        aspectRatio !== 'auto' ? aspectRatio : undefined,
+        imageSize,
+        temperature,
+      );
+    }
+
     if (!b64Result) {
       throw new AppError('Nano Bypass returned no image. Try a different prompt or image.', 502, 'NANO_BYPASS_NO_IMAGE');
     }

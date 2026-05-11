@@ -134,7 +134,7 @@ function buildPhotoMatchParts({ sourceImage, identityImages, characterName, prom
         `Copy from ${refLabel}:`,
         `- Face (exact likeness, not approximate)`,
         `- Skin tone and facial structure`,
-        `- Body shape and breast size/volume (match exactly)`,
+        `- Figure and body proportions (match exactly)`,
         `- Hair color and style`,
         `- Makeup`,
         `These identity traits are locked and override anything seen in the scene image.`,
@@ -156,7 +156,7 @@ function buildPhotoMatchParts({ sourceImage, identityImages, characterName, prom
       refLabel
         ? `Replace the person in this photo with ${name} from ${refLabel}.`
         : `The person should be ${name}.`,
-      `Do NOT copy from Image ${sourceNum}: face, facial structure, skin tone, body shape, breast size, hair color, hair style, or tattoos.`,
+      `Do NOT copy from Image ${sourceNum}: face, facial structure, skin tone, figure, hair color, hair style, or tattoos.`,
       `Image ${sourceNum} is a scene-only reference, not an identity reference.`,
     ].join('\n'),
   });
@@ -254,10 +254,10 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       '',
       // Who is the person
       refLabel
-        ? `WHO: ${name} — take face, facial structure, body shape, breast volume, hair color, hair style, skin tone, and makeup from ${refLabel}. Match exactly as shown.`
+        ? `WHO: ${name} — take face, facial structure, figure and body proportions, hair color, hair style, skin tone, and makeup from ${refLabel}. Match exactly as shown.`
         : `WHO: ${name} — ${character.masterPrompt || ''}`,
       '',
-      `IDENTITY PRIORITY: if anything in the scene image conflicts with the character references, the character references always win for face, skin, body shape, breast volume, hair, and makeup.`,
+      `IDENTITY PRIORITY: if anything in the scene image conflicts with the character references, the character references always win for face, skin, figure, hair, and makeup.`,
       `Treat the uploaded scene image only as a blueprint for environment, outfit, framing, pose, and expression.`,
       '',
       // What to copy from scene
@@ -265,7 +265,7 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       '',
       // Hard rules
       `RULES:`,
-      `- Do NOT copy face, facial structure, body shape, breast size, hair color, skin tone, or tattoos from ${sourceRef}`,
+      `- Do NOT copy face, facial structure, figure, hair color, skin tone, or tattoos from ${sourceRef}`,
       `- The person in the output is ${name} only`,
       `- The output must clearly look like ${name}, even if the source image person looks very different`,
       `- If needed, sacrifice source-person likeness completely to preserve ${name}'s identity`,
