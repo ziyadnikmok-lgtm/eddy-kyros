@@ -254,11 +254,25 @@ class GeminiService {
 
         if (parsed.blockReason || parsed.hasNoParts) {
           const reason = parsed.blockReason ? 'safety_block' : parsed.isImageOther ? 'IMAGE_OTHER' : 'empty_response';
-          console.warn(`[gemini] attempt ${attempt}/${maxAttempts} failed: ${reason}`);
+          const imgCount = contentParts.filter((p) => p.inlineData).length;
+          console.warn(`[gemini] attempt ${attempt}/${maxAttempts} failed: ${reason} (images=${imgCount})`);
           if (attempt < maxAttempts) {
             if (currentParts) {
-              // Sanitize text parts in the parts array (prompt-only sanitization was dead here)
-              currentParts = this._sanitizePartsForRetry(currentParts, attempt);
+              if (parsed.hasNoParts && !parsed.blockReason) {
+                const imageParts = currentParts.filter((p) => p.inlineData);
+                const textParts = currentParts.filter((p) => p.text);
+                if (imageParts.length > 2) {
+                  currentParts = [...imageParts.slice(0, 2), ...textParts];
+                  console.warn(`[gemini] retry ${attempt + 1}: dropped images ${imageParts.length} -> 2`);
+                } else if (imageParts.length > 0) {
+                  currentParts = [...textParts];
+                  console.warn(`[gemini] retry ${attempt + 1}: dropped all images, text-only`);
+                } else {
+                  currentParts = this._sanitizePartsForRetry(currentParts, attempt);
+                }
+              } else {
+                currentParts = this._sanitizePartsForRetry(currentParts, attempt);
+              }
             } else {
               currentPrompt = this._sanitizePromptForRetry(currentPrompt, attempt);
             }

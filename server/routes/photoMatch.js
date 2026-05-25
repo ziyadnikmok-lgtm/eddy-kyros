@@ -89,11 +89,15 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       sceneData = {};
     }
 
-    // Get character and references
+    // Get character and references — cap to 2 total (1 identity + 1 source)
+    // to stay within model input token limits.
     const character = referenceManager.getCharacter(characterId);
     const refIds = Array.isArray(activeReferenceIds) ? activeReferenceIds : null;
     const activeRefs = referenceManager.getActiveReferences(characterId, refIds);
-    const referenceImages = buildCharacterReferenceImages(characterId, activeRefs);
+    const allRefs = buildCharacterReferenceImages(characterId, activeRefs);
+
+    // Use only the first character reference image to keep input small
+    const referenceImages = allRefs.slice(0, 1);
 
     // Optimize and include the uploaded source image as a reference
     const sourceImage = await optimizeSourceImage(base64, mimeType);
@@ -117,28 +121,14 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
 
     const prompt = [
       exactMode
-        ? `Exact photo match recreation of ${character.name}. Recreate the uploaded source photo as closely as possible while preserving ${character.name}'s identity from the character references.`
-        : `Photo match recreation of ${character.name}. Match the uploaded source photo's scene, outfit, pose, and background while preserving ${character.name}'s identity.`,
-      '',
-      '[BACKGROUND — strength ' + bg + '%]',
-      bgInstruction + '.',
-      '',
-      '[POSE — strength ' + pose + '%]',
-      poseInstruction + '.',
-      '',
-      '[SCENE ANALYSIS]',
-      ...sceneParts,
-      '',
-      varyBackground && !exactMode
-        ? [
-            'BACKGROUND VARIATION: Keep the same location type, but shift lighting mood slightly, add or change minor background details, and make it feel like a different moment in the same place.',
-          ].join('\n')
-        : null,
-      varyBackground && !exactMode ? '' : null,
-      '[IDENTITY]',
-      character.masterPrompt || '',
-      '',
-      'Return exactly one image. No text.',
+        ? `Exact photo match: recreate the source photo with ${character.name}'s identity.`
+        : `Photo match: ${character.name} in the source scene.`,
+      `Background ${bg}%: ${bgInstruction}.`,
+      `Pose ${pose}%: ${poseInstruction}.`,
+      sceneParts.length ? `Scene: ${sceneParts.join('; ')}.` : null,
+      varyBackground && !exactMode ? 'Vary background slightly.' : null,
+      character.masterPrompt || null,
+      'Return one image only.',
       REALISM_DIRECTIVE,
     ].filter((s) => s != null).join('\n');
 
