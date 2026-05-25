@@ -6,10 +6,12 @@
  *   - Otherwise → use geminiService (direct Gemini API key)
  *
  * Text/analysis (generateText, analyzeImage, analyzeImagesWithPrompt, etc.):
- *   - ALWAYS uses geminiService (direct Gemini API key)
+ *   - Prefer geminiService (direct Gemini API key)
  *   - Automatically injects a fallback Gemini key when Vertex is active but the caller
  *     passed an empty/null key (which happens because getActiveKeyOrNull() returns null
  *     when Vertex is selected).
+ *   - If the direct Gemini key is unavailable or rate-limited, fall back to Vertex text
+ *     analysis so the request still works.
  *
  * This lets users run Vertex for image gen while still using a Gemini key for scene
  * analysis, prompt building, carousel planning, and all other text operations.
@@ -34,6 +36,19 @@ function _imageService() {
 
 function _textService() {
   return require('./geminiService');
+}
+
+function _vertexService() {
+  return require('./geminiVertexService');
+}
+
+function _isVertexActive() {
+  try {
+    const apiKeyManager = require('./apiKeyManager');
+    return apiKeyManager.shouldUseVertexBackend() || cfg.GEMINI_BACKEND === 'vertex';
+  } catch {
+    return cfg.GEMINI_BACKEND === 'vertex';
+  }
 }
 
 function _injectGeminiKey(args) {
@@ -72,6 +87,21 @@ const TEXT_METHODS = new Set([
   'generateTextWithSearch',
 ]);
 
+function _shouldFallbackTextError(err) {
+  const code = String(err?.code || err?.name || '').toUpperCase();
+  const message = String(err?.message || '').toLowerCase();
+  return (
+    code === 'RATE_LIMITED' ||
+    code === 'NO_ACTIVE_KEY' ||
+    code === 'CONFIG_ERROR' ||
+    message.includes('rate limit') ||
+    message.includes('429') ||
+    message.includes('resource_exhausted') ||
+    message.includes('api key is required') ||
+    message.includes('no active api key')
+  );
+}
+
 module.exports = new Proxy({}, {
   get(_target, prop) {
     const isImage = IMAGE_METHODS.has(prop);
@@ -83,12 +113,23 @@ module.exports = new Proxy({}, {
     if (typeof val !== 'function') return val;
 
     return (...args) => {
+      const finalArgs = isText ? _injectGeminiKey(args) : args;
       try {
-        const finalArgs = isText ? _injectGeminiKey(args) : args;
         const out = val.apply(svc, finalArgs);
-        return out;
+        if (!isText || !out || typeof out.then !== 'function') return out;
+        return out.catch((err) => {
+          if (!_isVertexActive() || !_shouldFallbackTextError(err)) throw err;
+          const vertex = _vertexService();
+          const fallback = vertex[prop];
+          if (typeof fallback !== 'function') throw err;
+          return fallback.apply(vertex, args);
+        });
       } catch (err) {
-        throw err;
+        if (!isText || !_isVertexActive() || !_shouldFallbackTextError(err)) throw err;
+        const vertex = _vertexService();
+        const fallback = vertex[prop];
+        if (typeof fallback !== 'function') throw err;
+        return fallback.apply(vertex, args);
       }
     };
   },
