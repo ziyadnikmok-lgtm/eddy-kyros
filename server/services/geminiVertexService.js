@@ -228,11 +228,13 @@ function isTransientError(err) {
   const cause = (err && err.cause) ? `${err.cause.code || ''} ${err.cause.message || ''}` : '';
   const text = `${msg} ${cause}`;
   return (
-    text.includes('503') || text.includes('500') || text.includes('UNAVAILABLE') ||
-    text.includes('INTERNAL') || text.includes('ECONNRESET') || text.includes('ETIMEDOUT') ||
+    text.includes('503') || text.includes('500') || text.includes('429') ||
+    text.includes('UNAVAILABLE') || text.includes('INTERNAL') ||
+    text.includes('ECONNRESET') || text.includes('ETIMEDOUT') ||
     text.includes('UND_ERR_CONNECT_TIMEOUT') || text.includes('fetch failed') ||
     text.includes('ENOTFOUND') || text.includes('socket hang up') || text.includes('network') ||
-    text.includes('upstream') || text.includes('Timed out')
+    text.includes('upstream') || text.includes('Timed out') ||
+    text.includes('RATE_LIMITED') || text.includes('RESOURCE_EXHAUSTED') || text.includes('Quota')
   );
 }
 

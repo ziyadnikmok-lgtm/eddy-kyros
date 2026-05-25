@@ -103,6 +103,7 @@ function isTransientError(err) {
   return (
     msg.includes('503') ||
     msg.includes('500') ||
+    msg.includes('429') ||
     msg.includes('unavailable') ||
     msg.includes('internal') ||
     msg.includes('econnreset') ||
@@ -111,7 +112,10 @@ function isTransientError(err) {
     msg.includes('socket hang up') ||
     msg.includes('network') ||
     msg.includes('upstream') ||
-    msg.includes('timed out')
+    msg.includes('timed out') ||
+    msg.includes('rate limit') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('quota')
   );
 }
 
