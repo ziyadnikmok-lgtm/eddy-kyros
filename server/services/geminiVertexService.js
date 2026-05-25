@@ -314,7 +314,6 @@ class GeminiVertexService {
         imageConfig: {
           aspectRatio: options.aspectRatio || '1:1',
           imageSize: options.imageSize || '2K',
-          safetySetting: 'BLOCK_NONE',
         },
       };
       if (typeof options.temperature === 'number') {
