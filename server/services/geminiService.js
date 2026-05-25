@@ -99,19 +99,19 @@ function _appendVariationSeedToParts(parts, seed) {
 }
 
 function isTransientError(err) {
-  const msg = (err && err.message) ? err.message : '';
+  const msg = ((err && err.message) ? err.message : '').toLowerCase();
   return (
     msg.includes('503') ||
     msg.includes('500') ||
-    msg.includes('UNAVAILABLE') ||
-    msg.includes('INTERNAL') ||
-    msg.includes('ECONNRESET') ||
-    msg.includes('ETIMEDOUT') ||
-    msg.includes('ENOTFOUND') ||
+    msg.includes('unavailable') ||
+    msg.includes('internal') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout') ||
+    msg.includes('enotfound') ||
     msg.includes('socket hang up') ||
     msg.includes('network') ||
     msg.includes('upstream') ||
-    msg.includes('Timed out')
+    msg.includes('timed out')
   );
 }
 
@@ -841,6 +841,7 @@ Return ONLY valid JSON, no markdown fences:
 
   _handleApiError(err) {
     const message = err.message || 'Unknown Gemini API error';
+    const normalizedMessage = message.toLowerCase();
     if (message.includes('API_KEY_INVALID') || message.includes('401')) {
       throw new AppError('Invalid Gemini API key.', 401, 'INVALID_API_KEY');
     }
@@ -850,7 +851,7 @@ Return ONLY valid JSON, no markdown fences:
     if (message.includes('SAFETY')) {
       throw new AppError('Prompt blocked by safety filters. Try rephrasing.', 400, 'SAFETY_BLOCKED');
     }
-    if (message.includes('Timed out')) {
+    if (normalizedMessage.includes('timed out')) {
       throw new AppError(`Gemini request timed out: ${message}`, 504, 'GEMINI_TIMEOUT');
     }
     if (isTransientError(err)) {

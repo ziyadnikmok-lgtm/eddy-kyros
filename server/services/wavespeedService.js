@@ -279,6 +279,125 @@ async function _downloadImageAsBase64(url, modelId) {
   };
 }
 
+// ── SeedDream v4.5 edit-sequential ────────────────────────────
+const SEEDDREAM_MODEL_ID = 'bytedance/seedream-v4.5/edit-sequential';
+const SEEDDREAM_POLL_INTERVAL_MS = 1500;
+const SEEDDREAM_MAX_POLL_MS = 180_000; // 3 min — sequential edit takes longer
+
+/**
+ * Edit 1–4 images with SeedDream v4.5, preserving character identity across all.
+ * @param {Array<{base64: string, mimeType: string}>} imageInputs
+ * @param {string} prompt  - editing instruction ("change outfit to red dress")
+ * @param {object} opts
+ * @param {number} [opts.seed]
+ * @param {number} [opts.guidanceScale]
+ * @param {string} [opts.aspectRatio]  e.g. '4:5'
+ * @returns {{ images: Array<{base64Data: string, mimeType: string}>, modelUsed: string }}
+ */
+async function generateSeedDreamEdit(imageInputs, prompt, opts = {}) {
+  if (!prompt?.trim()) throw new AppError('A prompt is required', 400, 'VALIDATION_ERROR');
+  if (!Array.isArray(imageInputs) || imageInputs.length === 0) {
+    throw new AppError('At least one source image is required', 400, 'VALIDATION_ERROR');
+  }
+
+  const sharp = require('sharp');
+  const key = getApiKey();
+
+  // Upload all images in parallel
+  const uploadedUrls = await Promise.all(imageInputs.map(async ({ base64, mimeType }) => {
+    let raw = base64;
+    const m = raw.match(/^data:[^;]+;base64,(.+)$/);
+    if (m) raw = m[1];
+    const srcBuf = Buffer.from(raw, 'base64');
+    const jpegBuf = await sharp(srcBuf).jpeg({ quality: 95 }).toBuffer();
+    const tempPath = path.join(os.tmpdir(), `ws-sd-${crypto.randomUUID()}.jpg`);
+    try {
+      fs.writeFileSync(tempPath, jpegBuf);
+      return await uploadFile(tempPath);
+    } finally {
+      try { fs.unlinkSync(tempPath); } catch {}
+    }
+  }));
+
+  log.info('seeddream_edit_start', { imageCount: uploadedUrls.length, promptLen: prompt.length });
+
+  const size = IMAGE_SIZE_MAP[opts.aspectRatio] || IMAGE_SIZE_MAP['1:1'];
+  const body = {
+    images: uploadedUrls,
+    prompt: prompt.trim(),
+    seed: typeof opts.seed === 'number' ? opts.seed : -1,
+    guidance_scale: typeof opts.guidanceScale === 'number' ? opts.guidanceScale : 3.5,
+    num_inference_steps: 28,
+    size,
+  };
+
+  let resp;
+  try {
+    resp = await _fetchWithRetry(`${BASE_URL}/${SEEDDREAM_MODEL_ID}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (fetchErr) {
+    const cause = fetchErr?.cause?.message || fetchErr?.cause?.code || fetchErr?.cause || 'unknown';
+    log.error('seeddream_fetch_failed', { message: fetchErr.message, cause: String(cause).slice(0, 500) });
+    throw new AppError(`SeedDream connection failed: ${String(cause).slice(0, 200)}`, 502, 'WAVESPEED_ERROR');
+  }
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    log.error('seeddream_api_error', { status: resp.status, body: text.slice(0, 500) });
+    if (resp.status === 401) throw new AppError('WaveSpeed auth failed', 401, 'INVALID_API_KEY');
+    if (resp.status === 429) throw new AppError('WaveSpeed rate limited', 429, 'RATE_LIMITED');
+    throw new AppError(`SeedDream error (${resp.status}): ${text.slice(0, 300)}`, 502, 'WAVESPEED_ERROR');
+  }
+
+  const json = await resp.json();
+  const data = json?.data || json;
+  log.info('seeddream_task_created', { taskId: data?.id, status: data?.status });
+
+  // Sync completed immediately
+  if (data?.status === 'completed') {
+    return await _extractSeedDreamResults(data);
+  }
+
+  const taskId = data?.id;
+  if (!taskId) throw new AppError('SeedDream returned no task ID', 502, 'WAVESPEED_ERROR');
+
+  // Poll until done
+  return await _pollSeedDreamResult(key, taskId);
+}
+
+async function _pollSeedDreamResult(key, taskId) {
+  const deadline = Date.now() + SEEDDREAM_MAX_POLL_MS;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, SEEDDREAM_POLL_INTERVAL_MS));
+    const res = await getTaskStatus(taskId);
+    if (res.status === 'completed') return await _extractSeedDreamResults(res);
+    if (res.status === 'failed') {
+      throw new AppError(`SeedDream edit failed: ${res.error || 'unknown'}`, 502, 'WAVESPEED_FAILED');
+    }
+  }
+  throw new AppError('SeedDream edit timed out', 504, 'WAVESPEED_TIMEOUT');
+}
+
+async function _extractSeedDreamResults(data) {
+  const outputs = data.outputs || data.output || [];
+  if (!outputs.length) throw new AppError('SeedDream returned no images', 502, 'WAVESPEED_EMPTY');
+
+  const images = await Promise.all(outputs.map(async (out) => {
+    const match = typeof out === 'string' && out.match(/^data:([^;]+);base64,(.+)$/);
+    if (match) return { base64Data: match[2], mimeType: match[1] };
+    if (typeof out === 'string' && !out.startsWith('http')) return { base64Data: out, mimeType: 'image/png' };
+    // URL — download
+    const { image } = await _downloadImageAsBase64(out, SEEDDREAM_MODEL_ID);
+    return image;
+  }));
+
+  return { images, modelUsed: SEEDDREAM_MODEL_ID };
+}
+
 // ── Img2Img generation (z-image-turbo/image-to-image-lora) ────
 const IMG2IMG_MODEL_ID = 'wavespeed-ai/z-image-turbo/image-to-image-lora';
 
@@ -410,7 +529,9 @@ module.exports = {
   downloadVideo,
   generateImage,
   generateImg2Img,
+  generateSeedDreamEdit,
   MODEL_ENDPOINTS,
   IMAGE_MODEL_ID,
   IMG2IMG_MODEL_ID,
+  SEEDDREAM_MODEL_ID,
 };

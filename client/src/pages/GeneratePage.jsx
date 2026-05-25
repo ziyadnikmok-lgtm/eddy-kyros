@@ -522,13 +522,19 @@ export default function GeneratePage() {
   };
 
   useEffect(() => {
+    const prompt = sessionStorage.getItem('pb_prompt');
+    if (prompt) {
+      update({ prompt });
+      sessionStorage.removeItem('pb_prompt');
+    }
     const raw = sessionStorage.getItem('pb_atomIds');
-    if (!raw) return;
-    sessionStorage.removeItem('pb_atomIds');
-    try {
-      const ids = JSON.parse(raw);
-      if (Array.isArray(ids) && ids.length > 0) handleApplyAtoms(ids);
-    } catch { /* Ignore stale prompt-builder handoff data. */ }
+    if (raw) {
+      sessionStorage.removeItem('pb_atomIds');
+      try {
+        const ids = JSON.parse(raw);
+        if (Array.isArray(ids) && ids.length > 0) handleApplyAtoms(ids);
+      } catch { /* Ignore stale prompt-builder handoff data. */ }
+    }
     const ar = sessionStorage.getItem('pb_aspectRatio');
     const res = sessionStorage.getItem('pb_resolutionTier');
     if (ar) { update({ aspectRatio: ar }); sessionStorage.removeItem('pb_aspectRatio'); }

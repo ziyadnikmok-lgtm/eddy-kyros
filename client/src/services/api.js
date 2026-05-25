@@ -12,7 +12,7 @@ const LONG_RUNNING_PATHS = [
   '/scene/recreate', '/scene/analyze', '/pinterest/recreate', '/story/generate',
   '/auto/plan', '/auto/execute',
   '/video/generate', '/reformat',
-  '/nsfw-generate', '/photo-match', '/nano-bypass', '/lora-datasets/generate',
+  '/nsfw-generate', '/photo-match', '/nano-bypass', '/lora-datasets/generate', '/seed-dream',
 ];
 
 const EXTRA_LONG_PATHS = ['/profile-clone'];
@@ -38,6 +38,7 @@ const USAGE_MUTATION_PATHS = [
   '/nsfw-generate',
   '/photo-match',
   '/nano-bypass',
+  '/seed-dream',
   '/lora-datasets/generate',
   '/profile-clone',
 ];
@@ -289,6 +290,14 @@ export const images = {
 
 export const gallery = {
   list: () => request('/gallery'),
+  upload: async (file, fields = {}) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    for (const [key, value] of Object.entries(fields)) {
+      if (value !== undefined && value !== null && value !== '') formData.append(key, value);
+    }
+    return request('/gallery/upload', { method: 'POST', body: formData });
+  },
   get: (id) => request(`/gallery/${id}`),
   remove: (id) => request(`/gallery/${id}`, { method: 'DELETE' }),
   toggleFavorite: (id) => request(`/gallery/${id}/favorite`, { method: 'PATCH' }),
@@ -314,7 +323,6 @@ export const gallery = {
   },
   imageUrl: (id) => `${BASE}/gallery/${id}/image`,
   spoofedDownloadUrl: (id) => `${BASE}/gallery/${id}/download-spoofed`,
-  // openFolder removed — no desktop in Docker container
   thumbUrl: (id) => `${BASE}/gallery/${id}/thumb`,
   listTags: () => request('/gallery/tags'),
   updateTags: (id, tags) => request(`/gallery/${id}/tags`, { method: 'PATCH', body: { tags } }),
@@ -366,6 +374,9 @@ export const nanoBypass = {
   edit: (body) => request('/nano-bypass/edit', { method: 'POST', body }),
 };
 
+export const seedDreamEdit = {
+  edit: (body) => request('/seed-dream/edit', { method: 'POST', body }),
+};
 
 export const xReply = {
   start: (body) => request('/x-reply/start', { method: 'POST', body }),

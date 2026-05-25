@@ -6,6 +6,7 @@ files:
   - server/**/*
   - "!server/data/**/*"
   - electron/**/*
+  - recovery/**/*
   - client/dist/**/*
   - package.json
 extraResources:

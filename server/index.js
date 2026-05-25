@@ -98,6 +98,7 @@ const backgroundsRouter = require('./routes/backgrounds');
 const videoComposeRouter = require('./routes/videoCompose');
 const photoMatchRouter = require('./routes/photoMatch');
 const nanoBypassRouter = require('./routes/nanoBypass');
+const seedDreamEditRouter = require('./routes/seedDreamEdit');
 const xReplyRouter = require('./routes/xReply');
 const authRouter = require('./routes/authRoutes');
 const cookieParser = require('cookie-parser');
@@ -330,6 +331,7 @@ app.use('/api/backgrounds', backgroundsRouter);
 app.use('/api/video-compose', generateLimiter, videoComposeRouter);
 app.use('/api/photo-match', generateLimiter, photoMatchRouter);
 app.use('/api/nano-bypass', generateLimiter, nanoBypassRouter);
+app.use('/api/seed-dream', generateLimiter, seedDreamEditRouter);
 app.use('/api/x-reply', xReplyRouter);
 
 const { CLIENT_DIST } = require('./paths');

@@ -488,7 +488,11 @@ export default function NanoBypassPage() {
 
     try {
       const data = await api.edit({
-        images: activeImages.map((img) => ({ base64: img.base64, mimeType: img.mimeType })),
+        images: activeImages.map((img) => ({
+          base64: img.base64,
+          mimeType: img.mimeType,
+          autoCharacterRef: img.autoCharacterRef || false,
+        })),
         prompt: prompt.trim(),
         characterId: characterId || undefined,
         model,

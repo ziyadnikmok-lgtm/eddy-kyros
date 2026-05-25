@@ -7,8 +7,9 @@ async function processImage() {
     vignette, fade, hueShift, rgbSplitDistance, rgbSplitDirection, rgbSplitColor,
   } = workerData;
 
-  let pipeline = sharp(filePath);
-  const meta = await sharp(filePath).metadata();
+  const normalizedInput = await sharp(filePath).rotate().toBuffer();
+  let pipeline = sharp(normalizedInput);
+  const meta = await sharp(normalizedInput).metadata();
   const w = meta.width || 1024;
   const h = meta.height || 1024;
 

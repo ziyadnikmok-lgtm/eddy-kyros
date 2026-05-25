@@ -7,6 +7,7 @@ const COMPOSE_ORDER = ['scene', 'lighting', 'camera', 'pose', 'expression', 'out
 const DEFAULT_DISABLED = new Set(['format']);
 const ASPECT_RATIOS = ['4:5', '9:16', '1:1', '16:9', '4:3', '3:4'];
 const RESOLUTION_TIERS = ['1K', '2K', '4K'];
+const CUSTOM_PROMPTS_KEY = 'pb_custom_prompts';
 
 const _i = (d) => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{d}</svg>;
 
@@ -46,6 +47,11 @@ export default function PromptBuilderPage() {
   });
   const [presetName, setPresetName] = useState('');
   const [showPresets, setShowPresets] = useState(false);
+  const [customPrompt, setCustomPrompt] = useState('');
+  const [customPromptName, setCustomPromptName] = useState('');
+  const [customPrompts, setCustomPrompts] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(CUSTOM_PROMPTS_KEY) || '[]'); } catch { return []; }
+  });
 
   const composeTimerRef = useRef(null);
   useEffect(() => {
@@ -123,6 +129,32 @@ export default function PromptBuilderPage() {
     notify(`Saved "${name}"`, 'success');
   };
 
+  const saveCustomPrompt = () => {
+    const prompt = customPrompt.trim();
+    if (!prompt) {
+      notify('Add a custom prompt first', 'warning');
+      return;
+    }
+    const name = customPromptName.trim() || `Custom ${customPrompts.length + 1}`;
+    const item = { name, prompt, createdAt: Date.now() };
+    const next = [item, ...customPrompts.filter(p => p.name !== name)].slice(0, 30);
+    setCustomPrompts(next);
+    localStorage.setItem(CUSTOM_PROMPTS_KEY, JSON.stringify(next));
+    setCustomPromptName('');
+    notify(`Saved "${name}"`, 'success');
+  };
+
+  const useCustomPrompt = (item) => {
+    setCustomPrompt(item.prompt || '');
+    notify(`Loaded "${item.name}"`, 'success');
+  };
+
+  const deleteCustomPrompt = (idx) => {
+    const next = customPrompts.filter((_, i) => i !== idx);
+    setCustomPrompts(next);
+    localStorage.setItem(CUSTOM_PROMPTS_KEY, JSON.stringify(next));
+  };
+
   const loadPreset = (preset) => {
     setSlots(preset.slots);
     setShowPresets(false);
@@ -158,6 +190,19 @@ export default function PromptBuilderPage() {
     sessionStorage.setItem('pb_resolutionTier', resolutionTier);
     navTo('generate');
     notify('Style atoms sent to Generate page', 'success');
+  };
+
+  const sendCustomToGenerate = () => {
+    const prompt = customPrompt.trim();
+    if (!prompt) {
+      notify('Add a custom prompt first', 'warning');
+      return;
+    }
+    sessionStorage.setItem('pb_prompt', prompt);
+    sessionStorage.setItem('pb_aspectRatio', aspectRatio);
+    sessionStorage.setItem('pb_resolutionTier', resolutionTier);
+    navTo('generate');
+    notify('Custom prompt sent to Generate page', 'success');
   };
 
   return (
@@ -340,6 +385,60 @@ export default function PromptBuilderPage() {
           </div>
         ) : (
           <p className="text-xs text-zinc-600 italic">Click slots above to add style atoms and build your prompt</p>
+        )}
+      </Card>
+
+      <Card>
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-200">Custom Prompt</h3>
+            <p className="text-[10px] text-zinc-600 mt-0.5">Save prompts you reuse, then click Use to paste them here.</p>
+          </div>
+          <span className="text-[10px] text-zinc-500">{customPrompt.length}/2500</span>
+        </div>
+        <textarea
+          value={customPrompt}
+          onChange={e => setCustomPrompt(e.target.value)}
+          placeholder="Paste or write your custom prompt..."
+          maxLength={2500}
+          rows={5}
+          className="w-full rounded-lg border border-zinc-700/60 bg-zinc-900/50 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition hover:border-zinc-600 focus:border-blue-500/70 focus:ring-2 focus:ring-blue-500/20 resize-y"
+        />
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={customPromptName}
+              onChange={e => setCustomPromptName(e.target.value)}
+              placeholder="Name..."
+              className="h-9 w-36 rounded-lg border border-zinc-700/60 bg-zinc-900/60 px-3 text-xs text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-blue-500/70"
+            />
+            <Btn variant="secondary" onClick={saveCustomPrompt} disabled={!customPrompt.trim()}>Save</Btn>
+          </div>
+          <div className="flex gap-2">
+            <Btn variant="ghost" onClick={() => { setCustomPrompt(composedPrompt); notify('Composed prompt pasted', 'success'); }} disabled={!composedPrompt}>Use Composed</Btn>
+            <Btn variant="primary" onClick={sendCustomToGenerate} disabled={!customPrompt.trim()}>Send to Generate</Btn>
+          </div>
+        </div>
+
+        {customPrompts.length > 0 && (
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            {customPrompts.map((item, i) => (
+              <div key={`${item.name}-${item.createdAt}`} className="rounded-lg border border-zinc-800/70 bg-zinc-900/40 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-semibold text-zinc-200">{item.name}</p>
+                    <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-zinc-500">{item.prompt}</p>
+                  </div>
+                  <button onClick={() => deleteCustomPrompt(i)} className="shrink-0 text-xs text-zinc-600 hover:text-red-400 cursor-pointer" title="Delete prompt">&times;</button>
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <Btn size="xs" variant="ghost" onClick={() => useCustomPrompt(item)} className="!px-2 !py-1 !text-xs">Use</Btn>
+                  <Btn size="xs" variant="ghost" onClick={() => navigator.clipboard.writeText(item.prompt || '').then(() => notify('Prompt copied', 'success'))} className="!px-2 !py-1 !text-xs">Copy</Btn>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </Card>
 

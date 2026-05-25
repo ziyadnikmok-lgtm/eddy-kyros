@@ -4,10 +4,10 @@ import { gallery as galleryApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import useImageLightbox from './lightbox/useImageLightbox';
 
-const WORKSPACE_PREFS_KEY = 'kyros_generation_workspace_prefs_v1';
+const WORKSPACE_PREFS_KEY = 'kyros_generation_workspace_prefs_v2';
 const DEFAULT_PREFS = {
-  layoutMode: 'row',
-  imageSize: 'medium',
+  layoutMode: 'grid',
+  imageSize: 'mini',
   editGrouping: 'ungroup',
 };
 
@@ -178,6 +178,16 @@ function ImageSurface({ item, onOpenImage, onOpenMenu, layoutMode, imageSize, bu
       onContextMenu={(event) => onOpenMenu?.(item, event)}
     >
       <CardActionButton onClick={(event) => onOpenMenu?.(item, event)} busy={busy} />
+      {/* Recreate hover button */}
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onOpenMenu?.(item, e, 'useAsSource'); }}
+        className="absolute bottom-2 left-2 z-10 flex items-center gap-1 rounded-lg border border-white/10 bg-black/60 px-2 py-1 text-[10px] font-semibold text-zinc-200 opacity-0 transition-all duration-150 group-hover:opacity-100 hover:bg-black/80 hover:text-white backdrop-blur-sm"
+        title="Use this image as source in Photo Match"
+      >
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.47"/></svg>
+        Use as source
+      </button>
       {item.isVideo && item.videoUrl ? (
         <video
           src={item.videoUrl}
@@ -492,6 +502,7 @@ const feedCtxIcons = {
   zap: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
   grid: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>,
   download: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+  recreate: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.47"/></svg>,
 };
 
 function FeedContextMenuItem({ icon, label, tone = 'default', ...props }) {
@@ -540,6 +551,7 @@ function ActionMenu({ x, y, item, onAction, onClose }) {
       {/* Actions */}
       <div className="py-0.5">
         <FeedContextMenuItem icon={feedCtxIcons.eye} label="Open preview" onClick={() => onAction('open', item)} />
+        <FeedContextMenuItem icon={feedCtxIcons.recreate} label="Use as source →" onClick={() => onAction('useAsSource', item)} />
         <FeedContextMenuItem icon={feedCtxIcons.clipboard} label="Copy prompt" onClick={() => onAction('copyPrompt', item)} />
         <FeedContextMenuItem icon={feedCtxIcons.image} label="Copy image" onClick={() => onAction('copyImage', item)} />
         <div className="my-1 border-t border-zinc-800/80 mx-2" />
@@ -648,12 +660,17 @@ export default function GenerationFeedPanel({ mode = 'rail' }) {
     openLightbox(urls, index < 0 ? 0 : index);
   };
 
-  const openContextMenu = (item, event) => {
+  const openContextMenu = (item, event, directAction = null) => {
     if (!isImageItem(item)) return;
     event.preventDefault();
     event.stopPropagation();
+    // If a directAction is specified (e.g. from the hover button), handle immediately
+    if (directAction) {
+      handleContextAction(directAction, item);
+      return;
+    }
     const width = 240;
-    const height = 380;
+    const height = 400;
     const x = Math.max(12, Math.min(event.clientX, window.innerWidth - width - 12));
     const y = Math.max(12, Math.min(event.clientY, window.innerHeight - height - 12));
     setContextMenu({ item, x, y });
@@ -716,6 +733,38 @@ export default function GenerationFeedPanel({ mode = 'rail' }) {
       });
       return;
     }
+
+    if (action === 'useAsSource') {
+      setActionBusyId(itemKey(item));
+      try {
+        const response = await fetch(galleryApi.imageUrl(targetId), { credentials: 'include' });
+        if (!response.ok) throw new Error('Failed to load image');
+        const blob = await response.blob();
+        const dataUrl = await blobToDataUrl(blob);
+        const parsed = parseDataUrl(dataUrl);
+        if (!parsed) throw new Error('Failed to read image data');
+        // Navigate to Photo Match first, then fire event after a short mount delay
+        navigateTo('photoMatch');
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('kyros:use-as-source', {
+            detail: {
+              base64: parsed.base64,
+              mimeType: parsed.mimeType,
+              name: buildActionFilename(item, parsed.mimeType),
+              aspectRatio: item.aspectRatio || undefined,
+              characterId: item.characterId || undefined,
+            }
+          }));
+        }, 150);
+        notify('Image loaded into Photo Match ⚡', 'success');
+      } catch (error) {
+        notify(error.message || 'Failed to load image', 'error');
+      } finally {
+        setActionBusyId('');
+      }
+      return;
+    }
+
 
     if (action === 'nanoBypass') {
       setActionBusyId(itemKey(item));

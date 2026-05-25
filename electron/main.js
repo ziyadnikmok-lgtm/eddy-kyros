@@ -8,6 +8,7 @@ const net = require('node:net');
 const { fork } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
+const { findRecoveryRoot, listRecoverySessions, readRecoverySession } = require('./recovery-store');
 
 // ── Error log file ──────────────────────────────────────────────────────
 let _logStream = null;
@@ -33,9 +34,22 @@ process.on('uncaughtException', (e) => { writeLog('[UNCAUGHT] ' + e.stack); });
 process.on('unhandledRejection', (r) => { writeLog('[UNHANDLED] ' + r); });
 
 let mainWindow = null;
+let recoveryWindow = null;
 let serverProcess = null;
 let serverPort = null;
 let userDataPath = null;
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return;
+    if (!mainWindow.isVisible()) mainWindow.show();
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  });
+}
 
 // ── Paths ───────────────────────────────────────────────────────────────
 
@@ -208,6 +222,57 @@ ipcMain.handle('downloads:save-file', async (_event, payload = {}) => {
   return { filePath, fileName: path.basename(filePath) };
 });
 
+ipcMain.handle('recovery:get-state', async () => {
+  return listRecoverySessions();
+});
+
+ipcMain.handle('recovery:get-session', async (_event, payload = {}) => {
+  const { root, path: relativePath } = payload || {};
+  if (!relativePath) {
+    throw new Error('path is required');
+  }
+  return readRecoverySession(root, relativePath);
+});
+
+function createRecoveryWindow() {
+  recoveryWindow = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    minWidth: 1100,
+    minHeight: 720,
+    show: false,
+    title: 'Recovered Chats',
+    backgroundColor: '#09090b',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'recovery-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  recoveryWindow.loadFile(path.join(__dirname, '..', 'recovery', 'index.html'));
+
+  recoveryWindow.once('ready-to-show', () => {
+    recoveryWindow.show();
+    recoveryWindow.focus();
+  });
+
+  recoveryWindow.on('closed', () => {
+    recoveryWindow = null;
+  });
+}
+
+ipcMain.handle('recovery:open', async () => {
+  if (recoveryWindow) {
+    if (!recoveryWindow.isVisible()) recoveryWindow.show();
+    recoveryWindow.focus();
+    return true;
+  }
+  createRecoveryWindow();
+  return true;
+});
+
 // ── Find free port ──────────────────────────────────────────────────────
 
 // Use a fixed port so session cookies survive app restarts.
@@ -234,7 +299,7 @@ function findFreePort() {
 
 // ── Wait for backend health check ───────────────────────────────────────
 
-function waitForServer(port, timeoutMs = 30_000) {
+function waitForServer(port, timeoutMs = 90_000) {
   const start = Date.now();
   return new Promise((resolve, reject) => {
     function check() {
@@ -304,6 +369,7 @@ function createWindow() {
     height: 900,
     minWidth: 1024,
     minHeight: 700,
+    show: false,
     title: 'Kyros Studio',
     backgroundColor: '#09090b', // zinc-950 to match the dark theme
     webPreferences: {
@@ -314,6 +380,11 @@ function createWindow() {
   });
 
   mainWindow.loadURL(`http://127.0.0.1:${serverPort}`);
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+    mainWindow.focus();
+    console.log('[electron] window shown');
+  });
   mainWindow.webContents.on('did-finish-load', () => console.log('[electron] window finished load'));
   mainWindow.webContents.on('did-fail-load', (_event, code, desc) => console.error(`[electron] window failed load code=${code} desc=${desc}`));
 
@@ -326,6 +397,7 @@ function createWindow() {
 // ── App lifecycle ───────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
+  if (!gotSingleInstanceLock) return;
   console.log('[electron] app.whenReady');
   userDataPath = app.getPath('userData');
 

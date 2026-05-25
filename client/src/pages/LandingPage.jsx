@@ -626,7 +626,7 @@ export default function LandingPage() {
                 </div>
                 <button onClick={() => setAuthModal('register')}
                   style={{
-                    width: '100%', padding: '12px', border: 'none', borderRadius: 3, cursor: 'pointer',
+                    width: '100%', padding: '12px', borderRadius: 3, cursor: 'pointer',
                     fontFamily: DS.body, fontWeight: 700, fontSize: 13, letterSpacing: '0.04em',
                     background: plan.popular ? DS.crimson : 'transparent',
                     color: plan.popular ? '#fff' : DS.textMuted,

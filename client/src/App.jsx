@@ -59,10 +59,10 @@ const ReformatPage = lazy(() => import('./pages/ReformatPage'));
 const NsfwGeneratePage = lazy(() => import('./pages/NsfwGeneratePage'));
 const ImageEditorPage = lazy(() => import('./pages/ImageEditorPage'));
 const BillingPage = lazy(() => import('./pages/BillingPage'));
-const VideoComposePage = lazy(() => import('./pages/VideoComposePage'));
 const LogsPage = lazy(() => import('./pages/LogsPage'));
 const PhotoMatchPage = lazy(() => import('./pages/PhotoMatchPage'));
 const NanoBypassPage = lazy(() => import('./pages/NanoBypassPage'));
+const SeedDreamEditPage = lazy(() => import('./pages/SeedDreamEditPage'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const ReferralPage = lazy(() => import('./pages/ReferralPage'));
@@ -87,13 +87,13 @@ const NAV_ICONS = {
   library: IconGrid2,
   gallery: IconImage,
   imageEditor: IconRulerPen,
-  videoCompose: IconVideo,
   characters: IconUsers,
   keys: IconKey,
   billing: IconCreditCards,
   logs: IconBulletList,
   photoMatch: IconCrosshairs,
   nanoBypass: IconMagicWandSparkle,
+  seedEdit: IconRulerPen,
   referral: IconUsers,
   admin: IconBulletList,
   settings: IconSettingsWrench,
@@ -119,13 +119,13 @@ const NAV_COLORS = {
   library:        ['#67e8f9', '#0284c7'],
   gallery:        ['#fcd34d', '#d97706'],
   imageEditor:    ['#f9a8d4', '#db2777'],
-  videoCompose:   ['#fdba74', '#ea580c'],
   characters:     ['#c4b5fd', '#7c3aed'],
   keys:           ['#94a3b8', '#475569'],
   billing:        ['#86efac', '#16a34a'],
   logs:           ['#fda4af', '#e11d48'],
   photoMatch:     ['#6ee7b7', '#0891b2'],
   nanoBypass:     ['#c4b5fd', '#7c3aed'],
+  seedEdit:       ['#f0abfc', '#a855f7'],
   referral:       ['#fb923c', '#ea580c'],
   admin:          ['#fcd34d', '#d97706'],
   settings:       ['#94a3b8', '#64748b'],
@@ -149,6 +149,7 @@ const NAV_SECTIONS = [
       { id: 'carousel', label: 'Carousel' },
       { id: 'photoMatch', label: 'Photo Match' },
       { id: 'nanoBypass', label: 'Nano Bypass' },
+      { id: 'seedEdit', label: 'SeedDream Edit' },
     ],
   },
   {
@@ -156,7 +157,6 @@ const NAV_SECTIONS = [
     items: [
       { id: 'reel', label: 'Reel Copy' },
       { id: 'pinterest', label: 'Pinterest DL' },
-      { id: 'videoCompose', label: 'Video Composer' },
     ],
   },
   {
@@ -209,7 +209,7 @@ const FEED_HIDDEN_PAGES = new Set([
 // Pages where controls panel is narrow and feed takes the rest of the space
 const FEED_DOMINANT_PAGES = new Set([
   'generate', 'nsfwGenerate', 'batch', 'video', 'auto',
-  'scene', 'postClone', 'reel', 'carousel', 'photoMatch', 'nanoBypass', 'pinterest',
+  'scene', 'postClone', 'reel', 'carousel', 'photoMatch', 'nanoBypass', 'pinterest', 'seedEdit',
 ]);
 
 function SidebarHeader() {
@@ -246,11 +246,11 @@ const PAGE_DESCRIPTIONS = {
   keys: 'Configure API keys and connections',
   billing: 'View your plan and upgrade your subscription',
   referral: 'Earn 20% recurring commission for every creator you refer',
-  videoCompose: 'Drop a video — add audio and text overlay',
   logs: 'View recent app logs and copy them for support',
   settings: 'Change password, manage your account',
   photoMatch: 'Paste any photo — match background & pose with your character',
   nanoBypass: 'Multi-image AI editing — combine, transform, reimagine with Gemini 3',
+  seedEdit: 'WaveSpeed SeedDream v4.5 — edit images while locking character identity',
   admin: 'Run the SaaS, inspect users, and review audit activity',
 };
 
@@ -278,10 +278,10 @@ const PAGES = {
   keys: ApiKeysPage,
   billing: BillingPage,
   referral: ReferralPage,
-  videoCompose: VideoComposePage,
   logs: LogsPage,
   photoMatch: PhotoMatchPage,
   nanoBypass: NanoBypassPage,
+  seedEdit: SeedDreamEditPage,
   admin: AdminPage,
   settings: SettingsPage,
 };

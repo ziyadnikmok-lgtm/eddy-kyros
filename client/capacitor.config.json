@@ -3,8 +3,7 @@
   "appName": "Kyros Studio",
   "webDir": "dist",
   "server": {
-    "url": "http://192.168.1.33:5173",
-    "cleartext": true
+    "url": "https://believable-curiosity-production-1126.up.railway.app"
   },
   "ios": {
     "contentInset": "automatic"

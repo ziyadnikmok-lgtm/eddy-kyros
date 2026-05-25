@@ -1,18 +1,18 @@
 module.exports = {
   PORT: parseInt(process.env.PORT, 10) || 3001,
-  HOST: process.env.HOST || 'localhost',
+  HOST: process.env.HOST || '127.0.0.1',
 
   // Gemini backend selector: 'direct' (default, API key) or 'vertex' (GCP ADC)
   GEMINI_BACKEND: process.env.GEMINI_BACKEND || 'direct',
 
   // Vertex AI config (only used when GEMINI_BACKEND=vertex)
   VERTEX_PROJECT: process.env.GOOGLE_CLOUD_PROJECT || process.env.VERTEX_PROJECT || '',
-  VERTEX_LOCATION: process.env.GOOGLE_CLOUD_LOCATION || process.env.VERTEX_LOCATION || 'us-central1',
+  VERTEX_LOCATION: process.env.GOOGLE_CLOUD_LOCATION || process.env.VERTEX_LOCATION || 'global',
 
   JSON_BODY_LIMIT: '20mb',
   SHUTDOWN_TIMEOUT_MS: 10_000,
 
-  GEMINI_GENERATE_TIMEOUT_MS: 120_000,
+  GEMINI_GENERATE_TIMEOUT_MS: 180_000,
   GEMINI_TEXT_TIMEOUT_MS: 120_000,
   ROUTE_TIMEOUT_MS: 5 * 60_000,
   HEALTH_CHECK_TIMEOUT_MS: 12_000,

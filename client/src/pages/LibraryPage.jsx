@@ -320,6 +320,7 @@ function ImageContextMenu({ menu, onClose, onAction }) {
         <ContextMenuItem icon={ctxIcons.edit} label="Edit in Image Editor" onClick={() => onAction('imageEditor')} />
         <ContextMenuItem icon={ctxIcons.zap} label="Nano Bypass" onClick={() => onAction('nanoBypass')} />
         <ContextMenuItem icon={ctxIcons.grid} label="Go to Carousel" onClick={() => onAction('carousel')} />
+        <ContextMenuItem icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.47"/></svg>} label="Photo Match →" onClick={() => onAction('photoMatch')} />
         <div className="my-1 border-t border-zinc-800/80 mx-2" />
         <ContextMenuItem icon={ctxIcons.download} label="Download" onClick={() => onAction('download')} />
         <ContextMenuItem icon={ctxIcons.trash} label="Delete" tone="danger" onClick={() => onAction('delete')} />
@@ -515,6 +516,34 @@ export default function LibraryPage() {
       return;
     }
 
+    if (destination === 'photoMatch') {
+      setEditDestinationBusy(true);
+      try {
+        const response = await fetch(editTarget.downloadUrl || `/api/gallery/${editTarget.originalId}/image`, { credentials: 'include' });
+        if (!response.ok) throw new Error(`Failed to load image (${response.status})`);
+        const blob = await response.blob();
+        const dataUrl = await blobToDataUrl(blob);
+        const parsed = parseDataUrl(dataUrl);
+        if (!parsed) throw new Error('Could not prepare image for Photo Match');
+        window.dispatchEvent(new CustomEvent('kyros:use-as-source', {
+          detail: {
+            base64: parsed.base64,
+            mimeType: parsed.mimeType,
+            name: editTarget.metadata?.filename || `library-${editTarget.originalId}.png`,
+            aspectRatio: editTarget.aspectRatio || undefined,
+            characterId: editTarget.characterId || undefined,
+          }
+        }));
+        navigateTo('photoMatch');
+        setEditTarget(null);
+      } catch (err) {
+        notify(err.message || 'Failed to open in Photo Match', 'error');
+      } finally {
+        setEditDestinationBusy(false);
+      }
+      return;
+    }
+
     if (destination !== 'nanoBypass') return;
 
     setEditDestinationBusy(true);
@@ -643,6 +672,34 @@ export default function LibraryPage() {
         aspectRatio: '4:5',
       });
       setContextMenu(null);
+      return;
+    }
+
+    if (action === 'photoMatch') {
+      setEditDestinationBusy(true);
+      try {
+        const response = await fetch(item.downloadUrl || `/api/gallery/${item.originalId}/image`, { credentials: 'include' });
+        if (!response.ok) throw new Error(`Failed to load image (${response.status})`);
+        const blob = await response.blob();
+        const dataUrl = await blobToDataUrl(blob);
+        const parsed = parseDataUrl(dataUrl);
+        if (!parsed) throw new Error('Could not prepare image for Photo Match');
+        window.dispatchEvent(new CustomEvent('kyros:use-as-source', {
+          detail: {
+            base64: parsed.base64,
+            mimeType: parsed.mimeType,
+            name: item.metadata?.filename || `library-${item.originalId}.png`,
+            aspectRatio: item.aspectRatio || undefined,
+            characterId: item.characterId || undefined,
+          }
+        }));
+        navigateTo('photoMatch');
+        setContextMenu(null);
+      } catch (err) {
+        notify(err.message || 'Failed to open in Photo Match', 'error');
+      } finally {
+        setEditDestinationBusy(false);
+      }
       return;
     }
 
@@ -1061,6 +1118,15 @@ export default function LibraryPage() {
             >
               <p className="text-sm font-semibold text-zinc-100">Carousel</p>
               <p className="mt-1 text-xs text-zinc-500">Create follow-up slides and variations from this image.</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleEditDestination('photoMatch')}
+              disabled={editDestinationBusy}
+              className="rounded-xl border border-zinc-700/60 bg-zinc-900/70 p-4 text-left transition hover:border-teal-500/40 hover:bg-zinc-800/80 disabled:opacity-60"
+            >
+              <p className="text-sm font-semibold text-zinc-100">Photo Match →</p>
+              <p className="mt-1 text-xs text-zinc-500">Use this image as source in Photo Match to recreate the scene with your character.</p>
             </button>
             <button
               type="button"

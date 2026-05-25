@@ -2,12 +2,11 @@
  * Gemini via Google Cloud Service Account (OAuth) — same interface as geminiService.js.
  *
  * Uses a service account JSON to get OAuth Bearer tokens, then calls the
- * standard Gemini API (generativelanguage.googleapis.com) with those tokens.
- * Same exact models as direct Gemini — no billing account required on GCP,
- * just enable the "Gemini API" (generativelanguage.googleapis.com) in your project.
+ * Vertex AI publisher Gemini endpoint (aiplatform.googleapis.com) so usage is
+ * billed through the selected Google Cloud project.
  *
  * Required setup (one-time per GCP project):
- *   1. Enable "Gemini API" at console.cloud.google.com/apis/library/generativelanguage.googleapis.com
+ *   1. Enable "Vertex AI API" at console.cloud.google.com/apis/library/aiplatform.googleapis.com
  *   2. Create a service account with any basic role (even no role works)
  *   3. Download the service account JSON key
  *   4. Paste it in Settings → API Keys → Vertex AI Credentials
@@ -21,14 +20,22 @@ const { AppError } = require('../middleware/errorHandler');
 const { dedupRequest } = require('../utils/dedup');
 const cfg = require('../config');
 
+try {
+  const { Agent, setGlobalDispatcher } = require('undici');
+  setGlobalDispatcher(new Agent({ connect: { timeout: 60_000 } }));
+} catch {
+  // Older runtimes may not expose undici; fetch will use its default timeout.
+}
+
 const IMAGE_MODEL = 'gemini-3-pro-image-preview';
+const VERTEX_IMAGEN_MODEL = process.env.VERTEX_IMAGEN_MODEL || 'imagen-3.0-generate-002';
 const IMAGE_MODEL_ALTERNATES = ['gemini-3.1-flash-image-preview'];
 const EXPERIMENTAL_IMAGE_MODEL_ALIASES = {
   'nano-bypass-experimental': 'gemini-3.1-flash-image-preview',
 };
 const ALLOWED_IMAGE_MODELS = [IMAGE_MODEL, ...IMAGE_MODEL_ALTERNATES];
 const MINIMAL_THINKING_IMAGE_MODELS = new Set(['gemini-3.1-flash-image-preview']);
-const TEXT_MODEL = 'gemini-3-flash-preview';
+const TEXT_MODEL = process.env.VERTEX_TEXT_MODEL || 'gemini-2.5-flash';
 
 const SAFETY_SETTINGS = [
   { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.OFF },
@@ -43,10 +50,7 @@ const TEXT_TIMEOUT_MS = cfg.GEMINI_TEXT_TIMEOUT_MS;
 const TRANSIENT_RETRY_COUNT = cfg.GEMINI_TRANSIENT_RETRIES;
 const TRANSIENT_RETRY_BASE_MS = cfg.GEMINI_TRANSIENT_BASE_MS;
 
-const OAUTH_SCOPES = [
-  'https://www.googleapis.com/auth/generative-language',
-  'https://www.googleapis.com/auth/cloud-platform',
-];
+const OAUTH_SCOPES = ['https://www.googleapis.com/auth/cloud-platform'];
 
 // Cache the GoogleAuth client per credential set (avoids re-parsing JSON)
 const _authCache = new Map();
@@ -59,21 +63,78 @@ function _getAuthClient(credentials) {
   return auth;
 }
 
+
+// --- Raw HTTP client (bypasses SDK's ?key= query param which breaks OAuth Bearer auth) ---
+
+const TOP_LEVEL_FIELDS = new Set(['safetySettings', 'systemInstruction', 'tools', 'toolConfig', 'cachedContent']);
+const SDK_ONLY_FIELDS  = new Set(['httpOptions', 'signal', 'audioTimestamp', 'personGeneration']);
+const VERTEX_LOCATION = process.env.VERTEX_LOCATION || cfg.VERTEX_LOCATION || 'global';
+const VERTEX_API_VERSION = process.env.VERTEX_API_VERSION || 'v1';
+
+function _normalizeImagenAspectRatio(aspectRatio = '1:1') {
+  const ratio = String(aspectRatio || '1:1').trim();
+  const supported = new Set(['1:1', '3:4', '4:3', '9:16', '16:9']);
+  if (supported.has(ratio)) return ratio;
+  const fallback = {
+    '4:5': '3:4',
+    '5:4': '4:3',
+    '2:3': '3:4',
+    '3:2': '4:3',
+    '1:2': '9:16',
+    '2:1': '16:9',
+  };
+  return fallback[ratio] || '1:1';
+}
+
+function _buildRawRequest(contents, config) {
+  const body = { contents };
+  const generationConfig = {};
+  if (config) {
+    for (const [key, value] of Object.entries(config)) {
+      if (SDK_ONLY_FIELDS.has(key) || value === undefined) continue;
+      if (TOP_LEVEL_FIELDS.has(key)) { body[key] = value; }
+      else { generationConfig[key] = value; }
+    }
+  }
+  if (Object.keys(generationConfig).length > 0) body.generationConfig = generationConfig;
+  return body;
+}
+
+function _buildHttpClient(credentials, token) {
+  const headers = {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+  const projectId = credentials.project_id;
+
+  return {
+    models: {
+      generateContent: async ({ model, contents, config }) => {
+        const url = `https://aiplatform.googleapis.com/${VERTEX_API_VERSION}/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(VERTEX_LOCATION)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
+        const body = _buildRawRequest(contents, config);
+        const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(JSON.stringify(data));
+        return data;
+      },
+    },
+  };
+}
+
 async function _getGeminiClient(credentials) {
   const auth = _getAuthClient(credentials);
   const tokenResponse = await auth.getClient().then(c => c.getAccessToken());
   const token = tokenResponse.token || tokenResponse;
   if (!token) throw new AppError('Failed to get OAuth token from service account credentials', 500, 'CONFIG_ERROR');
+  return _buildHttpClient(credentials, token);
+}
 
-  return new GoogleGenAI({
-    apiKey: token,
-    httpOptions: {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'x-goog-user-project': credentials.project_id || '',
-      },
-    },
-  });
+async function _getVertexAccessToken(credentials) {
+  const auth = _getAuthClient(credentials);
+  const tokenResponse = await auth.getClient().then(c => c.getAccessToken());
+  const token = tokenResponse.token || tokenResponse;
+  if (!token) throw new AppError('Failed to get OAuth token from service account credentials', 500, 'CONFIG_ERROR');
+  return token;
 }
 
 function _getStoredCredentials() {
@@ -164,11 +225,14 @@ function _appendVariationSeedToParts(parts, seed) {
 
 function isTransientError(err) {
   const msg = (err && err.message) ? err.message : '';
+  const cause = (err && err.cause) ? `${err.cause.code || ''} ${err.cause.message || ''}` : '';
+  const text = `${msg} ${cause}`;
   return (
-    msg.includes('503') || msg.includes('500') || msg.includes('UNAVAILABLE') ||
-    msg.includes('INTERNAL') || msg.includes('ECONNRESET') || msg.includes('ETIMEDOUT') ||
-    msg.includes('ENOTFOUND') || msg.includes('socket hang up') || msg.includes('network') ||
-    msg.includes('upstream') || msg.includes('Timed out')
+    text.includes('503') || text.includes('500') || text.includes('UNAVAILABLE') ||
+    text.includes('INTERNAL') || text.includes('ECONNRESET') || text.includes('ETIMEDOUT') ||
+    text.includes('UND_ERR_CONNECT_TIMEOUT') || text.includes('fetch failed') ||
+    text.includes('ENOTFOUND') || text.includes('socket hang up') || text.includes('network') ||
+    text.includes('upstream') || text.includes('Timed out')
   );
 }
 
@@ -258,10 +322,14 @@ class GeminiVertexService {
 
       const maxAttempts = 3;
       let currentPrompt = prompt;
+      let currentParts = Array.isArray(options.parts) && options.parts.length > 0
+        ? options.parts
+        : null;
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
+          const retryOptions = currentParts ? { ...options, parts: currentParts } : options;
           const retryPrompt = this._buildRetryPrompt(_appendVariationSeedToPrompt(currentPrompt, options.variationSeed), attempt);
-          const contentParts = this._buildImageGenerationParts(retryPrompt, options);
+          const contentParts = this._buildImageGenerationParts(retryPrompt, retryOptions);
           const response = await withTimeout(
             genAI.models.generateContent({
               model: selectedImageModel,
@@ -290,7 +358,11 @@ class GeminiVertexService {
             const reason = parsed.blockReason ? 'safety_block' : parsed.isImageOther ? 'IMAGE_OTHER' : 'empty_response';
             console.warn(`[vertex] attempt ${attempt}/${maxAttempts} failed: ${reason}`);
             if (attempt < maxAttempts) {
-              currentPrompt = this._sanitizePromptForRetry(currentPrompt, attempt);
+              if (currentParts) {
+                currentParts = this._sanitizePartsForRetry(currentParts, attempt);
+              } else {
+                currentPrompt = this._sanitizePromptForRetry(currentPrompt, attempt);
+              }
               await this._sleep(500 * attempt);
               continue;
             }
@@ -324,6 +396,101 @@ class GeminiVertexService {
     }
   }
 
+  async _generateImagenImage(prompt, options = {}) {
+    const credentials = _getStoredCredentials();
+    if (!credentials) throw new AppError('No Vertex/GCP credentials saved.', 500, 'CONFIG_ERROR');
+    const token = await _getVertexAccessToken(credentials);
+    const aspectRatio = _normalizeImagenAspectRatio(options.aspectRatio || '1:1');
+    const promptForImagen = await this._buildVertexOnlyImagePrompt(prompt, options);
+    const url = `https://${VERTEX_LOCATION}-aiplatform.googleapis.com/${VERTEX_API_VERSION}/projects/${encodeURIComponent(credentials.project_id)}/locations/${encodeURIComponent(VERTEX_LOCATION)}/publishers/google/models/${encodeURIComponent(VERTEX_IMAGEN_MODEL)}:predict`;
+    const body = {
+      instances: [{ prompt: _appendVariationSeedToPrompt(promptForImagen, options.variationSeed) }],
+      parameters: {
+        sampleCount: 1,
+        aspectRatio,
+        safetyFilterLevel: 'block_few',
+        personGeneration: 'allow_adult',
+      },
+    };
+    let res;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        break;
+      } catch (err) {
+        if (!isTransientError(err) || attempt === 3) throw err;
+        await this._sleep(Math.min(TRANSIENT_RETRY_BASE_MS * attempt, 5000));
+      }
+    }
+    const data = await res.json();
+    if (!res.ok) throw new Error(JSON.stringify(data));
+    const prediction = Array.isArray(data.predictions) ? data.predictions[0] : null;
+    const base64 = prediction?.bytesBase64Encoded || prediction?.image?.bytesBase64Encoded;
+    if (!base64) throw new AppError('Vertex Imagen returned no image.', 502, 'GENERATION_EMPTY');
+
+    const inputBuf = Buffer.from(base64, 'base64');
+    const pngBuf = await sharp(inputBuf).png({ compressionLevel: 6 }).toBuffer();
+    this._trackImageSpend(VERTEX_IMAGEN_MODEL, options.imageSize || '2K', 0, null, options.characterId);
+    return {
+      image: { mimeType: 'image/png', base64Data: pngBuf.toString('base64') },
+      text: null,
+      modelUsed: VERTEX_IMAGEN_MODEL,
+      seed: options.variationSeed || null,
+    };
+  }
+
+  async _buildVertexOnlyImagePrompt(prompt, options = {}) {
+    const inlineParts = [];
+    if (Array.isArray(options.parts)) {
+      inlineParts.push(...options.parts.filter((part) => part?.inlineData?.data && part?.inlineData?.mimeType));
+    }
+    if (Array.isArray(options.referenceImages)) {
+      for (const ref of options.referenceImages) {
+        if (ref?.base64Data && ref?.mimeType) {
+          inlineParts.push({ inlineData: { mimeType: ref.mimeType, data: ref.base64Data } });
+        }
+      }
+    }
+    if (inlineParts.length === 0) return prompt;
+
+    const limitedInlineParts = inlineParts.slice(0, 6);
+    const analysisPrompt = `You are preparing a prompt for Vertex Imagen. Analyze the attached images and convert them into a detailed visual brief.
+
+Rules:
+- If there is a source/photo-match image, describe its environment, camera angle, framing, pose, lighting, background, clothing, and composition.
+- If there are character/reference images, describe the recurring identity traits: face shape, hair, skin tone, eyes, brows, lips, body type, tattoos, styling, and vibe.
+- Be concrete and visual. Avoid saying "from the image". Do not mention policies or limitations.
+- Return one compact but detailed prompt paragraph that can be used by an image generator.
+
+User generation request:
+${String(prompt || '').slice(0, 6000)}`;
+
+    try {
+      const parts = [...limitedInlineParts, { text: analysisPrompt }];
+      const visualBrief = await this._generateTextInner(
+        null,
+        parts,
+        { temperature: 0.2 },
+        'Vertex reference image prompt extraction',
+        options.characterId
+      );
+      return [
+        'Generate one photorealistic image using this visual brief.',
+        'Preserve the described character identity, pose, environment, camera framing, lighting, outfit, and mood as closely as possible.',
+        'No text, no watermark, no collage, no extra people unless explicitly requested.',
+        '',
+        visualBrief,
+      ].join('\n');
+    } catch (err) {
+      console.warn('[vertex] Reference prompt extraction failed; continuing with original prompt:', err.message);
+      return prompt;
+    }
+  }
+
   _buildRetryPrompt(prompt, attempt) {
     const base = prompt.trim().slice(0, cfg.PROMPT_MAX_LENGTH);
     if (attempt <= 1) return base;
@@ -344,6 +511,9 @@ class GeminiVertexService {
       [/\bbody-?hugging\b/gi, 'form-fitting'], [/\bcurvy\b/gi, 'full-figured'],
       [/\bvoluptuous\b/gi, 'full-figured'], [/\bmidriff\b/gi, 'waist'],
       [/\bcrop[- ]top\b/gi, 'short top'], [/\bmini[- ]?skirt\b/gi, 'short skirt'],
+      [/\bbreast\b/gi, 'curves'], [/\bbreasts\b/gi, 'curves'], [/\bboob\b/gi, 'curves'],
+      [/\bboobs\b/gi, 'curves'], [/\bass\b/gi, 'hips'], [/\bbutt\b/gi, 'hips'],
+      [/\bchest\b/gi, 'torso'], [/\bnaughty\b/gi, 'playful']
     ];
     for (const [pattern, replacement] of swaps) text = text.replace(pattern, replacement);
     if (attempt >= 2) {
@@ -355,12 +525,22 @@ class GeminiVertexService {
     return text;
   }
 
+  _sanitizePartsForRetry(parts, attempt) {
+    return parts.map((part) => {
+      if (!part || typeof part.text !== 'string') return part;
+      return { ...part, text: this._sanitizePromptForRetry(part.text, attempt) };
+    });
+  }
+
   _parseImageResponse(response) {
     const firstCandidate = Array.isArray(response?.candidates) ? response.candidates[0] : null;
     const parts = firstCandidate?.content?.parts;
     const hasNoParts = !Array.isArray(parts) || parts.length === 0;
     const finishReason = firstCandidate?.finishReason || 'unknown';
-    const blockReason = response?.promptFeedback?.blockReason || finishReason === 'SAFETY' || finishReason === 'PROHIBITED_CONTENT';
+    const blockReason = response?.promptFeedback?.blockReason || 
+      finishReason === 'SAFETY' || 
+      finishReason === 'PROHIBITED_CONTENT' || 
+      finishReason === 'IMAGE_OTHER';
     const isImageOther = finishReason === 'IMAGE_OTHER';
 
     if (hasNoParts) {
@@ -629,7 +809,9 @@ Return ONLY valid JSON: {"score": <number 0-100>, "reasons": ["<reason1>", "<rea
   }
 
   _handleApiError(err) {
-    const message = err.message || 'Unknown Vertex/GCP error';
+    const cause = err?.cause ? ` (${err.cause.code || ''} ${err.cause.message || ''})`.trim() : '';
+    const message = `${err.message || 'Unknown Vertex/GCP error'}${cause ? ` ${cause}` : ''}`;
+    console.error('[vertex] RAW ERROR:', message);
     const diagnosed = classifyVertexRuntimeError(message);
     if (diagnosed) {
       throw new AppError(diagnosed.message, 401, diagnosed.code);
@@ -644,7 +826,7 @@ Return ONLY valid JSON: {"score": <number 0-100>, "reasons": ["<reason1>", "<rea
       throw new AppError(`Request timed out: ${message}`, 504, 'GEMINI_TIMEOUT');
     }
     if (isTransientError(err)) {
-      throw new AppError(`Transient error (retries exhausted): ${message}`, 502, 'GEMINI_TRANSIENT');
+      throw new AppError('Transient error (retries exhausted): ' + message, 502, 'GEMINI_TRANSIENT');
     }
     throw new AppError(`Vertex/GCP error: ${message}`, 502, 'GEMINI_ERROR');
   }

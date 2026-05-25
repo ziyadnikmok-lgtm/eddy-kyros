@@ -179,10 +179,16 @@ router.post('/edit', express.json({ limit: '100mb' }), requirePlanCapacity(), as
       }
     }
 
-    // Build parts: images first, then prompt (mirrors ComfyUI node)
-    const parts = [];
+    // Categorize images into source and character reference images
+    const sourceImages = [];
+    const identityImages = [];
+    
+    // Check if any image has autoCharacterRef explicitly true
+    const hasExplicitRefs = images.some(img => img.autoCharacterRef === true);
+    
     let totalImageBytes = 0;
-    for (const img of images) {
+    for (let i = 0; i < images.length; i++) {
+      const img = images[i];
       if (!img.base64 || typeof img.base64 !== 'string') {
         throw new AppError('each image must have a base64 field', 400, 'VALIDATION_ERROR');
       }
@@ -196,9 +202,82 @@ router.post('/edit', express.json({ limit: '100mb' }), requirePlanCapacity(), as
       if (totalImageBytes > MAX_TOTAL_IMAGE_BYTES) {
         throw new AppError(`combined Nano Bypass images are too large; use smaller files or fewer images (${MAX_TOTAL_IMAGE_MB}MB total limit)`, 400, 'VALIDATION_ERROR');
       }
-      parts.push({ inlineData: { mimeType, data: raw } });
+      
+      const imgObj = { data: raw, mimeType };
+      
+      if (hasExplicitRefs) {
+        if (img.autoCharacterRef === true) {
+          identityImages.push(imgObj);
+        } else {
+          sourceImages.push(imgObj);
+        }
+      } else {
+        // Fallback: first image is source, the rest are identity if a characterId is selected
+        if (i === 0) {
+          sourceImages.push(imgObj);
+        } else if (characterId) {
+          identityImages.push(imgObj);
+        } else {
+          sourceImages.push(imgObj);
+        }
+      }
     }
-    parts.push({ text: effectivePrompt });
+
+    // Build parts: if there are character references, use the improved identity preservation prompt structure
+    const parts = [];
+    if (identityImages.length > 0) {
+      const refCount = identityImages.length;
+      const refLabel = refCount === 1 ? 'Image 1'
+        : refCount === 2 ? 'Images 1 and 2'
+        : `Images 1–${refCount}`;
+
+      parts.push({
+        text: [
+          `[${refLabel} — CHARACTER IDENTITY REFERENCES]`,
+          `${refLabel} show the character's facial features and identity.`,
+          `The output person's face must look exactly like the character shown in ${refLabel}.`,
+          `Copy from ${refLabel}:`,
+          `- Face (exact likeness, eyes, nose, lips, facial shape)`,
+          `- Skin tone and facial structure`,
+          `- Body type and proportions`,
+          useVertexBackend
+            ? `- Body shape and curves`
+            : `- Body shape and breast size/volume`,
+          `- Hair color and style (unless the prompt below requests a change)`,
+          `These character identity traits must be preserved in the generated image.`,
+        ].join('\n')
+      });
+
+      for (const ref of identityImages) {
+        parts.push({ inlineData: { mimeType: ref.mimeType, data: ref.data } });
+      }
+
+      const sourceStartIdx = identityImages.length + 1;
+      const sourceEndIdx = identityImages.length + sourceImages.length;
+      const sourceLabel = sourceImages.length === 1 
+        ? `Image ${sourceStartIdx}` 
+        : `Images ${sourceStartIdx}–${sourceEndIdx}`;
+
+      parts.push({
+        text: [
+          `[${sourceLabel} — SOURCE IMAGE TO EDIT]`,
+          `This is the source image you must edit. Retain the subject's pose, the clothing, the background, the camera framing, the lighting, and the overall scene structure from ${sourceLabel}.`,
+          `CRITICAL: Replace the face and identity of the person in ${sourceLabel} with the character shown in the character identity references (Images 1–${identityImages.length}). Do NOT mix or blend the face of the person in ${sourceLabel} with the face in the identity references. Totally override the face of the person in the source image with the character's face. Keep the original head angle, gaze direction, and expression from ${sourceLabel}, but mapped onto the character's face.`,
+        ].join('\n')
+      });
+
+      for (const src of sourceImages) {
+        parts.push({ inlineData: { mimeType: src.mimeType, data: src.data } });
+      }
+
+      parts.push({ text: `USER EDITING PROMPT: ${effectivePrompt}` });
+    } else {
+      // Fallback/standard behavior when no identity references are used
+      for (const src of sourceImages) {
+        parts.push({ inlineData: { mimeType: src.mimeType, data: src.data } });
+      }
+      parts.push({ text: effectivePrompt });
+    }
 
     // Nano Bypass has its own retry + safety logic via callGemini().
     // For Vertex (GCP-auth) we fall back to geminiBackend which handles auth internally.

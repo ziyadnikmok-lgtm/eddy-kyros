@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
 import { gallery as galleryApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { cn } from '../lib/utils';
@@ -14,6 +14,9 @@ export default function ImageEditorPage() {
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [isDraggingImport, setIsDraggingImport] = useState(false);
+  const importInputRef = useRef(null);
 
   // Batch edit
   const [batchMode, setBatchMode] = useState(false);
@@ -27,7 +30,7 @@ export default function ImageEditorPage() {
     if (params?.editId) setSelectedId(params.editId);
   }, []);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await galleryApi.list();
@@ -36,9 +39,9 @@ export default function ImageEditorPage() {
       notify('Failed to load gallery', 'error');
     }
     setLoading(false);
-  };
+  }, [notify]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   const filtered = useMemo(() => {
     let result = images;
@@ -58,6 +61,32 @@ export default function ImageEditorPage() {
   }, []);
 
   const allPresets = useMemo(() => [...EDITOR_PRESETS, ...loadCustomPresets()], []);
+
+  const importFiles = useCallback(async (fileList) => {
+    const files = Array.from(fileList || []).filter((file) => file.type?.startsWith('image/'));
+    if (files.length === 0) {
+      notify('Drop or choose PNG, JPEG, or WebP images', 'error');
+      return;
+    }
+    setImporting(true);
+    try {
+      const uploaded = [];
+      for (const file of files) {
+        const entry = await galleryApi.upload(file, {
+          prompt: file.name || 'Computer upload',
+          source: 'upload',
+        });
+        if (entry?.id) uploaded.push(entry);
+      }
+      await load();
+      if (uploaded[0]?.id) setSelectedId(uploaded[0].id);
+      notify(files.length === 1 ? 'Image imported into editor' : `${uploaded.length} images imported`, 'success');
+    } catch (err) {
+      notify(err?.message || 'Failed to import image', 'error');
+    } finally {
+      setImporting(false);
+    }
+  }, [load, notify]);
 
   const handleBatchApply = useCallback(async () => {
     if (!batchPreset || batchSelected.size === 0) return;
@@ -79,7 +108,7 @@ export default function ImageEditorPage() {
     setBatchSelected(new Set());
     setBatchPreset(null);
     load();
-  }, [batchPreset, batchSelected, notify]);
+  }, [batchPreset, batchSelected, load, notify]);
 
   if (selectedId) {
     return (
@@ -123,6 +152,48 @@ export default function ImageEditorPage() {
           onChange={(e) => setSearchQuery(e.target.value)}
           className="w-full h-9 rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-blue-500/70 focus:ring-2 focus:ring-blue-500/20"
         />
+
+        <div
+          onDragOver={(event) => { event.preventDefault(); setIsDraggingImport(true); }}
+          onDragLeave={() => setIsDraggingImport(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setIsDraggingImport(false);
+            importFiles(event.dataTransfer?.files);
+          }}
+          className={cn(
+            'rounded-lg border border-dashed px-3 py-3 transition-colors',
+            isDraggingImport
+              ? 'border-blue-400 bg-blue-500/10'
+              : 'border-zinc-700/70 bg-zinc-950/35 hover:border-zinc-500',
+          )}
+        >
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            multiple
+            className="hidden"
+            onChange={(event) => {
+              importFiles(event.target.files);
+              event.target.value = '';
+            }}
+          />
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-medium text-zinc-200">Add images from computer</div>
+              <div className="text-xs text-zinc-500">Drag here or choose files. Imported images open in the editor.</div>
+            </div>
+            <Btn
+              variant="secondary"
+              onClick={() => importInputRef.current?.click()}
+              disabled={importing}
+              className="!py-1.5 !px-3 !text-xs shrink-0"
+            >
+              {importing ? <><Spinner size={14} /> Importing</> : 'Choose'}
+            </Btn>
+          </div>
+        </div>
 
         {/* Batch controls */}
         {batchMode && (

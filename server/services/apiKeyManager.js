@@ -184,6 +184,29 @@ class ApiKeyManager {
     }
   }
 
+  getFallbackGeminiKeys() {
+    if (!Array.isArray(this._store.keys) || this._store.keys.length === 0) return [];
+    const activeId = this._store.activeKeyId;
+    const ordered = this._store.keys.slice().sort((a, b) => {
+      if (a.id === activeId) return -1;
+      if (b.id === activeId) return 1;
+      return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+    });
+    const result = [];
+    for (const entry of ordered) {
+      if (!entry?.encryptedKey) continue;
+      try {
+        const key = this._decrypt(entry.encryptedKey);
+        if (key && typeof key === 'string' && key.trim()) {
+          result.push({ id: entry.id, name: entry.name, maskedKey: entry.maskedKey, key: key.trim() });
+        }
+      } catch {
+        // Skip corrupt entries; normal getActiveKey() will surface corruption for active-key-only paths.
+      }
+    }
+    return result;
+  }
+
   listKeys() {
     // SECURITY: explicitly allowlist fields — encryptedKey must NEVER be returned
     return this._store.keys.map((k) => ({

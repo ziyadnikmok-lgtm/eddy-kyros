@@ -26,6 +26,17 @@ function bgStrengthInstruction(strength) {
   return 'take loose inspiration from the background setting only';
 }
 
+function bgVariationInstruction() {
+  return [
+    'BACKGROUND VARIATION: Keep the same location and environment type from the source image, but make these creative changes:',
+    '  • Slightly shift the lighting mood (e.g. warmer/cooler, softer shadows, different direction)',
+    '  • Add natural background elements that fit the scene (people in the distance, foliage, objects, architectural details, bokeh variations)',
+    '  • Change minor background details — different items on surfaces, slightly different crowd density, subtle color temperature shift',
+    '  • Do NOT change the overall location or environment category — it must still clearly be the same type of place',
+    '  • The background should feel like a different moment in the same location, not a completely different place',
+  ].join('\n');
+}
+
 function poseStrengthInstruction(strength) {
   if (strength >= 85) return 'EXACTLY REPLICATE the body pose: identical stance, same weight distribution, same arm position, same hand placement, same head angle and tilt — mirror the pose precisely';
   if (strength >= 60) return 'closely match the body pose and stance from the reference image';
@@ -137,6 +148,7 @@ function buildPhotoMatchParts({ sourceImage, identityImages, characterName, prom
         `- Figure and body proportions (match exactly)`,
         `- Hair color and style`,
         `- Makeup`,
+        `- Tattoos or body markings ONLY if they are visible on ${refLabel}`,
         `These identity traits are locked and override anything seen in the scene image.`,
         `Do NOT copy the scene, background, or outfit from ${refLabel}.`,
       ].join('\n'),
@@ -153,10 +165,10 @@ function buildPhotoMatchParts({ sourceImage, identityImages, characterName, prom
       exactMode
         ? `Recreate this photo exactly: same outfit, background, lighting, pose, expression, framing.`
         : `Use this photo as the scene blueprint: match outfit, background, lighting, pose, and composition.`,
-      refLabel
+      refCount > 0
         ? `Replace the person in this photo with ${name} from ${refLabel}.`
         : `The person should be ${name}.`,
-      `Do NOT copy from Image ${sourceNum}: face, facial structure, skin tone, figure, hair color, hair style, or tattoos.`,
+      `Do NOT copy from Image ${sourceNum}: face, facial structure, skin tone, figure, body proportions, hair color, hair style, tattoos, or body markings.`,
       `Image ${sourceNum} is a scene-only reference, not an identity reference.`,
     ].join('\n'),
   });
@@ -173,6 +185,7 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
     const {
       image, mimeType, characterId, activeReferenceIds,
       bgStrength = 80, poseStrength = 80, imageModel, matchMode,
+      varyBackground = false,
     } = req.body;
     const { aspectRatio, resolutionTier, width, height } = resolveDimensions(req.body);
 
@@ -245,7 +258,6 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       : `Images 1–${refCount}`;
     const sourceRef = `Image ${sourceNum}`;
     const name = character.name;
-
     const prompt = [
       // Core task
       exactMode
@@ -254,10 +266,10 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       '',
       // Who is the person
       refLabel
-        ? `WHO: ${name} — take face, facial structure, figure and body proportions, hair color, hair style, skin tone, and makeup from ${refLabel}. Match exactly as shown.`
+        ? `WHO: ${name} — take face, facial structure, figure, body proportions, hair color, hair style, skin tone, and makeup from ${refLabel}. Match exactly as shown.`
         : `WHO: ${name} — ${character.masterPrompt || ''}`,
       '',
-      `IDENTITY PRIORITY: if anything in the scene image conflicts with the character references, the character references always win for face, skin, figure, hair, and makeup.`,
+      `IDENTITY PRIORITY: if anything in the scene image conflicts with the character references, the character references always win for face, skin, figure, body proportions, hair, and makeup.`,
       `Treat the uploaded scene image only as a blueprint for environment, outfit, framing, pose, and expression.`,
       '',
       // What to copy from scene
@@ -265,12 +277,15 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       '',
       // Hard rules
       `RULES:`,
-      `- Do NOT copy face, facial structure, figure, hair color, skin tone, or tattoos from ${sourceRef}`,
+      `- Do NOT copy face, facial structure, figure, body proportions, hair color, skin tone, tattoos, or body markings from ${sourceRef}`,
+      `- Do NOT add tattoos or body markings unless they are visible in ${refLabel || 'the character identity'}`,
       `- The person in the output is ${name} only`,
       `- The output must clearly look like ${name}, even if the source image person looks very different`,
       `- If needed, sacrifice source-person likeness completely to preserve ${name}'s identity`,
       exactMode ? `- Do not change outfit, background, crop, camera angle, or scene layout` : null,
       '',
+      varyBackground && !exactMode ? bgVariationInstruction() : null,
+      varyBackground && !exactMode ? '' : null,
       // Scene analysis context
       sceneParts.length > 0 ? `SCENE DETAILS:\n${sceneParts.join('\n')}` : null,
       '',
