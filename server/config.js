@@ -9,6 +9,9 @@ module.exports = {
   VERTEX_PROJECT: process.env.GOOGLE_CLOUD_PROJECT || process.env.VERTEX_PROJECT || '',
   VERTEX_LOCATION: process.env.GOOGLE_CLOUD_LOCATION || process.env.VERTEX_LOCATION || 'global',
 
+  OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY || '',
+  OPENROUTER_VISION_MODEL: process.env.OPENROUTER_VISION_MODEL || 'qwen/qwen2.5-vl-72b-instruct:free',
+
   JSON_BODY_LIMIT: '20mb',
   SHUTDOWN_TIMEOUT_MS: 10_000,
 

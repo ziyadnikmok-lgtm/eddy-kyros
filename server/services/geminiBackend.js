@@ -10,8 +10,8 @@
  *   - Automatically injects a fallback Gemini key when Vertex is active but the caller
  *     passed an empty/null key (which happens because getActiveKeyOrNull() returns null
  *     when Vertex is selected).
- *   - If the direct Gemini key is unavailable or rate-limited, fall back to Vertex text
- *     analysis so the request still works.
+ *   - If the direct Gemini key is unavailable or rate-limited, fall back to OpenRouter
+ *     vision analysis when configured, then Vertex text analysis.
  *
  * This lets users run Vertex for image gen while still using a Gemini key for scene
  * analysis, prompt building, carousel planning, and all other text operations.
@@ -40,6 +40,10 @@ function _textService() {
 
 function _vertexService() {
   return require('./geminiVertexService');
+}
+
+function _openRouterVisionService() {
+  return require('./openRouterVisionService');
 }
 
 function _isVertexActive() {
@@ -87,6 +91,12 @@ const TEXT_METHODS = new Set([
   'generateTextWithSearch',
 ]);
 
+const VISION_ANALYSIS_METHODS = new Set([
+  'analyzeImage',
+  'analyzeImageWithPrompt',
+  'analyzeImagesWithPrompt',
+]);
+
 function _shouldFallbackTextError(err) {
   const code = String(err?.code || err?.name || '').toUpperCase();
   const message = String(err?.message || '').toLowerCase();
@@ -100,6 +110,26 @@ function _shouldFallbackTextError(err) {
     message.includes('api key is required') ||
     message.includes('no active api key')
   );
+}
+
+async function _runTextFallback(prop, args, originalErr) {
+  if (VISION_ANALYSIS_METHODS.has(prop)) {
+    try {
+      const openRouter = _openRouterVisionService();
+      if (openRouter.isConfigured?.()) {
+        const fn = openRouter[prop];
+        if (typeof fn === 'function') return await fn.apply(openRouter, args);
+      }
+    } catch (err) {
+      if (!_isVertexActive()) throw err;
+    }
+  }
+
+  if (!_isVertexActive()) throw originalErr;
+  const vertex = _vertexService();
+  const fallback = vertex[prop];
+  if (typeof fallback !== 'function') throw originalErr;
+  return fallback.apply(vertex, args);
 }
 
 module.exports = new Proxy({}, {
@@ -119,17 +149,11 @@ module.exports = new Proxy({}, {
         if (!isText || !out || typeof out.then !== 'function') return out;
         return out.catch((err) => {
           if (!_isVertexActive() || !_shouldFallbackTextError(err)) throw err;
-          const vertex = _vertexService();
-          const fallback = vertex[prop];
-          if (typeof fallback !== 'function') throw err;
-          return fallback.apply(vertex, args);
+          return _runTextFallback(prop, args, err);
         });
       } catch (err) {
         if (!isText || !_isVertexActive() || !_shouldFallbackTextError(err)) throw err;
-        const vertex = _vertexService();
-        const fallback = vertex[prop];
-        if (typeof fallback !== 'function') throw err;
-        return fallback.apply(vertex, args);
+        return _runTextFallback(prop, args, err);
       }
     };
   },
