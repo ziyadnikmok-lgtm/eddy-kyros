@@ -21,7 +21,7 @@
 @layer base {
   * { scrollbar-width: thin; scrollbar-color: #3f3f46 transparent; }
   ::selection { background: #3b82f640; }
-  body { font-family: var(--font-sans); -webkit-tap-highlight-color: transparent; }
+  body { font-family: var(--font-sans); -webkit-tap-highlight-color: transparent; --kyros-build: "2026-05-26-2"; }
   button, a, [role="button"], input, select, textarea { touch-action: manipulation; }
 }
 
