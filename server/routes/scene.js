@@ -14,6 +14,10 @@ const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 const router = express.Router();
 
+function requestedProvider(provider) {
+  return provider === 'gemini' || provider === 'vertex' || provider === 'auto' ? provider : 'auto';
+}
+
 router.post('/analyze', async (req, res, next) => {
   try {
     const { image, mimeType } = req.body;
@@ -84,7 +88,7 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
     runId = startGenerationRun({
       userId: req.session?.userId,
       feature: 'scene-recreate',
-      provider: 'gemini',
+      provider: requestedProvider(provider),
       model: imageModel || null,
     });
     logUsageEvent({
@@ -93,7 +97,7 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       entityType: 'generation_run',
       entityId: runId,
       source: 'scene-recreate',
-      payload: { feature: 'scene-recreate', model: imageModel || null, characterId },
+      payload: { feature: 'scene-recreate', model: imageModel || null, characterId, provider: requestedProvider(provider) },
     });
 
     const activeRefs = referenceManager.getActiveReferences(
@@ -136,7 +140,7 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
     finishGenerationRun(runId, {
       status: 'succeeded',
       outputCount: 1,
-      provider: 'gemini',
+      provider: requestedProvider(provider),
       model: result.modelUsed || imageModel || null,
     });
     logUsageEvent({
@@ -165,7 +169,7 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       outputCount: 0,
       errorCode: err.code || err.name || 'UNKNOWN',
       errorMessage: err.message || 'Scene recreate failed',
-      provider: 'gemini',
+      provider: requestedProvider(req.body?.provider),
     });
     logUsageEvent({
       userId: req.session?.userId,

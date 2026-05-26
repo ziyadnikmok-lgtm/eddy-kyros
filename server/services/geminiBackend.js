@@ -157,7 +157,9 @@ module.exports = new Proxy({}, {
       const val = svc[prop];
       if (typeof val !== 'function') return val;
 
-      const finalArgs = isText ? _injectGeminiKey(args) : args;
+      const finalArgs = isText || (isImage && explicitProvider === 'gemini')
+        ? _injectGeminiKey(args)
+        : args;
       try {
         const out = val.apply(svc, finalArgs);
         if (!isText || !out || typeof out.then !== 'function') return out;
