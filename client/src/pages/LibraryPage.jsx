@@ -1156,6 +1156,19 @@ export default function LibraryPage() {
         </div>
       </Modal>
 
+      {bulkMode ? (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-2xl border border-zinc-700/60 bg-zinc-900/[0.97] px-4 py-2.5 shadow-2xl shadow-black/50 backdrop-blur-xl">
+          <span className="text-sm text-zinc-400 whitespace-nowrap">{selectedIds.size} selected</span>
+          <div className="h-4 w-px bg-zinc-700/60" />
+          <Btn variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={selectedIds.size === visibleItems.length && visibleItems.length > 0 ? clearSelection : selectAllVisible} disabled={bulkBusy}>
+            {selectedIds.size === visibleItems.length && visibleItems.length > 0 ? 'Deselect' : 'Select All'}
+          </Btn>
+          <Btn variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={handleBulkDownload} disabled={selectedIds.size === 0 || bulkBusy}>{isElectron ? 'Save Folder' : 'Download'}</Btn>
+          <Btn variant="danger" className="!px-3 !py-1.5 !text-xs" onClick={() => setBulkDeleteTarget(true)} disabled={selectedIds.size === 0 || bulkBusy}>Delete</Btn>
+          <Btn variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={clearSelection} disabled={bulkBusy}>Cancel</Btn>
+        </div>
+      ) : null}
+
       <LightboxComponent />
       <ImageContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} onAction={handleContextAction} />
     </div>
