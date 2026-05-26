@@ -273,10 +273,13 @@ router.post('/edit', express.json({ limit: '100mb' }), requirePlanCapacity(), as
       parts.push({ text: `USER EDITING PROMPT: ${effectivePrompt}` });
     } else {
       // Fallback/standard behavior when no identity references are used
+      parts.push({
+        text: `This is the source image to edit. Modify this image according to the instruction below. Keep the original subject, pose, background, lighting, and composition unless the instruction explicitly asks to change them.`,
+      });
       for (const src of sourceImages) {
         parts.push({ inlineData: { mimeType: src.mimeType, data: src.data } });
       }
-      parts.push({ text: effectivePrompt });
+      parts.push({ text: `Editing instruction: ${effectivePrompt}` });
     }
 
     // Nano Bypass has its own retry + safety logic via callGemini().
@@ -294,6 +297,7 @@ router.post('/edit', express.json({ limit: '100mb' }), requirePlanCapacity(), as
         imageSize,
         temperature,
         characterId: characterId || undefined,
+        requireImageInputs: true,
       });
       b64Result = generated?.image?.base64Data;
     } else {

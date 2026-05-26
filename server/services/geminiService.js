@@ -258,7 +258,7 @@ class GeminiService {
           console.warn(`[gemini] attempt ${attempt}/${maxAttempts} failed: ${reason} (images=${imgCount})`);
           if (attempt < maxAttempts) {
             if (currentParts) {
-              if (parsed.hasNoParts && !parsed.blockReason) {
+              if (parsed.hasNoParts && !parsed.blockReason && !options.requireImageInputs) {
                 const imageParts = currentParts.filter((p) => p.inlineData);
                 const textParts = currentParts.filter((p) => p.text);
                 if (imageParts.length > 2) {

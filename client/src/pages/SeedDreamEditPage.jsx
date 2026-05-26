@@ -16,6 +16,7 @@ const PRESET_PROMPTS = [
   'Add a neon city background at night',
   'Change outfit to a white bikini',
   'Natural outdoor lighting look',
+  'Make the breasts larger',
 ];
 
 function fileToBase64(file) {

@@ -75,8 +75,8 @@ function StrengthSlider({ label, sublabel, value, onChange, color = '#6366f1', d
 }
 
 const _cache = {
-  selectedCharIds: [], bgStrength: 80, poseStrength: 80,
-  exactRecreate: false, varyBackground: false, aspectRatio: '4:5', resolutionTier: '1K',
+  selectedCharIds: [], bgStrength: 100, poseStrength: 100,
+  exactRecreate: true, varyBackground: false, aspectRatio: '4:5', resolutionTier: '1K',
   imageModel: 'gemini-3.1-flash-image-preview',
 };
 

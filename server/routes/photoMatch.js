@@ -16,8 +16,9 @@ const { requirePlanCapacity } = require('../middleware/planLimits');
 const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 const router = express.Router();
-const PHOTO_MATCH_REF_MAX_DIMENSION = 1024;
-const PHOTO_MATCH_IDENTITY_MAX_DIMENSION = 1024;
+const PHOTO_MATCH_REF_MAX_DIMENSION = 1536;
+const PHOTO_MATCH_IDENTITY_MAX_DIMENSION = 896;
+const PHOTO_MATCH_MAX_IDENTITY_IMAGES = 3;
 const ANALYSIS_FALLBACK_CODES = new Set(['GEMINI_TRANSIENT', 'GEMINI_ERROR', 'PARSE_ERROR', 'GENERATION_EMPTY']);
 
 async function optimizeImage(base64Data, mimeType, dim = PHOTO_MATCH_REF_MAX_DIMENSION) {
@@ -35,22 +36,27 @@ async function optimizeImage(base64Data, mimeType, dim = PHOTO_MATCH_REF_MAX_DIM
   }
 }
 
-// Build numbered-image parts array (Image 1 = source, Image 2 = identity ref)
-function buildPhotoMatchParts({ sourceImage, identityImage, characterName, prompt }) {
+function identityLabel(index) {
+  return `Image 1${String.fromCharCode(65 + index)}`;
+}
+
+// Build labeled-image parts array (Image 1A/1B/1C = identity, Image 2 = source target)
+function buildPhotoMatchParts({ sourceImage, identityImages, characterName, prompt }) {
   const parts = [];
   const name = characterName || 'the character';
+  const refs = Array.isArray(identityImages) ? identityImages : [];
 
-  // Image 1: Identity reference
-  if (identityImage) {
+  refs.forEach((identityImage, index) => {
+    const label = identityLabel(index);
     parts.push({
-      text: `[Image 1 — ${name.toUpperCase()} IDENTITY REFERENCE]\nThis is the character reference showing ${name}'s face, skin tone, body, and hair. Copy ONLY identity from this image. Do NOT copy the scene or outfit.`,
+      text: `[${label} - ${name.toUpperCase()} IDENTITY REFERENCE]\nUse this reference only for ${name}'s identity: face, skin tone, hair, body shape, body proportions, curves, breast size/volume, makeup, and recognizable likeness. Combine all Image 1 references into one consistent identity. Do not copy these images' outfits, poses, cameras, backgrounds, or lighting.`,
     });
     parts.push({ inlineData: { mimeType: identityImage.mimeType, data: identityImage.base64Data } });
-  }
+  });
 
   // Image 2: Source scene
   parts.push({
-    text: `[Image 2 — SOURCE SCENE]\nThis is the scene blueprint. Match the background, environment, pose, outfit, lighting, and composition from Image 2. Replace the person with ${name} from ${identityImage ? 'Image 1' : 'the identity reference'}. Do NOT copy face, skin, body, or hair from Image 2.`,
+    text: `[Image 2 - LOCKED TARGET PHOTO]\nThis is the photo to recreate. Preserve Image 2 as the blueprint for the final output: same framing, crop, camera angle, lens perspective, pose, hand placement, outfit, background, props, lighting, shadows, colors, and composition. Replace only the person's identity with ${name} from ${refs.length > 0 ? 'the Image 1 identity references' : 'the character identity reference'}.`,
   });
   parts.push({ inlineData: { mimeType: sourceImage.mimeType, data: sourceImage.base64Data } });
 
@@ -110,13 +116,17 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       sceneData = {};
     }
 
-    // Character + refs — cap to 1 identity image + 1 source
+    // Character + refs - keep the source locked, plus a small identity set for likeness.
     const character = referenceManager.getCharacter(characterId);
     const refIds = Array.isArray(activeReferenceIds) ? activeReferenceIds : null;
     const activeRefs = referenceManager.getActiveReferences(characterId, refIds);
     const allRefs = buildCharacterReferenceImages(characterId, activeRefs);
 
-    const identityImage = allRefs[0] ? await optimizeImage(allRefs[0].base64Data, allRefs[0].mimeType, PHOTO_MATCH_IDENTITY_MAX_DIMENSION) : null;
+    const identityImages = (await Promise.all(
+      allRefs
+        .slice(0, PHOTO_MATCH_MAX_IDENTITY_IMAGES)
+        .map((ref) => optimizeImage(ref.base64Data, ref.mimeType, PHOTO_MATCH_IDENTITY_MAX_DIMENSION))
+    )).filter(Boolean);
     const sourceImage = await optimizeImage(base64, mimeType, PHOTO_MATCH_REF_MAX_DIMENSION);
     if (!sourceImage) throw new AppError('Unable to process source image', 400, 'VALIDATION_ERROR');
 
@@ -133,23 +143,29 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
 
     const prompt = [
       exactMode
-        ? `Recreate Image 2 exactly, replacing the person with ${character.name} from Image 1.`
+        ? `Recreate Image 2 as exactly as possible, replacing only the person's identity with ${character.name} from the Image 1 identity references.`
         : `Create a photorealistic image of ${character.name} in the scene from Image 2.`,
       '',
-      `WHO: ${character.name} — face, skin tone, body, hair, and makeup come from ${identityImage ? 'Image 1' : 'the identity reference'}.`,
-      `IDENTITY PRIORITY: The identity reference always overrides Image 2 for face, skin, body, and hair. The person in Image 2 is a scene prop only.`,
+      identityImages.length > 0
+        ? `WHO: ${character.name} - face, skin tone, hair, body shape, body proportions, curves, breast size/volume, makeup, and recognizable likeness come from ${identityImages.map((_, i) => identityLabel(i)).join(', ')}. Merge these into one consistent person.`
+        : `WHO: ${character.name} - use the saved character identity.`,
+      `LOCKED SOURCE PHOTO: Image 2 is not inspiration. It is the target photo layout. Keep the same crop, camera distance, angle, pose, gesture, outfit, background, lighting, shadows, colors, and object placement.`,
       '',
       `SCENE from Image 2: ${buildBgInstruction(bg)}. ${buildPoseInstruction(pose)}.`,
-      identityImage
-        ? `Keep outfit close to Image 2 unless Image 1 requires adjustments.`
+      identityImages.length > 0
+        ? `BODY SHAPE: Body shape, curves, and breast size/volume come from the Image 1 identity references. Pose, gesture, outfit, and accessories come from Image 2 exactly.`
         : null,
-      `Match expression and gaze from Image 2.`,
+      identityImages.length > 0
+        ? `The Image 1 references provide identity only (face, skin, hair, body shape). Image 2 provides pose, outfit, and scene.`
+        : null,
+      `Match expression, gaze direction, hand placement, head tilt, and body language from Image 2.`,
       '',
       'RULES:',
-      identityImage ? `- Do NOT copy face, skin, body, or hair from Image 2` : null,
+      identityImages.length > 0 ? `- Do NOT copy face, skin, body, or hair from Image 2` : null,
       `- The output person is ${character.name} only`,
       `- Sacrifice Image 2 person's likeness to preserve ${character.name}'s identity`,
-      exactMode ? `- Do not change outfit, background, crop, or camera angle` : null,
+      exactMode ? `- Do not redesign anything: same outfit, same pose, same background, same crop, same camera angle, same lighting` : null,
+      exactMode ? `- Do not beautify, recompose, zoom, rotate, change location, change clothing, or invent a new scene` : null,
       '',
       varyBackground && !exactMode ? 'BACKGROUND VARIATION: Keep same location type but shift lighting, add minor details, different moment.' : null,
       varyBackground && !exactMode ? '' : null,
@@ -162,7 +178,7 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
     ].filter((s) => s != null).join('\n');
 
     // Build parts with numbered image references
-    const parts = buildPhotoMatchParts({ sourceImage, identityImage, characterName: character.name, prompt });
+    const parts = buildPhotoMatchParts({ sourceImage, identityImages, characterName: character.name, prompt });
 
     const apiKey = apiKeyManager.getActiveKeyOrNull();
     runId = startGenerationRun({
@@ -186,6 +202,7 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       parts,
       model: imageModel,
       characterId,
+      requireImageInputs: true,
     });
 
     const stored = imageStore.store({

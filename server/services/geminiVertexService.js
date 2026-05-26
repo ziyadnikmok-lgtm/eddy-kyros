@@ -367,7 +367,7 @@ class GeminiVertexService {
               if (currentParts) {
                 // For empty responses (not safety blocks), progressively drop images
                 // to reduce token load — this is the most common cause of silent failures.
-                if (parsed.hasNoParts && !parsed.blockReason) {
+                if (parsed.hasNoParts && !parsed.blockReason && !options.requireImageInputs) {
                   const imageParts = currentParts.filter((p) => p.inlineData);
                   const textParts = currentParts.filter((p) => p.text);
                   if (imageParts.length > 2) {

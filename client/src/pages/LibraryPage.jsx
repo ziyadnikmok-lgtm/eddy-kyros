@@ -854,83 +854,85 @@ export default function LibraryPage() {
 
   return (
     <div className="space-y-5 animate-in">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <p className="text-zinc-500 text-sm">
-            {totals.all} items in your library
-            {filteredItems.length !== totals.all ? ` · ${filteredItems.length} matching` : ''}
-            {!groupBySession && visibleCount < filteredItems.length ? ` · Showing ${visibleCount}` : ''}
-          </p>
+      <div className="sticky top-0 z-40 -mx-2 space-y-4 border-b border-zinc-800/70 bg-[#070b12]/95 px-2 py-3 backdrop-blur-xl supports-[backdrop-filter]:bg-[#070b12]/80">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <p className="text-zinc-500 text-sm">
+              {totals.all} items in your library
+              {filteredItems.length !== totals.all ? ` · ${filteredItems.length} matching` : ''}
+              {!groupBySession && visibleCount < filteredItems.length ? ` · Showing ${visibleCount}` : ''}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {showSpoofToggle ? <Toggle checked={spoofEnabled} onChange={setSpoofEnabled} label="iPhone" /> : null}
+            {MEDIA_FILTERS.map((filter) => {
+              const count = filter.value === 'all' ? totals.all : filter.value === 'image' ? totals.images : totals.videos;
+              return (
+                <button
+                  key={filter.value}
+                  type="button"
+                  onClick={() => setMediaFilter(filter.value)}
+                  className={`rounded-lg border px-3 py-2 text-sm transition ${
+                    mediaFilter === filter.value
+                      ? 'border-blue-500/50 bg-blue-500/10 text-blue-400'
+                      : 'border-zinc-700/70 bg-zinc-900/60 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
+                  }`}
+                >
+                  {filter.label} <span className="text-zinc-500">{count}</span>
+                </button>
+              );
+            })}
+            {bulkMode ? (
+              <>
+                <span className="text-sm text-zinc-400">{selectedIds.size} selected</span>
+                <Btn variant="secondary" onClick={selectedIds.size === visibleItems.length && visibleItems.length > 0 ? clearSelection : selectAllVisible} disabled={bulkBusy}>
+                  {selectedIds.size === visibleItems.length && visibleItems.length > 0 ? 'Deselect' : 'Select All'}
+                </Btn>
+                <Btn variant="secondary" onClick={handleBulkDownload} disabled={selectedIds.size === 0 || bulkBusy}>{isElectron ? 'Save Folder' : 'Download'}</Btn>
+                <Btn variant="danger" onClick={() => setBulkDeleteTarget(true)} disabled={selectedIds.size === 0 || bulkBusy}>Delete</Btn>
+                <Btn variant="secondary" onClick={clearSelection} disabled={bulkBusy}>Cancel</Btn>
+              </>
+            ) : (
+              <Btn variant="secondary" onClick={() => setBulkMode(true)} disabled={loading || filteredItems.length === 0}>Select</Btn>
+            )}
+            <Btn variant="secondary" onClick={load} disabled={loading}>
+              {loading ? <Spinner size={14} /> : 'Refresh'}
+            </Btn>
+          </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {showSpoofToggle ? <Toggle checked={spoofEnabled} onChange={setSpoofEnabled} label="iPhone" /> : null}
-          {MEDIA_FILTERS.map((filter) => {
-            const count = filter.value === 'all' ? totals.all : filter.value === 'image' ? totals.images : totals.videos;
-            return (
-              <button
-                key={filter.value}
-                type="button"
-                onClick={() => setMediaFilter(filter.value)}
-                className={`rounded-lg border px-3 py-2 text-sm transition ${
-                  mediaFilter === filter.value
-                    ? 'border-blue-500/50 bg-blue-500/10 text-blue-400'
-                    : 'border-zinc-700/70 bg-zinc-900/60 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
-                }`}
-              >
-                {filter.label} <span className="text-zinc-500">{count}</span>
-              </button>
-            );
-          })}
-          {bulkMode ? (
-            <>
-              <span className="text-sm text-zinc-400">{selectedIds.size} selected</span>
-              <Btn variant="secondary" onClick={selectedIds.size === visibleItems.length && visibleItems.length > 0 ? clearSelection : selectAllVisible} disabled={bulkBusy}>
-                {selectedIds.size === visibleItems.length && visibleItems.length > 0 ? 'Deselect' : 'Select All'}
-              </Btn>
-              <Btn variant="secondary" onClick={handleBulkDownload} disabled={selectedIds.size === 0 || bulkBusy}>{isElectron ? 'Save Folder' : 'Download'}</Btn>
-              <Btn variant="danger" onClick={() => setBulkDeleteTarget(true)} disabled={selectedIds.size === 0 || bulkBusy}>Delete</Btn>
-              <Btn variant="secondary" onClick={clearSelection} disabled={bulkBusy}>Cancel</Btn>
-            </>
-          ) : (
-            <Btn variant="secondary" onClick={() => setBulkMode(true)} disabled={loading || filteredItems.length === 0}>Select</Btn>
-          )}
-          <Btn variant="secondary" onClick={load} disabled={loading}>
-            {loading ? <Spinner size={14} /> : 'Refresh'}
-          </Btn>
-        </div>
-      </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search prompts..."
-          className="h-10 min-w-[220px] flex-1 rounded-lg border border-zinc-700/70 bg-zinc-900/60 px-3 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none transition hover:border-zinc-600 focus:border-blue-500/70 focus:ring-2 focus:ring-blue-500/20"
-        />
-        <button
-          type="button"
-          onClick={() => setShowFilters((prev) => !prev)}
-          className={`h-10 rounded-lg border px-3 text-sm transition ${
-            showFilters || hasActiveFilters
-              ? 'border-blue-500/50 bg-blue-500/10 text-blue-400'
-              : 'border-zinc-700/70 bg-zinc-900/60 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
-          }`}
-        >
-          Filters
-        </button>
-        <button
-          type="button"
-          onClick={() => setFavoritesOnly((prev) => !prev)}
-          className={`h-10 w-10 rounded-lg border text-lg transition ${
-            favoritesOnly
-              ? 'border-yellow-500/50 bg-yellow-500/10 text-yellow-400'
-              : 'border-zinc-700/70 bg-zinc-900/60 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
-          }`}
-          aria-label={favoritesOnly ? 'Show all items' : 'Show favorites only'}
-        >
-          {favoritesOnly ? '\u2605' : '\u2606'}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search prompts..."
+            className="h-10 min-w-[220px] flex-1 rounded-lg border border-zinc-700/70 bg-zinc-900/60 px-3 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none transition hover:border-zinc-600 focus:border-blue-500/70 focus:ring-2 focus:ring-blue-500/20"
+          />
+          <button
+            type="button"
+            onClick={() => setShowFilters((prev) => !prev)}
+            className={`h-10 rounded-lg border px-3 text-sm transition ${
+              showFilters || hasActiveFilters
+                ? 'border-blue-500/50 bg-blue-500/10 text-blue-400'
+                : 'border-zinc-700/70 bg-zinc-900/60 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
+            }`}
+          >
+            Filters
+          </button>
+          <button
+            type="button"
+            onClick={() => setFavoritesOnly((prev) => !prev)}
+            className={`h-10 w-10 rounded-lg border text-lg transition ${
+              favoritesOnly
+                ? 'border-yellow-500/50 bg-yellow-500/10 text-yellow-400'
+                : 'border-zinc-700/70 bg-zinc-900/60 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
+            }`}
+            aria-label={favoritesOnly ? 'Show all items' : 'Show favorites only'}
+          >
+            {favoritesOnly ? '\u2605' : '\u2606'}
+          </button>
+        </div>
       </div>
 
       {showFilters ? (
@@ -1157,7 +1159,7 @@ export default function LibraryPage() {
       </Modal>
 
       {bulkMode ? (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-2xl border border-zinc-700/60 bg-zinc-900/[0.97] px-4 py-2.5 shadow-2xl shadow-black/50 backdrop-blur-xl">
+        <div className="fixed bottom-4 right-4 z-[100] flex max-w-[calc(100vw-2rem)] flex-wrap items-center justify-end gap-2 rounded-2xl border border-zinc-700/60 bg-zinc-900/[0.97] px-4 py-2.5 shadow-2xl shadow-black/50 backdrop-blur-xl">
           <span className="text-sm text-zinc-400 whitespace-nowrap">{selectedIds.size} selected</span>
           <div className="h-4 w-px bg-zinc-700/60" />
           <Btn variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={selectedIds.size === visibleItems.length && visibleItems.length > 0 ? clearSelection : selectAllVisible} disabled={bulkBusy}>
@@ -1167,6 +1169,14 @@ export default function LibraryPage() {
           <Btn variant="danger" className="!px-3 !py-1.5 !text-xs" onClick={() => setBulkDeleteTarget(true)} disabled={selectedIds.size === 0 || bulkBusy}>Delete</Btn>
           <Btn variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={clearSelection} disabled={bulkBusy}>Cancel</Btn>
         </div>
+      ) : !loading && filteredItems.length > 0 ? (
+        <button
+          type="button"
+          onClick={() => setBulkMode(true)}
+          className="fixed bottom-4 right-4 z-[100] rounded-2xl border border-blue-500/50 bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-2xl shadow-blue-950/50 transition hover:bg-blue-500"
+        >
+          Select
+        </button>
       ) : null}
 
       <LightboxComponent />
