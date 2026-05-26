@@ -58,6 +58,7 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       samePose,
       sameHair,
       sameTattoos,
+      provider,
     } = req.body;
     const { aspectRatio, resolutionTier, width, height } = resolveDimensions(req.body);
 
@@ -107,6 +108,7 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       imageSize: resolutionTier,
       referenceImages,
       model: imageModel,
+      provider,
     });
 
     const stored = imageStore.store({

@@ -28,6 +28,7 @@ const _cache = {
   samePose: false,
   sameHair: false,
   sameTattoos: false,
+  provider: 'auto',
   result: null,
   history: [],
 };
@@ -100,6 +101,7 @@ export default function SceneRecreatePage() {
   const [samePose, setSamePose] = useState(_cache.samePose);
   const [sameHair, setSameHair] = useState(_cache.sameHair);
   const [sameTattoos, setSameTattoos] = useState(_cache.sameTattoos);
+  const [provider, setProvider] = useState(_cache.provider);
   const [result, setResult] = useState(initialStoreState.result);
   const [history, setHistory] = useState(initialStoreState.history);
   const [queueItems, setQueueItems] = useState(initialStoreState.queueItems);
@@ -116,6 +118,7 @@ export default function SceneRecreatePage() {
   useEffect(() => { _cache.samePose = samePose; }, [samePose]);
   useEffect(() => { _cache.sameHair = sameHair; }, [sameHair]);
   useEffect(() => { _cache.sameTattoos = sameTattoos; }, [sameTattoos]);
+  useEffect(() => { _cache.provider = provider; }, [provider]);
   useEffect(() => scenePageStore.subscribe((snapshot) => {
     setSceneData(snapshot.sceneData);
     setEditableScene(snapshot.editableScene);
@@ -259,6 +262,7 @@ export default function SceneRecreatePage() {
         masterPromptOverride: characterPromptPreview || undefined,
         aspectRatio, resolutionTier, imageModel, sameBackground, samePose,
         sameHair, sameTattoos,
+        provider,
       });
       scenePageStore.setValue('result', data);
       scenePageStore.setValue('history', (prev) => [data, ...prev].slice(0, 10));
@@ -396,6 +400,32 @@ export default function SceneRecreatePage() {
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
+            </div>
+
+            {/* Provider */}
+            <div>
+              <span className="text-xs text-zinc-400 font-medium block mb-1.5">Provider</span>
+              <div className="flex gap-2">
+                {[
+                  { value: 'auto', label: 'Auto' },
+                  { value: 'gemini', label: 'Gemini' },
+                  { value: 'vertex', label: 'Vertex' },
+                ].map((p) => (
+                  <button
+                    key={p.value}
+                    type="button"
+                    onClick={() => setProvider(p.value)}
+                    className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition cursor-pointer ${
+                      provider === p.value
+                        ? 'border-blue-500/60 bg-blue-500/15 text-blue-100'
+                        : 'border-zinc-700/70 bg-zinc-900/50 text-zinc-400 hover:border-zinc-600'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-zinc-600 mt-1">Gemini = direct API (better bypass). Vertex = GCP account.</p>
             </div>
 
             {/* Aspect ratio + resolution */}

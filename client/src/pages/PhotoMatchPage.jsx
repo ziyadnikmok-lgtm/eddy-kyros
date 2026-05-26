@@ -78,6 +78,7 @@ const _cache = {
   selectedCharIds: [], bgStrength: 100, poseStrength: 100,
   exactRecreate: true, varyBackground: false, aspectRatio: '4:5', resolutionTier: '1K',
   imageModel: 'gemini-3.1-flash-image-preview',
+  provider: 'auto',
 };
 
 const photoMatchStore = createPersistentPageState('photo-match', { result: null, history: [], queueItems: [] });
@@ -101,6 +102,7 @@ export default function PhotoMatchPage() {
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [resolutionTier, setResolutionTier] = useState(_cache.resolutionTier);
   const [imageModel, setImageModel] = useState(_cache.imageModel);
+  const [provider, setProvider] = useState(_cache.provider);
   const [queueItems, setQueueItems] = useState(initialStoreState.queueItems);
 
   useEffect(() => { _cache.selectedCharIds = selectedCharIds; }, [selectedCharIds]);
@@ -111,6 +113,7 @@ export default function PhotoMatchPage() {
   useEffect(() => { _cache.aspectRatio = aspectRatio; }, [aspectRatio]);
   useEffect(() => { _cache.resolutionTier = resolutionTier; }, [resolutionTier]);
   useEffect(() => { _cache.imageModel = imageModel; }, [imageModel]);
+  useEffect(() => { _cache.provider = provider; }, [provider]);
   useEffect(() => photoMatchStore.subscribe((s) => setQueueItems(s.queueItems)), []);
 
   // Fetch details for selected characters
@@ -227,7 +230,7 @@ export default function PhotoMatchPage() {
   const toggleCharacter = (id) => setSelectedCharIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
   const dispatchOneJob = useCallback((charIdSnap, charDetailSnap, fileSnap, opts) => {
-    const { bgStr, poseStr, exact, varyBg, ar, resTier, imgModel } = opts;
+    const { bgStr, poseStr, exact, varyBg, ar, resTier, imgModel, prov } = opts;
     const queueId = makePersistentJobId('photo-match');
     pushPending({ id: queueId, prompt: exact ? 'Exact Recreate' : 'Photo Match', imageModel: imgModel || '', aspectRatio: ar, resolutionTier: resTier });
     photoMatchStore.setValue('queueItems', prev => [{
@@ -252,6 +255,7 @@ export default function PhotoMatchPage() {
         matchMode: exact ? 'exact' : 'match',
         varyBackground: varyBg,
         aspectRatio: ar, resolutionTier: resTier, imageModel: imgModel,
+        provider: prov,
       });
     }).then(data => {
       photoMatchStore.setValue('result', data);
@@ -275,7 +279,7 @@ export default function PhotoMatchPage() {
   const handleGenerate = () => {
     if (files.length === 0) { notify('Add at least one source image', 'error'); return; }
     if (selectedCharIds.length === 0) { notify('Select at least one character', 'error'); return; }
-    const opts = { bgStr: bgStrength, poseStr: poseStrength, exact: exactRecreate, varyBg: varyBackground, ar: aspectRatio, resTier: resolutionTier, imgModel: imageModel };
+    const opts = { bgStr: bgStrength, poseStr: poseStrength, exact: exactRecreate, varyBg: varyBackground, ar: aspectRatio, resTier: resolutionTier, imgModel: imageModel, prov: provider };
     for (const { file: f } of files) {
       for (const charIdSnap of selectedCharIds) {
         dispatchOneJob(charIdSnap, charDetails[charIdSnap] || null, f, opts);
@@ -425,6 +429,31 @@ export default function PhotoMatchPage() {
                 className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500/70 cursor-pointer">
                 {IMAGE_MODEL_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
               </select>
+            </div>
+
+            <div>
+              <span className="text-xs text-zinc-400 font-medium block mb-1.5">Provider</span>
+              <div className="flex gap-2">
+                {[
+                  { value: 'auto', label: 'Auto' },
+                  { value: 'gemini', label: 'Gemini' },
+                  { value: 'vertex', label: 'Vertex' },
+                ].map((p) => (
+                  <button
+                    key={p.value}
+                    type="button"
+                    onClick={() => setProvider(p.value)}
+                    className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition cursor-pointer ${
+                      provider === p.value
+                        ? 'border-blue-500/60 bg-blue-500/15 text-blue-100'
+                        : 'border-zinc-700/70 bg-zinc-900/50 text-zinc-400 hover:border-zinc-600'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-zinc-600 mt-1">Gemini = direct API (better bypass). Vertex = GCP account.</p>
             </div>
 
             <div>

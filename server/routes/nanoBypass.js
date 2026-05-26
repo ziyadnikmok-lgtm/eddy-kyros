@@ -282,14 +282,12 @@ router.post('/edit', express.json({ limit: '100mb' }), requirePlanCapacity(), as
       parts.push({ text: `Editing instruction: ${effectivePrompt}` });
     }
 
-    // Nano Bypass has its own retry + safety logic via callGemini().
-    // For Vertex (GCP-auth) we fall back to geminiBackend which handles auth internally.
-    // For the direct Gemini API path we call callGemini() directly so that:
-    //   • BLOCK_ONLY_HIGH safety settings are actually applied
-    //   • The 3-attempt progressive retry (incl. safety-strip on attempt 3) fires
-    //   • The temperature slider from the UI is actually honoured
+    // Nano Bypass always uses direct Gemini API (like AI Studio) for best bypass results.
+    // Vertex is skipped here regardless of user preference.
     let b64Result;
-    if (useVertexBackend) {
+    if (useVertexBackend && !apiKey) {
+      // Edge case: Vertex is active but no Gemini key available — force through backend
+      // with explicit gemini provider so it tries to find a fallback key.
       const generated = await geminiBackend.generateImage('', effectivePrompt, {
         parts,
         model: modelId,
@@ -298,6 +296,7 @@ router.post('/edit', express.json({ limit: '100mb' }), requirePlanCapacity(), as
         temperature,
         characterId: characterId || undefined,
         requireImageInputs: true,
+        provider: 'gemini',
       });
       b64Result = generated?.image?.base64Data;
     } else {
