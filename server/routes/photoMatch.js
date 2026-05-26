@@ -17,35 +17,60 @@ const REALISM_DIRECTIVE = require('../utils/realismDirective');
 
 const router = express.Router();
 const PHOTO_MATCH_REF_MAX_DIMENSION = 1024;
+const PHOTO_MATCH_IDENTITY_MAX_DIMENSION = 1024;
 const ANALYSIS_FALLBACK_CODES = new Set(['GEMINI_TRANSIENT', 'GEMINI_ERROR', 'PARSE_ERROR', 'GENERATION_EMPTY']);
 
-function bgStrengthInstruction(strength) {
-  if (strength >= 85) return 'EXACTLY REPLICATE the background: identical environment, same location, same colors, same lighting conditions, same depth and distance of background elements';
-  if (strength >= 60) return 'closely match the background environment: same type of location, very similar colors and lighting, keep most background elements';
-  if (strength >= 35) return 'use a similar background and environment to the reference image';
-  return 'take loose inspiration from the background setting only';
-}
-
-function poseStrengthInstruction(strength) {
-  if (strength >= 85) return 'EXACTLY REPLICATE the body pose: identical stance, same weight distribution, same arm position, same hand placement, same head angle and tilt';
-  if (strength >= 60) return 'closely match the body pose and stance from the reference image';
-  if (strength >= 35) return 'use a similar body position and pose to the reference';
-  return 'take loose inspiration from the pose only, feel free to adapt it';
-}
-
-async function optimizeSourceImage(base64Data, mimeType) {
+async function optimizeImage(base64Data, mimeType, dim = PHOTO_MATCH_REF_MAX_DIMENSION) {
   if (!base64Data || typeof base64Data !== 'string') return null;
   if (!mimeType || typeof mimeType !== 'string' || !mimeType.startsWith('image/')) return null;
   try {
     const resized = await sharp(Buffer.from(base64Data, 'base64'))
       .rotate()
-      .resize(PHOTO_MATCH_REF_MAX_DIMENSION, PHOTO_MATCH_REF_MAX_DIMENSION, { fit: 'inside', withoutEnlargement: true })
-      .jpeg({ quality: 85 })
+      .resize(dim, dim, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 82 })
       .toBuffer();
     return { mimeType: 'image/jpeg', base64Data: resized.toString('base64') };
   } catch {
     return { mimeType, base64Data };
   }
+}
+
+// Build numbered-image parts array (Image 1 = source, Image 2 = identity ref)
+function buildPhotoMatchParts({ sourceImage, identityImage, characterName, prompt }) {
+  const parts = [];
+  const name = characterName || 'the character';
+
+  // Image 1: Identity reference
+  if (identityImage) {
+    parts.push({
+      text: `[Image 1 — ${name.toUpperCase()} IDENTITY REFERENCE]\nThis is the character reference showing ${name}'s face, skin tone, body, and hair. Copy ONLY identity from this image. Do NOT copy the scene or outfit.`,
+    });
+    parts.push({ inlineData: { mimeType: identityImage.mimeType, data: identityImage.base64Data } });
+  }
+
+  // Image 2: Source scene
+  parts.push({
+    text: `[Image 2 — SOURCE SCENE]\nThis is the scene blueprint. Match the background, environment, pose, outfit, lighting, and composition from Image 2. Replace the person with ${name} from ${identityImage ? 'Image 1' : 'the identity reference'}. Do NOT copy face, skin, body, or hair from Image 2.`,
+  });
+  parts.push({ inlineData: { mimeType: sourceImage.mimeType, data: sourceImage.base64Data } });
+
+  // Final prompt
+  parts.push({ text: prompt.trim() });
+  return parts;
+}
+
+function buildBgInstruction(strength) {
+  if (strength >= 85) return 'EXACTLY REPLICATE the background from Image 2: identical environment, same location, same colors, same lighting, same depth';
+  if (strength >= 60) return 'closely match the background from Image 2: same type of location, similar colors and lighting';
+  if (strength >= 35) return 'use a similar background to Image 2';
+  return 'take loose background inspiration from Image 2';
+}
+
+function buildPoseInstruction(strength) {
+  if (strength >= 85) return 'EXACTLY REPLICATE the body pose from Image 2: identical stance, same weight distribution, same arm/hand placement, same head angle';
+  if (strength >= 60) return 'closely match the body pose from Image 2';
+  if (strength >= 35) return 'use a similar pose to Image 2';
+  return 'take loose pose inspiration from Image 2';
 }
 
 // POST /api/photo-match/recreate
@@ -75,62 +100,69 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
     const bg = exactMode ? 100 : Math.max(0, Math.min(100, Number(bgStrength) || 80));
     const pose = exactMode ? 100 : Math.max(0, Math.min(100, Number(poseStrength) || 80));
 
-    // Analyze the scene automatically
+    // Scene analysis
     let sceneData = {};
     try {
       sceneData = await sceneAnalyzer.analyzeScene(base64, mimeType);
     } catch (err) {
       if (!ANALYSIS_FALLBACK_CODES.has(err?.code)) throw err;
-      log.warn('photo_match_scene_analysis_failed', {
-        code: err.code || 'UNKNOWN',
-        message: err.message,
-        characterId,
-      });
+      log.warn('photo_match_scene_analysis_failed', { code: err.code || 'UNKNOWN', message: err.message, characterId });
       sceneData = {};
     }
 
-    // Get character and references — cap to 2 total (1 identity + 1 source)
-    // to stay within model input token limits.
+    // Character + refs — cap to 1 identity image + 1 source
     const character = referenceManager.getCharacter(characterId);
     const refIds = Array.isArray(activeReferenceIds) ? activeReferenceIds : null;
     const activeRefs = referenceManager.getActiveReferences(characterId, refIds);
     const allRefs = buildCharacterReferenceImages(characterId, activeRefs);
 
-    // Use only the first character reference image to keep input small
-    const referenceImages = allRefs.slice(0, 1);
+    const identityImage = allRefs[0] ? await optimizeImage(allRefs[0].base64Data, allRefs[0].mimeType, PHOTO_MATCH_IDENTITY_MAX_DIMENSION) : null;
+    const sourceImage = await optimizeImage(base64, mimeType, PHOTO_MATCH_REF_MAX_DIMENSION);
+    if (!sourceImage) throw new AppError('Unable to process source image', 400, 'VALIDATION_ERROR');
 
-    // Optimize and include the uploaded source image as a reference
-    const sourceImage = await optimizeSourceImage(base64, mimeType);
-    if (sourceImage) {
-      referenceImages.push(sourceImage);
-    }
-
-    // Build strength-aware prompt
-    const bgInstruction = bgStrengthInstruction(bg);
-    const poseInstruction = poseStrengthInstruction(pose);
-
+    // Build prompt
     const sceneParts = [];
     if (sceneData.environment) sceneParts.push(`Environment: ${sceneData.environment}`);
-    if (sceneData.lighting)     sceneParts.push(`Lighting: ${sceneData.lighting}`);
-    if (sceneData.camera)       sceneParts.push(`Camera: ${sceneData.camera}`);
-    if (sceneData.composition)  sceneParts.push(`Composition: ${sceneData.composition}`);
-    if (sceneData.mood)         sceneParts.push(`Mood: ${sceneData.mood}`);
-    if (sceneData.pose)         sceneParts.push(`Pose reference: ${sceneData.pose}`);
-    if (sceneData.expression)   sceneParts.push(`Expression: ${sceneData.expression}`);
-    if (sceneData.outfit)       sceneParts.push(`Outfit: ${sceneData.outfit}`);
+    if (sceneData.lighting) sceneParts.push(`Lighting: ${sceneData.lighting}`);
+    if (sceneData.camera) sceneParts.push(`Camera: ${sceneData.camera}`);
+    if (sceneData.composition) sceneParts.push(`Composition: ${sceneData.composition}`);
+    if (sceneData.mood) sceneParts.push(`Mood: ${sceneData.mood}`);
+    if (sceneData.pose) sceneParts.push(`Pose: ${sceneData.pose}`);
+    if (sceneData.expression) sceneParts.push(`Expression: ${sceneData.expression}`);
+    if (sceneData.outfit) sceneParts.push(`Outfit: ${sceneData.outfit}`);
 
     const prompt = [
       exactMode
-        ? `Exact photo match: recreate the source photo with ${character.name}'s identity.`
-        : `Photo match: ${character.name} in the source scene.`,
-      `Background ${bg}%: ${bgInstruction}.`,
-      `Pose ${pose}%: ${poseInstruction}.`,
-      sceneParts.length ? `Scene: ${sceneParts.join('; ')}.` : null,
-      varyBackground && !exactMode ? 'Vary background slightly.' : null,
-      character.masterPrompt || null,
-      'Return one image only.',
+        ? `Recreate Image 2 exactly, replacing the person with ${character.name} from Image 1.`
+        : `Create a photorealistic image of ${character.name} in the scene from Image 2.`,
+      '',
+      `WHO: ${character.name} — face, skin tone, body, hair, and makeup come from ${identityImage ? 'Image 1' : 'the identity reference'}.`,
+      `IDENTITY PRIORITY: The identity reference always overrides Image 2 for face, skin, body, and hair. The person in Image 2 is a scene prop only.`,
+      '',
+      `SCENE from Image 2: ${buildBgInstruction(bg)}. ${buildPoseInstruction(pose)}.`,
+      identityImage
+        ? `Keep outfit close to Image 2 unless Image 1 requires adjustments.`
+        : null,
+      `Match expression and gaze from Image 2.`,
+      '',
+      'RULES:',
+      identityImage ? `- Do NOT copy face, skin, body, or hair from Image 2` : null,
+      `- The output person is ${character.name} only`,
+      `- Sacrifice Image 2 person's likeness to preserve ${character.name}'s identity`,
+      exactMode ? `- Do not change outfit, background, crop, or camera angle` : null,
+      '',
+      varyBackground && !exactMode ? 'BACKGROUND VARIATION: Keep same location type but shift lighting, add minor details, different moment.' : null,
+      varyBackground && !exactMode ? '' : null,
+      sceneParts.length > 0 ? `SCENE DETAILS:\n${sceneParts.join('\n')}` : null,
+      '',
+      character.masterPrompt ? `ADDITIONAL IDENTITY: ${character.masterPrompt}` : null,
+      '',
+      'Return exactly one image. No text.',
       REALISM_DIRECTIVE,
     ].filter((s) => s != null).join('\n');
+
+    // Build parts with numbered image references
+    const parts = buildPhotoMatchParts({ sourceImage, identityImage, characterName: character.name, prompt });
 
     const apiKey = apiKeyManager.getActiveKeyOrNull();
     runId = startGenerationRun({
@@ -151,7 +183,7 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
     const result = await geminiService.generateImage(apiKey, prompt, {
       aspectRatio,
       imageSize: resolutionTier,
-      referenceImages,
+      parts,
       model: imageModel,
       characterId,
     });
