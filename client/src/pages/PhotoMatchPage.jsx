@@ -277,6 +277,7 @@ export default function PhotoMatchPage() {
   }, [notify]);
 
   const handleGenerate = () => {
+    if (activeQueueCount > 0) { notify('Wait for the current Photo Match job to finish first', 'error'); return; }
     if (files.length === 0) { notify('Add at least one source image', 'error'); return; }
     if (selectedCharIds.length === 0) { notify('Select at least one character', 'error'); return; }
     const opts = { bgStr: bgStrength, poseStr: poseStrength, exact: exactRecreate, varyBg: varyBackground, ar: aspectRatio, resTier: resolutionTier, imgModel: imageModel, prov: provider };
@@ -487,9 +488,9 @@ export default function PhotoMatchPage() {
               </div>
             )}
 
-            <Btn onClick={handleGenerate} disabled={files.length === 0 || selectedCharIds.length === 0} className="w-full">
+            <Btn onClick={handleGenerate} disabled={activeQueueCount > 0 || files.length === 0 || selectedCharIds.length === 0} className="w-full">
               {activeQueueCount > 0
-                ? <>Queue More · {activeQueueCount} running</>
+                ? <>{activeQueueCount} running…</>
                 : totalJobs > 1
                   ? <>Photo Match ×{totalJobs}</>
                   : <>Photo Match</>

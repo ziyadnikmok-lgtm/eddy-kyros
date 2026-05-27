@@ -214,7 +214,10 @@ class GeminiService {
       config.thinkingConfig = { thinkingLevel: ThinkingLevel.MINIMAL };
     }
 
-    const maxAttempts = 3;
+    const requestedMaxAttempts = Number.parseInt(options.maxAttempts, 10);
+    const maxAttempts = Number.isSafeInteger(requestedMaxAttempts)
+      ? Math.max(1, Math.min(3, requestedMaxAttempts))
+      : 3;
     let currentPrompt = prompt;
     // When the caller passes a pre-built parts array (Photo Match, Scene Recreate,
     // Nano Bypass etc.) _buildImageGenerationParts ignores the retry prompt entirely.

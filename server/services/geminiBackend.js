@@ -77,6 +77,14 @@ function _injectGeminiKey(args) {
   return args;
 }
 
+function _limitPinnedImageAttempts(args) {
+  const cloned = [...args];
+  const lastIndex = cloned.length - 1;
+  const options = cloned[lastIndex] && typeof cloned[lastIndex] === 'object' ? cloned[lastIndex] : {};
+  cloned[lastIndex] = { ...options, maxAttempts: 1 };
+  return cloned;
+}
+
 // Methods that generate images → routed to Vertex when active
 const IMAGE_METHODS = new Set([
   'generateImage',
@@ -158,9 +166,9 @@ module.exports = new Proxy({}, {
       if (typeof val !== 'function') return val;
 
       const pinnedProvider = explicitProvider === 'gemini' || explicitProvider === 'vertex';
-      const finalArgs = isText || (isImage && explicitProvider === 'gemini')
-        ? _injectGeminiKey(args)
-        : args;
+      let finalArgs = args;
+      if (isImage && pinnedProvider) finalArgs = _limitPinnedImageAttempts(finalArgs);
+      if (isText || (isImage && explicitProvider === 'gemini')) finalArgs = _injectGeminiKey(finalArgs);
       try {
         const out = val.apply(svc, finalArgs);
         if (!isText || !out || typeof out.then !== 'function') return out;

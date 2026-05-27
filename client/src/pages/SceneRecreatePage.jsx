@@ -226,6 +226,7 @@ export default function SceneRecreatePage() {
   const isRecreating = queueItems.some((job) => job.status === 'running' && job.kind === 'recreate');
 
   const handleGenerate = async () => {
+    if (isRunning) { notify('Wait for the current Scene Recreate job to finish first', 'error'); return; }
     if (!file) { notify('Upload an image first', 'error'); return; }
     if (!charId) { notify('Select a character', 'error'); return; }
     const activeRefIds = charDetail?.references?.filter((r) => r.isActive).map((r) => r.id) || [];
@@ -485,7 +486,7 @@ export default function SceneRecreatePage() {
             {/* Generate button */}
             <Btn
               onClick={handleGenerate}
-              disabled={!file || !charId}
+              disabled={isRunning || !file || !charId}
               className="w-full py-3 text-sm font-semibold"
             >
               {analyzing ? (
@@ -493,7 +494,7 @@ export default function SceneRecreatePage() {
                   <span className="w-3.5 h-3.5 rounded-full border border-t-white border-white/20 animate-spin" />
                   Analyzing…
                 </span>
-              ) : activeQueueCount > 0 ? `Queue Another · ${activeQueueCount} running` : result ? 'Generate Again' : 'Generate Scene'}
+              ) : activeQueueCount > 0 ? `${activeQueueCount} running…` : result ? 'Generate Again' : 'Generate Scene'}
             </Btn>
           </Card>
 
