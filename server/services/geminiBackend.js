@@ -77,7 +77,7 @@ function _injectGeminiKey(args) {
   return args;
 }
 
-function _limitPinnedImageAttempts(args) {
+function _limitGeminiImageAttempts(args) {
   const cloned = [...args];
   const lastIndex = cloned.length - 1;
   const options = cloned[lastIndex] && typeof cloned[lastIndex] === 'object' ? cloned[lastIndex] : {};
@@ -167,7 +167,7 @@ module.exports = new Proxy({}, {
 
       const pinnedProvider = explicitProvider === 'gemini' || explicitProvider === 'vertex';
       let finalArgs = args;
-      if (isImage && pinnedProvider) finalArgs = _limitPinnedImageAttempts(finalArgs);
+      if (isImage && explicitProvider === 'gemini') finalArgs = _limitGeminiImageAttempts(finalArgs);
       if (isText || (isImage && explicitProvider === 'gemini')) finalArgs = _injectGeminiKey(finalArgs);
       try {
         const out = val.apply(svc, finalArgs);
