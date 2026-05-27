@@ -2,8 +2,8 @@
  * Gemini hybrid backend — routes image generation to Vertex, text/analysis to direct Gemini.
  *
  * Image generation (generateImage, generateImagenImage, resolveImageModel):
- *   - If options.provider === 'gemini' → force geminiService (direct API key)
- *   - If options.provider === 'vertex' → force geminiVertexService
+ *   - If options.provider === 'gemini' → force geminiService (direct API key), no Vertex fallback
+ *   - If options.provider === 'vertex' → force geminiVertexService, no Gemini fallback
  *   - If Vertex credentials are saved and selected → use geminiVertexService
  *   - Otherwise → use geminiService (direct Gemini API key)
  *
@@ -157,6 +157,7 @@ module.exports = new Proxy({}, {
       const val = svc[prop];
       if (typeof val !== 'function') return val;
 
+      const pinnedProvider = explicitProvider === 'gemini' || explicitProvider === 'vertex';
       const finalArgs = isText || (isImage && explicitProvider === 'gemini')
         ? _injectGeminiKey(args)
         : args;
@@ -164,11 +165,11 @@ module.exports = new Proxy({}, {
         const out = val.apply(svc, finalArgs);
         if (!isText || !out || typeof out.then !== 'function') return out;
         return out.catch((err) => {
-          if (!_isVertexActive() || !_shouldFallbackTextError(err)) throw err;
+          if (pinnedProvider || !_isVertexActive() || !_shouldFallbackTextError(err)) throw err;
           return _runTextFallback(prop, args, err);
         });
       } catch (err) {
-        if (!isText || !_isVertexActive() || !_shouldFallbackTextError(err)) throw err;
+        if (!isText || pinnedProvider || !_isVertexActive() || !_shouldFallbackTextError(err)) throw err;
         return _runTextFallback(prop, args, err);
       }
     };
