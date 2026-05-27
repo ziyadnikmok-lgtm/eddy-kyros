@@ -90,11 +90,11 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       sceneData = {};
     }
 
-    // Get character and references
+    // Get character and references. Photo Match intentionally uses every saved
+    // character reference so identity has the strongest possible signal.
     const character = referenceManager.getCharacter(characterId);
-    const refIds = Array.isArray(activeReferenceIds) ? activeReferenceIds : null;
-    const activeRefs = referenceManager.getActiveReferences(characterId, refIds);
-    const referenceImages = buildCharacterReferenceImages(characterId, activeRefs);
+    const allRefs = Array.isArray(character.references) ? character.references : [];
+    const referenceImages = buildCharacterReferenceImages(characterId, allRefs);
 
     // Optimize and include the uploaded source image as a reference
     const sourceImage = await optimizeSourceImage(base64, mimeType);
@@ -117,9 +117,7 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
     if (sceneData.outfit)       sceneParts.push(`Outfit: ${sceneData.outfit}`);
 
     const prompt = [
-      exactMode
-        ? `Exact photo match recreation of ${character.name}. Recreate the uploaded source photo as closely as possible while preserving ${character.name}'s identity from the character references.`
-        : `Photo match recreation of ${character.name}. Match the uploaded source photo's scene, outfit, pose, and background while preserving ${character.name}'s identity.`,
+      `Photo match recreation of ${character.name}.`,
       '',
       '[BACKGROUND — strength ' + bg + '%]',
       bgInstruction + '.',
@@ -139,7 +137,6 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       '[IDENTITY]',
       character.masterPrompt || '',
       '',
-      'Return exactly one image. No text.',
       REALISM_DIRECTIVE,
     ].filter((s) => s != null).join('\n');
 
@@ -166,6 +163,7 @@ router.post('/recreate', requirePlanCapacity(), async (req, res, next) => {
       model: imageModel,
       characterId,
       provider,
+      maxAttempts: provider === 'gemini' ? 3 : undefined,
     });
 
     const stored = imageStore.store({

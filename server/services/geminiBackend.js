@@ -81,7 +81,7 @@ function _limitGeminiImageAttempts(args) {
   const cloned = [...args];
   const lastIndex = cloned.length - 1;
   const options = cloned[lastIndex] && typeof cloned[lastIndex] === 'object' ? cloned[lastIndex] : {};
-  cloned[lastIndex] = { ...options, maxAttempts: 1 };
+  cloned[lastIndex] = { ...options, maxAttempts: options.maxAttempts || 1 };
   return cloned;
 }
 
