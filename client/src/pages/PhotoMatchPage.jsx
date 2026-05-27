@@ -4,7 +4,7 @@ import { photoMatch as photoMatchApi, characters as charApi } from '../services/
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Badge } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
-import { ASPECT_RATIOS, RESOLUTION_TIERS, IMAGE_MODEL_OPTIONS } from '../config/photoModes';
+import { ASPECT_RATIOS, RESOLUTION_TIERS, IMAGE_MODEL_OPTIONS, DEFAULT_IMAGE_MODEL } from '../config/photoModes';
 import { createPersistentPageState, makePersistentJobId } from '../lib/persistentPageState';
 import { IconImage } from 'nucleo-glass';
 
@@ -75,10 +75,10 @@ function StrengthSlider({ label, sublabel, value, onChange, color = '#6366f1', d
 }
 
 const _cache = {
-  selectedCharIds: [], bgStrength: 100, poseStrength: 100,
-  exactRecreate: true, varyBackground: false, aspectRatio: '4:5', resolutionTier: '1K',
-  imageModel: 'gemini-3.1-flash-image-preview',
-  provider: 'auto',
+  selectedCharIds: [], bgStrength: 85, poseStrength: 85,
+  exactRecreate: false, varyBackground: false, aspectRatio: '9:16', resolutionTier: '1K',
+  imageModel: DEFAULT_IMAGE_MODEL,
+  provider: 'gemini',
 };
 
 const photoMatchStore = createPersistentPageState('photo-match', { result: null, history: [], queueItems: [] });
@@ -106,14 +106,6 @@ export default function PhotoMatchPage() {
   const [queueItems, setQueueItems] = useState(initialStoreState.queueItems);
 
   useEffect(() => { _cache.selectedCharIds = selectedCharIds; }, [selectedCharIds]);
-  useEffect(() => { _cache.bgStrength = bgStrength; }, [bgStrength]);
-  useEffect(() => { _cache.poseStrength = poseStrength; }, [poseStrength]);
-  useEffect(() => { _cache.exactRecreate = exactRecreate; }, [exactRecreate]);
-  useEffect(() => { _cache.varyBackground = varyBackground; }, [varyBackground]);
-  useEffect(() => { _cache.aspectRatio = aspectRatio; }, [aspectRatio]);
-  useEffect(() => { _cache.resolutionTier = resolutionTier; }, [resolutionTier]);
-  useEffect(() => { _cache.imageModel = imageModel; }, [imageModel]);
-  useEffect(() => { _cache.provider = provider; }, [provider]);
   useEffect(() => photoMatchStore.subscribe((s) => setQueueItems(s.queueItems)), []);
 
   // Fetch details for selected characters
