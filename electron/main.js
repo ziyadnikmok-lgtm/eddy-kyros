@@ -44,6 +44,7 @@ const APP_VERSION = (() => {
   try { return require('../package.json').version || ''; } catch { return ''; }
 })();
 const APP_USAGE_ENDPOINT = process.env.KYROS_USAGE_ENDPOINT || 'https://kyros-studio.xyz/api/app-usage';
+const APP_LICENSE_ENDPOINT = process.env.KYROS_LICENSE_ENDPOINT || 'https://kyros-studio.xyz/api/app-license/activate';
 const OWNER_DEV_FLAG_FILE = path.join(__dirname, '..', '.owner-dev-unlock');
 const OWNER_DEV_MODE = !app.isPackaged && (process.env.KYROS_OWNER_DEV === '1' || fs.existsSync(OWNER_DEV_FLAG_FILE));
 
@@ -93,6 +94,42 @@ function reportAppUsage(event, extra = {}) {
     req.write(payload);
     req.end();
   } catch {}
+}
+
+function postJson(urlString, body, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body || {});
+    try {
+      const url = new URL(urlString);
+      const transport = url.protocol === 'http:' ? require('node:http') : require('node:https');
+      const req = transport.request({
+        method: 'POST',
+        hostname: url.hostname,
+        port: url.port || (url.protocol === 'http:' ? 80 : 443),
+        path: `${url.pathname}${url.search}`,
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+        timeout: timeoutMs,
+      }, (res) => {
+        let data = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          try {
+            const parsed = data ? JSON.parse(data) : {};
+            resolve({ statusCode: res.statusCode, body: parsed });
+          } catch {
+            reject(new Error('Activation server returned an invalid response.'));
+          }
+        });
+      });
+      req.on('error', reject);
+      req.on('timeout', () => req.destroy(new Error('Activation server timed out.')));
+      req.write(payload);
+      req.end();
+    } catch (err) {
+      reject(err);
+    }
+  });
 }
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -292,7 +329,7 @@ ipcMain.handle('recovery:get-session', async (_event, payload = {}) => {
 
 ipcMain.handle('license:load', () => publicLicenseInfo(getOwnerDevLicense() || loadSavedLicense(app)));
 
-ipcMain.handle('license:activate', (_event, payload) => {
+ipcMain.handle('license:activate', async (_event, payload) => {
   const keyStr = typeof payload === 'object' && payload ? payload.key : payload;
   const customerEmail = normalizeEmail(typeof payload === 'object' && payload ? payload.email : '');
   if (!isValidEmail(customerEmail)) {
@@ -300,6 +337,20 @@ ipcMain.handle('license:activate', (_event, payload) => {
   }
   const result = validateKey(keyStr);
   if (result.valid) {
+    try {
+      const activation = await postJson(APP_LICENSE_ENDPOINT, {
+        key: keyStr,
+        customerEmail,
+        machineFingerprint: getMachineFingerprint(),
+        appVersion: APP_VERSION,
+        platform: process.platform,
+      });
+      if (!activation.body?.valid) {
+        return { valid: false, reason: activation.body?.reason || 'This token could not be activated.' };
+      }
+    } catch (err) {
+      return { valid: false, reason: `Activation requires internet: ${err.message}` };
+    }
     result.customerEmail = customerEmail;
     saveLicense(app, result, customerEmail);
     reportAppUsage('license_activated', { licenseId: result.id, customerEmail, plan: result.plan, maxSeats: result.maxSeats });

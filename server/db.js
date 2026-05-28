@@ -138,6 +138,19 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_usage_events_user_created
     ON usage_events(user_id, created_at);
 
+  CREATE TABLE IF NOT EXISTS desktop_license_activations (
+    license_id TEXT PRIMARY KEY,
+    customer_email TEXT NOT NULL,
+    machine_fingerprint TEXT NOT NULL,
+    plan TEXT NOT NULL DEFAULT '',
+    expires_at INTEGER,
+    activated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_desktop_license_activations_email
+    ON desktop_license_activations(customer_email);
+
   CREATE TABLE IF NOT EXISTS admin_audit_logs (
     id            TEXT PRIMARY KEY,
     admin_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

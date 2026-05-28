@@ -322,6 +322,21 @@ app.post('/api/app-usage', (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/app-license/activate', (req, res) => {
+  try {
+    const { activateDesktopLicense } = require('./services/desktopLicenseRegistry');
+    const result = activateDesktopLicense({
+      keyStr: req.body?.key,
+      customerEmail: req.body?.customerEmail,
+      machineFingerprint: req.body?.machineFingerprint,
+    });
+    return res.status(result.valid ? 200 : 403).json(result);
+  } catch (err) {
+    log.error('desktop_license_activate_error', { error: err.message });
+    return res.status(500).json({ valid: false, reason: 'Activation server error. Try again.' });
+  }
+});
+
 app.use('/api/keys', readLimiter, keysRouter);
 app.use('/api/characters', readLimiter, charactersRouter);
 app.use('/api/batch', batchLimiter, batchRouter);
