@@ -569,6 +569,97 @@ const AuthSuspense = ({ children }) => (
   </Suspense>
 );
 
+function LicenseGate({ children }) {
+  const electron = typeof window !== 'undefined' ? window.electronAPI : null;
+  const [state, setState] = useState(() => electron?.isElectron ? 'loading' : 'valid');
+  const [license, setLicense] = useState(null);
+  const [token, setToken] = useState('');
+  const [error, setError] = useState('');
+
+  const refreshLicense = useCallback(() => {
+    if (!electron?.isElectron || !electron.licenseLoad) {
+      setState('valid');
+      return;
+    }
+    setState('loading');
+    electron.licenseLoad()
+      .then((info) => {
+        setLicense(info || null);
+        setError(info && !info.valid ? info.reason || 'Invalid access token' : '');
+        setState(info?.valid ? 'valid' : 'locked');
+      })
+      .catch(() => {
+        setLicense(null);
+        setError('Could not read the access token.');
+        setState('locked');
+      });
+  }, [electron]);
+
+  useEffect(() => { refreshLicense(); }, [refreshLicense]);
+
+  const activate = async (event) => {
+    event.preventDefault();
+    setError('');
+    const raw = token.trim();
+    if (!raw) {
+      setError('Paste your paid Kyros access token first.');
+      return;
+    }
+    setState('activating');
+    try {
+      const result = await electron.licenseActivate(raw);
+      setLicense(result || null);
+      if (result?.valid) {
+        setToken('');
+        setState('valid');
+        return;
+      }
+      setError(result?.reason || 'Invalid access token.');
+      setState('locked');
+    } catch {
+      setError('Activation failed. Try again.');
+      setState('locked');
+    }
+  };
+
+  if (state === 'valid') return children;
+  if (state === 'loading') {
+    return <div className="min-h-screen bg-zinc-950 flex items-center justify-center"><Spinner size={32} /></div>;
+  }
+
+  return (
+    <div className="min-h-screen overflow-hidden bg-[#050608] text-white flex items-center justify-center p-6">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(34,211,238,0.18),transparent_28%),radial-gradient(circle_at_80%_0%,rgba(245,158,11,0.12),transparent_30%)]" />
+      <div className="relative w-full max-w-lg rounded-3xl border border-white/10 bg-zinc-950/85 p-6 shadow-2xl backdrop-blur-xl">
+        <div className="mb-6">
+          <div className="mb-2 text-[10px] font-black uppercase tracking-[0.24em] text-cyan-300">Kyros Studio Access</div>
+          <h1 className="text-2xl font-black tracking-tight">Paid token required</h1>
+          <p className="mt-2 text-sm leading-6 text-zinc-400">This app no longer includes free trial access. Activate a paid Kyros token to open the studio.</p>
+        </div>
+        <form onSubmit={activate} className="space-y-4">
+          <textarea
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="KYROS2-..."
+            spellCheck={false}
+            className="min-h-28 w-full resize-none rounded-2xl border border-white/10 bg-black/40 p-4 font-mono text-xs text-zinc-100 outline-none transition focus:border-cyan-400/60"
+          />
+          {error && <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-200">{error}</div>}
+          {license?.machineMismatch && <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">This token is machine locked. Contact support for a transfer.</div>}
+          <button
+            type="submit"
+            disabled={state === 'activating'}
+            className="w-full rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-black text-zinc-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {state === 'activating' ? 'Activating...' : 'Activate Paid Token'}
+          </button>
+        </form>
+        <p className="mt-4 text-center text-[11px] text-zinc-600">Tokens are signed, expire automatically, and lock to this machine after activation.</p>
+      </div>
+    </div>
+  );
+}
+
 const AUTH_PATHS = {
   landing: '/',
   login: '/login',
@@ -696,9 +787,9 @@ export default function App() {
 
   if (authState === 'loading') {
     return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+      <LicenseGate><div className="min-h-screen bg-zinc-950 flex items-center justify-center">
         <Spinner size={32} />
-      </div>
+      </div></LicenseGate>
     );
   }
 
@@ -708,36 +799,36 @@ export default function App() {
       syncAuthLocation(page, options);
     };
     if (authPage === 'login') {
-      return <AuthSuspense><LandingPage initialAuthModal="login" onNavigate={navigate} /></AuthSuspense>;
+      return <LicenseGate><AuthSuspense><LandingPage initialAuthModal="login" onNavigate={navigate} /></AuthSuspense></LicenseGate>;
     }
     if (authPage === 'register') {
-      return <AuthSuspense><LandingPage initialAuthModal="register" onNavigate={navigate} /></AuthSuspense>;
+      return <LicenseGate><AuthSuspense><LandingPage initialAuthModal="register" onNavigate={navigate} /></AuthSuspense></LicenseGate>;
     }
     if (authPage === 'forgot-password') {
-      return <AuthSuspense><ForgotPasswordPage onNavigate={navigate} /></AuthSuspense>;
+      return <LicenseGate><AuthSuspense><ForgotPasswordPage onNavigate={navigate} /></AuthSuspense></LicenseGate>;
     }
     if (authPage === 'reset-password') {
-      return <AuthSuspense><ResetPasswordPage onNavigate={navigate} /></AuthSuspense>;
+      return <LicenseGate><AuthSuspense><ResetPasswordPage onNavigate={navigate} /></AuthSuspense></LicenseGate>;
     }
     if (authPage === 'verify-email') {
-      return <AuthSuspense><VerifyEmailPage onNavigate={navigate} /></AuthSuspense>;
+      return <LicenseGate><AuthSuspense><VerifyEmailPage onNavigate={navigate} /></AuthSuspense></LicenseGate>;
     }
     // Default: landing page
-    return <AuthSuspense><LandingPage onNavigate={navigate} /></AuthSuspense>;
+    return <LicenseGate><AuthSuspense><LandingPage onNavigate={navigate} /></AuthSuspense></LicenseGate>;
   }
 
   if (!currentUser) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+      <LicenseGate><div className="min-h-screen bg-zinc-950 flex items-center justify-center">
         <Spinner size={32} />
-      </div>
+      </div></LicenseGate>
     );
   }
 
-  return <MainApp currentUser={currentUser} onLogout={() => {
+  return <LicenseGate><MainApp currentUser={currentUser} onLogout={() => {
     setCurrentUser(null);
     setAuthState('unauthenticated');
     setAuthPage('landing');
     syncAuthLocation('landing', { replace: true });
-  }} />;
+  }} /></LicenseGate>;
 }

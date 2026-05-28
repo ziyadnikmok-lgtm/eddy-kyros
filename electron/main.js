@@ -9,6 +9,7 @@ const { fork } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const { findRecoveryRoot, listRecoverySessions, readRecoverySession } = require('./recovery-store');
+const { validateKey, saveLicense, loadSavedLicense, clearLicense, publicLicenseInfo, getMachineFingerprint } = require('./kyrosLicense');
 
 // ── Error log file ──────────────────────────────────────────────────────
 let _logStream = null;
@@ -38,6 +39,60 @@ let recoveryWindow = null;
 let serverProcess = null;
 let serverPort = null;
 let userDataPath = null;
+
+const APP_VERSION = (() => {
+  try { return require('../package.json').version || ''; } catch { return ''; }
+})();
+const APP_USAGE_ENDPOINT = process.env.KYROS_USAGE_ENDPOINT || 'https://kyros-studio.xyz/api/app-usage';
+const OWNER_DEV_FLAG_FILE = path.join(__dirname, '..', '.owner-dev-unlock');
+const OWNER_DEV_MODE = !app.isPackaged && (process.env.KYROS_OWNER_DEV === '1' || fs.existsSync(OWNER_DEV_FLAG_FILE));
+
+function getOwnerDevLicense() {
+  if (!OWNER_DEV_MODE) return null;
+  return { valid: true, id: 'OWNER-DEV-LOCAL', plan: 'owner-dev', type: 'paid', maxSeats: 999, expiresAt: '2099-12-31T23:59:59.000Z', daysLeft: 9999, machineLocked: false, ownerDev: true };
+}
+
+function getValidLicense() {
+  const owner = getOwnerDevLicense();
+  if (owner) return owner;
+  const lic = loadSavedLicense(app);
+  return lic?.valid ? lic : null;
+}
+
+function reportAppUsage(event, extra = {}) {
+  const license = getValidLicense();
+  if (!license) return;
+  const payload = JSON.stringify({
+    licenseId: license.id,
+    plan: license.plan,
+    type: license.type,
+    maxSeats: license.maxSeats,
+    expiresAt: license.expiresAt,
+    daysLeft: license.daysLeft,
+    appVersion: APP_VERSION,
+    machineFingerprint: getMachineFingerprint(),
+    packaged: app.isPackaged,
+    platform: process.platform,
+    event,
+    ...extra,
+  });
+  try {
+    const url = new URL(APP_USAGE_ENDPOINT);
+    const transport = url.protocol === 'http:' ? require('node:http') : require('node:https');
+    const req = transport.request({
+      method: 'POST',
+      hostname: url.hostname,
+      port: url.port || (url.protocol === 'http:' ? 80 : 443),
+      path: `${url.pathname}${url.search}`,
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+      timeout: 3500,
+    });
+    req.on('error', () => {});
+    req.on('timeout', () => req.destroy());
+    req.write(payload);
+    req.end();
+  } catch {}
+}
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
@@ -234,6 +289,22 @@ ipcMain.handle('recovery:get-session', async (_event, payload = {}) => {
   return readRecoverySession(root, relativePath);
 });
 
+ipcMain.handle('license:load', () => publicLicenseInfo(getOwnerDevLicense() || loadSavedLicense(app)));
+
+ipcMain.handle('license:activate', (_event, keyStr) => {
+  const result = validateKey(keyStr);
+  if (result.valid) {
+    saveLicense(app, result);
+    reportAppUsage('license_activated', { licenseId: result.id, plan: result.plan, maxSeats: result.maxSeats });
+  }
+  return publicLicenseInfo(result);
+});
+
+ipcMain.handle('license:clear', () => {
+  clearLicense(app);
+  return { ok: true };
+});
+
 function createRecoveryWindow() {
   recoveryWindow = new BrowserWindow({
     width: 1400,
@@ -383,6 +454,7 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
     mainWindow.focus();
+    reportAppUsage('app_opened', { mode: 'local' });
     console.log('[electron] window shown');
   });
   mainWindow.webContents.on('did-finish-load', () => console.log('[electron] window finished load'));
@@ -424,6 +496,7 @@ app.whenReady().then(async () => {
     });
     mainWindow.loadURL(remoteUrl);
     mainWindow.webContents.on('did-finish-load', () => console.log('[electron] remote window loaded'));
+    mainWindow.once('ready-to-show', () => reportAppUsage('app_opened', { mode: 'remote' }));
     mainWindow.on('closed', () => { mainWindow = null; });
     return;
   }

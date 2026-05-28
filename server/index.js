@@ -295,6 +295,32 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+app.post('/api/app-usage', (req, res) => {
+  try {
+    const { logUsageEvent } = require('./services/eventLogger');
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const licenseId = String(body.licenseId || '').slice(0, 80);
+    const event = String(body.event || 'app_event').slice(0, 80);
+    logUsageEvent({
+      userId: null,
+      eventType: `desktop.${event}`,
+      entityType: 'desktop_license',
+      entityId: licenseId || null,
+      source: 'desktop-app',
+      payload: {
+        licenseId,
+        plan: String(body.plan || '').slice(0, 40),
+        appVersion: String(body.appVersion || '').slice(0, 40),
+        platform: String(body.platform || '').slice(0, 40),
+        packaged: !!body.packaged,
+        daysLeft: Number(body.daysLeft) || null,
+        machineFingerprint: String(body.machineFingerprint || '').slice(0, 80),
+      },
+    });
+  } catch {}
+  res.json({ ok: true });
+});
+
 app.use('/api/keys', readLimiter, keysRouter);
 app.use('/api/characters', readLimiter, charactersRouter);
 app.use('/api/batch', batchLimiter, batchRouter);

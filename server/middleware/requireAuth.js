@@ -3,7 +3,7 @@ const db = require('../db');
 const { enterWithUser } = require('../userContext');
 
 function requireAuth(req, res, next) {
-  if (req.path.startsWith('/api/auth/') || req.path === '/api/health' || req.path === '/api/bootstrap-admin') return next();
+  if (req.path.startsWith('/api/auth/') || req.path === '/api/health' || req.path === '/api/bootstrap-admin' || req.path === '/api/app-usage') return next();
   if (req.session && req.session.userId) {
     // Keep the user context available across Express route hops and upload stream callbacks.
     req.userId = req.session.userId;
