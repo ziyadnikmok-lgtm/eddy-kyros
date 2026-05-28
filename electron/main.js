@@ -9,7 +9,7 @@ const { fork } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const { findRecoveryRoot, listRecoverySessions, readRecoverySession } = require('./recovery-store');
-const { validateKey, saveLicense, loadSavedLicense, clearLicense, publicLicenseInfo, getMachineFingerprint } = require('./kyrosLicense');
+const { validateKey, saveLicense, loadSavedLicense, clearLicense, publicLicenseInfo, getMachineFingerprint, isValidEmail, normalizeEmail } = require('./kyrosLicense');
 
 // ── Error log file ──────────────────────────────────────────────────────
 let _logStream = null;
@@ -64,6 +64,7 @@ function reportAppUsage(event, extra = {}) {
   if (!license) return;
   const payload = JSON.stringify({
     licenseId: license.id,
+    customerEmail: license.customerEmail || '',
     plan: license.plan,
     type: license.type,
     maxSeats: license.maxSeats,
@@ -291,11 +292,17 @@ ipcMain.handle('recovery:get-session', async (_event, payload = {}) => {
 
 ipcMain.handle('license:load', () => publicLicenseInfo(getOwnerDevLicense() || loadSavedLicense(app)));
 
-ipcMain.handle('license:activate', (_event, keyStr) => {
+ipcMain.handle('license:activate', (_event, payload) => {
+  const keyStr = typeof payload === 'object' && payload ? payload.key : payload;
+  const customerEmail = normalizeEmail(typeof payload === 'object' && payload ? payload.email : '');
+  if (!isValidEmail(customerEmail)) {
+    return { valid: false, reason: 'Enter a valid customer email before activating.' };
+  }
   const result = validateKey(keyStr);
   if (result.valid) {
-    saveLicense(app, result);
-    reportAppUsage('license_activated', { licenseId: result.id, plan: result.plan, maxSeats: result.maxSeats });
+    result.customerEmail = customerEmail;
+    saveLicense(app, result, customerEmail);
+    reportAppUsage('license_activated', { licenseId: result.id, customerEmail, plan: result.plan, maxSeats: result.maxSeats });
   }
   return publicLicenseInfo(result);
 });

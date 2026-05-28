@@ -24,6 +24,7 @@ function publicLicenseInfo(info) {
     valid: !!info.valid,
     reason: info.reason || '',
     id: info.id || '',
+    customerEmail: info.customerEmail || '',
     plan: info.plan || '',
     type: info.type || '',
     maxSeats: info.maxSeats || 1,
@@ -78,12 +79,25 @@ function validateKey(keyStr) {
   }
 }
 
-function saveLicense(app, info) {
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(email));
+}
+
+function saveLicense(app, info, customerEmail = '') {
+  const normalizedEmail = normalizeEmail(customerEmail || info.customerEmail || info.issuedTo || '');
+  if (!isValidEmail(normalizedEmail)) {
+    throw new Error('A valid customer email is required to activate Kyros Studio.');
+  }
   const file = getLicenseFile(app);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({
     keyStr: info.keyStr,
     id: info.id,
+    customerEmail: normalizedEmail,
     plan: info.plan,
     type: info.type,
     expiresAt: info.expiresAt,
@@ -103,7 +117,9 @@ function loadSavedLicense(app) {
       return { valid: false, reason: 'Token is locked to a different machine. Contact support to transfer it.', machineMismatch: true };
     }
 
-    return validateKey(saved.keyStr);
+    const info = validateKey(saved.keyStr);
+    if (info?.valid) info.customerEmail = saved.customerEmail || '';
+    return info;
   } catch {
     return null;
   }
@@ -120,4 +136,6 @@ module.exports = {
   publicLicenseInfo,
   saveLicense,
   validateKey,
+  isValidEmail,
+  normalizeEmail,
 };

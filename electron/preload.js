@@ -7,6 +7,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   chooseDownloadFolder: (options) => ipcRenderer.invoke('downloads:choose-directory', options),
   saveFileToFolder: (payload) => ipcRenderer.invoke('downloads:save-file', payload),
   licenseLoad: () => ipcRenderer.invoke('license:load'),
-  licenseActivate: (key) => ipcRenderer.invoke('license:activate', key),
+  licenseActivate: (payload) => ipcRenderer.invoke('license:activate', payload),
   licenseClear: () => ipcRenderer.invoke('license:clear'),
 });

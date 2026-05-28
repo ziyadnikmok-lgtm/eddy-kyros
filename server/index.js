@@ -309,6 +309,7 @@ app.post('/api/app-usage', (req, res) => {
       source: 'desktop-app',
       payload: {
         licenseId,
+        customerEmail: String(body.customerEmail || '').trim().toLowerCase().slice(0, 254),
         plan: String(body.plan || '').slice(0, 40),
         appVersion: String(body.appVersion || '').slice(0, 40),
         platform: String(body.platform || '').slice(0, 40),

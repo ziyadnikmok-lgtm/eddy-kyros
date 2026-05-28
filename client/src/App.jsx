@@ -573,6 +573,7 @@ function LicenseGate({ children }) {
   const electron = typeof window !== 'undefined' ? window.electronAPI : null;
   const [state, setState] = useState(() => electron?.isElectron ? 'loading' : 'valid');
   const [license, setLicense] = useState(null);
+  const [email, setEmail] = useState('');
   const [token, setToken] = useState('');
   const [error, setError] = useState('');
 
@@ -601,13 +602,18 @@ function LicenseGate({ children }) {
     event.preventDefault();
     setError('');
     const raw = token.trim();
+    const customerEmail = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)) {
+      setError('Enter your customer email first.');
+      return;
+    }
     if (!raw) {
       setError('Paste your paid Kyros access token first.');
       return;
     }
     setState('activating');
     try {
-      const result = await electron.licenseActivate(raw);
+      const result = await electron.licenseActivate({ email: customerEmail, key: raw });
       setLicense(result || null);
       if (result?.valid) {
         setToken('');
@@ -637,6 +643,13 @@ function LicenseGate({ children }) {
           <p className="mt-2 text-sm leading-6 text-zinc-400">This app no longer includes free trial access. Activate a paid Kyros token to open the studio.</p>
         </div>
         <form onSubmit={activate} className="space-y-4">
+          <input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="customer@email.com"
+            type="email"
+            className="w-full rounded-2xl border border-white/10 bg-black/40 p-4 text-sm text-zinc-100 outline-none transition focus:border-cyan-400/60"
+          />
           <textarea
             value={token}
             onChange={(e) => setToken(e.target.value)}
