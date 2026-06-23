@@ -363,6 +363,81 @@ ipcMain.handle('license:clear', () => {
   return { ok: true };
 });
 
+ipcMain.on('drag:start-files', (event, payload = {}) => {
+  const { files, paths } = payload;
+  const logPath = path.join(__dirname, '..', 'drag-debug.log');
+
+  const logMessage = (msg) => {
+    try {
+      const timestamp = new Date().toISOString();
+      fs.appendFileSync(logPath, `[${timestamp}] ${msg}\n`);
+    } catch (e) {
+      console.error('Failed to write to drag-debug.log', e);
+    }
+  };
+
+  logMessage(`drag:start-files triggered. paths: ${JSON.stringify(paths)} | files count: ${files?.length || 0}`);
+
+  let filePaths = [];
+
+  if (Array.isArray(paths) && paths.length > 0) {
+    for (const p of paths) {
+      const resolvedPath = path.resolve(p);
+      const exists = fs.existsSync(resolvedPath);
+      logMessage(`Resolving path: "${p}" -> resolved: "${resolvedPath}" | exists: ${exists}`);
+      if (exists) {
+        filePaths.push(resolvedPath);
+      }
+    }
+  } else if (Array.isArray(files) && files.length > 0) {
+    const tempDir = path.join(app.getPath('temp'), 'kyros-drag-temp');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    // Clear previous drag-temp files
+    try {
+      for (const file of fs.readdirSync(tempDir)) {
+        fs.unlinkSync(path.join(tempDir, file));
+      }
+    } catch {}
+
+    for (const f of files) {
+      const safeName = sanitizeFileName(f.name);
+      const filePath = path.join(tempDir, safeName);
+      const buffer = Buffer.from(f.base64, 'base64');
+      fs.writeFileSync(filePath, buffer);
+      filePaths.push(filePath);
+      logMessage(`Created temp file: "${filePath}"`);
+    }
+  }
+
+  logMessage(`Final filePaths to drag: ${JSON.stringify(filePaths)}`);
+
+  if (filePaths.length === 0) {
+    logMessage('Abort drag: filePaths is empty');
+    return;
+  }
+
+  const tempDir = path.join(app.getPath('temp'), 'kyros-drag-temp');
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+  }
+  const iconPath = path.join(tempDir, 'drag-icon.png');
+  const transparentPngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+  fs.writeFileSync(iconPath, Buffer.from(transparentPngBase64, 'base64'));
+
+  try {
+    event.sender.startDrag({
+      file: filePaths[0],
+      files: filePaths,
+      icon: iconPath
+    });
+    logMessage('startDrag successfully initiated');
+  } catch (err) {
+    logMessage(`startDrag failed with error: ${err.message}`);
+  }
+});
+
 function createRecoveryWindow() {
   recoveryWindow = new BrowserWindow({
     width: 1400,

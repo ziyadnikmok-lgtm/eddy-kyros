@@ -3,7 +3,7 @@ import { characters as charApi } from '../services/api';
 
 const AppContext = createContext(null);
 
-const VALID_PAGE_IDS = new Set(['generate', 'nsfwGenerate', 'batch', 'auto', 'video', 'videoGallery', 'carousel', 'scene', 'reel', 'postClone', 'pinterest', 'styleLibrary', 'promptBuilder', 'profileAnalyzer', 'storyteller', 'loraDataset', 'gallery', 'library', 'imageEditor', 'characters', 'keys', 'billing', 'referral', 'videoCompose', 'logs', 'photoMatch', 'nanoBypass', 'seedEdit', 'admin', 'settings']);
+const VALID_PAGE_IDS = new Set(['generate', 'nsfwGenerate', 'batch', 'auto', 'video', 'videoGallery', 'carousel', 'scene', 'reel', 'postClone', 'pinterest', 'instagramFrames', 'frameLibrary', 'styleLibrary', 'promptBuilder', 'profileAnalyzer', 'storyteller', 'loraDataset', 'gallery', 'library', 'pasteInbox', 'imageEditor', 'characters', 'keys', 'billing', 'referral', 'videoCompose', 'logs', 'photoMatch', 'nanoBypass', 'seedEdit', 'admin', 'settings']);
 
 function pageFromPathname(pathname) {
   const segment = (pathname || '/').replace(/^\/+|\/+$/g, '') || 'generate';
@@ -74,9 +74,24 @@ export function AppProvider({ children }) {
     fetchJson('/api/outfits').then(setOutfits).catch(() => setOutfits([]));
   }, []);
 
+  const refreshIntegrationStatus = useCallback(() => {
+    setIntegrationRefreshToken((value) => value + 1);
+  }, []);
+
+  useEffect(() => {
+    const t = timers;
+    return () => { for (const id of Object.keys(t.current)) clearTimeout(t.current[id]); };
+  }, []);
+
+  // Defensive: always coerce to a readable string — prevents "[object Object]" toasts
   const notify = useCallback((message, type = 'info', duration = 4000) => {
     const id = ++toastId;
-    setToasts((t) => [...t.slice(-4), { id, message, type }]);
+    const safeMessage = message instanceof Error
+      ? (message.message || 'An error occurred')
+      : typeof message === 'string'
+        ? message
+        : (typeof message?.message === 'string' ? message.message : String(message ?? 'An error occurred'));
+    setToasts((t) => [...t.slice(-4), { id, message: safeMessage, type }]);
     timers.current[id] = setTimeout(() => {
       setToasts((t) => t.filter((x) => x.id !== id));
       delete timers.current[id];
@@ -88,15 +103,6 @@ export function AppProvider({ children }) {
     clearTimeout(timers.current[id]);
     delete timers.current[id];
     setToasts((t) => t.filter((x) => x.id !== id));
-  }, []);
-
-  const refreshIntegrationStatus = useCallback(() => {
-    setIntegrationRefreshToken((value) => value + 1);
-  }, []);
-
-  useEffect(() => {
-    const t = timers;
-    return () => { for (const id of Object.keys(t.current)) clearTimeout(t.current[id]); };
   }, []);
 
   const value = useMemo(() => ({

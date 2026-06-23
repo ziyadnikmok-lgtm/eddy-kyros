@@ -84,6 +84,7 @@ const reelCopyRoute = require('./routes/reelCopy');
 const postCloneRoute = require('./routes/postClone');
 const profileCloneRoute = require('./routes/profileClone');
 const pinterestRoute = require('./routes/pinterest');
+const instagramFramesRoute = require('./routes/instagramFrames');
 const promptKnowledgeRoute = require('./routes/promptKnowledge');
 const availabilityRoute = require('./routes/availability');
 const templatesRouter = require('./routes/templates');
@@ -238,6 +239,33 @@ app.post('/api/bootstrap-admin', (req, res) => {
   res.json({ ok: true, changes: result.changes, email });
 });
 
+// ── One-time desktop auto-login ───────────────────────────────────────────────
+// Set KYROS_AUTO_LOGIN_EMAIL in the Electron userData .env to auto-login on
+// next launch. Fires once on the first unauthenticated root page load, then
+// self-destructs so it never fires again.
+let _autoLoginDone = false;
+app.use((req, res, next) => {
+  const targetEmail = process.env.KYROS_AUTO_LOGIN_EMAIL;
+  if (_autoLoginDone || !targetEmail || req.session?.userId) return next();
+  if (req.path !== '/') return next();
+  try {
+    const db = require('./db');
+    const user = db.prepare(
+      'SELECT id, email, is_admin, is_owner FROM users WHERE LOWER(email) = LOWER(?)'
+    ).get(targetEmail.trim());
+    if (!user) { _autoLoginDone = true; return next(); }
+    _autoLoginDone = true;
+    delete process.env.KYROS_AUTO_LOGIN_EMAIL;
+    req.session.regenerate((err) => {
+      if (err) return next();
+      req.session.userId  = user.id;
+      req.session.isAdmin = !!user.is_admin;
+      req.session.isOwner = !!user.is_owner;
+      req.session.save(() => next());
+    });
+  } catch (_) { next(); }
+});
+
 // Auth always enforced (removed NODE_ENV gate)
 app.use(requireAuth);
 app.use('/api/user/keys', userKeysRouter);
@@ -359,6 +387,7 @@ app.use('/api/reel-copy', cloneLimiter, reelCopyRoute);
 app.use('/api/post-clone', cloneLimiter, postCloneRoute);
 app.use('/api/profile-clone', cloneLimiter, profileCloneRoute);
 app.use('/api/pinterest', generateLimiter, pinterestRoute);
+app.use('/api/instagram-frames', readLimiter, instagramFramesRoute);
 app.use('/api/prompt-knowledge', promptKnowledgeRoute);
 app.use('/api/availability', availabilityRoute);
 app.use('/api/templates', templatesRouter);

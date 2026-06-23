@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useReducer, useRef, lazy, Suspense } from 'react';
 import { pushPending, resolvePending, rejectPending } from '../lib/generationFeed';
+import { fileToCompressedDataUrl } from '../lib/imageCompression';
 import { generate as genApi, characters as charApi, templates as templatesApi, styleLibrary as styleApi, captionTemplates as captionApi, styleFocus as styleFocusApi } from '../services/api';
 import { useStepTimer } from '../hooks/useStepTimer';
 import { useApp } from '../context/AppContext';
@@ -834,7 +835,7 @@ export default function GeneratePage() {
       return;
     }
     try {
-      const dataUrl = await fileToDataUrl(file);
+      const dataUrl = await fileToCompressedDataUrl(file);
       const newImg = { id: `ref-${Date.now()}-${Math.random().toString(36).slice(2)}`, image: dataUrl, mimeType: file.type, name: file.name, preview: dataUrl };
       update((prev) => ({ referenceImages: [...(prev.referenceImages || []), newImg] }));
     } catch {
@@ -868,7 +869,7 @@ export default function GeneratePage() {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const dataUrl = await fileToDataUrl(file);
+      const dataUrl = await fileToCompressedDataUrl(file);
       const next = {
         image: dataUrl,
         mimeType: file.type,

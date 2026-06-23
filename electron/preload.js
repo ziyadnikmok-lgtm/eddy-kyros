@@ -9,4 +9,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   licenseLoad: () => ipcRenderer.invoke('license:load'),
   licenseActivate: (payload) => ipcRenderer.invoke('license:activate', payload),
   licenseClear: () => ipcRenderer.invoke('license:clear'),
+  startDragFiles: (payload) => ipcRenderer.send('drag:start-files', payload),
 });

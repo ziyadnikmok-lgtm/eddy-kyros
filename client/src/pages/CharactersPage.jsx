@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { characters as charApi, outfits as outfitApi } from '../services/api';
 import { useApp } from '../context/AppContext';
+import { resizeAndCompressImage } from '../lib/imageCompression';
 import { useAsync } from '../hooks/useAsync';
 import { Card, Btn, Input, Textarea, Modal, Badge, Spinner, Empty, ConfirmDialog } from '../components/UI';
 import { IconUsers, IconCamera, IconImage } from 'nucleo-glass';
@@ -227,7 +228,8 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
   const addPrimaryImageFile = useCallback((file) => {
     if (!validateCharacterImageFile(file, notify)) return;
     run(async () => {
-      await charApi.addPrimaryImage(char.id, characterImageFormData({}, file));
+      const compressedFile = await resizeAndCompressImage(file);
+      await charApi.addPrimaryImage(char.id, characterImageFormData({}, compressedFile));
       notify('Primary image added', 'success');
       onUpdate();
     });
@@ -459,7 +461,8 @@ function CreateCharacterModal({ open, onClose, onCreated, seedFile }) {
     if (!name.trim()) { notify('Character name is required', 'error'); return; }
     if (!masterPrompt.trim()) { notify('Master prompt is required — describe face, body, and defining traits', 'error'); return; }
     if (!file) { notify('Primary image is required — upload a clear reference photo', 'error'); return; }
-    await charApi.create(characterImageFormData({ name: name.trim(), masterPrompt: masterPrompt.trim() }, file));
+    const compressedFile = await resizeAndCompressImage(file);
+    await charApi.create(characterImageFormData({ name: name.trim(), masterPrompt: masterPrompt.trim() }, compressedFile));
     notify('Character created', 'success');
     if (preview) URL.revokeObjectURL(preview);
     setName(''); setMasterPrompt(''); setFile(null); setPreview(null);
@@ -551,7 +554,8 @@ function AddReferenceModal({ open, onClose, characterId, onAdded }) {
 
   const handleAdd = () => run(async () => {
     if (!file || !overridePrompt.trim()) { notify('Image and override prompt required', 'error'); return; }
-    await charApi.addReference(characterId, characterImageFormData({ category, overridePrompt: overridePrompt.trim() }, file));
+    const compressedFile = await resizeAndCompressImage(file);
+    await charApi.addReference(characterId, characterImageFormData({ category, overridePrompt: overridePrompt.trim() }, compressedFile));
     notify('Reference added', 'success');
     setOverridePrompt(''); setFile(null);
     setPreview((prev) => {

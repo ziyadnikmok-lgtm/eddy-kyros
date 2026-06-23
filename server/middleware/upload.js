@@ -1,7 +1,7 @@
 const { AppError } = require('./errorHandler');
 
 const ALLOWED_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
-const MAX_SIZE = 10 * 1024 * 1024;
+const MAX_SIZE = 50 * 1024 * 1024;
 const MAX_SIZE_MB = MAX_SIZE / 1024 / 1024;
 const SUPPORTED_FORMATS_TEXT = 'PNG, JPG, or WEBP';
 

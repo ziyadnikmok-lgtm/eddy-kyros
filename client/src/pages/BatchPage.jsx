@@ -1,5 +1,6 @@
 import { useState, useEffect, useReducer, useRef } from 'react';
 import { pushToFeed } from '../lib/generationFeed';
+import { fileToCompressedDataUrl } from '../lib/imageCompression';
 import { batch as batchApi, characters as charApi, gallery as galleryApi, templates as templatesApi, reformat as reformatApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { useAsync } from '../hooks/useAsync';
@@ -569,12 +570,7 @@ export default function BatchPage() {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const src = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
+      const src = await fileToCompressedDataUrl(file);
       const tempId = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const uploaded = { id: tempId, src, prompt: file.name, source: 'upload' };
       update((prev) => ({ editUploadImages: [uploaded, ...prev.editUploadImages], selectedImageId: tempId }));
@@ -589,12 +585,7 @@ export default function BatchPage() {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const dataUrl = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
+      const dataUrl = await fileToCompressedDataUrl(file);
       const next = {
         image: dataUrl,
         mimeType: file.type,

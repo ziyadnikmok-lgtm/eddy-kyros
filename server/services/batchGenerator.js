@@ -876,11 +876,16 @@ class BatchGenerator extends EventEmitter {
         ...referenceParts,
         { text: finalPrompt },
       ];
+      const hasCharacterRefs = referenceParts.some((p) => p.inlineData);
       const result = await geminiService.generateImage(apiKey, finalPrompt, {
         aspectRatio: job.aspectRatio,
         imageSize: job.imageSize,
         model: job.imageModel || undefined,
         parts,
+        // Prevent Vertex retry loop from silently dropping character reference images.
+        // Identity refs are critical — if they fail, better to surface the error than
+        // generate a hallucinated or leaked identity from Image 1.
+        requireImageInputs: hasCharacterRefs,
       });
 
       if (job._cancelled) {

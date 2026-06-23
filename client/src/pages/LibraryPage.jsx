@@ -360,6 +360,167 @@ export default function LibraryPage() {
   const [editDestinationBusy, setEditDestinationBusy] = useState(false);
   const [contextMenu, setContextMenu] = useState(null);
   const sentinelRef = useRef(null);
+  const lastSelectedIdRef = useRef(null);
+  const [dragBox, setDragBox] = useState(null);
+  const [isDragSelecting, setIsDragSelecting] = useState(false);
+  const activeDragSelectedRef = useRef(new Set());
+  const initialSelectedRef = useRef(new Set());
+
+  const resolvedPathsRef = useRef({});
+  const fetchingPathsRef = useRef(new Set());
+
+  const prefetchPaths = useCallback(async (itemsToFetch) => {
+    if (!isElectron) return;
+    const missing = itemsToFetch.filter(
+      (x) => !resolvedPathsRef.current[x.id] && !fetchingPathsRef.current.has(x.id)
+    );
+    if (missing.length === 0) return;
+
+    for (const x of missing) {
+      fetchingPathsRef.current.add(x.id);
+    }
+
+    try {
+      const res = await libraryApi.bulkPaths(missing);
+      if (res?.success && res.data) {
+        for (const x of res.data) {
+          resolvedPathsRef.current[x.id] = x.filePath;
+        }
+      }
+    } catch (err) {
+      console.error('[LibraryPage] Failed to prefetch paths', err);
+    } finally {
+      for (const x of missing) {
+        fetchingPathsRef.current.delete(x.id);
+      }
+    }
+  }, [isElectron]);
+
+
+
+  const handleItemMouseEnter = useCallback((item) => {
+    if (isElectron) {
+      prefetchPaths([item]);
+    }
+  }, [isElectron, prefetchPaths]);
+
+  const handleItemMouseDown = useCallback((item) => {
+    if (isElectron) {
+      prefetchPaths([item]);
+    }
+  }, [isElectron, prefetchPaths]);
+
+  useEffect(() => {
+    const handleMouseDown = (e) => {
+      // 1. Only left click triggers drag selection
+      if (e.button !== 0) return;
+
+      // 2. Do not trigger drag select on buttons, inputs, context menu, dialogs, etc.
+      const target = e.target;
+      const isInteractive = target.closest('button, input, select, textarea, a, [role="button"]') ||
+                            target.closest('.ConfirmDialog') ||
+                            target.closest('.Modal') ||
+                            target.closest('[class*="ContextMenu"]');
+      if (isInteractive) return;
+
+      // 3. Make sure we don't start dragging if we clicked directly on draggable elements
+      if (target.closest('img, video, [draggable="true"]')) return;
+
+      const startX = e.clientX;
+      const startY = e.clientY;
+
+      let hasTriggeredDrag = false;
+      const initialSelected = new Set(selectedIds);
+      initialSelectedRef.current = initialSelected;
+      activeDragSelectedRef.current = new Set();
+
+      const handleMouseMove = (moveEvent) => {
+        const currentX = moveEvent.clientX;
+        const currentY = moveEvent.clientY;
+        const dx = currentX - startX;
+        const dy = currentY - startY;
+
+        // Threshold of 5px to distinguish click vs drag
+        if (!hasTriggeredDrag && Math.sqrt(dx * dx + dy * dy) > 5) {
+          hasTriggeredDrag = true;
+          setIsDragSelecting(true);
+          setBulkMode(true);
+        }
+
+        if (hasTriggeredDrag) {
+          moveEvent.preventDefault();
+          setDragBox({ startX, startY, currentX, currentY });
+
+          // Calculate selection box coordinates relative to viewport
+          const boxLeft = Math.min(startX, currentX);
+          const boxTop = Math.min(startY, currentY);
+          const boxWidth = Math.abs(currentX - startX);
+          const boxHeight = Math.abs(currentY - startY);
+
+          // Find all elements with data-library-item-id
+          const elements = document.querySelectorAll('[data-library-item-id]');
+          const intersectingIds = new Set();
+
+          elements.forEach((el) => {
+            const itemId = el.getAttribute('data-library-item-id');
+            if (!itemId) return;
+
+            const rect = el.getBoundingClientRect();
+            // Check intersection
+            const intersects = !(
+              rect.right < boxLeft ||
+              rect.left > boxLeft + boxWidth ||
+              rect.bottom < boxTop ||
+              rect.top > boxTop + boxHeight
+            );
+
+            if (intersects) {
+              intersectingIds.add(itemId);
+            }
+          });
+
+          // Check if intersecting IDs changed before triggering React render
+          const isSetEqual = (a, b) => a.size === b.size && [...a].every(value => b.has(value));
+          if (!isSetEqual(intersectingIds, activeDragSelectedRef.current)) {
+            activeDragSelectedRef.current = intersectingIds;
+
+            // Merge with initial selection if shift/ctrl is held
+            const isModifierHeld = moveEvent.shiftKey || moveEvent.ctrlKey || moveEvent.metaKey;
+            setSelectedIds(() => {
+              if (isModifierHeld) {
+                const merged = new Set(initialSelected);
+                intersectingIds.forEach(id => {
+                  if (initialSelected.has(id)) {
+                    merged.delete(id);
+                  } else {
+                    merged.add(id);
+                  }
+                });
+                return merged;
+              } else {
+                return new Set(intersectingIds);
+              }
+            });
+          }
+        }
+      };
+
+      const handleMouseUp = () => {
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+        setIsDragSelecting(false);
+        setDragBox(null);
+      };
+
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousedown', handleMouseDown);
+    return () => {
+      window.removeEventListener('mousedown', handleMouseDown);
+    };
+  }, [selectedIds, setBulkMode]);
 
   const imageItems = useMemo(() => items.filter((item) => item.mediaType === 'image'), [items]);
   const imagePreviewUrls = useMemo(() => imageItems.map((item) => item.previewUrl), [imageItems]);
@@ -456,6 +617,11 @@ export default function LibraryPage() {
   }, [visibleCount, filteredItems.length, groupBySession]);
 
   const visibleItems = useMemo(() => (groupBySession ? filteredItems : filteredItems.slice(0, visibleCount)), [filteredItems, groupBySession, visibleCount]);
+
+  useEffect(() => {
+    if (!isElectron || visibleItems.length === 0) return;
+    prefetchPaths(visibleItems);
+  }, [visibleItems, isElectron, prefetchPaths]);
 
   const groupedSessions = useMemo(() => {
     if (!groupBySession) return [];
@@ -750,14 +916,41 @@ export default function LibraryPage() {
     setGroupBySession(false);
   };
 
-  const toggleSelection = useCallback((id) => {
+  const toggleSelection = useCallback((id, isShift = false) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const isSelecting = !next.has(id);
+
+      if (isShift && lastSelectedIdRef.current) {
+        const idsList = visibleItems.map((item) => item.id);
+        const startIdx = idsList.indexOf(lastSelectedIdRef.current);
+        const endIdx = idsList.indexOf(id);
+
+        if (startIdx !== -1 && endIdx !== -1) {
+          const minIdx = Math.min(startIdx, endIdx);
+          const maxIdx = Math.max(startIdx, endIdx);
+
+          for (let i = minIdx; i <= maxIdx; i++) {
+            const currentId = idsList[i];
+            if (isSelecting) {
+              next.add(currentId);
+            } else {
+              next.delete(currentId);
+            }
+          }
+        }
+      } else {
+        if (isSelecting) {
+          next.add(id);
+        } else {
+          next.delete(id);
+        }
+      }
+
+      lastSelectedIdRef.current = id;
       return next;
     });
-  }, []);
+  }, [visibleItems]);
 
   const selectAllVisible = () => setSelectedIds(new Set(visibleItems.map((item) => item.id)));
   const clearSelection = () => {
@@ -825,6 +1018,97 @@ export default function LibraryPage() {
     }
   };
 
+  const handleDragStart = useCallback((e, item) => {
+    const dragItems = bulkMode && selectedIds.has(item.id)
+      ? items.filter((x) => selectedIds.has(x.id))
+      : [item];
+
+    if (isElectron && window.electronAPI?.startDragFiles) {
+      const paths = dragItems
+        .map((x) => resolvedPathsRef.current[x.id])
+        .filter(Boolean);
+
+      if (paths.length > 0) {
+        e.preventDefault();
+        window.electronAPI.startDragFiles({ paths });
+        return;
+      }
+    }
+
+    const payload = {
+      type: 'kyros-library-items',
+      items: dragItems.map((x) => ({
+        id: x.id,
+        name: x.metadata?.filename || `library-${x.originalId}.png`,
+        previewUrl: x.previewUrl,
+        downloadUrl: x.downloadUrl,
+      })),
+    };
+
+    e.dataTransfer.setData('application/json', JSON.stringify(payload));
+
+    const urls = dragItems.map((x) => window.location.origin + x.previewUrl).join('\n');
+    e.dataTransfer.setData('text/uri-list', urls);
+    e.dataTransfer.setData('text/plain', urls);
+    e.dataTransfer.effectAllowed = 'copy';
+  }, [bulkMode, selectedIds, items, isElectron]);
+
+  const sendSelectedTo = useCallback(async (page) => {
+    const selected = items.filter((item) => selectedIds.has(item.id) && item.mediaType === 'image');
+    if (selected.length === 0) {
+      notify('Select at least one image first', 'error');
+      return;
+    }
+
+    setBulkBusy(true);
+    try {
+      const itemsPayload = [];
+      for (const item of selected) {
+        const response = await fetch(item.downloadUrl || `/api/gallery/${item.originalId}/image`, { credentials: 'include' });
+        if (!response.ok) continue;
+        const blob = await response.blob();
+        const dataUrl = await blobToDataUrl(blob);
+        itemsPayload.push({
+          dataUrl,
+          name: item.metadata?.filename || `library-${item.originalId}.png`,
+        });
+      }
+
+      if (itemsPayload.length === 0) {
+        throw new Error('Failed to load any of the selected images');
+      }
+
+      const eventName = page === 'photoMatch' ? 'kyros:use-as-photo-match-source' : 'kyros:use-as-scene-source';
+      const storageKey = page === 'photoMatch' ? 'kyros.photoMatch.sources' : 'kyros.sceneRecreate.sources';
+
+      try {
+        const storagePayload = selected.map((item, idx) => ({
+          id: item.id,
+          name: item.metadata?.filename || `library-${item.originalId}.png`,
+          type: item.metadata?.mimeType || 'image/png',
+          size: item.metadata?.fileSize || 0,
+          createdAt: new Date(item.createdAt).getTime(),
+          dataUrl: itemsPayload[idx].dataUrl,
+        }));
+        window.localStorage.setItem(storageKey, JSON.stringify(storagePayload));
+      } catch (err) {
+        console.error('LocalStorage save failed', err);
+      }
+
+      navigateTo(page);
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent(eventName, { detail: { items: itemsPayload } }));
+      }, 200);
+
+      notify(`${itemsPayload.length} image${itemsPayload.length === 1 ? '' : 's'} sent to ${page === 'photoMatch' ? 'Photo Match' : 'Scene Recreate'} ⚡`, 'success');
+      clearSelection();
+    } catch (err) {
+      notify(err.message || 'Failed to send images', 'error');
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [items, selectedIds, notify, navigateTo]);
+
   const handleBulkDelete = async () => {
     const selected = items.filter((item) => selectedIds.has(item.id));
     if (selected.length === 0) return;
@@ -888,6 +1172,8 @@ export default function LibraryPage() {
                 <Btn variant="secondary" onClick={selectedIds.size === visibleItems.length && visibleItems.length > 0 ? clearSelection : selectAllVisible} disabled={bulkBusy}>
                   {selectedIds.size === visibleItems.length && visibleItems.length > 0 ? 'Deselect' : 'Select All'}
                 </Btn>
+                <Btn variant="secondary" onClick={() => sendSelectedTo('photoMatch')} disabled={selectedIds.size === 0 || bulkBusy}>→ Photo Match</Btn>
+                <Btn variant="secondary" onClick={() => sendSelectedTo('scene')} disabled={selectedIds.size === 0 || bulkBusy}>→ Scene Recreate</Btn>
                 <Btn variant="secondary" onClick={handleBulkDownload} disabled={selectedIds.size === 0 || bulkBusy}>{isElectron ? 'Save Folder' : 'Download'}</Btn>
                 <Btn variant="danger" onClick={() => setBulkDeleteTarget(true)} disabled={selectedIds.size === 0 || bulkBusy}>Delete</Btn>
                 <Btn variant="secondary" onClick={clearSelection} disabled={bulkBusy}>Cancel</Btn>
@@ -1026,18 +1312,26 @@ export default function LibraryPage() {
               </div>
               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 p-2">
                 {group.items.map((item) => (
-                  <div key={item.id} className="relative rounded-lg overflow-hidden border border-zinc-800/60 bg-zinc-950 group">
+                  <div
+                    key={item.id}
+                    data-library-item-id={item.id}
+                    className="relative rounded-lg overflow-hidden border border-zinc-800/60 bg-zinc-950 group"
+                    onMouseEnter={() => handleItemMouseEnter(item)}
+                    onMouseDown={() => handleItemMouseDown(item)}
+                  >
                     <img
                       src={item.thumbnailUrl || item.previewUrl}
                       alt={item.prompt ? item.prompt.slice(0, 80) : 'Generated image'}
                       className="w-full aspect-square object-cover cursor-pointer transition-transform duration-300 group-hover:scale-[1.03]"
                       loading="lazy"
-                      onClick={() => openImage(item)}
+                      onClick={(e) => bulkMode ? toggleSelection(item.id, e.shiftKey) : openImage(item)}
+                      draggable="true"
+                      onDragStart={(event) => handleDragStart(event, item)}
                     />
                     {bulkMode ? (
                       <button
                         type="button"
-                        onClick={() => toggleSelection(item.id)}
+                        onClick={(e) => toggleSelection(item.id, e.shiftKey)}
                         className={`absolute top-2 left-2 h-7 w-7 rounded-md border-2 flex items-center justify-center text-xs ${
                           selectedIds.has(item.id) ? 'border-blue-500 bg-blue-500 text-white' : 'border-zinc-400 bg-black/40 text-transparent'
                         }`}
@@ -1061,13 +1355,16 @@ export default function LibraryPage() {
                 bulkMode={bulkMode}
                 selected={selectedIds.has(item.id)}
                 notify={notify}
-                onSelect={() => toggleSelection(item.id)}
+                onSelect={(e) => toggleSelection(item.id, e?.shiftKey)}
                 onOpen={() => openImage(item)}
                 onContextMenu={(event) => openContextMenu(event, item)}
                 onFavorite={() => handleImageFavorite(item)}
                 onDelete={() => setDeleteTarget(item)}
                 onDownload={() => handleImageDownload(item)}
                 onEdit={() => handleOpenEditChooser(item)}
+                onDragStart={(event) => handleDragStart(event, item)}
+                onMouseEnter={() => handleItemMouseEnter(item)}
+                onMouseDown={() => handleItemMouseDown(item)}
               />
             ) : (
               <VideoLibraryCard
@@ -1076,10 +1373,13 @@ export default function LibraryPage() {
                 bulkMode={bulkMode}
                 selected={selectedIds.has(item.id)}
                 notify={notify}
-                onSelect={() => toggleSelection(item.id)}
+                onSelect={(e) => toggleSelection(item.id, e?.shiftKey)}
                 expanded={expandedVideoId === item.id}
                 onToggle={() => setExpandedVideoId((prev) => prev === item.id ? null : item.id)}
                 onDelete={() => setDeleteTarget(item)}
+                onDragStart={(event) => handleDragStart(event, item)}
+                onMouseEnter={() => handleItemMouseEnter(item)}
+                onMouseDown={() => handleItemMouseDown(item)}
               />
             )
           ))}
@@ -1087,6 +1387,18 @@ export default function LibraryPage() {
       )}
 
       {!groupBySession && visibleCount < filteredItems.length ? <div ref={sentinelRef} className="h-px" /> : null}
+
+      {isDragSelecting && dragBox && (
+        <div
+          className="fixed border border-blue-500 bg-blue-500/10 rounded pointer-events-none z-[9999]"
+          style={{
+            left: Math.min(dragBox.startX, dragBox.currentX),
+            top: Math.min(dragBox.startY, dragBox.currentY),
+            width: Math.abs(dragBox.startX - dragBox.currentX),
+            height: Math.abs(dragBox.startY - dragBox.currentY),
+          }}
+        />
+      )}
 
       <ConfirmDialog
         open={!!deleteTarget}
@@ -1165,6 +1477,8 @@ export default function LibraryPage() {
           <Btn variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={selectedIds.size === visibleItems.length && visibleItems.length > 0 ? clearSelection : selectAllVisible} disabled={bulkBusy}>
             {selectedIds.size === visibleItems.length && visibleItems.length > 0 ? 'Deselect' : 'Select All'}
           </Btn>
+          <Btn variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={() => sendSelectedTo('photoMatch')} disabled={selectedIds.size === 0 || bulkBusy}>→ Photo Match</Btn>
+          <Btn variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={() => sendSelectedTo('scene')} disabled={selectedIds.size === 0 || bulkBusy}>→ Scene Recreate</Btn>
           <Btn variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={handleBulkDownload} disabled={selectedIds.size === 0 || bulkBusy}>{isElectron ? 'Save Folder' : 'Download'}</Btn>
           <Btn variant="danger" className="!px-3 !py-1.5 !text-xs" onClick={() => setBulkDeleteTarget(true)} disabled={selectedIds.size === 0 || bulkBusy}>Delete</Btn>
           <Btn variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={clearSelection} disabled={bulkBusy}>Cancel</Btn>
@@ -1185,12 +1499,14 @@ export default function LibraryPage() {
   );
 }
 
-function ImageLibraryCard({ item, bulkMode, selected, onSelect, onOpen, onFavorite, onDelete, onDownload, onEdit, onContextMenu, notify }) {
+function ImageLibraryCard({ item, bulkMode, selected, onSelect, onOpen, onFavorite, onDelete, onDownload, onEdit, onContextMenu, onDragStart, onMouseEnter, onMouseDown, notify }) {
   return (
-    <div className={`rounded-2xl overflow-hidden bg-zinc-900 border shadow-lg hover:shadow-xl transition-all duration-300 group ${
+    <div data-library-item-id={item.id} className={`rounded-2xl overflow-hidden bg-zinc-900 border shadow-lg hover:shadow-xl transition-all duration-300 group ${
       selected ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-zinc-800/60'
     }`}
     onContextMenu={bulkMode ? undefined : onContextMenu}
+    onMouseEnter={onMouseEnter}
+    onMouseDown={onMouseDown}
     >
       <div className="relative bg-zinc-950 overflow-hidden">
         <img
@@ -1198,12 +1514,14 @@ function ImageLibraryCard({ item, bulkMode, selected, onSelect, onOpen, onFavori
           alt={item.prompt ? item.prompt.slice(0, 120) : 'Generated image'}
           className="w-full aspect-[4/5] object-cover cursor-pointer transition-transform duration-300 group-hover:scale-[1.02]"
           loading="lazy"
-          onClick={bulkMode ? onSelect : onOpen}
+          onClick={bulkMode ? (e) => onSelect(e) : onOpen}
+          draggable="true"
+          onDragStart={onDragStart}
         />
         {bulkMode ? (
           <button
             type="button"
-            onClick={onSelect}
+            onClick={(e) => onSelect(e)}
             className={`absolute top-2 left-2 h-8 w-8 rounded-md border-2 flex items-center justify-center ${
               selected ? 'border-blue-500 bg-blue-500 text-white' : 'border-zinc-400 bg-black/40 text-transparent'
             }`}
@@ -1252,14 +1570,19 @@ function ImageLibraryCard({ item, bulkMode, selected, onSelect, onOpen, onFavori
   );
 }
 
-function VideoLibraryCard({ item, bulkMode, selected, onSelect, expanded, onToggle, onDelete, notify }) {
+function VideoLibraryCard({ item, bulkMode, selected, onSelect, expanded, onToggle, onDelete, onDragStart, onMouseEnter, onMouseDown, notify }) {
   const hasFile = !!item.previewUrl;
   const statusColor = item.status === 'completed' ? 'green' : item.status === 'failed' ? 'red' : 'blue';
 
   return (
-    <div className={`rounded-2xl overflow-hidden bg-zinc-900 border shadow-lg hover:shadow-xl transition-all duration-300 group ${
-      selected ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-zinc-800/60'
-    }`}>
+    <div
+      data-library-item-id={item.id}
+      className={`rounded-2xl overflow-hidden bg-zinc-900 border shadow-lg hover:shadow-xl transition-all duration-300 group ${
+        selected ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-zinc-800/60'
+      }`}
+      onMouseEnter={onMouseEnter}
+      onMouseDown={onMouseDown}
+    >
       <div className="relative aspect-video bg-zinc-950 flex items-center justify-center overflow-hidden">
         {hasFile ? (
           <video
@@ -1269,7 +1592,7 @@ function VideoLibraryCard({ item, bulkMode, selected, onSelect, expanded, onTogg
             loop
             playsInline
             preload="metadata"
-            onClick={bulkMode ? onSelect : onToggle}
+            onClick={bulkMode ? (e) => onSelect(e) : onToggle}
             onMouseEnter={(e) => { if (!bulkMode) e.currentTarget.play().catch(() => {}); }}
             onMouseLeave={(e) => {
               if (!bulkMode) {
@@ -1277,6 +1600,8 @@ function VideoLibraryCard({ item, bulkMode, selected, onSelect, expanded, onTogg
                 e.currentTarget.currentTime = 0;
               }
             }}
+            draggable="true"
+            onDragStart={onDragStart}
           />
         ) : (
           <div className="text-zinc-600 text-xs px-4 text-center">{item.status === 'failed' ? 'Video failed' : 'Video still processing'}</div>
@@ -1285,7 +1610,7 @@ function VideoLibraryCard({ item, bulkMode, selected, onSelect, expanded, onTogg
           <Badge color={statusColor}>{item.status || 'processing'}</Badge>
           <Badge color="zinc">Video</Badge>
         </div>
-        {bulkMode ? <button type="button" onClick={onSelect} className={`absolute top-2 right-2 h-8 w-8 rounded-md border-2 flex items-center justify-center ${selected ? 'border-blue-500 bg-blue-500 text-white' : 'border-zinc-400 bg-black/40 text-transparent'}`}>{selected ? '\u2713' : ''}</button> : null}
+        {bulkMode ? <button type="button" onClick={(e) => onSelect(e)} className={`absolute top-2 right-2 h-8 w-8 rounded-md border-2 flex items-center justify-center ${selected ? 'border-blue-500 bg-blue-500 text-white' : 'border-zinc-400 bg-black/40 text-transparent'}`}>{selected ? '\u2713' : ''}</button> : null}
       </div>
       <div className="px-3 py-3 space-y-2">
         <PromptSnippet prompt={item.prompt} notify={notify} />

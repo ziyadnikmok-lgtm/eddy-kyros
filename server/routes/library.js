@@ -81,4 +81,47 @@ router.get('/', (_req, res, next) => {
   }
 });
 
+const { UPLOADS_DIR } = require('../paths');
+const fs = require('node:fs');
+const path = require('node:path');
+
+router.post('/bulk-paths', (req, res, next) => {
+  try {
+    const { items } = req.body;
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.json({ success: true, data: [] });
+    }
+
+    const results = [];
+    for (const item of items) {
+      if (item.mediaType === 'image') {
+        try {
+          const { filePath } = galleryManager.getFilePath(item.originalId);
+          if (fs.existsSync(filePath)) {
+            results.push({
+              id: item.id,
+              filePath,
+              filename: path.basename(filePath),
+            });
+          }
+        } catch {}
+      } else if (item.mediaType === 'video' && item.metadata?.filename) {
+        const videoDir = path.join(UPLOADS_DIR, 'videos');
+        const filePath = path.join(videoDir, path.basename(item.metadata.filename));
+        if (fs.existsSync(filePath)) {
+          results.push({
+            id: item.id,
+            filePath,
+            filename: path.basename(filePath),
+          });
+        }
+      }
+    }
+
+    res.json({ success: true, data: results });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

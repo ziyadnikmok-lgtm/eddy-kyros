@@ -78,17 +78,18 @@ router.post('/execute', requirePlanCapacity({
       return { type: 'carousel', prompt, sceneMemoryId, outfitId: outfit.id, cameraProfileId: slide.cameraProfileId || 'iphone_selfie', slide: index + 1, kineticMotionBlur: blurIndices.has(index) };
     });
 
+    const activeProvider = apiKeyManager.shouldUseVertexBackend() ? 'vertex' : 'gemini';
     const jobIds = startMultiBatches(entries, { aspectRatio: finalAspectRatio, imageSize: finalImageSize, imageModel, gallerySource: 'carousel' }, { characterId, activeReferenceIds: resolvedActiveReferenceIds });
     const runId = startGenerationRun({
       userId: req.session?.userId,
       feature: 'carousel',
-      provider: 'gemini',
+      provider: activeProvider,
       model: imageModel || null,
     });
     finishGenerationRun(runId, {
       status: 'succeeded',
       outputCount: entries.length,
-      provider: 'gemini',
+      provider: activeProvider,
       model: imageModel || null,
     });
     logUsageEvent({
@@ -210,17 +211,18 @@ router.post('/polls', requirePlanCapacity({
       entries.push({ type: 'carousel', prompt: withImageQualityLock(poll.optionB.prompt), sceneMemoryId: null, outfitId: null, cameraProfileId: 'iphone_selfie' });
     }
 
+    const pollActiveProvider = apiKeyManager.shouldUseVertexBackend() ? 'vertex' : 'gemini';
     const jobIds = startMultiBatches(entries, { aspectRatio: finalAspectRatio, imageSize: finalImageSize, imageModel, gallerySource: 'carousel' }, { characterId: characterId || null, activeReferenceIds: resolvedActiveReferenceIds });
     const pollRunId = startGenerationRun({
       userId: req.session?.userId,
       feature: 'carousel-polls',
-      provider: 'gemini',
+      provider: pollActiveProvider,
       model: imageModel || null,
     });
     finishGenerationRun(pollRunId, {
       status: 'succeeded',
       outputCount: entries.length,
-      provider: 'gemini',
+      provider: pollActiveProvider,
       model: imageModel || null,
     });
 

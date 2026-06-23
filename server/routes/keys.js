@@ -24,6 +24,29 @@ function sanitizeErrorMessage(err) {
   return raw.replace(/\s+/g, ' ').slice(0, 180);
 }
 
+async function validateGeminiApiKey(apiKey) {
+  const key = String(apiKey || '').trim();
+  const response = await withTimeout(
+    fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+      headers: { 'x-goog-api-key': key },
+    }),
+    HEALTH_TIMEOUT_MS,
+    'Gemini API key validation'
+  );
+  if (response.ok) return;
+
+  let message = 'Gemini API key is invalid. Copy the full key from Google AI Studio.';
+  try {
+    const data = await response.json();
+    if (data?.error?.message) message = data.error.message;
+  } catch {}
+
+  if (response.status === 400 || response.status === 401 || response.status === 403) {
+    throw new AppError(message, 401, 'INVALID_API_KEY');
+  }
+  throw new AppError(`Could not validate Gemini API key: ${message}`, response.status || 502, 'GEMINI_ERROR');
+}
+
 function classifyVertexIssue(err) {
   const raw = (err && err.message ? String(err.message) : '').toLowerCase();
   const links = {
@@ -207,7 +230,7 @@ async function checkApifyHealth() {
   }
 }
 
-router.post('/', (req, res, next) => {
+router.post('/', async (req, res, next) => {
   try {
     const { name, apiKey } = req.body;
 
@@ -220,6 +243,8 @@ router.post('/', (req, res, next) => {
     if (apiKey.trim().length > 200) {
       throw new AppError('"apiKey" must be 200 characters or fewer', 400, 'VALIDATION_ERROR');
     }
+
+    await validateGeminiApiKey(apiKey);
 
     const result = apiKeyManager.addKey(name, apiKey);
     invalidateHealthCache();

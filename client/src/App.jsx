@@ -26,6 +26,7 @@ import {
   IconMagnifier,
   IconBookOpen,
   IconImage,
+  IconClipboard,
   IconRulerPen,
   IconGrid2,
   IconUsers,
@@ -44,10 +45,10 @@ const AutoGeneratorPage = lazy(() => import('./pages/AutoGeneratorPage'));
 const CharactersPage = lazy(() => import('./pages/CharactersPage'));
 const GalleryPage = lazy(() => import('./pages/GalleryPage'));
 const LibraryPage = lazy(() => import('./pages/LibraryPage'));
+const PasteInboxPage = lazy(() => import('./pages/PasteInboxPage'));
 const SceneRecreatePage = lazy(() => import('./pages/SceneRecreatePage'));
-const ReelRecreatePage = lazy(() => import('./pages/ReelRecreatePage'));
+const FrameLibraryPage = lazy(() => import('./pages/FrameLibraryPage'));
 const PostClonePage = lazy(() => import('./pages/PostClonePage'));
-const PinterestPage = lazy(() => import('./pages/PinterestPage'));
 const StyleLibraryPage = lazy(() => import('./pages/StyleLibraryPage'));
 const ProfileAnalyzerPage = lazy(() => import('./pages/ProfileAnalyzerPage'));
 const PromptBuilderPage = lazy(() => import('./pages/PromptBuilderPage'));
@@ -59,6 +60,7 @@ const ReformatPage = lazy(() => import('./pages/ReformatPage'));
 const NsfwGeneratePage = lazy(() => import('./pages/NsfwGeneratePage'));
 const ImageEditorPage = lazy(() => import('./pages/ImageEditorPage'));
 const BillingPage = lazy(() => import('./pages/BillingPage'));
+const InstagramFramesPage = lazy(() => import('./pages/InstagramFramesPage'));
 const LogsPage = lazy(() => import('./pages/LogsPage'));
 const PhotoMatchPage = lazy(() => import('./pages/PhotoMatchPage'));
 const NanoBypassPage = lazy(() => import('./pages/NanoBypassPage'));
@@ -76,15 +78,16 @@ const NAV_ICONS = {
   scene: IconCamera,
   video: IconVideo,
   videoGallery: IconGrid2,
-  reel: IconSwap,
   postClone: IconCopies,
-  pinterest: IconImage,
+  instagramFrames: IconImage,
+  frameLibrary: IconGrid2,
   styleLibrary: IconColorPalette,
   promptBuilder: IconMagicWandSparkle,
   loraDataset: IconLayers,
   profileAnalyzer: IconMagnifier,
   storyteller: IconBookOpen,
   library: IconGrid2,
+  pasteInbox: IconClipboard,
   gallery: IconImage,
   imageEditor: IconRulerPen,
   characters: IconUsers,
@@ -109,14 +112,15 @@ const NAV_COLORS = {
   scene:          ['#67e8f9', '#0891b2'],
   video:          ['#f9a8d4', '#ec4899'],
   videoGallery:   ['#5eead4', '#0d9488'],
-  reel:           ['#fdba74', '#ea580c'],
   postClone:      ['#d8b4fe', '#9333ea'],
-  pinterest:      ['#fda4af', '#ec4899'],
+  instagramFrames: ['#f9a8d4', '#e879f9'],
+  frameLibrary:    ['#fcd34d', '#f43f5e'],
   styleLibrary:   ['#6ee7b7', '#059669'],
   promptBuilder:  ['#a5b4fc', '#4f46e5'],
   profileAnalyzer:['#7dd3fc', '#0284c7'],
   storyteller:    ['#bef264', '#65a30d'],
   library:        ['#67e8f9', '#0284c7'],
+  pasteInbox:     ['#c084fc', '#7c3aed'],
   gallery:        ['#fcd34d', '#d97706'],
   imageEditor:    ['#f9a8d4', '#db2777'],
   characters:     ['#c4b5fd', '#7c3aed'],
@@ -142,6 +146,16 @@ const NAV_SECTIONS = [
     ],
   },
   {
+    label: 'Tools',
+    items: [
+      { id: 'styleLibrary', label: 'Style Library' },
+      { id: 'promptBuilder', label: 'Prompt Builder' },
+      { id: 'loraDataset', label: 'LoRA Dataset' },
+      { id: 'profileAnalyzer', label: 'Profile Analyzer' },
+      { id: 'storyteller', label: 'Storyteller' },
+    ],
+  },
+  {
     label: 'Image Remix',
     items: [
       { id: 'scene', label: 'Scene Recreate' },
@@ -153,29 +167,20 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    label: 'Video Remix',
+    label: 'Media Grab',
     items: [
-      { id: 'reel', label: 'Reel Copy' },
-      { id: 'pinterest', label: 'Pinterest DL' },
+      { id: 'instagramFrames', label: 'Frame Grabber' },
+      { id: 'frameLibrary', label: 'Frame Library' },
     ],
   },
-  {
-    label: 'Tools',
-    items: [
-      { id: 'styleLibrary', label: 'Style Library' },
-      { id: 'promptBuilder', label: 'Prompt Builder' },
-      { id: 'loraDataset', label: 'LoRA Dataset' },
-      { id: 'profileAnalyzer', label: 'Profile Analyzer' },
-      { id: 'storyteller', label: 'Storyteller' },
-    ],
-  },
-  {
-    label: 'Content',
-    items: [
-      { id: 'library', label: 'Library' },
-      { id: 'imageEditor', label: 'Image Editor' },
-      { id: 'characters', label: 'Characters' },
-    ],
+    {
+      label: 'Content',
+      items: [
+        { id: 'library', label: 'Library' },
+        { id: 'pasteInbox', label: 'Paste Inbox' },
+        { id: 'imageEditor', label: 'Image Editor' },
+        { id: 'characters', label: 'Characters' },
+      ],
   },
   {
     label: 'Account',
@@ -204,12 +209,14 @@ const FEED_HIDDEN_PAGES = new Set([
   'referral',
   'settings',
   'logs',
+  'instagramFrames',
+  'frameLibrary',
 ]);
 
 // Pages where controls panel is narrow and feed takes the rest of the space
 const FEED_DOMINANT_PAGES = new Set([
   'generate', 'nsfwGenerate', 'batch', 'video', 'auto',
-  'scene', 'postClone', 'reel', 'carousel', 'photoMatch', 'nanoBypass', 'pinterest', 'seedEdit',
+  'scene', 'postClone', 'carousel', 'photoMatch', 'nanoBypass', 'seedEdit',
 ]);
 
 function SidebarHeader() {
@@ -231,15 +238,16 @@ const PAGE_DESCRIPTIONS = {
   auto: 'AI-planned multi-day content schedules',
   carousel: 'Generate slide variations from a source image',
   scene: 'Upload a scene and recreate it with your character',
-  reel: 'Recreate Instagram reels with your character',
   postClone: 'Clone Instagram posts with your character',
-  pinterest: 'Fetch Pinterest pins and recreate them with your character',
+  instagramFrames: 'Grab frames from any public Instagram Reel or TikTok Video — send to Photo Match or Scene Recreate',
+  frameLibrary: 'Manage your downloaded Instagram/TikTok frames and reference images',
   styleLibrary: 'Manage reusable style building blocks',
   promptBuilder: 'Visual prompt composition with Nano-Banana formula',
   loraDataset: 'Build captioned LoRA training datasets from characters',
   profileAnalyzer: 'Extract style patterns from Instagram profiles',
   storyteller: 'Generate captions and hashtags for images',
   library: 'Browse and manage all generated images and videos',
+  pasteInbox: 'Save pasted images for quick reuse in Photo Match or Scene Recreate',
   gallery: 'Browse and manage all generated images',
   videoGallery: 'Browse and manage all generated videos',
   characters: 'Manage character identities and references',
@@ -260,15 +268,16 @@ const PAGES = {
   batch: BatchPage,
   carousel: CarouselPage,
   scene: SceneRecreatePage,
-  reel: ReelRecreatePage,
   postClone: PostClonePage,
-  pinterest: PinterestPage,
+  instagramFrames: InstagramFramesPage,
+  frameLibrary: FrameLibraryPage,
   styleLibrary: StyleLibraryPage,
   promptBuilder: PromptBuilderPage,
   loraDataset: LoraDatasetPage,
   profileAnalyzer: ProfileAnalyzerPage,
   storyteller: StorytellerPage,
   library: LibraryPage,
+  pasteInbox: PasteInboxPage,
   video: VideoPage,
   videoGallery: VideoGalleryPage,
   auto: AutoGeneratorPage,

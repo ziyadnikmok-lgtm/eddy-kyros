@@ -149,6 +149,25 @@ router.post('/bulk-download', async (req, res, next) => {
   }
 });
 
+router.post('/bulk-paths', (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new AppError('ids array is required', 400, 'VALIDATION_ERROR');
+    }
+    const files = galleryManager.getMultipleFilePaths(ids);
+    res.json({
+      success: true,
+      data: files.map((f) => ({
+        filePath: f.filePath,
+        filename: f.filename,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/tags', (_req, res, next) => {
   try {
     const tags = galleryManager.getAllTags();

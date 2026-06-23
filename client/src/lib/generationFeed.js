@@ -66,3 +66,9 @@ export function subscribeFeed(fn) {
   fn([..._feed]);
   return () => _listeners.delete(fn);
 }
+
+export function removeFeedItem(id) {
+  _feed = _feed.filter((item) => item.id !== id);
+  persist();
+  emit();
+}

@@ -333,6 +333,7 @@ export const gallery = {
 
 export const library = {
   list: () => request('/library'),
+  bulkPaths: (items) => request('/library/bulk-paths', { method: 'POST', body: { items } }),
 };
 
 export const scene = {

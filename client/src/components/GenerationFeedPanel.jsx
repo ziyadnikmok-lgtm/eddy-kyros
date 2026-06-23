@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { subscribeFeed } from '../lib/generationFeed';
+import { subscribeFeed, removeFeedItem } from '../lib/generationFeed';
 import { gallery as galleryApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import useImageLightbox from './lightbox/useImageLightbox';
@@ -503,6 +503,7 @@ const feedCtxIcons = {
   grid: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>,
   download: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
   recreate: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.47"/></svg>,
+  trash: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>,
 };
 
 function FeedContextMenuItem({ icon, label, tone = 'default', ...props }) {
@@ -560,6 +561,8 @@ function ActionMenu({ x, y, item, onAction, onClose }) {
         <FeedContextMenuItem icon={feedCtxIcons.grid} label="Go to Carousel" onClick={() => onAction('carousel', item)} />
         <div className="my-1 border-t border-zinc-800/80 mx-2" />
         <FeedContextMenuItem icon={feedCtxIcons.download} label="Download" onClick={() => onAction('download', item)} />
+        <div className="my-1 border-t border-zinc-800/80 mx-2" />
+        <FeedContextMenuItem icon={feedCtxIcons.trash} label="Delete from feed" tone="danger" onClick={() => onAction('deleteFeedItem', item)} />
       </div>
     </div>
   );
@@ -787,6 +790,12 @@ export default function GenerationFeedPanel({ mode = 'rail' }) {
       } finally {
         setActionBusyId('');
       }
+    }
+
+    if (action === 'deleteFeedItem') {
+      removeFeedItem(item.id);
+      notify('Removed from feed', 'success');
+      return;
     }
   };
 
