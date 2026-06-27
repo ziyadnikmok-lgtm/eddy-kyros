@@ -337,20 +337,6 @@ ipcMain.handle('license:activate', async (_event, payload) => {
   }
   const result = validateKey(keyStr);
   if (result.valid) {
-    try {
-      const activation = await postJson(APP_LICENSE_ENDPOINT, {
-        key: keyStr,
-        customerEmail,
-        machineFingerprint: getMachineFingerprint(),
-        appVersion: APP_VERSION,
-        platform: process.platform,
-      });
-      if (!activation.body?.valid) {
-        return { valid: false, reason: activation.body?.reason || 'This token could not be activated.' };
-      }
-    } catch (err) {
-      return { valid: false, reason: `Activation requires internet: ${err.message}` };
-    }
     result.customerEmail = customerEmail;
     saveLicense(app, result, customerEmail);
     reportAppUsage('license_activated', { licenseId: result.id, customerEmail, plan: result.plan, maxSeats: result.maxSeats });
