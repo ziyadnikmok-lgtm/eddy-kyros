@@ -589,37 +589,7 @@ app.whenReady().then(async () => {
   console.log('[electron] app.whenReady');
   userDataPath = app.getPath('userData');
 
-  // REMOTE_URL mode: skip local backend, open the hosted website directly.
-  // Set REMOTE_URL in the userData .env or as an env var to enable.
-  // Example:  REMOTE_URL=https://kyros.yourdomain.com
-  const envPath = path.join(userDataPath, '.env');
-  const forceLocalMode = process.env.KYROS_FORCE_LOCAL === '1';
-  let remoteUrl = process.env.REMOTE_URL;
-  if (!forceLocalMode && !remoteUrl && fs.existsSync(envPath)) {
-    const envContent = fs.readFileSync(envPath, 'utf8');
-    const match = envContent.match(/^REMOTE_URL=(.+)$/m);
-    if (match) remoteUrl = match[1].trim();
-  }
-
-  if (remoteUrl && !forceLocalMode) {
-    console.log(`[electron] REMOTE_URL mode — loading ${remoteUrl}`);
-    serverPort = null;
-    mainWindow = new BrowserWindow({
-      width: 1400, height: 900, minWidth: 1024, minHeight: 700,
-      title: 'Kyros Studio',
-      backgroundColor: '#09090b',
-      webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
-    });
-    mainWindow.loadURL(remoteUrl);
-    mainWindow.webContents.on('did-finish-load', () => console.log('[electron] remote window loaded'));
-    mainWindow.once('ready-to-show', () => reportAppUsage('app_opened', { mode: 'remote' }));
-    mainWindow.on('closed', () => { mainWindow = null; });
-    return;
-  }
-
-  if (forceLocalMode) {
-    console.log('[electron] KYROS_FORCE_LOCAL=1 — skipping REMOTE_URL mode');
-  }
+  // Always run local backend — remote URL mode disabled
 
   ensureUserData();
   await startBackend();
