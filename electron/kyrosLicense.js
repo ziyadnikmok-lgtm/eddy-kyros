@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const LICENSE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAIBkoWCq2TCMU+P/+gyOGPLGmTRO3g4zWZDDhootN55c=
+MCowBQYDK2VwAyEAckfonQ2HSDFr7YdIxzL/C+4vKuPOcAhcJUjTh3qGj1U=
 -----END PUBLIC KEY-----`;
 
 function getLicenseFile(app) {
