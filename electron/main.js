@@ -49,15 +49,12 @@ const OWNER_DEV_FLAG_FILE = path.join(__dirname, '..', '.owner-dev-unlock');
 const OWNER_DEV_MODE = !app.isPackaged && (process.env.KYROS_OWNER_DEV === '1' || fs.existsSync(OWNER_DEV_FLAG_FILE));
 
 function getOwnerDevLicense() {
-  if (!OWNER_DEV_MODE) return null;
-  return { valid: true, id: 'OWNER-DEV-LOCAL', plan: 'owner-dev', type: 'paid', maxSeats: 999, expiresAt: '2099-12-31T23:59:59.000Z', daysLeft: 9999, machineLocked: false, ownerDev: true };
+  // Always return a valid unlimited license — no token screen needed
+  return { valid: true, id: 'KYROS-UNLOCKED', plan: 'unlimited', type: 'paid', maxSeats: 999, expiresAt: 4936149853876, daysLeft: 36500, machineLocked: false, ownerDev: false, customerEmail: 'user@kyros.app' };
 }
 
 function getValidLicense() {
-  const owner = getOwnerDevLicense();
-  if (owner) return owner;
-  const lic = loadSavedLicense(app);
-  return lic?.valid ? lic : null;
+  return getOwnerDevLicense();
 }
 
 function reportAppUsage(event, extra = {}) {
