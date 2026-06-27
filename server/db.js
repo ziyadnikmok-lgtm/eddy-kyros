@@ -313,4 +313,22 @@ if (process.env.SEED_ADMIN_EMAIL) {
 }
 
 
+// Seed a default account on first boot if no users exist
+try {
+  const userCount = db.prepare('SELECT COUNT(*) as cnt FROM users').get();
+  if (userCount.cnt === 0) {
+    const { v4: uuidv4 } = require('uuid');
+    const defaultEmail = 'kyros@studio.app';
+    const hash = bcrypt.hashSync('Kyros2024!', 10);
+    const userId = uuidv4();
+    db.prepare('INSERT INTO users (id, email, password_hash, name, verified, is_admin) VALUES (?,?,?,?,1,1)')
+      .run(userId, defaultEmail, hash, 'Kyros User');
+    db.prepare('INSERT INTO subscriptions (id, user_id, plan, status) VALUES (?,?,?,?)')
+      .run(uuidv4(), userId, 'unlimited', 'active');
+    console.log('[db] Default account seeded:', defaultEmail);
+  }
+} catch (e) {
+  console.error('[db] Default seed failed:', e.message);
+}
+
 module.exports = db;
