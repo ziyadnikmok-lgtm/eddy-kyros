@@ -620,12 +620,18 @@ app.whenReady().then(async () => {
 
 // startBackendProcess — fork the server but DON'T wait for health check
 // (the loading screen handles that)
+let lastServerError = '';
+const serverErrorFile = path.join(app.getPath('temp'), 'kyros-server-error.txt');
+
 async function startBackendProcess() {
   console.log(`[electron] startBackendProcess port=${serverPort}`);
 
   const envPath = path.join(userDataPath, '.env');
   const envExists = fs.existsSync(envPath);
   console.log(`[electron] envPath=${envPath} exists=${envExists}`);
+
+  // Clear old error file
+  try { fs.unlinkSync(serverErrorFile); } catch {}
 
   serverProcess = fork(serverEntry, [], {
     execPath: process.execPath,
@@ -641,12 +647,37 @@ async function startBackendProcess() {
   });
   console.log('[electron] forked backend process');
 
+  const stderrChunks = [];
   serverProcess.stdout?.on('data', (d) => { process.stdout.write(d); writeLog('[server] ' + d.toString().trim()); });
-  serverProcess.stderr?.on('data', (d) => { process.stderr.write(d); writeLog('[server:err] ' + d.toString().trim()); });
+  serverProcess.stderr?.on('data', (d) => {
+    process.stderr.write(d);
+    const line = d.toString().trim();
+    writeLog('[server:err] ' + line);
+    stderrChunks.push(line);
+    // Keep only last 20 lines
+    if (stderrChunks.length > 20) stderrChunks.shift();
+  });
 
   serverProcess.on('exit', (code) => {
     console.log(`[electron] Backend exited with code ${code}`);
     serverProcess = null;
+    if (code !== 0 && code !== null) {
+      lastServerError = stderrChunks.join('\n') || `Server exited with code ${code}`;
+      try { fs.writeFileSync(serverErrorFile, lastServerError); } catch {}
+      console.error(`[electron] Server crash error:\n${lastServerError}`);
+      // Inject error directly into loading screen
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const safeError = lastServerError.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '<br>');
+        mainWindow.webContents.executeJavaScript(`
+          try {
+            document.getElementById('spinner').style.display = 'none';
+            document.getElementById('status').textContent = 'Server crashed (exit code ${code})';
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('error').innerHTML = '<pre style="text-align:left;font-size:11px;color:#f87171;white-space:pre-wrap;max-height:300px;overflow:auto;background:#18181b;padding:12px;border-radius:8px;margin-top:8px">${safeError}</pre>';
+          } catch(e) {}
+        `).catch(() => {});
+      }
+    }
   });
 }
 
