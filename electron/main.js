@@ -177,20 +177,29 @@ function ensureUserData() {
     fs.copyFileSync(envSource, envDest);
   }
 
-  // Auto-generate ENCRYPTION_SECRET if missing (clean builds ship without one)
+  // Auto-generate all required secrets if missing (clean builds ship without them)
   if (fs.existsSync(envDest)) {
     const crypto = require('node:crypto');
     let envContent = fs.readFileSync(envDest, 'utf8');
-    if (/^ENCRYPTION_SECRET=\s*$/m.test(envContent) || !envContent.includes('ENCRYPTION_SECRET=')) {
-      const secret = crypto.randomBytes(32).toString('hex');
-      envContent = envContent.replace(
-        /^ENCRYPTION_SECRET=.*$/m,
-        `ENCRYPTION_SECRET=${secret}`
-      );
-      if (!envContent.includes('ENCRYPTION_SECRET=')) {
-        envContent += `\nENCRYPTION_SECRET=${secret}\n`;
+    let changed = false;
+
+    const secretKeys = ['ENCRYPTION_SECRET', 'SESSION_SECRET', 'SERVER_ENCRYPTION_KEY'];
+    for (const key of secretKeys) {
+      const emptyPattern = new RegExp(`^${key}=\\s*$`, 'm');
+      if (emptyPattern.test(envContent) || !envContent.includes(`${key}=`)) {
+        const secret = crypto.randomBytes(32).toString('hex');
+        if (envContent.includes(`${key}=`)) {
+          envContent = envContent.replace(new RegExp(`^${key}=.*$`, 'm'), `${key}=${secret}`);
+        } else {
+          envContent += `\n${key}=${secret}\n`;
+        }
+        changed = true;
       }
+    }
+
+    if (changed) {
       fs.writeFileSync(envDest, envContent);
+      console.log('[electron] Auto-generated missing secrets in .env');
     }
   }
 
@@ -556,9 +565,9 @@ function createWindow() {
     height: 900,
     minWidth: 1024,
     minHeight: 700,
-    show: false,
+    show: true,
     title: 'Kyros Studio',
-    backgroundColor: '#09090b', // zinc-950 to match the dark theme
+    backgroundColor: '#09090b',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -566,20 +575,39 @@ function createWindow() {
     },
   });
 
-  mainWindow.loadURL(`http://127.0.0.1:${serverPort}`);
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
+  const serverUrl = `http://127.0.0.1:${serverPort}`;
+  let retryCount = 0;
+  const maxRetries = 10;
+
+  function loadApp() {
+    console.log(`[electron] loading ${serverUrl} (attempt ${retryCount + 1})`);
+    mainWindow.loadURL(serverUrl);
+  }
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.log('[electron] window finished load');
     mainWindow.focus();
     reportAppUsage('app_opened', { mode: 'local' });
-    console.log('[electron] window shown');
   });
-  mainWindow.webContents.on('did-finish-load', () => console.log('[electron] window finished load'));
-  mainWindow.webContents.on('did-fail-load', (_event, code, desc) => console.error(`[electron] window failed load code=${code} desc=${desc}`));
+
+  mainWindow.webContents.on('did-fail-load', (_event, code, desc) => {
+    console.error(`[electron] window failed load code=${code} desc=${desc}`);
+    retryCount++;
+    if (retryCount < maxRetries) {
+      console.log(`[electron] retrying in 2s (attempt ${retryCount + 1}/${maxRetries})`);
+      setTimeout(loadApp, 2000);
+    } else {
+      console.error('[electron] max retries reached, showing error');
+      mainWindow.loadURL(`data:text/html,<html><body style="background:#09090b;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h1>Kyros Studio</h1><p>Backend server failed to start.</p><p style="color:#888">Check the logs or restart the app.</p></div></body></html>`);
+    }
+  });
 
   mainWindow.on('closed', () => {
     console.log('[electron] window closed');
     mainWindow = null;
   });
+
+  loadApp();
 }
 
 // ── App lifecycle ───────────────────────────────────────────────────────
