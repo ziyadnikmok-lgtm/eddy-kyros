@@ -197,9 +197,15 @@ function ensureUserData() {
       }
     }
 
+    // Strip REMOTE_URL if present (leftover from old builds)
+    if (/^REMOTE_URL=.+$/m.test(envContent)) {
+      envContent = envContent.replace(/^REMOTE_URL=.*$/m, 'REMOTE_URL=');
+      changed = true;
+    }
+
     if (changed) {
       fs.writeFileSync(envDest, envContent);
-      console.log('[electron] Auto-generated missing secrets in .env');
+      console.log('[electron] Updated .env (generated secrets / cleared REMOTE_URL)');
     }
   }
 
