@@ -499,70 +499,53 @@ function findFreePort() {
   });
 }
 
-// ── Wait for backend health check ───────────────────────────────────────
-
-function waitForServer(port, timeoutMs = 90_000) {
-  const start = Date.now();
-  return new Promise((resolve, reject) => {
-    function check() {
-      if (Date.now() - start > timeoutMs) {
-        return reject(new Error('Backend did not start in time'));
-      }
-      const req = http.get(`http://127.0.0.1:${port}/api/health`, (res) => {
-        res.resume(); // drain response to free socket
-        if (res.statusCode === 200) return resolve();
-        setTimeout(check, 300);
-      });
-      req.on('error', () => setTimeout(check, 300));
-      req.setTimeout(5000, () => { req.destroy(); });
-    }
-    check();
-  });
-}
-
-// ── Start backend ───────────────────────────────────────────────────────
-
-async function startBackend() {
-  serverPort = await findFreePort();
-  console.log(`[electron] startBackend port=${serverPort}`);
-
-  const envPath = path.join(userDataPath, '.env');
-  const envExists = fs.existsSync(envPath);
-  console.log(`[electron] envPath=${envPath} exists=${envExists}`);
-
-  serverProcess = fork(serverEntry, [], {
-    execPath: process.execPath,
-    env: {
-      ...process.env,
-      ELECTRON_RUN_AS_NODE: '1',
-      PORT: String(serverPort),
-      HOST: '127.0.0.1',
-      ELECTRON_USER_DATA: userDataPath,
-      // Load .env from userData if it exists there
-      ...(envExists ? { DOTENV_CONFIG_PATH: envPath } : {}),
-    },
-    stdio: 'pipe',
-  });
-  console.log('[electron] forked backend process');
-
-  serverProcess.stdout?.on('data', (d) => { process.stdout.write(d); writeLog('[server] ' + d.toString().trim()); });
-  serverProcess.stderr?.on('data', (d) => { process.stderr.write(d); writeLog('[server:err] ' + d.toString().trim()); });
-
-  serverProcess.on('exit', (code) => {
-    console.log(`[electron] Backend exited with code ${code}`);
-    serverProcess = null;
-    if (mainWindow && code !== 0 && code !== null) {
-      const { dialog } = require('electron');
-      dialog.showErrorBox('Backend Crashed', `The server process exited unexpectedly (code ${code}).`);
-      app.quit();
-    }
-  });
-
-  await waitForServer(serverPort);
-  console.log(`[electron] Backend ready on port ${serverPort}`);
-}
-
 // ── Create window ───────────────────────────────────────────────────────
+
+const LOADING_HTML = `
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Kyros Studio</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #09090b; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex; align-items: center; justify-content: center; height: 100vh; flex-direction: column; }
+  h1 { font-size: 2rem; margin-bottom: 1rem; background: linear-gradient(135deg, #a78bfa, #6366f1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .spinner { width: 40px; height: 40px; border: 3px solid #27272a; border-top-color: #a78bfa; border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 1.5rem; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #status { color: #71717a; font-size: 0.875rem; }
+  #error { color: #ef4444; display: none; margin-top: 1rem; max-width: 500px; text-align: center; line-height: 1.5; }
+</style></head>
+<body>
+  <div class="spinner" id="spinner"></div>
+  <h1>Kyros Studio</h1>
+  <div id="status">Starting server...</div>
+  <div id="error"></div>
+  <script>
+    const port = new URLSearchParams(location.search).get('port');
+    const logPath = new URLSearchParams(location.search).get('log') || '';
+    let attempts = 0;
+    const maxAttempts = 60;
+    function check() {
+      attempts++;
+      document.getElementById('status').textContent = 'Starting server... (' + attempts + 's)';
+      fetch('http://127.0.0.1:' + port + '/api/health', { signal: AbortSignal.timeout(3000) })
+        .then(r => { if (r.ok) { location.href = 'http://127.0.0.1:' + port; } else { retry(); } })
+        .catch(() => retry());
+    }
+    function retry() {
+      if (attempts >= maxAttempts) {
+        document.getElementById('spinner').style.display = 'none';
+        document.getElementById('status').textContent = 'Server failed to start';
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('error').innerHTML =
+          'The backend did not respond after ' + maxAttempts + ' seconds.<br>' +
+          'Try restarting the app or deleting:<br><code style="color:#a78bfa">' + logPath + '</code>';
+        return;
+      }
+      setTimeout(check, 1000);
+    }
+    setTimeout(check, 500);
+  </script>
+</body></html>`;
 
 function createWindow() {
   console.log(`[electron] createWindow for port ${serverPort}`);
@@ -581,30 +564,23 @@ function createWindow() {
     },
   });
 
-  const serverUrl = `http://127.0.0.1:${serverPort}`;
-  let retryCount = 0;
-  const maxRetries = 10;
-
-  function loadApp() {
-    console.log(`[electron] loading ${serverUrl} (attempt ${retryCount + 1})`);
-    mainWindow.loadURL(serverUrl);
-  }
+  // Show loading screen immediately — then it polls the backend and redirects when ready
+  const logDir = userDataPath ? path.join(userDataPath, '..') : '';
+  const loadingUrl = `data:text/html;charset=utf-8,${encodeURIComponent(LOADING_HTML)}`.replace(
+    'LOADING_HTML', LOADING_HTML
+  );
+  // Use a temp file instead of data: URL so fetch() works (no CORS issues from data: origin)
+  const tempHtml = path.join(app.getPath('temp'), 'kyros-loading.html');
+  const htmlContent = LOADING_HTML.replace('</html>', '</html>');
+  fs.writeFileSync(tempHtml, htmlContent);
+  mainWindow.loadURL(`file://${tempHtml}?port=${serverPort}&log=${encodeURIComponent(logDir)}`);
 
   mainWindow.webContents.on('did-finish-load', () => {
-    console.log('[electron] window finished load');
-    mainWindow.focus();
-    reportAppUsage('app_opened', { mode: 'local' });
-  });
-
-  mainWindow.webContents.on('did-fail-load', (_event, code, desc) => {
-    console.error(`[electron] window failed load code=${code} desc=${desc}`);
-    retryCount++;
-    if (retryCount < maxRetries) {
-      console.log(`[electron] retrying in 2s (attempt ${retryCount + 1}/${maxRetries})`);
-      setTimeout(loadApp, 2000);
-    } else {
-      console.error('[electron] max retries reached, showing error');
-      mainWindow.loadURL(`data:text/html,<html><body style="background:#09090b;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h1>Kyros Studio</h1><p>Backend server failed to start.</p><p style="color:#888">Check the logs or restart the app.</p></div></body></html>`);
+    const url = mainWindow?.webContents?.getURL() || '';
+    if (url.includes('127.0.0.1')) {
+      console.log('[electron] App loaded successfully');
+      mainWindow.focus();
+      reportAppUsage('app_opened', { mode: 'local' });
     }
   });
 
@@ -612,8 +588,6 @@ function createWindow() {
     console.log('[electron] window closed');
     mainWindow = null;
   });
-
-  loadApp();
 }
 
 // ── App lifecycle ───────────────────────────────────────────────────────
@@ -623,17 +597,58 @@ app.whenReady().then(async () => {
   console.log('[electron] app.whenReady');
   userDataPath = app.getPath('userData');
 
-  // Always run local backend — remote URL mode disabled
-
   ensureUserData();
-  await startBackend();
+
+  // Show window FIRST with loading screen, then start backend
+  // This guarantees the user always sees something immediately
+  serverPort = await findFreePort();
   createWindow();
+
+  // Start backend in background — loading screen polls for health
+  try {
+    await startBackendProcess();
+  } catch (err) {
+    console.error('[electron] Backend start error:', err.message);
+    // Loading screen will handle the timeout and show error
+  }
 }).catch((err) => {
   console.error('[electron] Fatal startup error:', err);
   const { dialog } = require('electron');
-  dialog.showErrorBox('Startup Error', `Backend failed to start:\n${err.message}`);
+  dialog.showErrorBox('Startup Error', `Kyros Studio failed to start:\n${err.message}`);
   app.quit();
 });
+
+// startBackendProcess — fork the server but DON'T wait for health check
+// (the loading screen handles that)
+async function startBackendProcess() {
+  console.log(`[electron] startBackendProcess port=${serverPort}`);
+
+  const envPath = path.join(userDataPath, '.env');
+  const envExists = fs.existsSync(envPath);
+  console.log(`[electron] envPath=${envPath} exists=${envExists}`);
+
+  serverProcess = fork(serverEntry, [], {
+    execPath: process.execPath,
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      PORT: String(serverPort),
+      HOST: '127.0.0.1',
+      ELECTRON_USER_DATA: userDataPath,
+      ...(envExists ? { DOTENV_CONFIG_PATH: envPath } : {}),
+    },
+    stdio: 'pipe',
+  });
+  console.log('[electron] forked backend process');
+
+  serverProcess.stdout?.on('data', (d) => { process.stdout.write(d); writeLog('[server] ' + d.toString().trim()); });
+  serverProcess.stderr?.on('data', (d) => { process.stderr.write(d); writeLog('[server:err] ' + d.toString().trim()); });
+
+  serverProcess.on('exit', (code) => {
+    console.log(`[electron] Backend exited with code ${code}`);
+    serverProcess = null;
+  });
+}
 
 app.on('window-all-closed', () => {
   app.quit();
@@ -644,7 +659,6 @@ app.on('before-quit', () => {
     const proc = serverProcess;
     serverProcess = null;
     proc.kill('SIGTERM');
-    // Force-kill if graceful shutdown takes too long
     setTimeout(() => {
       try { proc.kill('SIGKILL'); } catch { /* already exited */ }
     }, 5000).unref();
