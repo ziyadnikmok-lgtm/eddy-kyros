@@ -42,4 +42,12 @@
      --color-rose-500: oklch(64.5% .246 70);
      --color-rose-600: oklch(58.6% .253 70);
   */
+
+  /* No prompt-on-hover in the picker tiles. The shared component fades the prompt
+     text in over a thumbnail on hover (kept for Ziyad, who uses it to tell near-
+     identical poses apart). Eddy does not want it, so hide it here — scoped to this
+     tab only. It is the one transition-opacity span inside the picker grid. */
+  & [data-picker-grid] span.transition-opacity {
+    display: none;
+  }
 }
