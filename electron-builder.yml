@@ -1,0 +1,44 @@
+appId: com.aistudio.app
+productName: Kyros Studio
+directories:
+  output: "dist-electron"
+files:
+  - server/**/*
+  - "!server/data/**/*"
+  - electron/**/*
+  - recovery/**/*
+  - client/dist/**/*
+  - package.json
+extraResources:
+  - from: server/data/styleLibrary.json
+    to: seed-data/styleLibrary.json
+  - from: server/data/contentTypePresets.json
+    to: seed-data/contentTypePresets.json
+  - from: server/data/niches.json
+    to: seed-data/niches.json
+  - from: server/data/promptKnowledge.json
+    to: seed-data/promptKnowledge.json
+  - from: build/seed-data
+    to: seed-data
+  # build/.env is deliberately NOT shipped. It carried ENCRYPTION_SECRET,
+  # SESSION_SECRET, the seed admin password and the Resend key into every build,
+  # readable by anyone who unpacks the app. Each install now generates its own
+  # secrets on first launch — see ensureLocalSecrets in electron/main.js.
+asarUnpack:
+  - node_modules/ffmpeg-static/**
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  category: public.app-category.productivity
+  identity: null
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+  signAndEditExecutable: false
+portable:
+  artifactName: "${productName} ${version}.exe"

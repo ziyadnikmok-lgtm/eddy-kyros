@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Recovered Chats</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">RC</div>
+          <div>
+            <h1>Recovered Chats</h1>
+            <p id="root-label">Looking for your latest recovery folder</p>
+          </div>
+        </div>
+        <div class="toolbar">
+          <label class="search">
+            <span>Search</span>
+            <input id="search" type="search" placeholder="Title, source, workspace, text" />
+          </label>
+          <label class="select">
+            <span>Source</span>
+            <select id="source-filter"></select>
+          </label>
+          <button id="reload-btn" class="secondary-btn" type="button" title="Reload sessions">Refresh</button>
+          <button id="open-folder-btn" class="secondary-btn" type="button">Open folder</button>
+        </div>
+      </header>
+
+      <main class="layout">
+        <aside class="sidebar">
+          <div class="sidebar-head">
+            <span id="count-label">0 sessions</span>
+            <span id="status-label">Idle</span>
+          </div>
+          <div id="session-list" class="session-list"></div>
+        </aside>
+
+        <section class="detail">
+          <div class="detail-head">
+            <div>
+              <div id="session-source" class="eyebrow">No session selected</div>
+              <h2 id="session-title">Pick one chat on the left</h2>
+              <div id="session-meta" class="meta"></div>
+            </div>
+            <div class="actions">
+              <button id="copy-transcript-btn" class="secondary-btn" type="button" disabled>Copy transcript</button>
+              <button id="copy-brief-btn" class="secondary-btn" type="button" disabled>Copy brief</button>
+              <button id="reveal-raw-btn" class="secondary-btn" type="button" disabled>Reveal raw</button>
+            </div>
+          </div>
+
+          <div id="session-preview" class="preview"></div>
+          <div id="transcript" class="transcript empty-state">
+            Select a recovered conversation to open the transcript.
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="./recovery.js"></script>
+  </body>
+</html>

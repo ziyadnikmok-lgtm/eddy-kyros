@@ -1,0 +1,1310 @@
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { Card, Btn, Input, Spinner, Textarea } from './UI';
+import { useApp } from '../context/AppContext';
+import { createEddyCollection } from '../lib/eddyCollectionStore';
+import { autoBlurFace } from '../lib/autoBlurFace';
+import BlurByHand from './BlurByHand';
+import { eddyVision, gallery as galleryApi, video as videoApi } from '../services/api';
+import { cn } from '../lib/utils';
+import { downloadBlob } from '../lib/stripMetadata';
+import { isPosePromptBroken } from '../lib/poseText';
+
+/**
+ * Eddy's shared collection UI — folders on top, items below, drop/paste/upload to add.
+ *
+ * Library, Outfit, Pose and Character are all the same thing with different labels:
+ *   Library / Outfit  — folders of images
+ *   Pose              — prompts, each optionally with a reference image (withPrompt)
+ *   Character         — a "folder" IS a character; its images are her reference photos
+ * One component means a fix to folders or drag-and-drop lands in all four at once.
+ */
+/**
+ * A five-point star — FILLED when favorited, OUTLINE otherwise. Both fill and stroke are
+ * currentColor so the button around it decides the hue (rose when on, muted when off). Kept as a
+ * local glyph rather than imported from EddyGeneratePage so this shared component has no page
+ * dependency; the two stars are intentionally drawn identically so a favorite reads the same in the
+ * Pose tab and in the Eddy pose picker.
+ *
+ * WHY rose and never amber: the filled star must not read as a price. Nothing here uses amber, so
+ * there is no clash, but the rule is kept deliberately so a copied style never drifts into money hue.
+ */
+function StarIcon({ filled }) {
+  return (
+    <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"
+      fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinejoin="round">
+      <path d="M12 3.5l2.6 5.27 5.82.85-4.21 4.1.99 5.79L12 16.77l-5.2 2.73.99-5.79-4.21-4.1 5.82-.85z" />
+    </svg>
+  );
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+
+/** Fetch a URL and hand back a data URL — the picker's items are links, not stored bytes. */
+async function urlToDataUrl(url) {
+  const resp = await fetch(url, { credentials: 'include' });
+  if (!resp.ok) throw new Error(`Could not download that file (${resp.status})`);
+  const blob = await resp.blob();
+  return await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Everything in the MAIN gallery, which is where generations land — not Eddy's own collections.
+ * Images and clips live in separate stores server side, so the source depends on the tab.
+ */
+async function listMainLibrary(kind) {
+  if (kind === 'video') {
+    const res = await videoApi.history();
+    const rows = Array.isArray(res) ? res : (res?.history || res?.videos || res?.data || []);
+    return rows
+      .filter((v) => v.filename)
+      .map((v) => ({ id: String(v.id ?? v.filename), url: videoApi.fileUrl(v.filename), prompt: v.prompt || '' }));
+  }
+  const res = await galleryApi.list();
+  const rows = Array.isArray(res) ? res : (res?.images || res?.gallery || res?.data || []);
+  return rows.map((g) => ({ id: String(g.id), url: galleryApi.imageUrl(g.id), prompt: g.prompt || '' }));
+}
+
+
+/**
+ * Pull the clip length out of a prompt so it can be read at a glance.
+ *
+ * Prefers an explicit "Duration: exactly 6 seconds" line — every imported video prompt carries
+ * one — and only falls back to a bare "N seconds" elsewhere in the text, which could be
+ * describing a beat rather than the clip.
+ */
+function durationFromPrompt(prompt) {
+  const text = String(prompt || '');
+  const labelled = text.match(/duration[^\n]*?(\d+(?:\.\d+)?)\s*second/i);
+  const any = labelled || text.match(/(\d+(?:\.\d+)?)\s*second/i);
+  return any ? `${any[1]}s` : '';
+}
+
+export default function EddyCollection({
+  dbName,
+  title,
+  subtitle,
+  folderLabel = 'Folder',
+  withPrompt = false,
+  // A second prompt on the card. Pose uses it for the motion that goes with the shot, so one
+  // card holds the image, how she is positioned, and how she moves.
+  withVideoPrompt = false,
+  oldestFirst = false,
+  autoBlur = false,
+  refreshKey = 0,
+  promptLabel = 'prompt',
+  describeKind = null,
+  // 'video' swaps the card media to a <video> and accepts video files. Everything else —
+  // folders, prompts, select/move/delete, export — is identical, so a clip collection behaves
+  // exactly like the pose and outfit ones people already know.
+  mediaKind = 'image',
+}) {
+  const { notify } = useApp();
+  const store = useMemo(() => createEddyCollection(dbName), [dbName]);
+
+  const [folders, setFolders] = useState([]);
+  const [items, setItems] = useState([]);
+  const [thumbs, setThumbs] = useState({});      // id -> dataUrl ('' for prompt-only items)
+  // The favorited item ids, read from the store's small `favorites` key — NOT from item.favorite.
+  // A Set so the per-card star fill, the "★ Favorite (N)" count and the favOnly filter all derive
+  // from one source that a big-index rewrite can never clobber. Loaded in refresh() below.
+  const [favIds, setFavIds] = useState(() => new Set());
+  const [activeFolder, setActiveFolder] = useState(null); // null = All
+  // The "★ Favorite" FILTER — a flag view that cuts ACROSS folders, not a folder itself. A favorite
+  // keeps its category (Feet/Tease/…) AND shows here, so this is a separate toggle from activeFolder
+  // rather than a folder value: when it is on, the visible list is every favorited item regardless of
+  // folder; picking All or any folder turns it off and restores the plain folder view.
+  const [favOnly, setFavOnly] = useState(false);
+  // Pulling from Eddy's Library is how a tab gets filled without re-uploading a picture that is
+  // already in the app. Loaded on open rather than on mount — the Library grows while you work.
+  const [libOpen, setLibOpen] = useState(false);
+  const [libItems, setLibItems] = useState([]);
+  const [libPicked, setLibPicked] = useState([]);
+  const [libBusy, setLibBusy] = useState(false);
+  // Set when the picker was opened from a card's Change image button — that card's picture gets
+  // replaced instead of new items being added.
+  const [libSwapId, setLibSwapId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [dragging, setDragging] = useState(false);
+  const [blurring, setBlurring] = useState(false);
+  const [handBlur, setHandBlur] = useState(null);   // the item being blurred by hand
+  const [dropOn, setDropOn] = useState(null);      // card currently under a dragged file
+  const [newFolder, setNewFolder] = useState('');
+  const [showNewFolder, setShowNewFolder] = useState(false);
+  const [describing, setDescribing] = useState({});
+  const [describeProgress, setDescribeProgress] = useState(null);
+  const [describingAll, setDescribingAll] = useState(false);
+  // Checked once per loop iteration rather than aborting the in-flight fetch — Stop means "don't
+  // start the next one", not "cut off the request already in the air".
+  const describeAllStopRef = useRef(false);
+  const [selected, setSelected] = useState([]);
+  // Layout is a per-person preference, not a per-collection one, so it is shared by every tab
+  // and kept across launches.
+  const [cols, setCols] = useState(() => {
+    const v = parseInt(localStorage.getItem('eddy.grid.cols') || '', 10);
+    return Number.isFinite(v) && v >= 1 && v <= 8 ? v : 4;
+  });
+  const [imgH, setImgH] = useState(() => {
+    const v = parseInt(localStorage.getItem('eddy.grid.imgH') || '', 10);
+    return Number.isFinite(v) && v >= 120 && v <= 720 ? v : 320;
+  });
+  useEffect(() => { try { localStorage.setItem('eddy.grid.cols', String(cols)); } catch { /* private mode */ } }, [cols]);
+  useEffect(() => { try { localStorage.setItem('eddy.grid.imgH', String(imgH)); } catch { /* private mode */ } }, [imgH]);
+
+  const refresh = useCallback(async () => {
+    const [f, i, favs] = await Promise.all([store.listFolders(), store.listItems(), store.listFavorites()]);
+    setFolders(f);
+    setItems(i);
+    // Favorites come from their own tiny key, re-read on every refresh so the stars and the count
+    // reflect the store right after a toggle and after a reload.
+    setFavIds(new Set(favs));
+    // Thumbnails are fetched per id rather than held in the index, so adding one photo never
+    // rewrites the whole collection.
+    const map = {};
+    await Promise.all(i.map(async (it) => { map[it.id] = await store.getImage(it.id); }));
+    setThumbs(map);
+    setLoading(false);
+  }, [store]);
+
+  useEffect(() => { refresh(); }, [refresh, refreshKey]);
+
+  // Ticks belong to the folder they were made in. Keeping them across a switch left the bulk
+  // bar acting on items no longer on screen — Delete could remove things you could not see.
+  useEffect(() => { setSelected([]); }, [activeFolder, favOnly]);
+
+  const visible = useMemo(() => {
+    // Favorite wins over the folder: it is a cross-folder view of every starred item. Otherwise the
+    // original folder behaviour is untouched (null = All).
+    const base = favOnly
+      ? items.filter((i) => favIds.has(i.id))
+      : (activeFolder ? items.filter((i) => i.folderId === activeFolder) : items);
+    return oldestFirst ? [...base].sort((a, b) => a.createdAt - b.createdAt) : base;
+  }, [items, activeFolder, favOnly, favIds, oldestFirst]);
+
+  const describe = useCallback(async (id, dataUrl, { retries = 3 } = {}) => {
+    const mt = (dataUrl.match(/^data:([^;]+);base64,/) || [])[1] || 'image/jpeg';
+    setDescribing((d) => ({ ...d, [id]: true }));
+    try {
+      // Vertex rate-limits on a long run — a 50-image batch will hit 429 partway through.
+      // Backing off and retrying is the difference between finishing and stopping half done.
+      let r;
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          r = await eddyVision.describe({ image: dataUrl, mimeType: mt, kind: describeKind });
+          break;
+        } catch (err) {
+          const rateLimited = /429|quota|exhaust|rate/i.test(err?.message || '');
+          if (!rateLimited || attempt >= retries) throw err;
+          await new Promise((res) => setTimeout(res, 2000 * (attempt + 1)));
+        }
+      }
+      const text = r?.text ?? r?.data?.text ?? '';
+      // The server refuses an over-long structured reply outright instead of saving a fragment of
+      // it (see RESPONSE_LIMITS in server/routes/eddyVision.js). Pass its explanation on: without
+      // this the user sees only "nothing happened" on a card that still has no prompt.
+      const reason = r?.reason ?? r?.data?.reason ?? '';
+      if (!text && reason) notify(reason, 'error');
+      // A refusal must not overwrite the prompt with an empty string -- that would quietly
+      // weaken every generation that used this item.
+      if (text) await store.updateItem(id, { prompt: text });
+      await refresh();
+      return Boolean(text);
+    } catch (err) {
+      notify(err.message || 'Could not read that image', 'error');
+      return false;
+    } finally {
+      setDescribing((d) => ({ ...d, [id]: false }));
+    }
+  }, [store, describeKind, refresh, notify]);
+
+  // Items with a picture but no pose prompt yet — what a Pose folder accumulates by the dozen
+  // when reference images get added ahead of writing what they show. Scoped to `visible`, not
+  // `selected` like Blur all faces / Export all: the point of this button is to sweep every
+  // missing prompt in the current view without first having to tick 97 boxes.
+  const missingDescribeTargets = useMemo(() => {
+    if (!describeKind) return [];
+    // Same "has a picture" check the per-card button uses (thumbs OR a server url) — an item
+    // with neither is prompt-only and was never a candidate for AI description.
+    return visible.filter((i) => (thumbs[i.id] || i.url) && !i.prompt?.trim());
+  }, [describeKind, visible, thumbs]);
+
+  // Cards that DO have a prompt but whose prompt yields no pose. Deliberately separate from
+  // missingDescribeTargets and given its own button rather than folded into "Describe N missing":
+  // these carry text the user may have written or edited, and a sweep that rewrites saved text
+  // has to be asked for by name, not ridden in on a button about empty cards.
+  const brokenPromptTargets = useMemo(() => {
+    if (describeKind !== 'pose') return [];
+    return visible.filter((i) => (thumbs[i.id] || i.url) && isPosePromptBroken(i.prompt));
+  }, [describeKind, visible, thumbs]);
+
+  // Duplicate STARS: several cards sharing one title all ended up favorited, because a collection
+  // with repeated titles gets a star on every copy (12 favourites became 23 on the last import).
+  // This only UN-STARS the extras. No card is ever deleted: same-title cards can still hold
+  // DIFFERENT pose images, and removing one would lose real work. Scoped to the whole collection,
+  // not `visible` - a starred twin in another folder is the one you cannot see to unstar by hand.
+  const dupeFavGroups = useMemo(() => {
+    const by = new Map();
+    for (const i of items) {
+      if (!favIds.has(i.id)) continue;
+      const key = (i.name || '').trim().toLowerCase();
+      if (!key) continue;
+      if (!by.has(key)) by.set(key, []);
+      by.get(key).push(i);
+    }
+    return [...by.values()].filter((g) => g.length > 1);
+  }, [items, favIds]);
+  const dupeFavCount = useMemo(() => dupeFavGroups.reduce((n, g) => n + g.length - 1, 0), [dupeFavGroups]);
+
+  const tidyFavorites = useCallback(async () => {
+    if (!dupeFavCount) return;
+    if (!window.confirm(`${dupeFavCount} extra star(s) sit on cards sharing a title with another favourite. Un-star the extras, keeping ONE per title? No card is deleted.`)) return;
+    let cleared = 0;
+    for (const group of dupeFavGroups) {
+      for (const g of group.slice(1)) {          // keep the first, un-star the rest
+        await store.toggleFavorite(g.id);
+        cleared += 1;
+      }
+    }
+    notify(`Un-starred ${cleared} duplicate favourite${cleared === 1 ? '' : 's'}`, 'success');
+    await load();
+  }, [dupeFavGroups, dupeFavCount, store, notify]);
+
+  const redescribeBroken = useCallback(async () => {
+    if (!brokenPromptTargets.length) return;
+    if (!window.confirm(`Re-describe ${brokenPromptTargets.length} pose card${brokenPromptTargets.length === 1 ? '' : 's'} whose prompt cannot be read? The AI rewrites the prompt text on ${brokenPromptTargets.length === 1 ? 'that card' : 'those cards'}. Images and titles are untouched.`)) return;
+    let ok = 0;
+    for (const it of brokenPromptTargets) {
+      // Sequential for the same reason describeAllMissing is: parallel vision calls on a batch
+      // this size trip the rate limit and half of them come back empty.
+      if (await describe(it.id, thumbs[it.id])) ok += 1;
+    }
+    notify(`Re-described ${ok} of ${brokenPromptTargets.length}`, ok ? 'success' : 'error');
+  }, [brokenPromptTargets, describe, thumbs, notify]);
+
+  const stopDescribeAll = useCallback(() => {
+    describeAllStopRef.current = true;
+  }, []);
+
+  const describeAllMissing = useCallback(async () => {
+    const targets = missingDescribeTargets;
+    if (!targets.length) return;
+    describeAllStopRef.current = false;
+    setDescribingAll(true);
+    let succeeded = 0;
+    let failed = 0;
+    let stopped = false;
+    try {
+      for (let n = 0; n < targets.length; n += 1) {
+        if (describeAllStopRef.current) { stopped = true; break; }
+        const it = targets[n];
+        setDescribeProgress({ done: n, total: targets.length });
+        // Sequential, not Promise.all: a 4-worker parallel pass over this exact kind of batch
+        // finished 14 of 48 before Vertex's quota cut it off, while one paced stream ran clean.
+        //
+        // Reads thumbs[id] — the same source the per-card "Describe with AI" button reads, i.e.
+        // the ACTIVE (possibly blurred) copy. The unblurred original lives under `img:<id>:alt`
+        // when autoBlur made one, but eddyCollectionStore exposes no read of its contents — only
+        // hasAlt() (a boolean) and swapAlt() (which mutates the collection by swapping them).
+        // Matching the existing single-item button beats inventing a new store method for one
+        // caller.
+        // eslint-disable-next-line no-await-in-loop -- sequential on purpose, see above
+        const ok = await describe(it.id, thumbs[it.id]);
+        if (ok) succeeded += 1; else failed += 1;
+      }
+    } finally {
+      setDescribeProgress(null);
+      setDescribingAll(false);
+    }
+    const left = targets.length - succeeded - failed;
+    if (stopped) {
+      notify(`Stopped — described ${succeeded}, ${failed} failed, ${left} not started. Click Describe again to pick up the rest.`, 'success');
+    } else if (failed) {
+      // Rate-limit is the near-certain cause on a batch this size — retries inside describe()
+      // already absorbed the transient 429s, so what's left failing rode out the backoff too.
+      notify(`Described ${succeeded} of ${targets.length} — ${failed} failed, most likely Vertex quota. Click "Describe missing" again to pick up the rest.`, 'error');
+    } else {
+      notify(`Described ${succeeded} missing prompt${succeeded === 1 ? '' : 's'}`, 'success');
+    }
+  }, [missingDescribeTargets, describe, thumbs, notify]);
+
+  const addFiles = useCallback(async (files) => {
+    const isVideo = mediaKind === 'video';
+    const accepts = isVideo ? /^video\/(mp4|webm|quicktime|x-matroska)$/i : /^image\/(png|jpe?g|webp)$/i;
+    const valid = Array.from(files || []).filter((f) => accepts.test(f.type));
+    if (!valid.length) { notify(isVideo ? 'Use MP4, WebM or MOV' : 'Use PNG, JPG or WebP', 'error'); return; }
+    if (isVideo) {
+      const heavy = valid.filter((f) => f.size > 40 * 1024 * 1024);
+      if (heavy.length) {
+        notify(`${heavy.length} clip(s) over 40 MB — browser storage may reject them. Trim or compress if they fail.`, 'error');
+      }
+    }
+    // Settle per file. Promise.all let ONE unreadable file reject the whole call from handlers
+    // that do not catch, so every image was dropped and no message appeared at all.
+    const read = await Promise.allSettled(valid.map(async (f) => ({ dataUrl: await fileToDataUrl(f), name: f.name })));
+    let payload = read.filter((r) => r.status === 'fulfilled').map((r) => r.value);
+
+    // Pose references get their face removed before they are stored. Seedream copies any face
+    // it is shown, and the woman in a pose photo is not the subject.
+    if (autoBlur && !isVideo && payload.length) {
+      let missed = 0;
+      payload = await Promise.all(payload.map(async (item) => {
+        const out = await autoBlurFace(item.dataUrl);
+        if (!out.blurred) missed += 1;
+        // original travels alongside so the blur can be undone or shared unblurred
+        return { ...item, dataUrl: out.dataUrl, original: out.blurred ? item.dataUrl : '' };
+      }));
+      if (missed) notify(`${missed} image(s): no face found to blur — check them yourself`, 'error');
+    }
+    const unreadable = read.length - payload.length;
+    if (!payload.length) { notify('None of those files could be read', 'error'); return; }
+
+    let stored = [];
+    try {
+      stored = await store.addItems(payload, activeFolder);
+    } catch (err) {
+      notify(err.message || 'Could not save those images', 'error');
+      await refresh();
+      return;
+    }
+
+    const lost = unreadable + (stored.failed || 0);
+    if (lost) notify(`Added ${stored.length} of ${valid.length} — ${lost} could not be saved`, 'error');
+    else notify(`Added ${stored.length} image${stored.length === 1 ? '' : 's'}`, 'success');
+
+    await refresh();
+    // Write each new picture's prompt for you. Sequential on purpose: parallel vision calls on
+    // a bulk upload would hammer the API and race each other's index writes.
+    //
+    // Paired by srcIndex, NOT by position: one skipped image used to shift every later pairing,
+    // so each description was written onto the following picture.
+    if (describeKind) {
+      let failed = 0;
+      for (let n = 0; n < stored.length; n += 1) {
+        const item = stored[n];
+        const src = payload[item.srcIndex];
+        if (!src) continue;
+        setDescribeProgress({ done: n, total: stored.length });
+        // eslint-disable-next-line no-await-in-loop -- sequential on purpose: parallel vision
+        // calls on a 50-image batch trip the rate limit immediately.
+        const ok = await describe(item.id, src.dataUrl);
+        if (ok === false) failed += 1;
+      }
+      setDescribeProgress(null);
+      if (failed) notify(`${failed} of ${stored.length} could not be described — use Re-describe on those`, 'error');
+    }
+  }, [store, activeFolder, refresh, notify, describeKind, describe, autoBlur]);
+
+  // A pose or outfit can be pure text — the prompt is the point, the image is only an example.
+  const openLibrary = useCallback(async (swapId = null) => {
+    setLibSwapId(swapId); setLibOpen(true); setLibPicked([]); setLibBusy(true);
+    try {
+      setLibItems(await listMainLibrary(mediaKind));
+    } catch (err) {
+      notify(err.message || 'Could not read the gallery', 'error');
+    } finally { setLibBusy(false); }
+  }, [notify, mediaKind]);
+
+  const importFromLibrary = useCallback(async () => {
+    if (!libPicked.length) return;
+    setLibBusy(true);
+    try {
+      // Swapping one card's picture: take the first pick and replace, rather than adding items.
+      if (libSwapId) {
+        const srcItem = libItems.find((x) => x.id === libPicked[0]);
+        if (!srcItem?.url) { notify('Could not read that file', 'error'); return; }
+        let dataUrl = await urlToDataUrl(srcItem.url);
+        if (!dataUrl) { notify('Could not read that image', 'error'); return; }
+        if (autoBlur) {
+          const out = await autoBlurFace(dataUrl);
+          dataUrl = out.dataUrl;
+          if (!out.blurred) notify('No face found to blur — check it yourself', 'error');
+        }
+        // setImage, not setImageKeepingAlt: this is a different picture, so the old unblurred
+        // spare belongs to an image that is no longer here.
+        await store.setImage(libSwapId, dataUrl);
+        setLibOpen(false); setLibPicked([]); setLibSwapId(null);
+        await refresh();
+        // Deliberately no re-describe: the prompt beside this card was written on purpose and
+        // swapping the picture is not a request to rewrite it. Use "Re-describe with AI" for that.
+        notify('Image changed · prompt kept', 'success');
+        return;
+      }
+
+      let payload = [];
+      for (const id of libPicked) {
+        const src0 = libItems.find((i) => i.id === id);
+        if (!src0?.url) continue;
+        const dataUrl = await urlToDataUrl(src0.url);
+        if (!dataUrl) continue;
+        payload.push({ dataUrl, prompt: '', name: src0.id ? `gallery-${src0.id}` : 'from library' });
+      }
+      if (!payload.length) { notify('Could not read those images', 'error'); return; }
+
+      // A pose or environment reference gets the same face treatment as an upload — Seedream
+      // copies any face it is shown, and a Library picture usually has one.
+      if (autoBlur) {
+        payload = await Promise.all(payload.map(async (item) => {
+          const out = await autoBlurFace(item.dataUrl);
+          return { ...item, dataUrl: out.dataUrl, original: out.blurred ? item.dataUrl : '' };
+        }));
+      }
+
+      const stored = await store.addItems(payload, activeFolder);
+      // Copies, not moves: the picture stays in the Library too.
+      notify(`Added ${stored.length || payload.length} from Gallery`, 'success');
+      setLibOpen(false); setLibPicked([]);
+      await refresh();
+      if (describeKind) for (const it of (stored || [])) { await describe(it.id, payload[0]?.dataUrl); }
+    } catch (err) {
+      notify(err.message || 'Could not add those', 'error');
+    } finally { setLibBusy(false); }
+  }, [libPicked, libItems, libSwapId, store, activeFolder, autoBlur, notify, refresh, describeKind, describe, mediaKind]);
+
+  const addPromptOnly = useCallback(async () => {
+    await store.addItems([{ prompt: '', name: promptLabel }], activeFolder);
+    await refresh();
+  }, [store, activeFolder, refresh, promptLabel]);
+
+  const attachTo = useCallback(async (id, file) => {
+    const isVid = mediaKind === 'video';
+    const accepts = isVid ? /^video\/(mp4|webm|quicktime|x-matroska)$/i : /^image\/(png|jpe?g|webp)$/i;
+    if (!accepts.test(file.type)) {
+      notify(isVid ? 'Use MP4, WebM or MOV' : 'Use PNG, JPG or WebP', 'error');
+      return;
+    }
+    // Replacing an item that already carries a prompt must not rewrite that text — dropping a
+    // new picture is a swap, not a request to re-describe. Only a card with no prompt yet gets
+    // one written for it.
+    const existing = items.find((i) => i.id === id);
+    const hadPrompt = Boolean(existing?.prompt?.trim());
+    const hadImage = Boolean(thumbs[id] || existing?.url);
+    try {
+      let dataUrl = await fileToDataUrl(file);
+      // Kept so the DESCRIPTION reads the unblurred picture while the STORED one stays blurred.
+      // A pose brief ignores the face entirely, and a blur over it only makes the body harder
+      // to read.
+      const original = dataUrl;
+      if (autoBlur && !isVid) {
+        const out = await autoBlurFace(dataUrl);
+        dataUrl = out.dataUrl;
+        if (!out.blurred) notify('No face found to blur in that image — check it yourself', 'error');
+      }
+      await store.setImage(id, dataUrl);
+      await refresh();
+      notify(hadImage ? `${isVid ? 'Video' : 'Image'} changed${hadPrompt ? ' · prompt kept' : ''}` : `${isVid ? 'Video' : 'Image'} attached`, 'success');
+      // Writing a description is only wanted for a card that has no prompt of its own.
+      if (describeKind && !hadPrompt) await describe(id, original);
+    } catch (err) {
+      notify(err.message || 'Could not attach that image', 'error');
+    }
+  }, [store, refresh, notify, describeKind, describe, autoBlur, mediaKind, items, thumbs]);
+
+  // Drag anywhere on the page, not only over the drop card. A file dropped outside a handler
+  // makes the window navigate to it, which looks like the app crashing.
+  useEffect(() => {
+    const over = (e) => { e.preventDefault(); if (e.dataTransfer?.types?.includes('Files')) setDragging(true); };
+    const leave = (e) => { if (!e.relatedTarget) setDragging(false); };
+    const drop = (e) => {
+      e.preventDefault();
+      setDragging(false);
+      if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
+    };
+    window.addEventListener('dragover', over);
+    window.addEventListener('dragleave', leave);
+    window.addEventListener('drop', drop);
+    return () => {
+      window.removeEventListener('dragover', over);
+      window.removeEventListener('dragleave', leave);
+      window.removeEventListener('drop', drop);
+    };
+  }, [addFiles, mediaKind]);
+
+  // Paste anywhere on the page drops into the folder you're looking at.
+  useEffect(() => {
+    const onPaste = (e) => {
+      const files = [...(e.clipboardData?.items || [])]
+        .filter((i) => i.type.startsWith(mediaKind === 'video' ? 'video/' : 'image/'))
+        .map((i) => i.getAsFile()).filter(Boolean);
+      if (files.length) { e.preventDefault(); addFiles(files); }
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [addFiles]);
+
+  const createFolder = async () => {
+    if (!newFolder.trim()) return;
+    await store.createFolder(newFolder);
+    setNewFolder('');
+    setShowNewFolder(false);
+    await refresh();
+  };
+
+  // Works for both kinds of item: a data: URL carries its own bytes, a server URL is fetched
+  // with credentials so the session cookie goes along.
+  /**
+   * Save one item to disk.
+   *
+   * Three things went wrong here at once once titles became the filename:
+   *   - a title can be 592 characters, and Windows refuses a filename over 255, so the save
+   *     failed with no error at all;
+   *   - the object URL was revoked in the same tick as the click, which cancels the download
+   *     before the browser has read it;
+   *   - a stored item is already a data URL, so fetching it just to get a blob was a pointless
+   *     round trip that could itself fail.
+   */
+  const download = async (it) => {
+    const src = thumbs[it.id] || it.url;
+    if (!src) { notify('Nothing to download on that card', 'error'); return false; }
+
+    // Keep it recognisable but well inside the OS limit, and never end on a separator.
+    const base = (it.name || it.prompt || 'image')
+      .split(/\r?\n/)[0]
+      .replace(/[^\w.-]+/g, '_')
+      .slice(0, 80)
+      // Trim separators AFTER the cut — slicing mid-word otherwise leaves a trailing underscore.
+      .replace(/^[_.-]+|[_.-]+$/g, '') || 'image';
+
+    try {
+      let href = src;
+      let revoke = false;
+      let ext = 'png';
+
+      if (/^data:/.test(src)) {
+        // data URLs can be handed straight to the anchor; the mime is already in the string.
+        ext = (src.match(/^data:([^;/]+)\/([^;]+)/) || [])[2] || 'png';
+      } else {
+        const resp = await fetch(src, { credentials: 'include' });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const blob = await resp.blob();
+        href = URL.createObjectURL(blob);
+        revoke = true;
+        ext = (blob.type.split('/')[1] || 'png');
+      }
+      ext = ext.replace('jpeg', 'jpg').replace('quicktime', 'mov');
+
+      // downloadBlob strips generator metadata before saving, so nothing posted carries the
+      // prompt or the model name. It needs a Blob, which a data URL is not.
+      const blob = revoke ? await (await fetch(href)).blob() : await (await fetch(src)).blob();
+      if (revoke) URL.revokeObjectURL(href);
+      await downloadBlob(blob, `${base}.${ext}`);
+      return true;
+    } catch (err) {
+      notify(`Could not download that file — ${err.message || 'unknown error'}`, 'error');
+      return false;
+    }
+  };
+
+  const downloadSelected = async () => {
+    const picked = visible.filter((i) => selected.includes(i.id));
+    let saved = 0;
+    for (const it of picked) {
+      if (await download(it)) saved += 1;
+      // Browsers drop rapid-fire downloads; a short gap makes a multi-file save reliable.
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    // An expired session 401s every fetch. Announcing the selection size put a success toast on
+    // top of twenty failures, and it was the one left on screen.
+    if (saved === picked.length) notify(`Downloaded ${saved} image${saved === 1 ? '' : 's'}`, 'success');
+    else notify(`Downloaded ${saved} of ${picked.length} — the rest failed`, 'error');
+  };
+
+  // Export the whole collection as the same JSON shape the importer takes, so a file exported
+  // here can be handed to someone else and imported straight into their app.
+  const exportAll = async () => {
+    try {
+      // Selection wins when there is one, so you can send just the batch you added rather
+      // than your whole collection every time.
+      const source = selected.length ? items.filter((i) => selected.includes(i.id)) : items;
+      const rows = source.map((it) => ({
+        // The title was being dropped, so an exported set came back headless and every card
+        // had to be renamed by hand. The importer already reads `title`.
+        title: it.name || '',
+        prompt: it.prompt || '',
+        // Pose cards carry a video prompt alongside the pose prompt. Without it here, an export
+        // of 36 poses would come back needing 36 video prompts retyped by hand.
+        videoPrompt: it.videoPrompt || '',
+        image: thumbs[it.id] || '',   // data URL for a stored image, '' for prompt-only
+        folder: folders.find((f) => f.id === it.folderId)?.name || '',
+        // Stars travel WITH the export. Favorites live in their own key keyed by item id, and an
+        // import mints new ids — so without this the ★ set had to be rebuilt by hand every time a
+        // sheet came back. The importer reads this field.
+        favorite: favIds.has(it.id),
+      }));
+      if (!rows.length) { notify('Nothing to export', 'error'); return; }
+      const blob = new Blob([JSON.stringify(rows)], { type: 'application/json' });
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = `${dbName}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(href);
+      notify(`Exported ${rows.length} ${promptLabel}s`, 'success');
+    } catch (err) {
+      notify(err.message || 'Could not export', 'error');
+    }
+  };
+
+  // Blur faces on images already in the collection. Auto-blur only runs on the way in, so
+  // anything added before it existed keeps its face — which is most of them.
+  const blurExisting = async () => {
+    const targets = (selected.length ? visible.filter((i) => selected.includes(i.id)) : visible)
+      .filter((i) => thumbs[i.id] && !i.url);      // server-hosted entries have no local bytes
+    if (!targets.length) { notify('No stored images to blur here', 'error'); return; }
+
+    setBlurring(true);
+    let done = 0;
+    let missed = 0;
+    try {
+      for (const it of targets) {
+        const out = await autoBlurFace(thumbs[it.id]);
+        if (out.blurred) {
+          await store.setImageKeepingAlt(it.id, out.dataUrl);
+          await store.updateItem(it.id, { blurred: true });
+          done += 1;
+        } else missed += 1;
+      }
+      await refresh();
+      if (!done) notify(`No face found in any of the ${targets.length} — nothing changed`, 'error');
+      else if (missed) notify(`Blurred ${done}; no face found in ${missed}`, 'success');
+      else notify(`Blurred ${done} face${done === 1 ? '' : 's'}`, 'success');
+    } catch (err) {
+      notify(err.message || 'Blur failed', 'error');
+    } finally {
+      setBlurring(false);
+    }
+  };
+
+  // Per-item retry, with the detector loosened. Some faces are turned away or half-hidden and
+  // the confident pass walks past them.
+  const blurOne = async (it) => {
+    setBlurring(true);
+    try {
+      const out = await autoBlurFace(thumbs[it.id], { aggressive: true });
+      if (!out.blurred) { notify('Still no face found in that one', 'error'); return; }
+      await store.setImageKeepingAlt(it.id, out.dataUrl);
+      await store.updateItem(it.id, { blurred: true });
+      await refresh();
+      notify('Blurred', 'success');
+    } catch (err) {
+      notify(err.message || 'Blur failed', 'error');
+    } finally {
+      setBlurring(false);
+    }
+  };
+
+  // Swap between the blurred copy and the original. Export and generation both read whichever
+  // is active, so this is also how you share an unblurred set.
+  const toggleBlurred = async (it) => {
+    const ok = await store.swapAlt(it.id);
+    if (!ok) { notify('No other version stored for that one', 'error'); return; }
+    await store.updateItem(it.id, { blurred: !it.blurred });
+    await refresh();
+  };
+
+  // Flip the whole collection at once. Sharing an unblurred set means switching every pose,
+  // and doing that one card at a time across thirty of them is not a workflow.
+  const setAllBlurred = async (wantBlurred) => {
+    const targets = (selected.length ? visible.filter((i) => selected.includes(i.id)) : visible)
+      .filter((i) => i.blurred !== undefined && i.blurred !== wantBlurred);
+    if (!targets.length) {
+      notify(wantBlurred ? 'All already blurred' : 'All already showing originals', 'success');
+      return;
+    }
+    setBlurring(true);
+    let moved = 0;
+    try {
+      for (const it of targets) {
+        if (await store.swapAlt(it.id)) {
+          await store.updateItem(it.id, { blurred: wantBlurred });
+          moved += 1;
+        }
+      }
+      await refresh();
+      notify(`${moved} switched to ${wantBlurred ? 'blurred' : 'original'}`, 'success');
+    } catch (err) {
+      notify(err.message || 'Could not switch those', 'error');
+    } finally {
+      setBlurring(false);
+    }
+  };
+
+  const removeItem = async (id) => {
+    try { await store.removeItem(id); } catch (err) { notify(err.message || 'Could not delete', 'error'); }
+    await refresh();
+  };
+
+  const toggleSelect = (id) => setSelected((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+
+  // Star / un-star an item. The favorite is a FLAG stored on the item via the existing store — no
+  // folder move, so the item keeps its category. The write PERSISTS the flag (survives reload), so the
+  // "★ Favorite" (favOnly) filter then lists this item. Errors surface (a silent false here would leave
+  // the star looking flipped while nothing was written) AND skip the refresh/toast so we never claim a
+  // favorite that did not persist. On success refresh re-reads so the star fills and the "★ Favorite
+  // (N)" count updates immediately, and a toast confirms the click landed — the user reported clicking
+  // the star and seeing nothing move it to Favorites, so visible feedback is required.
+  const toggleFavorite = async (it) => {
+    let nowFav;
+    try {
+      // Writes ONLY the small favorites key (store.toggleFavorite) — never the big index. Returns the
+      // new boolean. A failed/quota-refused write throws and is surfaced below; we do NOT refresh or
+      // toast, so the star can never look flipped for a favorite that did not persist.
+      nowFav = await store.toggleFavorite(it.id);
+    } catch (err) {
+      notify(err.message || 'Could not update favorite', 'error');
+      return;
+    }
+    await refresh();
+    notify(nowFav ? '★ Added to Favorites' : 'Removed from Favorites', 'success');
+  };
+
+  const moveSelected = async (raw) => {
+    const folderId = raw === 'none' ? null : raw;
+    let moved = 0;
+    let failure = '';
+    for (const id of selected) {
+      try { await store.moveItem(id, folderId); moved += 1; } catch (err) { failure = err.message; }
+    }
+    const total = selected.length;
+    setSelected([]);
+    await refresh();
+    const where = folders.find((f) => f.id === folderId)?.name || 'No folder';
+    // Count what landed. Announcing the selection size claimed success for writes that a full
+    // quota had silently refused.
+    if (moved === total) notify(`Moved ${moved} to ${where}`, 'success');
+    else notify(`Moved ${moved} of ${total} — ${failure || 'some writes failed'}`, 'error');
+  };
+
+  const deleteSelected = async () => {
+    let gone = 0;
+    let failure = '';
+    for (const id of selected) {
+      try { await store.removeItem(id); gone += 1; } catch (err) { failure = err.message; }
+    }
+    const total = selected.length;
+    setSelected([]);
+    await refresh();
+    if (gone === total) notify(`Deleted ${gone} item${gone === 1 ? '' : 's'}`, 'success');
+    else notify(`Deleted ${gone} of ${total} — ${failure || 'some writes failed'}`, 'error');
+  };
+  const moveItem = async (id, folderId) => { await store.moveItem(id, folderId); await refresh(); };
+  const savePrompt = async (id, prompt) => {
+    try {
+      await store.updateItem(id, { prompt });
+    } catch (err) {
+      // Uncontrolled Textarea: a failed write leaves your text on screen with nothing behind
+      // it, so without this it looks saved until the next reload.
+      notify(err.message || 'Could not save that prompt', 'error');
+    }
+    await refresh();
+  };
+
+  const deleteFolder = async (id) => {
+    await store.deleteFolder(id);
+    if (activeFolder === id) setActiveFolder(null);
+    await refresh();
+    notify(`${folderLabel} deleted — its items moved to All`, 'success');
+  };
+
+  // Items added together get consecutive createdAt values (t0, t0+1, …), so a real gap marks
+  // the boundary between one add and the next. Walk back from the newest until the gap opens.
+  const newestBatch = useMemo(() => {
+    if (!visible.length) return [];
+    const sorted = [...visible].sort((a, b) => b.createdAt - a.createdAt);
+    const batch = [sorted[0]];
+    for (let i = 1; i < sorted.length; i += 1) {
+      if (sorted[i - 1].createdAt - sorted[i].createdAt > 60_000) break;   // a minute apart = a different session
+      batch.push(sorted[i]);
+    }
+    return batch.map((i) => i.id);
+  }, [visible]);
+
+  // Membership, not length: equal counts across different sets flipped the label wrongly.
+  const allShownSelected = visible.length > 0 && visible.every((i) => selected.includes(i.id));
+
+  if (loading) return <div className="flex justify-center py-16"><Spinner size={28} /></div>;
+
+  return (
+    <div className="w-full space-y-4 animate-in">
+      <div>
+        <h2 className="text-lg font-semibold text-zinc-100">{title}</h2>
+        {subtitle && <p className="text-sm text-zinc-500">{subtitle}</p>}
+      </div>
+
+      {/* Folders */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          onClick={() => { setActiveFolder(null); setFavOnly(false); }}
+          className={cn('rounded-full border px-3 py-1.5 text-xs font-medium transition cursor-pointer',
+            activeFolder === null && !favOnly ? 'border-rose-500 bg-rose-500/15 text-white' : 'border-zinc-700/60 bg-white/[0.02] text-zinc-400 hover:text-white')}
+        >
+          All ({items.length})
+        </button>
+        {/* Favorite FILTER — distinct from folders by its star. It is a flag view across ALL folders,
+            so it sits beside All rather than in the folder list. Always offered so it is discoverable
+            even before the first star; harmless on Library/Outfit/Character where nobody stars. */}
+        <button
+          onClick={() => setFavOnly((v) => !v)}
+          aria-pressed={favOnly}
+          title="Show only favorited items — across every folder"
+          className={cn('inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-medium transition cursor-pointer',
+            favOnly ? 'border-rose-500 bg-rose-500/15 text-rose-300' : 'border-zinc-700/60 bg-white/[0.02] text-zinc-400 hover:text-white')}
+        >
+          <StarIcon filled={favOnly} /> Favorite ({items.filter((i) => favIds.has(i.id)).length})
+        </button>
+        {folders.map((f) => {
+          const count = items.filter((i) => i.folderId === f.id).length;
+          return (
+            <span key={f.id} className="group relative inline-flex">
+              <button
+                onClick={() => { setActiveFolder(f.id); setFavOnly(false); }}
+                className={cn('rounded-full border px-3 py-1.5 text-xs font-medium transition cursor-pointer',
+                  activeFolder === f.id && !favOnly ? 'border-rose-500 bg-rose-500/15 text-white' : 'border-zinc-700/60 bg-white/[0.02] text-zinc-400 hover:text-white')}
+              >
+                {f.name} ({count})
+              </button>
+              <button
+                onClick={() => deleteFolder(f.id)}
+                title={`Delete ${folderLabel.toLowerCase()} (its items are kept)`}
+                className="absolute -right-1 -top-1 hidden h-4 w-4 items-center justify-center rounded-full border border-zinc-600 bg-zinc-800 text-[0.5625rem] text-zinc-400 hover:text-red-400 group-hover:flex cursor-pointer"
+              >×</button>
+            </span>
+          );
+        })}
+        {showNewFolder ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Input value={newFolder} onChange={(e) => setNewFolder(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') createFolder(); }}
+              placeholder={`${folderLabel} name`} className="!h-8 !py-1 !text-xs w-40" autoFocus />
+            <Btn className="!rounded-lg !py-1 !px-3 !text-xs" onClick={createFolder}>Add</Btn>
+            <Btn variant="ghost" className="!rounded-lg !py-1 !px-2 !text-xs" onClick={() => setShowNewFolder(false)}>×</Btn>
+          </span>
+        ) : (
+          <Btn variant="secondary" className="!rounded-full !py-1.5 !px-3 !text-xs" onClick={() => setShowNewFolder(true)}>
+            + New {folderLabel.toLowerCase()}
+          </Btn>
+        )}
+      </div>
+
+      {libOpen && createPortal(
+        <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/70 p-4"
+             onClick={(e) => { if (e.target === e.currentTarget) { setLibOpen(false); setLibSwapId(null); } }}>
+          <Card className="flex max-h-[86vh] w-full max-w-4xl flex-col p-4">
+            <div className="flex items-center justify-between gap-3 pb-3">
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-zinc-300">
+                {libSwapId ? `Change ${mediaKind === 'video' ? 'video' : 'image'} · pick from Gallery` : (mediaKind === 'video' ? 'Add from Video Gallery' : 'Add from Gallery')}
+                {libPicked.length > 0 && <span className="ml-2 text-rose-400">· {libSwapId ? 1 : libPicked.length} selected</span>}
+              </h3>
+              <button onClick={() => setLibOpen(false)}
+                      className="cursor-pointer px-2 text-lg text-zinc-500 hover:text-zinc-200">×</button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {libBusy && !libItems.length ? (
+                <div className="flex justify-center py-10"><Spinner size={20} /></div>
+              ) : !libItems.length ? (
+                <p className="py-10 text-center text-sm text-zinc-500">
+                  {mediaKind === 'video' ? 'No videos in the Video Gallery yet — generate one first.' : 'The Gallery is empty — generate something first.'}
+                </p>
+              ) : (
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
+                  {libItems.map((it) => {
+                    const on = libPicked.includes(it.id);
+                    return (
+                      <button key={it.id} type="button"
+                        onClick={() => setLibPicked((prev) => (libSwapId ? [it.id] : on ? prev.filter((x) => x !== it.id) : [...prev, it.id]))}
+                        className={cn('relative overflow-hidden rounded-lg border transition cursor-pointer',
+                          on ? 'border-rose-500 ring-2 ring-rose-500/50' : 'border-white/[0.07] hover:border-zinc-600')}>
+                        {it.url
+                          ? (mediaKind === 'video'
+                            ? <video src={it.url} muted preload="metadata" className="aspect-square w-full object-cover bg-zinc-950" />
+                            : <img src={it.url} alt="" className="aspect-square w-full object-cover bg-zinc-950" />)
+                          : <span className="flex aspect-square w-full items-center justify-center bg-white/[0.03] text-[0.5rem] uppercase text-zinc-600">no pic</span>}
+                        {on && <span className="absolute right-1 top-1 rounded-full bg-rose-500 px-1.5 text-[0.625rem] font-bold text-white">✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between gap-3 pt-3">
+              <p className="text-[0.625rem] text-zinc-600">
+                {libSwapId
+                  ? 'Replaces this card’s picture. Its prompt is kept.'
+                  : `Copies into ${title}${activeFolder ? ` → “${folders.find((f) => f.id === activeFolder)?.name}”` : ''}. The Library keeps its copy.`}
+                {autoBlur && ' Faces are blurred on the way in.'}
+              </p>
+              <div className="flex gap-2">
+                <Btn variant="ghost" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={() => { setLibOpen(false); setLibSwapId(null); }}>Cancel</Btn>
+                <Btn className="!rounded-lg !py-2 !px-4 !text-sm" onClick={importFromLibrary} disabled={!libPicked.length || libBusy}>
+                  {libBusy ? <><Spinner size={14} /><span className="ml-2">{libSwapId ? 'Changing…' : 'Adding…'}</span></> : (libSwapId ? 'Use this image' : `Add ${libPicked.length || ''}`)}
+                </Btn>
+              </div>
+            </div>
+          </Card>
+        </div>,
+        document.body,
+      )}
+
+      {/* Drop zone */}
+      <Card className={cn('p-4 transition', dragging && 'ring-2 ring-rose-500/60')}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-zinc-500">
+            {withPrompt ? 'Drop or paste an image anywhere to add one — or drop onto a card to attach it there' : 'Drop or paste images anywhere on this page'}
+            {activeFolder ? ` — into “${folders.find((f) => f.id === activeFolder)?.name}”` : ''}.
+          </p>
+          <div className="flex items-center gap-2">
+            {autoBlur && items.length > 0 && (
+              <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={blurExisting} disabled={blurring}>
+                {blurring ? 'Blurring…' : selected.length ? `Blur ${selected.length} face(s)` : 'Blur all faces'}
+              </Btn>
+            )}
+            {autoBlur && items.some((i) => i.blurred !== undefined) && (
+              <>
+                <Btn variant="ghost" className="!rounded-lg !py-2 !px-3 !text-sm" disabled={blurring}
+                  onClick={() => setAllBlurred(false)}>
+                  Unblur all
+                </Btn>
+                <Btn variant="ghost" className="!rounded-lg !py-2 !px-3 !text-sm" disabled={blurring}
+                  onClick={() => setAllBlurred(true)}>
+                  Re-blur all
+                </Btn>
+              </>
+            )}
+            {describeKind && (describingAll || missingDescribeTargets.length > 0) && (
+              describingAll ? (
+                <Btn variant="ghost" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={stopDescribeAll}>
+                  Stop describing
+                </Btn>
+              ) : (
+                <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={describeAllMissing}>
+                  Describe {missingDescribeTargets.length} missing
+                </Btn>
+              )
+            )}
+            {/* Only appears when there is something to fix, and states the count so a collection
+                with broken cards cannot look clean. */}
+            {!describingAll && brokenPromptTargets.length > 0 && (
+              <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm !border-amber-500/40 !text-amber-200" onClick={redescribeBroken}>
+                Re-describe {brokenPromptTargets.length} unreadable
+              </Btn>
+            )}
+            {/* Same rule as the unreadable sweep: only shown when there is something to clean, and it
+                names the count so a collection full of duplicates cannot look tidy. */}
+            {dupeFavCount > 0 && (
+              <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm !border-amber-500/40 !text-amber-200" onClick={tidyFavorites}>
+                Fix {dupeFavCount} duplicate star{dupeFavCount === 1 ? '' : 's'}
+              </Btn>
+            )}
+            {withPrompt && (
+              <Btn className="!rounded-lg !py-2 !px-4 !text-sm" onClick={addPromptOnly}>+ Add {promptLabel}</Btn>
+            )}
+            {items.length > 0 && (
+              <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={exportAll}>
+                {selected.length ? `Export ${selected.length}` : 'Export all'}
+              </Btn>
+            )}
+            <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={openLibrary}>
+              {mediaKind === 'video' ? 'From Video Gallery' : 'From Gallery'}
+            </Btn>
+            <label className="inline-flex cursor-pointer items-center rounded-lg border border-white/[0.06] bg-white/[0.04] px-4 py-2 text-sm font-medium text-zinc-300 transition hover:bg-white/[0.07]">
+              Upload
+              <input type="file" accept={mediaKind === 'video' ? 'video/mp4,video/webm,video/quicktime' : 'image/png,image/jpeg,image/webp'} multiple className="hidden"
+                onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
+            </label>
+          </div>
+        </div>
+      </Card>
+
+      {/* Always reachable — Select all used to live inside the bulk bar, which only appeared
+          once something was already ticked, so there was no way to start a select-all. */}
+      {visible.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 px-1 text-xs text-zinc-500">
+          <span>{visible.length} item{visible.length === 1 ? '' : 's'}{activeFolder ? ' in this folder' : ''}</span>
+          <button
+            onClick={() => setSelected(allShownSelected ? [] : visible.map((i) => i.id))}
+            className="text-zinc-400 hover:text-white cursor-pointer underline underline-offset-2"
+          >
+            {allShownSelected ? 'Clear selection' : 'Select all'}
+          </button>
+          <span className="ml-auto flex items-center gap-2">
+            <span className="text-[0.625rem] font-bold uppercase tracking-wider text-zinc-600">Per row</span>
+            {[2, 3, 4, 5, 6].map((n) => (
+              <button key={n} type="button" onClick={() => setCols(n)}
+                className={cn('h-6 w-6 rounded-md border text-[0.6875rem] font-semibold transition cursor-pointer',
+                  cols === n ? 'border-rose-500 bg-rose-500/15 text-rose-300'
+                             : 'border-white/[0.07] text-zinc-500 hover:border-zinc-600')}>
+                {n}
+              </button>
+            ))}
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="text-[0.625rem] font-bold uppercase tracking-wider text-zinc-600">Size</span>
+            <input type="range" min="120" max="720" step="20" value={imgH}
+              onChange={(e) => setImgH(parseInt(e.target.value, 10))}
+              className="h-1 w-28 cursor-pointer accent-rose-500" />
+            <span className="w-10 tabular-nums text-zinc-500">{imgH}px</span>
+          </span>
+          {newestBatch.length > 0 && newestBatch.length < visible.length && (
+            <button
+              onClick={() => setSelected(newestBatch)}
+              className="text-zinc-400 hover:text-white cursor-pointer underline underline-offset-2"
+            >
+              Select last added ({newestBatch.length})
+            </button>
+          )}
+          {describeProgress && (
+        <p className="px-1 text-xs text-zinc-400">
+          Describing with AI — {describeProgress.done + 1} of {describeProgress.total}…
+        </p>
+      )}
+
+      {selected.length > 0 && (
+            <span className="ml-auto text-zinc-600">Export sends the {selected.length} selected</span>
+          )}
+        </div>
+      )}
+
+      {selected.length > 0 && (
+        <div className="flex items-center gap-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2">
+          <span className="text-xs text-zinc-300">{selected.length} selected</span>
+          <select
+            defaultValue=""
+            onChange={(e) => { if (e.target.value !== '') { moveSelected(e.target.value || null); e.target.value = ''; } }}
+            className="rounded-lg border border-white/[0.06] bg-[#0b0b0f] px-2 py-1 text-xs text-zinc-300 outline-none cursor-pointer"
+          >
+            <option value="" disabled>Move to…</option>
+            <option value="none">No {folderLabel.toLowerCase()}</option>
+            {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
+          <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs" onClick={downloadSelected}>Download</Btn>
+          <Btn className="!rounded-lg !py-1 !px-3 !text-xs" onClick={deleteSelected}>Delete selected</Btn>
+          <Btn variant="ghost" className="!rounded-lg !py-1 !px-3 !text-xs" onClick={() => setSelected([])}>Cancel</Btn>
+          <button onClick={() => setSelected(visible.map((i) => i.id))}
+            className="ml-auto text-xs text-zinc-500 hover:text-white cursor-pointer">Select all shown</button>
+        </div>
+      )}
+
+      {/* Items */}
+      {!visible.length ? (
+        <p className="py-10 text-center text-sm text-zinc-600">
+          Nothing here yet. {withPrompt ? 'Add a prompt, or drop an image.' : 'Drop, paste or upload an image.'}
+        </p>
+      ) : (
+        <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+          {visible.map((it) => (
+            <Card key={it.id}
+              className={cn('p-2 space-y-2 transition',
+                dropOn === it.id
+                  ? 'ring-2 ring-rose-500 bg-rose-500/[0.06]'
+                  : 'hover:ring-1 hover:ring-rose-500/30')}
+              onDragOver={(e) => {
+                if (!e.dataTransfer?.types?.includes('Files')) return;
+                e.preventDefault(); e.stopPropagation();
+                // Highlight the card being aimed at, so a drop meant to REPLACE this one is
+                // visibly different from a drop that adds a new item to the page.
+                setDropOn(it.id);
+              }}
+              onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDropOn(null); }}
+              onDrop={(e) => {
+                const f = e.dataTransfer?.files?.[0];
+                setDropOn(null);
+                if (!f) return;
+                // Stop the window handler, or this would ALSO add a brand new item.
+                e.preventDefault();
+                e.stopPropagation();
+                setDragging(false);
+                attachTo(it.id, f);
+              }}>
+              <div className="relative">
+                {withPrompt && durationFromPrompt(it.prompt) && (thumbs[it.id] || it.url) && (
+                  <span className="absolute bottom-2 left-2 z-10 rounded-lg border border-rose-400/40 bg-black/80 px-3 py-1.5 text-lg font-extrabold leading-none tabular-nums text-rose-200 shadow-lg">
+                    {durationFromPrompt(it.prompt)}
+                  </span>
+                )}
+                {dropOn === it.id && (thumbs[it.id] || it.url) && (
+                  <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-black/60 text-xs font-semibold text-rose-200">
+                    Drop to replace{it.prompt?.trim() ? ' · prompt kept' : ''}
+                  </div>
+                )}
+                {(thumbs[it.id] || it.url) ? (
+                  mediaKind === 'video' ? (
+                  <video
+                    src={thumbs[it.id] || it.url}
+                    controls
+                    preload="metadata"
+                    className="w-full rounded-lg bg-zinc-950 object-contain"
+                    style={{ maxHeight: 260 }}
+                  />
+                  ) : (
+                  <img
+                    src={thumbs[it.id] || it.url}
+                    alt={it.name}
+                    // contain, not cover, on prompt cards: a pose is judged by the whole body,
+                    // and h-28 + cover cropped every image down to a thin band of its middle.
+                    style={withPrompt ? { maxHeight: imgH } : undefined}
+                    className={cn('w-full rounded-lg bg-zinc-950',
+                      withPrompt ? 'object-contain' : 'aspect-[3/4] object-cover')}
+                  />
+                  )
+                ) : (
+                  // Prompt-only item: offer an explicit way in, not just drag-and-drop.
+                  <label className="flex h-9 cursor-pointer items-center justify-between rounded-lg bg-white/[0.02] px-3 text-[0.6875rem] text-zinc-500 transition hover:bg-white/[0.05] hover:text-zinc-300">
+                    <span>Prompt only</span>
+                    <span className="text-rose-400">+ Add image</span>
+                    <input type="file" accept={mediaKind === 'video' ? 'video/mp4,video/webm,video/quicktime' : 'image/png,image/jpeg,image/webp'} className="hidden"
+                      onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) attachTo(it.id, f); }} />
+                  </label>
+                )}
+                <button onClick={() => removeItem(it.id)} title="Delete"
+                  className="absolute right-1 top-1 h-6 w-6 rounded-full bg-black/70 text-xs text-zinc-300 hover:text-red-400 cursor-pointer">×</button>
+                {(thumbs[it.id] || it.url) && (
+                  <button onClick={() => download(it)} title="Download"
+                    className="absolute right-8 top-1 h-6 w-6 rounded-full bg-black/70 text-xs text-zinc-300 hover:text-white cursor-pointer">↓</button>
+                )}
+                <input type="checkbox" title="Select" checked={selected.includes(it.id)}
+                  onChange={() => toggleSelect(it.id)}
+                  className="absolute left-1 top-1 h-4 w-4 cursor-pointer accent-rose-500" />
+                {oldestFirst && visible[0]?.id === it.id && (
+                  <span className="absolute left-1 top-1 rounded-md bg-rose-500 px-1.5 py-0.5 text-[0.5625rem] font-bold text-white">BASE</span>
+                )}
+                {/* Favorite star — top strip, beside the select checkbox (left-1). Kept OUT of the
+                    bottom strip on purpose: a video card's native controls live there, so bottom
+                    placement would fight the scrubber on the clips tab. Clear of delete/download
+                    (top-right) and the duration badge (bottom-left). Rose+filled when favorited,
+                    muted outline otherwise. A real button, so it is keyboard-focusable and toggles
+                    on Enter/Space; title states the action for screen readers. */}
+                <button
+                  // Pure favorite toggle: stopPropagation + preventDefault so the click only stars the
+                  // item — never bubbles to the card's drag/drop handlers or the window drop handler,
+                  // and never triggers a default. This is the click the user said "did nothing".
+                  onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleFavorite(it); }}
+                  aria-pressed={favIds.has(it.id)}
+                  title={favIds.has(it.id) ? 'Remove from favorites' : 'Mark as favorite'}
+                  className={cn('absolute left-8 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-black/70 transition cursor-pointer',
+                    favIds.has(it.id) ? 'text-rose-400' : 'text-zinc-300 hover:text-rose-300')}
+                >
+                  <StarIcon filled={favIds.has(it.id)} />
+                </button>
+              </div>
+
+              {withPrompt && (
+                <Input
+                  value={it.name || ''}
+                  placeholder="Title — what the shot is"
+                  onChange={(e) => store.updateItem(it.id, { name: e.target.value }).then(refresh)}
+                  className="!py-1 !text-[0.75rem] !font-semibold"
+                />
+              )}
+              {autoBlur && thumbs[it.id] && !it.url && (
+                <div className="grid grid-cols-2 gap-1">
+                  <Btn variant="secondary" className="!w-full !rounded-lg !py-1 !px-0 !text-[0.6875rem]"
+                    disabled={blurring} onClick={() => blurOne(it)}>
+                    Retry blur
+                  </Btn>
+                  <Btn variant="secondary" className="!w-full !rounded-lg !py-1 !px-0 !text-[0.6875rem]"
+                    onClick={() => setHandBlur(it)}>
+                    Blur by hand
+                  </Btn>
+                </div>
+              )}
+              {/* Swap the picture without losing the prompt written beside it. */}
+              {(thumbs[it.id] || it.url) && (
+                <Btn variant="secondary" className="!w-full !rounded-lg !py-1 !text-[0.6875rem]"
+                  onClick={() => openLibrary(it.id)}>
+                  {mediaKind === 'video' ? 'Change video · from Gallery' : 'Change image · from Gallery'}
+                </Btn>
+              )}
+              {autoBlur && it.blurred !== undefined && (
+                <Btn variant="ghost" className="!w-full !rounded-lg !py-1 !text-[0.6875rem]"
+                  onClick={() => toggleBlurred(it)}>
+                  {it.blurred ? 'Showing blurred · use original' : 'Showing original · use blurred'}
+                </Btn>
+              )}
+              {withPrompt && describeKind && (thumbs[it.id] || it.url) && (
+                <Btn variant="secondary" className="!w-full !rounded-lg !py-1 !text-[0.6875rem]"
+                  disabled={describing[it.id]} onClick={() => describe(it.id, thumbs[it.id])}>
+                  {describing[it.id] ? 'Reading…' : it.prompt ? 'Re-describe with AI' : 'Describe with AI'}
+                </Btn>
+              )}
+              {/* A pose whose saved prompt yields no pose_action.description is silently dropped
+                  from the generation prompt. Without this the card looks fine — it shows a
+                  plausible block of JSON in the box below — and the only symptom is that the pose
+                  never comes out. Said on the card, next to the text it is talking about, with
+                  the fix named. Nothing is deleted or rewritten: the text stays exactly as saved
+                  so the original wording is never lost. */}
+              {withPrompt && describeKind === 'pose' && isPosePromptBroken(it.prompt) && (
+                <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[0.6875rem] leading-snug text-amber-200">
+                  Prompt unreadable — no pose can be read out of it, so generations use this
+                  card’s image only. {(thumbs[it.id] || it.url) ? 'Press “Re-describe with AI” above to rewrite it.' : 'Attach the pose image, then press “Describe with AI”.'}
+                </p>
+              )}
+              {withPrompt && (
+                <Textarea
+                  key={`${it.id}-${it.prompt}`}
+                  rows={3}
+                  defaultValue={it.prompt}
+                  placeholder={`Paste the ${promptLabel} prompt here…`}
+                  onBlur={(e) => { if (e.target.value !== it.prompt) savePrompt(it.id, e.target.value); }}
+                  className="!text-xs"
+                />
+              )}
+              {withVideoPrompt && (
+                <Textarea
+                  defaultValue={it.videoPrompt || ''}
+                  rows={2}
+                  placeholder="Video prompt — how this shot moves"
+                  onBlur={(e) => store.updateItem(it.id, { videoPrompt: e.target.value }).then(refresh)}
+                  className="!text-[0.6875rem]"
+                />
+              )}
+
+              {folders.length > 0 && (
+                <select
+                  value={it.folderId || ''}
+                  onChange={(e) => moveItem(it.id, e.target.value || null)}
+                  className="w-full rounded-lg border border-white/[0.06] bg-[#0b0b0f] px-2 py-1 text-[0.6875rem] text-zinc-300 outline-none cursor-pointer"
+                >
+                  <option value="">No {folderLabel.toLowerCase()}</option>
+                  {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                </select>
+              )}
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {handBlur && (
+        <BlurByHand
+          src={thumbs[handBlur.id]}
+          onClose={() => setHandBlur(null)}
+          onApply={async (dataUrl) => {
+            try {
+              await store.setImageKeepingAlt(handBlur.id, dataUrl);
+              await store.updateItem(handBlur.id, { blurred: true });
+              await refresh();
+              notify('Blurred', 'success');
+            } catch (err) {
+              notify(err.message || 'Could not save that', 'error');
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}

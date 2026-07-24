@@ -1,0 +1,1 @@
+function m(e,n,r="1:1"){return new Promise(i=>{if(!e||!Array.isArray(n)||!n.length){i(r);return}const t=new Image;t.onload=()=>{if(!t.width||!t.height){i(r);return}const u=t.width/t.height;let s=n[0],f=1/0;for(const o of n){const[c,h]=String(o).split(":").map(Number);if(!c||!h)continue;const g=Math.abs(c/h-u);g<f&&(f=g,s=o)}i(s)},t.onerror=()=>i(r),t.src=e})}export{m as d};

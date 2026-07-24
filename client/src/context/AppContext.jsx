@@ -1,0 +1,135 @@
+import { createContext, useContext, useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { characters as charApi } from '../services/api';
+
+const AppContext = createContext(null);
+
+const VALID_PAGE_IDS = new Set(['generate', 'nsfwGenerate', 'batch', 'auto', 'video', 'videoGallery', 'seedanceVideo', 'seedanceOmni', 'seedreamEdit', 'carousel', 'scene', 'reel', 'postClone', 'pinterest', 'instagramFrames', 'frameLibrary', 'styleLibrary', 'promptBuilder', 'profileAnalyzer', 'storyteller', 'loraDataset', 'gallery', 'library', 'pasteInbox', 'imageEditor', 'characters', 'keys', 'billing', 'referral', 'videoCompose', 'logs', 'photoMatch', 'poseFix', 'nanoBypass', 'outfitSwap', 'seedreamGenerate', 'outfitSwapSeedream', 'photoMatchSeedream', 'sceneRecreateSeedream', 'poseRemixSeedream', 'eddyGenerate', 'eddy', 'eddyLibrary', 'eddyOutfit', 'eddyPose', 'eddyEnvironment', 'videoLibrary', 'eddyCharacter', 'admin', 'settings', 'instagramReel']);
+
+function pageFromPathname(pathname) {
+  const segment = (pathname || '/').replace(/^\/+|\/+$/g, '') || 'eddy';
+  return VALID_PAGE_IDS.has(segment) ? segment : 'eddy';
+}
+
+function pathnameFromPage(pageId) {
+  return pageId === 'generate' ? '/' : `/${pageId}`;
+}
+
+let toastId = 0;
+
+async function fetchJson(url) {
+  const res = await fetch(url);
+  const json = await res.json();
+  return Array.isArray(json?.data) ? json.data : [];
+}
+
+export function AppProvider({ children }) {
+  const [activeKey, setActiveKey] = useState(null);
+  const [vertexActive, setVertexActive] = useState(false);
+  const [integrationRefreshToken, setIntegrationRefreshToken] = useState(0);
+  const [toasts, setToasts] = useState([]);
+  const timers = useRef({});
+
+  const [page, setPage] = useState(() => pageFromPathname(typeof window !== 'undefined' ? window.location.pathname : '/'));
+  const [pageParams, setPageParams] = useState({});
+  const navigateTo = useCallback((pageId, params = {}) => {
+    // Any new page MUST be added to VALID_PAGE_IDS above. An id missing from it lands on
+    // Generate with no error, which looks exactly like a broken page.
+    if (!VALID_PAGE_IDS.has(pageId) && typeof console !== 'undefined') {
+      console.warn(`[nav] unknown page "${pageId}" — add it to VALID_PAGE_IDS. Falling back to generate.`);
+    }
+    const id = VALID_PAGE_IDS.has(pageId) ? pageId : 'generate';
+    setPage(id);
+    setPageParams(params);
+    if (typeof window !== 'undefined') {
+      const path = pathnameFromPage(id);
+      if (window.location.pathname !== path) {
+        window.history.pushState(null, '', path);
+      }
+    }
+  }, []);
+  const consumePageParams = useCallback(() => {
+    const p = pageParams;
+    if (Object.keys(p).length > 0) setPageParams({});
+    return p;
+  }, [pageParams]);
+
+  const [characters, setCharacters] = useState([]);
+  const [sceneMemories, setSceneMemories] = useState([]);
+  const [outfits, setOutfits] = useState([]);
+
+  useEffect(() => {
+    const onPopState = () => setPage(pageFromPathname(window.location.pathname));
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  useEffect(() => {
+    charApi.list().then(setCharacters).catch(() => setCharacters([]));
+    fetchJson('/api/scene-memory').then(setSceneMemories).catch(() => setSceneMemories([]));
+    fetchJson('/api/outfits').then(setOutfits).catch(() => setOutfits([]));
+  }, []);
+
+  const refreshCharacters = useCallback(() => {
+    charApi.list().then(setCharacters).catch(() => setCharacters([]));
+  }, []);
+  const refreshSceneMemories = useCallback(() => {
+    fetchJson('/api/scene-memory').then(setSceneMemories).catch(() => setSceneMemories([]));
+  }, []);
+  const refreshOutfits = useCallback(() => {
+    fetchJson('/api/outfits').then(setOutfits).catch(() => setOutfits([]));
+  }, []);
+
+  const refreshIntegrationStatus = useCallback(() => {
+    setIntegrationRefreshToken((value) => value + 1);
+  }, []);
+
+  useEffect(() => {
+    const t = timers;
+    return () => { for (const id of Object.keys(t.current)) clearTimeout(t.current[id]); };
+  }, []);
+
+  // Defensive: always coerce to a readable string — prevents "[object Object]" toasts
+  const notify = useCallback((message, type = 'info', duration = 4000) => {
+    const id = ++toastId;
+    const safeMessage = message instanceof Error
+      ? (message.message || 'An error occurred')
+      : typeof message === 'string'
+        ? message
+        : (typeof message?.message === 'string' ? message.message : String(message ?? 'An error occurred'));
+    setToasts((t) => [...t.slice(-4), { id, message: safeMessage, type }]);
+    timers.current[id] = setTimeout(() => {
+      setToasts((t) => t.filter((x) => x.id !== id));
+      delete timers.current[id];
+    }, duration);
+    return id;
+  }, []);
+
+  const dismissToast = useCallback((id) => {
+    clearTimeout(timers.current[id]);
+    delete timers.current[id];
+    setToasts((t) => t.filter((x) => x.id !== id));
+  }, []);
+
+  const value = useMemo(() => ({
+    activeKey, setActiveKey, vertexActive, setVertexActive, integrationRefreshToken, refreshIntegrationStatus, toasts, notify, dismissToast,
+    page, navigateTo, consumePageParams,
+    characters, refreshCharacters,
+    sceneMemories, refreshSceneMemories,
+    outfits, refreshOutfits,
+  }), [activeKey, setActiveKey, vertexActive, setVertexActive, integrationRefreshToken, refreshIntegrationStatus, toasts, notify, dismissToast,
+    page, navigateTo, consumePageParams,
+    characters, refreshCharacters, sceneMemories, refreshSceneMemories,
+    outfits, refreshOutfits]);
+
+  return (
+    <AppContext.Provider value={value}>
+      {children}
+    </AppContext.Provider>
+  );
+}
+
+export function useApp() {
+  const ctx = useContext(AppContext);
+  if (!ctx) throw new Error('useApp must be inside AppProvider');
+  return ctx;
+}

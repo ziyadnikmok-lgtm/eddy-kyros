@@ -1,0 +1,266 @@
+[
+  {
+    "id": "d015e361-2bcc-4bb8-992f-232313cb05be",
+    "name": "Personal Brand",
+    "tone": "Confident, authentic, and relatable. Speak as a trusted expert sharing personal insights.",
+    "styleRules": [
+      "Use first person — \"I\" statements",
+      "Share micro-stories and personal anecdotes",
+      "Balance vulnerability with authority",
+      "Keep sentences punchy — max 15 words",
+      "One idea per slide"
+    ],
+    "emotionalTriggers": [
+      "aspiration",
+      "relatability",
+      "trust",
+      "transformation"
+    ],
+    "hookStrategy": "Lead with a bold personal opinion or a counter-intuitive truth from lived experience.",
+    "ctaStyle": "Invite conversation: \"What would you do?\" or \"Follow for more real talk.\"",
+    "isBuiltIn": true,
+    "createdAt": "2026-02-19T17:03:36.221Z"
+  },
+  {
+    "id": "7aec213c-b504-4f7d-a0ed-28a7345db720",
+    "name": "Luxury Lifestyle",
+    "tone": "Aspirational, polished, and subtly exclusive. Never desperate. The audience comes to you.",
+    "styleRules": [
+      "Use sensory language — textures, scents, light",
+      "Short sentences. Let images breathe.",
+      "Imply exclusivity without bragging",
+      "Minimal emojis — only ✨🤍🖤 if any",
+      "Never use exclamation marks"
+    ],
+    "emotionalTriggers": [
+      "desire",
+      "exclusivity",
+      "status",
+      "beauty"
+    ],
+    "hookStrategy": "Open with an evocative sensory detail or a quiet flex that makes people stop scrolling.",
+    "ctaStyle": "Subtle invitation: \"Link in bio\" or \"DM for details.\" Never hard-sell.",
+    "isBuiltIn": true,
+    "createdAt": "2026-02-19T17:03:36.221Z"
+  },
+  {
+    "id": "cc9582c9-2edf-4b11-909d-47fa964d8c2a",
+    "name": "Fitness",
+    "tone": "High-energy, disciplined, and motivational. Direct and no-nonsense.",
+    "styleRules": [
+      "Use action verbs — grind, push, build, earn",
+      "Short declarative sentences",
+      "Include numbers and specifics when possible",
+      "Use line breaks for emphasis",
+      "Conversational but authoritative"
+    ],
+    "emotionalTriggers": [
+      "discipline",
+      "transformation",
+      "pride",
+      "competition"
+    ],
+    "hookStrategy": "Start with a hard truth, a before/after contrast, or a challenge to the reader.",
+    "ctaStyle": "Direct command: \"Save this workout\" or \"Tag your gym partner.\"",
+    "isBuiltIn": true,
+    "createdAt": "2026-02-19T17:03:36.221Z"
+  },
+  {
+    "id": "52493aa9-e355-44c2-9443-899606fef3cd",
+    "name": "Motivation",
+    "tone": "Empowering, intense, and emotionally charged. Speak to the person at 3am who needs this.",
+    "styleRules": [
+      "One powerful sentence per line",
+      "Use repetition and rhythm",
+      "Build intensity across slides",
+      "End on a peak emotional note",
+      "Avoid clichés — find fresh metaphors"
+    ],
+    "emotionalTriggers": [
+      "resilience",
+      "purpose",
+      "urgency",
+      "self-belief"
+    ],
+    "hookStrategy": "Open with a painful truth everyone feels but nobody says. Create instant recognition.",
+    "ctaStyle": "Emotional close: \"Share this with someone who needs it\" or \"Save for when it gets hard.\"",
+    "isBuiltIn": true,
+    "createdAt": "2026-02-19T17:03:36.221Z"
+  },
+  {
+    "id": "14cc5960-abf1-4bd6-b77a-117c932725a4",
+    "name": "Influencer",
+    "tone": "Friendly, trendy, and conversational. Like texting your most stylish friend.",
+    "styleRules": [
+      "Use casual language — contractions, slang ok",
+      "Strategic emoji use throughout",
+      "Ask questions to drive engagement",
+      "Reference trends and pop culture naturally",
+      "Keep it light and shareable"
+    ],
+    "emotionalTriggers": [
+      "FOMO",
+      "belonging",
+      "trend-awareness",
+      "aspiration"
+    ],
+    "hookStrategy": "Lead with \"POV:\", \"Things I wish I knew:\", or a relatable hot take.",
+    "ctaStyle": "Engagement bait: \"Comment 🔥 if you relate\" or \"Save for later bestie.\"",
+    "isBuiltIn": true,
+    "createdAt": "2026-02-19T17:03:36.221Z"
+  },
+  {
+    "id": "0c2d5d7b-f067-465b-ab48-3bf019298c16",
+    "name": "Aesthetic Model",
+    "tone": "Dreamy, poetic, and visually evocative. Words should feel like the images look.",
+    "styleRules": [
+      "Minimal text — let visuals dominate",
+      "Poetic fragments over full sentences",
+      "Use metaphor and symbolism",
+      "Lowercase aesthetic acceptable",
+      "Max 8 words per slide caption"
+    ],
+    "emotionalTriggers": [
+      "beauty",
+      "mood",
+      "mystery",
+      "sensuality"
+    ],
+    "hookStrategy": "A single evocative phrase or question that creates atmosphere. No explanation needed.",
+    "ctaStyle": "Whisper-soft: \"✨\" or \"more on my page\" — never aggressive.",
+    "isBuiltIn": true,
+    "createdAt": "2026-02-19T17:03:36.221Z"
+  },
+  {
+    "id": "a78ca68c-7239-47b9-9718-6d72100e4f56",
+    "name": "Educational",
+    "tone": "Clear, authoritative, and approachable. A smart friend explaining complex things simply.",
+    "styleRules": [
+      "Use numbered lists and frameworks",
+      "One concept per slide — no overloading",
+      "Define jargon when used",
+      "Use \"Here's why\" and \"Here's how\" transitions",
+      "End with actionable takeaway"
+    ],
+    "emotionalTriggers": [
+      "curiosity",
+      "competence",
+      "growth",
+      "clarity"
+    ],
+    "hookStrategy": "Open with a surprising statistic, a common misconception, or \"Most people get this wrong.\"",
+    "ctaStyle": "Value-driven: \"Save this for reference\" or \"Share with someone learning this.\"",
+    "isBuiltIn": true,
+    "createdAt": "2026-02-19T17:03:36.221Z"
+  },
+  {
+    "id": "cdb83a7a-2872-445a-b1fd-cb6d6a5460bb",
+    "name": "E-Girl",
+    "tone": "Playful, chaotic, and self-aware. Internet-native with a touch of dark humor.",
+    "styleRules": [
+      "Mix lowercase with strategic caps for EMPHASIS",
+      "Use internet speak — \"ngl\", \"lowkey\", \"fr\"",
+      "Self-deprecating humor welcome",
+      "Emojis: 🖤⛓️🥀💀✨",
+      "Break grammar rules intentionally"
+    ],
+    "emotionalTriggers": [
+      "rebellion",
+      "humor",
+      "authenticity",
+      "chaos"
+    ],
+    "hookStrategy": "Chaotic opener — an unhinged take, a cursed observation, or \"no one asked but.\"",
+    "ctaStyle": "Casual chaos: \"follow for more unhinged content\" or \"like if u relate 💀\"",
+    "isBuiltIn": true,
+    "createdAt": "2026-02-19T17:03:36.221Z"
+  },
+  {
+    "id": "121c27e9-6ddf-48da-b81d-5637832dbd4d",
+    "name": "Travel",
+    "tone": "Adventurous, warm, and immersive. Transport the reader to the destination.",
+    "styleRules": [
+      "Use vivid sensory details — sounds, smells, tastes",
+      "Mix practical tips with emotional moments",
+      "Include specific location names",
+      "Write as if journaling in the moment",
+      "Use present tense for immediacy"
+    ],
+    "emotionalTriggers": [
+      "wanderlust",
+      "freedom",
+      "discovery",
+      "nostalgia"
+    ],
+    "hookStrategy": "Drop the reader into a moment: \"The sun hits the water at 6am in Santorini and...\"",
+    "ctaStyle": "Inspire action: \"Save for your next trip\" or \"Where should I go next? 👇\"",
+    "isBuiltIn": true,
+    "createdAt": "2026-02-19T17:03:36.221Z"
+  },
+  {
+    "id": "d31ccbea-71ff-45f5-81a8-4443ee8d94cf",
+    "name": "Fashion",
+    "tone": "Editorial, trend-conscious, and opinionated. Like a magazine editor with a personal blog.",
+    "styleRules": [
+      "Name brands, fabrics, and specific pieces",
+      "Use fashion vocabulary naturally",
+      "Confidence over explanation — state don't justify",
+      "Mix high and low references",
+      "Clean formatting — no clutter"
+    ],
+    "emotionalTriggers": [
+      "self-expression",
+      "confidence",
+      "status",
+      "creativity"
+    ],
+    "hookStrategy": "Bold style opinion, unexpected combination, or \"The piece everyone needs this season.\"",
+    "ctaStyle": "Chic and direct: \"Shop link in bio\" or \"Outfit details in stories.\"",
+    "isBuiltIn": true,
+    "createdAt": "2026-02-19T17:03:36.221Z"
+  },
+  {
+    "id": "4af2640f-2f2e-466b-9356-619c6991cd59",
+    "name": "Goth",
+    "tone": "Dark, atmospheric, and eloquent. Romantic darkness with literary depth.",
+    "styleRules": [
+      "Rich vocabulary — embrace the dramatic",
+      "Reference darkness, night, decay, rebirth",
+      "Poetic cadence in every line",
+      "Emojis: 🖤🌙🥀⛓️🕯️",
+      "Never peppy — maintain gravitas"
+    ],
+    "emotionalTriggers": [
+      "melancholy",
+      "beauty-in-darkness",
+      "individuality",
+      "depth"
+    ],
+    "hookStrategy": "Open with a dark poetic image or a philosophical observation about beauty and shadow.",
+    "ctaStyle": "Atmospheric: \"Follow for the dark side\" or simply 🖤.",
+    "isBuiltIn": true,
+    "createdAt": "2026-02-19T17:03:36.221Z"
+  },
+  {
+    "id": "1a9151ea-30c9-4127-8ca5-9e75da80fc04",
+    "name": "Mindset",
+    "tone": "Philosophical, calm authority, and transformative. A mentor speaking quietly with conviction.",
+    "styleRules": [
+      "Use \"you\" directly — speak to the reader",
+      "Short wisdom-packed sentences",
+      "Build from problem to solution across slides",
+      "Use contrast: \"Most people X. Winners Y.\"",
+      "No fluff — every word earns its place"
+    ],
+    "emotionalTriggers": [
+      "self-improvement",
+      "clarity",
+      "discipline",
+      "inner-strength"
+    ],
+    "hookStrategy": "Start with a mindset shift: \"The reason you're stuck isn't what you think.\"",
+    "ctaStyle": "Growth-focused: \"Follow for daily mindset shifts\" or \"Save this. Read it again in 30 days.\"",
+    "isBuiltIn": true,
+    "createdAt": "2026-02-19T17:03:36.221Z"
+  }
+]

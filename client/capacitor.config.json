@@ -1,0 +1,11 @@
+{
+  "appId": "com.aistudio.mobile",
+  "appName": "Kyros Studio",
+  "webDir": "dist",
+  "server": {
+    "url": "https://believable-curiosity-production-1126.up.railway.app"
+  },
+  "ios": {
+    "contentInset": "automatic"
+  }
+}

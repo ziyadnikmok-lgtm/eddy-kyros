@@ -1,0 +1,1 @@
+const o=r=>`kyros.pendingSource.${r}`;function s(r,n){try{Array.isArray(n)&&n.length&&window.sessionStorage.setItem(o(r),JSON.stringify(n))}catch{}}function a(r){try{const n=window.sessionStorage.getItem(o(r));if(!n)return[];window.sessionStorage.removeItem(o(r));const t=JSON.parse(n);return Array.isArray(t)?t.filter(e=>e&&e.dataUrl):[]}catch{return[]}}export{a as c,s};

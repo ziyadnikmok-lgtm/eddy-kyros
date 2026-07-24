@@ -1,0 +1,17 @@
+#!/bin/sh
+# Kyros secret guard — first check, on what is staged.
+#
+# This can be skipped with --no-verify, which is why pre-push checks again.
+
+ROOT=$(git rev-parse --show-toplevel) || exit 1
+
+PY=""
+for C in python py python3; do
+    if command -v "$C" >/dev/null 2>&1; then PY="$C"; break; fi
+done
+if [ -z "$PY" ]; then
+    echo "COMMIT REFUSED -- secret guard could not run: no python on PATH." >&2
+    exit 2
+fi
+
+"$PY" "$ROOT/tools/secret_guard.py" --staged || exit 1

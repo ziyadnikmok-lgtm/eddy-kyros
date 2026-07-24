@@ -1,0 +1,900 @@
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+const { AppError } = require('../middleware/errorHandler');
+const log = require('../utils/logger');
+const { atomicWriteJSON } = require('../utils/helpers');
+
+const { getDataDir } = require('../paths');
+
+const VALID_CATEGORIES = ['pose', 'expression', 'outfit', 'scene', 'lighting', 'camera', 'vibe', 'accessories', 'format'];
+const VALID_SOURCE_TYPES = ['profile_analysis', 'post_clone', 'manual', 'json_import', 'backfill'];
+
+const COMPOSE_ORDER = ['scene', 'lighting', 'camera', 'pose', 'expression', 'outfit', 'accessories', 'vibe', 'format'];
+
+const IDENTITY_PATTERNS = [
+  /\b(?:a\s+)?(?:young|tall|short|slim|curvy|petite|athletic)?\s*(?:woman|girl|lady|female|man|boy|guy|male)\s+(?:with|who|has|having)\b[^.;]*/gi,
+  /\bher\s+(?:face|body|skin|hair|eyes|lips|nose|cheeks?|forehead|chin|jawline|eyebrows?|eyelashes?|complexion)\b[^.;]*/gi,
+  /\bhis\s+(?:face|body|skin|hair|eyes|lips|nose|cheeks?|forehead|chin|jawline|eyebrows?|eyelashes?|complexion)\b[^.;]*/gi,
+  /\b(?:fair|dark|light|olive|pale|tan(?:ned)?|brown|black|white|caramel|porcelain|ebony|ivory)\s*(?:skin(?:ned)?|complex(?:ion)?|tone)\b/gi,
+  /\b(?:blonde|brunette|redhead|black-haired|brown-haired|auburn)\b/gi,
+  /\b(?:blue|green|brown|hazel|gray|grey)\s*eyes?\b/gi,
+  /\b(?:large|small|ample|flat|perky|full)\s*(?:bust|chest|breasts?|hips?|waist|thighs?|buttocks?)\b/gi,
+  /\b(?:\d+'?\d*"?\s*(?:tall|short)|(?:weighs?\s+)?\d+\s*(?:lbs?|kg|pounds?|kilos?))\b/gi,
+  /^(?:she|he)\s+(?:is|has|was|were|looks?|appears?|stands?|sits?|poses?)\s+/gim,
+];
+
+class StyleLibraryService {
+  get _dataFile() { return path.join(getDataDir(), 'styleLibrary.json'); }
+  get _profilesFile() { return path.join(getDataDir(), 'analyzedProfiles.json'); }
+
+  constructor() {
+    // no eager load — all reads happen per-request
+  }
+
+  _buildNormIndex(store) {
+    const normIndex = new Map();
+    for (const a of store) {
+      const key = a.text.trim().toLowerCase().replace(/\s+/g, ' ');
+      if (!normIndex.has(a.category)) normIndex.set(a.category, new Set());
+      normIndex.get(a.category).add(key);
+    }
+    return normIndex;
+  }
+
+  _addToNormIndex(normIndex, category, text) {
+    const key = text.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (!normIndex.has(category)) normIndex.set(category, new Set());
+    normIndex.get(category).add(key);
+  }
+
+  isDuplicate(category, text, store) {
+    const normalizedStore = store || this._loadStore();
+    const normIndex = this._buildNormIndex(normalizedStore);
+    const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (normalized.length < 5) return true;
+
+    if (normIndex.get(category)?.has(normalized)) return true;
+
+    const wordsNew = new Set(normalized.split(/\s+/));
+    if (wordsNew.size === 0) return true;
+
+    for (const a of normalizedStore) {
+      if (a.category !== category) continue;
+      const wordsExisting = new Set(a.text.trim().toLowerCase().split(/\s+/));
+      // Inline Jaccard — avoid allocating intermediate Sets
+      let intersectionSize = 0;
+      for (const w of wordsNew) {
+        if (wordsExisting.has(w)) intersectionSize++;
+      }
+      const unionSize = wordsNew.size + wordsExisting.size - intersectionSize;
+      if (unionSize > 0 && intersectionSize / unionSize > 0.6) return true;
+    }
+
+    return false;
+  }
+
+  passesQualityGate(category, text) {
+    const trimmed = (text || '').trim();
+    const words = trimmed.split(/\s+/);
+
+    const minWords = { outfit: 4, pose: 4, scene: 5, lighting: 4, camera: 4, expression: 3, vibe: 4, accessories: 3, format: 3 };
+    const minW = minWords[category] || 3;
+    if (words.length < minW) return { pass: false, reason: `too short (${words.length} words, need ${minW})` };
+
+    if (/^(?:the|a)\s+(?:woman|girl|lady|man|boy|guy)\s+(?:wears?|is\s+wearing|has\s+on|is\s+dressed)/i.test(trimmed)) {
+      return { pass: false, reason: 'identity leak' };
+    }
+    if (/^(?:she|he)\s+(?:wears?|is|has|looks?|appears?|stands?|sits?)/i.test(trimmed)) {
+      return { pass: false, reason: 'identity leak (pronoun start)' };
+    }
+
+    if (/^(?:beautiful|pretty|gorgeous|stunning|4k|realistic|high quality|masterpiece|best quality|ultra)/i.test(trimmed) && words.length < 5) {
+      return { pass: false, reason: 'generic quality tag' };
+    }
+
+    return { pass: true };
+  }
+
+  createAtom(data, { skipDuplicateCheck = false } = {}) {
+    this._validateAtomPayload(data);
+
+    const text = data.text.trim();
+    const source = this._normalizeSource(data.source);
+
+    // Manual atoms are user-authored building blocks. Keep the stricter quality
+    // gate for imported/auto-extracted atoms, but do not silently discard a
+    // creator's manual snippet and make the UI look like it vanished on refresh.
+    if (source.type !== 'manual') {
+      const quality = this.passesQualityGate(data.category, text);
+      if (!quality.pass) {
+        log.info('style_library_quality_reject', { reason: quality.reason, text: text.substring(0, 60) });
+        return null;
+      }
+    }
+
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+
+    if (!skipDuplicateCheck && this.isDuplicate(data.category, text, store)) {
+      log.info('style_library_duplicate_skip', { text: text.substring(0, 60) });
+      return null;
+    }
+
+    const atom = {
+      id: crypto.randomUUID(),
+      category: data.category,
+      text,
+      tags: Array.isArray(data.tags) ? data.tags.map(t => String(t).trim().toLowerCase()).filter(Boolean) : [],
+      source,
+      createdAt: new Date().toISOString(),
+      usageCount: 0,
+      favorite: false,
+    };
+
+    store.push(atom);
+    this._persistStore(store);
+    return { ...atom };
+  }
+
+  createBulk(atoms, { skipDuplicateCheck = false } = {}) {
+    if (!Array.isArray(atoms) || atoms.length === 0) {
+      throw new AppError('atoms must be a non-empty array', 400, 'VALIDATION_ERROR');
+    }
+
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+    const normIndex = this._buildNormIndex(store);
+
+    const created = [];
+    let skippedQuality = 0;
+    let skippedDuplicate = 0;
+
+    for (const data of atoms) {
+      this._validateAtomPayload(data);
+      const text = data.text.trim();
+
+      const quality = this.passesQualityGate(data.category, text);
+      if (!quality.pass) { skippedQuality++; continue; }
+
+      if (!skipDuplicateCheck && this._isDuplicateInStore(store, normIndex, data.category, text)) { skippedDuplicate++; continue; }
+
+      const atom = {
+        id: crypto.randomUUID(),
+        category: data.category,
+        text,
+        tags: Array.isArray(data.tags) ? data.tags.map(t => String(t).trim().toLowerCase()).filter(Boolean) : [],
+        source: this._normalizeSource(data.source),
+        createdAt: new Date().toISOString(),
+        usageCount: 0,
+        favorite: false,
+      };
+      store.push(atom);
+      this._addToNormIndex(normIndex, atom.category, atom.text);
+      created.push({ ...atom });
+    }
+
+    if (skippedQuality > 0 || skippedDuplicate > 0) {
+      log.info(`[style-library] createBulk: ${created.length} created, ${skippedQuality} failed quality, ${skippedDuplicate} duplicates skipped`);
+    }
+
+    if (created.length > 0) this._persistStore(store);
+    return created;
+  }
+
+  getAtom(id) {
+    this._validateId(id);
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+    const atom = store.find(a => a.id === id);
+    if (!atom) throw new AppError('Atom not found', 404, 'ATOM_NOT_FOUND');
+    return { ...atom };
+  }
+
+  listAtoms(filters = {}) {
+    this._ensureDataFile(this._dataFile);
+    let results = this._loadStore();
+
+    if (filters.category) {
+      results = results.filter(a => a.category === filters.category);
+    }
+    if (filters.tag) {
+      const tag = filters.tag.toLowerCase();
+      results = results.filter(a => a.tags && a.tags.includes(tag));
+    }
+    if (filters.sourceType) {
+      results = results.filter(a => a.source?.type === filters.sourceType);
+    }
+    if (filters.sourceUsername) {
+      results = results.filter(a => a.source?.profileUsername === filters.sourceUsername);
+    }
+    if (filters.favorite === true || filters.favorite === 'true') {
+      results = results.filter(a => a.favorite);
+    }
+    if (filters.q) {
+      const q = filters.q.toLowerCase();
+      results = results.filter(a => a.text.toLowerCase().includes(q) || (a.tags && a.tags.some(t => t.includes(q))));
+    }
+
+    results = results.sort((a, b) => {
+      if (a.favorite !== b.favorite) return b.favorite ? 1 : -1;
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
+
+    const page = Math.max(1, parseInt(filters.page) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(filters.limit) || 50));
+    const total = results.length;
+    const offset = (page - 1) * limit;
+
+    return {
+      atoms: results.slice(offset, offset + limit).map(a => ({ ...a })),
+      total,
+      page,
+      limit,
+      pages: Math.ceil(total / limit),
+    };
+  }
+
+  listAllAtoms(filters = {}) {
+    this._ensureDataFile(this._dataFile);
+    let results = this._loadStore();
+    if (filters.category) results = results.filter(a => a.category === filters.category);
+    if (filters.tag) {
+      const tag = filters.tag.toLowerCase();
+      results = results.filter(a => a.tags && a.tags.includes(tag));
+    }
+    if (filters.sourceType) results = results.filter(a => a.source?.type === filters.sourceType);
+    if (filters.sourceUsername) results = results.filter(a => a.source?.profileUsername === filters.sourceUsername);
+    if (filters.favorite === true || filters.favorite === 'true') results = results.filter(a => a.favorite);
+    if (filters.q) {
+      const q = filters.q.toLowerCase();
+      results = results.filter(a => a.text.toLowerCase().includes(q) || (a.tags && a.tags.some(t => t.includes(q))));
+    }
+    return results
+      .sort((a, b) => {
+        if (a.favorite !== b.favorite) return b.favorite ? 1 : -1;
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      })
+      .map(a => ({ ...a }));
+  }
+
+  updateAtom(id, updates) {
+    this._validateId(id);
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+    const idx = store.findIndex(a => a.id === id);
+    if (idx === -1) throw new AppError('Atom not found', 404, 'ATOM_NOT_FOUND');
+
+    const atom = store[idx];
+
+    if (typeof updates.text === 'string' && updates.text.trim().length > 0) {
+      atom.text = updates.text.trim();
+    }
+    if (Array.isArray(updates.tags)) {
+      atom.tags = updates.tags.map(t => String(t).trim().toLowerCase()).filter(Boolean);
+    }
+    if (typeof updates.favorite === 'boolean') {
+      atom.favorite = updates.favorite;
+    }
+    if (typeof updates.category === 'string' && VALID_CATEGORIES.includes(updates.category)) {
+      atom.category = updates.category;
+    }
+
+    this._persistStore(store);
+    return { ...atom };
+  }
+
+  deleteAtom(id) {
+    this._validateId(id);
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+    const idx = store.findIndex(a => a.id === id);
+    if (idx === -1) throw new AppError('Atom not found', 404, 'ATOM_NOT_FOUND');
+    store.splice(idx, 1);
+    this._persistStore(store);
+    return { removed: true };
+  }
+
+  deleteBulk(ids) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new AppError('ids must be a non-empty array', 400, 'VALIDATION_ERROR');
+    }
+    this._ensureDataFile(this._dataFile);
+    let store = this._loadStore();
+    const before = store.length;
+    const idSet = new Set(ids);
+    store = store.filter(a => !idSet.has(a.id));
+    this._persistStore(store);
+    return { removed: before - store.length };
+  }
+
+  deleteAll() {
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+    const count = store.length;
+    this._persistStore([]);
+    return { removed: count };
+  }
+
+  findDuplicates() {
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+    const groups = new Map();
+    for (const atom of store) {
+      const key = `${atom.category}::${atom.text.trim().toLowerCase().replace(/\s+/g, ' ')}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(atom);
+    }
+
+    let duplicateCount = 0;
+    const toRemove = [];
+    for (const [, group] of groups) {
+      if (group.length <= 1) continue;
+      group.sort((a, b) => {
+        if (a.favorite !== b.favorite) return a.favorite ? -1 : 1;
+        if ((a.usageCount || 0) !== (b.usageCount || 0)) return (b.usageCount || 0) - (a.usageCount || 0);
+        return new Date(a.createdAt) - new Date(b.createdAt);
+      });
+      for (let i = 1; i < group.length; i++) {
+        toRemove.push(group[i].id);
+      }
+      duplicateCount += group.length - 1;
+    }
+
+    return { duplicateCount, removeIds: toRemove };
+  }
+
+  deleteDuplicates() {
+    const { duplicateCount, removeIds } = this.findDuplicates();
+    if (removeIds.length === 0) return { removed: 0 };
+    this._ensureDataFile(this._dataFile);
+    let store = this._loadStore();
+    const idSet = new Set(removeIds);
+    store = store.filter(a => !idSet.has(a.id));
+    this._persistStore(store);
+    return { removed: duplicateCount };
+  }
+
+  deleteBySource(username) {
+    this._ensureDataFile(this._dataFile);
+    this._ensureDataFile(this._profilesFile);
+    let store = this._loadStore();
+    const before = store.length;
+    store = store.filter(a => a.source?.profileUsername !== username);
+    this._persistStore(store);
+    let profiles = this._loadProfiles();
+    profiles = profiles.filter(p => p.username !== username);
+    this._persistProfiles(profiles);
+    return { removed: before - store.length };
+  }
+
+  composePrompt(atomIds) {
+    if (!Array.isArray(atomIds) || atomIds.length === 0) {
+      throw new AppError('atomIds must be a non-empty array', 400, 'VALIDATION_ERROR');
+    }
+
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+    const atoms = atomIds.map(id => store.find(a => a.id === id)).filter(Boolean);
+    if (atoms.length === 0) {
+      throw new AppError('No valid atoms found for the given IDs', 404, 'ATOMS_NOT_FOUND');
+    }
+
+    const grouped = {};
+    for (const atom of atoms) {
+      if (!grouped[atom.category]) grouped[atom.category] = [];
+      grouped[atom.category].push(atom.text);
+    }
+
+    const parts = [];
+    for (const cat of COMPOSE_ORDER) {
+      if (grouped[cat] && grouped[cat].length > 0) {
+        const label = cat.charAt(0).toUpperCase() + cat.slice(1);
+        parts.push(`${label}: ${grouped[cat].join('. ')}`);
+      }
+    }
+
+    return parts.join('\n');
+  }
+
+  autoSelect(keywords, { maxPerCategory = 1, excludeIds = [] } = {}) {
+    if (!Array.isArray(keywords) || keywords.length === 0) return [];
+
+    const normalizedKeywords = keywords
+      .map(k => String(k).toLowerCase().trim())
+      .filter(k => k.length >= 3);
+    if (normalizedKeywords.length === 0) return [];
+
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+    const excludeSet = new Set(excludeIds);
+    const candidates = store.filter(a => !excludeSet.has(a.id));
+
+    const scored = candidates.map(atom => {
+      const hay = `${atom.text} ${(atom.tags || []).join(' ')}`.toLowerCase();
+      let score = 0;
+      for (const kw of normalizedKeywords) {
+        if (hay.includes(kw)) score += 1;
+      }
+      if (atom.favorite) score += 0.5;
+      if ((atom.usageCount || 0) > 5) score += 0.3;
+      return { atom, score };
+    }).filter(s => s.score > 0);
+
+    const byCategory = {};
+    for (const { atom, score } of scored) {
+      if (!byCategory[atom.category]) byCategory[atom.category] = [];
+      byCategory[atom.category].push({ id: atom.id, score });
+    }
+
+    const selected = [];
+    for (const cat of COMPOSE_ORDER) {
+      if (!byCategory[cat]) continue;
+      byCategory[cat].sort((a, b) => b.score - a.score);
+      const picks = byCategory[cat].slice(0, maxPerCategory);
+      selected.push(...picks.map(p => p.id));
+    }
+
+    return selected;
+  }
+
+  getStats() {
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+    const byCategory = {};
+    const bySource = {};
+    for (const cat of VALID_CATEGORIES) byCategory[cat] = 0;
+
+    for (const atom of store) {
+      byCategory[atom.category] = (byCategory[atom.category] || 0) + 1;
+      const src = atom.source?.type || 'unknown';
+      bySource[src] = (bySource[src] || 0) + 1;
+    }
+
+    return {
+      total: store.length,
+      byCategory,
+      bySource,
+      favorites: store.filter(a => a.favorite).length,
+    };
+  }
+
+  incrementUsage(atomId) {
+    this._ensureDataFile(this._dataFile);
+    const store = this._loadStore();
+    const atom = store.find(a => a.id === atomId);
+    if (atom) {
+      atom.usageCount = (atom.usageCount || 0) + 1;
+      this._persistStore(store);
+    }
+  }
+
+  getAnalyzedProfiles() {
+    this._ensureDataFile(this._dataFile);
+    this._ensureDataFile(this._profilesFile);
+    const store = this._loadStore();
+    const profiles = this._loadProfiles();
+    return profiles.map(p => {
+      const atomCount = store.filter(a => a.source?.profileUsername === p.username).length;
+      return { ...p, atomCount };
+    });
+  }
+
+  markProfileAnalyzed(username, meta = {}) {
+    this._ensureDataFile(this._profilesFile);
+    const profiles = this._loadProfiles();
+    const existing = profiles.find(p => p.username === username);
+    if (existing) {
+      existing.analyzedAt = new Date().toISOString();
+      if (meta.postCount !== undefined) existing.postCount = meta.postCount;
+      if (meta.selectedAtomCount !== undefined) existing.selectedAtomCount = meta.selectedAtomCount;
+    } else {
+      profiles.push({
+        username,
+        analyzedAt: new Date().toISOString(),
+        postCount: meta.postCount !== undefined ? meta.postCount : 0,
+        selectedAtomCount: meta.selectedAtomCount !== undefined ? meta.selectedAtomCount : 0,
+      });
+    }
+    this._persistProfiles(profiles);
+  }
+
+  stripIdentity(text) {
+    if (!text || typeof text !== 'string') return '';
+    let cleaned = text;
+    for (const pattern of IDENTITY_PATTERNS) {
+      pattern.lastIndex = 0;
+      cleaned = cleaned.replace(pattern, '');
+    }
+    cleaned = cleaned
+      .replace(/,\s*,/g, ',')
+      .replace(/\.\s*\./g, '.')
+      .replace(/\s{2,}/g, ' ')
+      .replace(/^[\s,.;]+/, '')
+      .replace(/[\s,.;]+$/, '')
+      .trim();
+    return cleaned;
+  }
+
+  importFromJSON(jsonData, sourceLabel = 'json_import') {
+    if (!jsonData || typeof jsonData !== 'object') {
+      throw new AppError('Invalid JSON data', 400, 'VALIDATION_ERROR');
+    }
+
+    const atoms = [];
+
+    if (Array.isArray(jsonData)) {
+      for (const item of jsonData) {
+        if (!item || typeof item !== 'object') continue;
+        const prompt = item.prompt && typeof item.prompt === 'object' ? item.prompt : item;
+        this._extractPromptExampleAtoms(prompt, sourceLabel, atoms);
+      }
+    } else {
+      const profileData = jsonData.life_story && typeof jsonData.life_story === 'object'
+        ? jsonData.life_story
+        : jsonData;
+      this._extractSubjectProfileAtoms(profileData, sourceLabel, atoms);
+    }
+
+    for (const atom of atoms) {
+      atom.text = this.stripIdentity(atom.text);
+    }
+
+    return atoms.filter(a => a.text && a.text.length >= 10);
+  }
+
+  _extractPromptExampleAtoms(prompt, sourceLabel, atoms) {
+    const outfitParts = [prompt.outfit, prompt.fabric_contour].filter(Boolean);
+    if (outfitParts.length) {
+      atoms.push({ category: 'outfit', text: outfitParts.join('. '), tags: [], sourceField: 'outfit+fabric_contour', source: { type: 'json_import', sourceLabel } });
+    }
+
+    if (prompt.framing) {
+      atoms.push({ category: 'camera', text: prompt.framing, tags: [], sourceField: 'framing', source: { type: 'json_import', sourceLabel } });
+    }
+
+    const poseParts = [prompt.pose, prompt.interaction].filter(Boolean);
+    if (poseParts.length) {
+      atoms.push({ category: 'pose', text: poseParts.join('. '), tags: [], sourceField: 'pose+interaction', source: { type: 'json_import', sourceLabel } });
+    }
+
+    const exprParts = [prompt.expression, prompt.gaze].filter(Boolean);
+    if (exprParts.length) {
+      atoms.push({ category: 'expression', text: exprParts.join('. '), tags: [], sourceField: 'expression+gaze', source: { type: 'json_import', sourceLabel } });
+    }
+
+    if (prompt.lighting) {
+      atoms.push({ category: 'lighting', text: prompt.lighting, tags: [], sourceField: 'lighting', source: { type: 'json_import', sourceLabel } });
+    }
+
+    if (prompt.background) {
+      atoms.push({ category: 'scene', text: prompt.background, tags: [], sourceField: 'background', source: { type: 'json_import', sourceLabel } });
+    }
+
+    if (prompt.style) {
+      atoms.push({ category: 'vibe', text: prompt.style, tags: [], sourceField: 'style', source: { type: 'json_import', sourceLabel } });
+    }
+  }
+
+  _extractSubjectProfileAtoms(data, sourceLabel, atoms) {
+    const src = { type: 'json_import', sourceLabel };
+
+    if (data.pose_inspiration && typeof data.pose_inspiration === 'object') {
+      this._flattenToAtoms(data.pose_inspiration, 'pose', 'pose_inspiration', src, atoms);
+    }
+
+    if (Array.isArray(data.hand_interactions)) {
+      for (const item of data.hand_interactions) {
+        const text = typeof item === 'string' ? item : (item?.description || item?.text || JSON.stringify(item));
+        if (text) atoms.push({ category: 'pose', text, tags: ['hands'], sourceField: 'hand_interactions', source: { ...src } });
+      }
+    }
+
+    if (Array.isArray(data.expanded_expressions)) {
+      for (const item of data.expanded_expressions) {
+        const text = typeof item === 'string' ? item : (item?.description || item?.text || '');
+        if (text) atoms.push({ category: 'expression', text, tags: [], sourceField: 'expanded_expressions', source: { ...src } });
+      }
+    }
+    if (data.emotional_range && typeof data.emotional_range === 'object') {
+      this._flattenToAtoms(data.emotional_range, 'expression', 'emotional_range', src, atoms);
+    }
+    if (Array.isArray(data.camera_relationship)) {
+      for (const item of data.camera_relationship) {
+        const text = typeof item === 'string' ? item : (item?.description || item?.text || '');
+        if (text) atoms.push({ category: 'expression', text, tags: ['camera-relationship'], sourceField: 'camera_relationship', source: { ...src } });
+      }
+    }
+
+    if (data.outfit_combos && typeof data.outfit_combos === 'object') {
+      for (const [subcategory, items] of Object.entries(data.outfit_combos)) {
+        if (Array.isArray(items)) {
+          for (const item of items) {
+            const text = typeof item === 'string' ? item : (item?.description || item?.text || '');
+            if (text) atoms.push({ category: 'outfit', text, tags: [subcategory], sourceField: `outfit_combos.${subcategory}`, source: { ...src } });
+          }
+        } else if (typeof items === 'string') {
+          atoms.push({ category: 'outfit', text: items, tags: [subcategory], sourceField: `outfit_combos.${subcategory}`, source: { ...src } });
+        }
+      }
+    }
+
+    if (Array.isArray(data.past_locations)) {
+      for (const item of data.past_locations) {
+        const text = typeof item === 'string' ? item : (item?.description || item?.text || '');
+        if (text) atoms.push({ category: 'scene', text, tags: [], sourceField: 'past_locations', source: { ...src } });
+      }
+    }
+
+    if (Array.isArray(data.locations_and_environments)) {
+      for (const loc of data.locations_and_environments) {
+        if (!loc || typeof loc !== 'object') continue;
+        if (loc.physical_environment) {
+          atoms.push({ category: 'scene', text: loc.physical_environment, tags: [loc.location_name || ''].filter(Boolean), sourceField: 'locations_and_environments', source: { ...src } });
+        }
+        if (loc.lighting_profile) {
+          atoms.push({ category: 'lighting', text: loc.lighting_profile, tags: [loc.location_name || ''].filter(Boolean), sourceField: 'locations_and_environments.lighting', source: { ...src } });
+        }
+      }
+    }
+
+    if (data.scenes_and_activities && typeof data.scenes_and_activities === 'object') {
+      for (const [sceneName, items] of Object.entries(data.scenes_and_activities)) {
+        if (Array.isArray(items)) {
+          for (const item of items) {
+            const text = typeof item === 'string' ? item : (item?.description || item?.text || '');
+            if (text) atoms.push({ category: 'vibe', text, tags: [sceneName], sourceField: `scenes_and_activities.${sceneName}`, source: { ...src } });
+          }
+        }
+      }
+    }
+
+    if (Array.isArray(data.outfit_formulas)) {
+      for (const formula of data.outfit_formulas) {
+        if (!formula || typeof formula !== 'object') continue;
+        const parts = [formula.top, formula.bottom, formula.shoes].filter(Boolean);
+        if (parts.length > 0) {
+          atoms.push({ category: 'outfit', text: parts.join('. '), tags: [formula.name || ''].filter(Boolean), sourceField: 'outfit_formulas', source: { ...src } });
+        }
+      }
+    }
+
+    if (data.wardrobe_catalog && typeof data.wardrobe_catalog === 'object') {
+      for (const [subcategory, items] of Object.entries(data.wardrobe_catalog)) {
+        if (Array.isArray(items)) {
+          for (const item of items) {
+            const text = typeof item === 'string' ? item : (item?.description || item?.text || '');
+            if (text) atoms.push({ category: 'outfit', text, tags: [subcategory], sourceField: `wardrobe_catalog.${subcategory}`, source: { ...src } });
+          }
+        }
+      }
+    }
+
+    if (Array.isArray(data.past_moments)) {
+      for (const item of data.past_moments) {
+        const text = typeof item === 'string' ? item : (item?.description || item?.text || '');
+        if (text) atoms.push({ category: 'vibe', text, tags: ['moment'], sourceField: 'past_moments', source: { ...src } });
+      }
+    }
+
+    if (data.photography_styles?.technical_approach) {
+      const ta = data.photography_styles.technical_approach;
+      if (Array.isArray(ta)) {
+        for (const item of ta) {
+          const text = typeof item === 'string' ? item : (item?.description || item?.text || '');
+          if (text) atoms.push({ category: 'camera', text, tags: [], sourceField: 'photography_styles.technical_approach', source: { ...src } });
+        }
+      } else if (typeof ta === 'string') {
+        atoms.push({ category: 'camera', text: ta, tags: [], sourceField: 'photography_styles.technical_approach', source: { ...src } });
+      }
+    }
+
+    if (data.generation_rules?.lighting_and_atmosphere?.keywords) {
+      const kw = data.generation_rules.lighting_and_atmosphere.keywords;
+      if (Array.isArray(kw)) {
+        for (const item of kw) {
+          const text = typeof item === 'string' ? item : '';
+          if (text) atoms.push({ category: 'lighting', text, tags: [], sourceField: 'generation_rules.lighting_and_atmosphere.keywords', source: { ...src } });
+        }
+      }
+    }
+
+    if (Array.isArray(data.recurring_visual_motifs)) {
+      for (const item of data.recurring_visual_motifs) {
+        const text = typeof item === 'string' ? item : (item?.description || item?.text || '');
+        if (text) atoms.push({ category: 'vibe', text, tags: ['motif'], sourceField: 'recurring_visual_motifs', source: { ...src } });
+      }
+    } else if (data.recurring_visual_motifs?.elements) {
+      this._flattenToAtoms(data.recurring_visual_motifs.elements, 'vibe', 'recurring_visual_motifs.elements', src, atoms);
+    }
+    if (data.character_energy && typeof data.character_energy === 'object') {
+      this._flattenToAtoms(data.character_energy, 'vibe', 'character_energy', src, atoms);
+    } else if (typeof data.character_energy === 'string') {
+      atoms.push({ category: 'vibe', text: data.character_energy, tags: ['energy'], sourceField: 'character_energy', source: { ...src } });
+    }
+
+    if (Array.isArray(data.accessories_catalog)) {
+      for (const item of data.accessories_catalog) {
+        const text = typeof item === 'string' ? item : (item?.description || item?.text || '');
+        if (text) atoms.push({ category: 'accessories', text, tags: [], sourceField: 'accessories_catalog', source: { ...src } });
+      }
+    } else if (data.accessories_catalog && typeof data.accessories_catalog === 'object') {
+      for (const [subcat, items] of Object.entries(data.accessories_catalog)) {
+        if (Array.isArray(items)) {
+          for (const item of items) {
+            const text = typeof item === 'string' ? item : (item?.description || item?.text || '');
+            if (text) atoms.push({ category: 'accessories', text, tags: [subcat], sourceField: `accessories_catalog.${subcat}`, source: { ...src } });
+          }
+        }
+      }
+    }
+    if (Array.isArray(data.accessory_styling_combos)) {
+      for (const item of data.accessory_styling_combos) {
+        const text = typeof item === 'string' ? item : (item?.description || item?.text || '');
+        if (text) atoms.push({ category: 'accessories', text, tags: ['combo'], sourceField: 'accessory_styling_combos', source: { ...src } });
+      }
+    }
+  }
+
+  _flattenToAtoms(obj, category, parentField, source, atoms) {
+    if (Array.isArray(obj)) {
+      for (const item of obj) {
+        if (typeof item === 'string') {
+          atoms.push({ category, text: item, tags: [], sourceField: parentField, source: { ...source } });
+        } else if (item && typeof item === 'object') {
+          const text = item.description || item.text || item.name || '';
+          if (text) atoms.push({ category, text, tags: [], sourceField: parentField, source: { ...source } });
+        }
+      }
+    } else if (typeof obj === 'object' && obj !== null) {
+      for (const [key, val] of Object.entries(obj)) {
+        const fieldPath = `${parentField}.${key}`;
+        if (Array.isArray(val)) {
+          for (const item of val) {
+            if (typeof item === 'string') {
+              atoms.push({ category, text: item, tags: [key], sourceField: fieldPath, source: { ...source } });
+            } else if (item && typeof item === 'object') {
+              const text = item.description || item.text || item.name || '';
+              if (text) atoms.push({ category, text, tags: [key], sourceField: fieldPath, source: { ...source } });
+            }
+          }
+        } else if (typeof val === 'string') {
+          atoms.push({ category, text: val, tags: [key], sourceField: fieldPath, source: { ...source } });
+        }
+      }
+    }
+  }
+
+  backfillFromPromptKnowledge() {
+    const pkFile = path.join(getDataDir(), 'promptKnowledge.json');
+    if (!fs.existsSync(pkFile)) return { imported: 0 };
+
+    let pkData;
+    try {
+      pkData = JSON.parse(fs.readFileSync(pkFile, 'utf8'));
+    } catch {
+      return { imported: 0 };
+    }
+    if (!Array.isArray(pkData)) return { imported: 0 };
+
+    const categories = ['lighting', 'camera', 'pose', 'expression', 'outfit', 'scene', 'accessories'];
+    const atoms = [];
+
+    for (const entry of pkData) {
+      for (const cat of categories) {
+        const text = entry[cat];
+        if (typeof text === 'string' && text.trim().length > 15) {
+          atoms.push({
+            category: cat,
+            text: this.stripIdentity(text.trim()),
+            tags: [],
+            source: {
+              type: 'backfill',
+              postUrl: entry.source_url || '',
+            },
+          });
+        }
+      }
+    }
+
+    const unique = [];
+    const seen = new Set();
+    for (const atom of atoms) {
+      const key = `${atom.category}::${atom.text.toLowerCase().slice(0, 80)}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        unique.push(atom);
+      }
+    }
+
+    if (unique.length === 0) return { imported: 0 };
+
+    const created = this.createBulk(unique);
+    return { imported: created.length };
+  }
+
+  _validateId(id) {
+    if (!id || typeof id !== 'string' || id.trim().length === 0) {
+      throw new AppError('Atom ID is required', 400, 'VALIDATION_ERROR');
+    }
+  }
+
+  _validateAtomPayload(data) {
+    if (!data || typeof data !== 'object') {
+      throw new AppError('Atom data is required', 400, 'VALIDATION_ERROR');
+    }
+    if (!VALID_CATEGORIES.includes(data.category)) {
+      throw new AppError(`category must be one of: ${VALID_CATEGORIES.join(', ')}`, 400, 'VALIDATION_ERROR');
+    }
+    if (typeof data.text !== 'string' || data.text.trim().length === 0) {
+      throw new AppError('text is required and must be a non-empty string', 400, 'VALIDATION_ERROR');
+    }
+  }
+
+  _normalizeSource(source) {
+    if (!source || typeof source !== 'object') return { type: 'manual' };
+    return {
+      type: VALID_SOURCE_TYPES.includes(source.type) ? source.type : 'manual',
+      ...(source.profileUsername ? { profileUsername: source.profileUsername } : {}),
+      ...(source.postUrl ? { postUrl: source.postUrl } : {}),
+      ...(source.sourceLabel ? { sourceLabel: source.sourceLabel } : {}),
+    };
+  }
+
+  _isDuplicateInStore(store, normIndex, category, text) {
+    const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (normalized.length < 5) return true;
+    if (normIndex.get(category)?.has(normalized)) return true;
+
+    const wordsNew = new Set(normalized.split(/\s+/));
+    if (wordsNew.size === 0) return true;
+
+    for (const a of store) {
+      if (a.category !== category) continue;
+      const wordsExisting = new Set(a.text.trim().toLowerCase().split(/\s+/));
+      let intersectionSize = 0;
+      for (const w of wordsNew) {
+        if (wordsExisting.has(w)) intersectionSize++;
+      }
+      const unionSize = wordsNew.size + wordsExisting.size - intersectionSize;
+      if (unionSize > 0 && intersectionSize / unionSize > 0.6) return true;
+    }
+
+    return false;
+  }
+
+  _ensureDataFile(filePath) {
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, '[]', 'utf8');
+  }
+
+  _loadStore() {
+    return this._loadFile(this._dataFile);
+  }
+
+  _loadProfiles() {
+    return this._loadFile(this._profilesFile);
+  }
+
+  _loadFile(filePath) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      if (Array.isArray(parsed)) return parsed;
+    } catch (err) {
+      log.warn('style_library_load_failed', { file: filePath, message: err.message });
+    }
+    fs.writeFileSync(filePath, '[]', 'utf8');
+    return [];
+  }
+
+  _persistStore(data) {
+    atomicWriteJSON(this._dataFile, data);
+  }
+
+  _persistProfiles(data) {
+    atomicWriteJSON(this._profilesFile, data);
+  }
+}
+
+module.exports = new StyleLibraryService();

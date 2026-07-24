@@ -1,0 +1,273 @@
+@import "tailwindcss";
+
+/* ── WORKSPACES ───────────────────────────────────────────────────────────────────────────
+   Each browser tab at the top of the app is a WORKSPACE: the same application, same pages,
+   same code, with its own look. Switching sets data-workspace on <html>.
+
+   Each person's UI lives in its OWN file so we can restyle independently without touching each
+   other's tab. Imported last so a workspace can override anything above it.
+
+   How one attribute re-skins the whole app: Tailwind v4 compiles every `bg-rose-500` to
+   `background-color: var(--color-rose-500)`, and the accent runs through `rose-*` in ~660
+   places — so overriding the rose ramp inside a workspace block re-themes all of them at once,
+   without touching a single component. */
+@import "./workspaces/eddy.css";
+@import "./workspaces/ziyad.css";
+
+/* Everything in the app is sized in rem, so the root font size scales the whole interface at
+   once — labels, chips, body copy, buttons. Bumping individual classes one at a time was
+   never going to catch them all.
+
+   18px against the browser default of 16px is a 12.5% increase. Fixed-px widths (the sidebar
+   rail, image tiles) do not scale with it, which is deliberate: those are sized to their
+   content, not to the type. */
+html {
+  /* Set live from the sidebar control; 20px is the starting point. */
+  font-size: var(--ui-scale, 20px);
+}
+
+@theme {
+  --font-sans: "Outfit", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --color-accent: #d946a8;
+  --color-accent-hover: #be2596;
+  --color-accent-muted: #d946a820;
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+
+  --animate-dialog-in: dialog-content-show 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-overlay-in: overlay-show 200ms ease-out;
+  --animate-tooltip-in: tooltip-show 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-toast-in: toast-slide-in 350ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-collapsible-down: collapsible-expand 200ms ease-out;
+  --animate-collapsible-up: collapsible-collapse 200ms ease-out;
+}
+
+@layer base {
+  * { scrollbar-width: thin; scrollbar-color: #272533 transparent; }
+  ::selection { background: #d946a840; }
+  body {
+    font-family: var(--font-sans);
+    -webkit-tap-highlight-color: transparent;
+    --kyros-build: "2026-05-26-2";
+    background-color: #0d0c15;
+  }
+  button, a, [role="button"], input, select, textarea { touch-action: manipulation; }
+}
+
+@layer utilities {
+  .scrollbar-none { scrollbar-width: none; -ms-overflow-style: none; }
+  .scrollbar-none::-webkit-scrollbar { display: none; }
+  .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0); }
+  .safe-top { padding-top: env(safe-area-inset-top, 0); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin-slow {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+@keyframes dialog-content-show {
+  from { opacity: 0; scale: 0.95; }
+  to { opacity: 1; scale: 1; }
+}
+
+@keyframes overlay-show {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes tooltip-show {
+  from { opacity: 0; scale: 0.96; }
+  to { opacity: 1; scale: 1; }
+}
+
+@keyframes toast-slide-in {
+  from { opacity: 0; transform: translateX(calc(100% + 1rem)); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes collapsible-expand {
+  from { height: 0; opacity: 0; }
+  to { height: var(--radix-collapsible-content-height); opacity: 1; }
+}
+
+@keyframes collapsible-collapse {
+  from { height: var(--radix-collapsible-content-height); opacity: 1; }
+  to { height: 0; opacity: 0; }
+}
+
+@keyframes dropdown-in {
+  from { opacity: 0; scale: 0.95; transform: translateY(-4px); }
+  to { opacity: 1; scale: 1; transform: translateY(0); }
+}
+
+@keyframes stagger-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes glow-breathe {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes rose-glow-breathe {
+  0%, 100% { opacity: 0.5; box-shadow: 0 0 20px rgba(217, 70, 168, 0.3); }
+  50% { opacity: 0.9; box-shadow: 0 0 30px rgba(217, 70, 168, 0.55); }
+}
+
+@keyframes grabPulse {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+
+[style*="glow-breathe"] {
+  will-change: opacity;
+}
+
+@utility skeleton {
+  background: linear-gradient(90deg, #181622 25%, #242233 50%, #181622 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
+  border-radius: 0.5rem;
+}
+
+@utility animate-in {
+  animation: fade-in 0.3s ease-out both;
+}
+
+@utility dropdown-animate {
+  animation: dropdown-in 150ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: top right;
+}
+
+@utility stagger-item {
+  animation: stagger-fade-in 0.35s ease-out both;
+  animation-delay: calc(var(--stagger-index, 0) * 50ms);
+}
+
+@utility scroll-fade {
+  mask-image: linear-gradient(to bottom, transparent 0, black 8px, black calc(100% - 16px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 8px, black calc(100% - 16px), transparent 100%);
+}
+
+@utility spinner {
+  border: 2.5px solid #242233;
+  border-top-color: #d946a8;
+  border-radius: 50%;
+  animation: spin-slow 0.7s linear infinite;
+}
+
+@utility text-gradient {
+  background: linear-gradient(135deg, #f4f4f5 0%, #a1a1aa 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+@utility glass {
+  background: rgba(19, 17, 28, 0.76);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/* Rose Glass — frosted translucent cards over the cool violet-black ground.
+   Lower opacity + blur/saturate lets the single ambient glow tint through. */
+@utility glass-card {
+  background: linear-gradient(180deg, rgba(30, 26, 44, 0.58), rgba(20, 17, 30, 0.58));
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  box-shadow: 0 10px 34px -16px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+@utility noise {
+  position: relative;
+}
+
+.noise::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  opacity: 0.025;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-size: 128px 128px;
+}
+
+@utility inset-depth {
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+/* Custom rose range slider styling from visual sketch */
+input[type=range].rose-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.08);
+}
+input[type=range].rose-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid #d946a8;
+  box-shadow: 0 0 8px 1px rgba(217, 70, 168, 0.7);
+  cursor: pointer;
+}
+input[type=range].rose-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid #d946a8;
+  box-shadow: 0 0 8px 1px rgba(217, 70, 168, 0.7);
+  cursor: pointer;
+}
+
+/* Deep — procedural pink smoke. Generated, not a photo: nothing to license, no image in the
+   bundle, and density/height/hue are parameters rather than a new asset.
+   feTurbulence is expensive to rasterise, so this is a static background-image (painted once
+   and cached) rather than a live filter behind the blurring UI, which would cost frames on
+   every resize. */
+.smoke-deep {
+  background-color: #08050e;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1600' height='1000' viewBox='0 0 1600 1000' preserveAspectRatio='xMidYMid slice'%3E%3Cdefs%3E%3Cfilter id='s' x='-25%' y='-25%' width='150%' height='150%' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.004 0.009' numOctaves='6' seed='29' stitchTiles='stitch' result='t'/%3E%3CfeColorMatrix in='t' type='luminanceToAlpha' result='a'/%3E%3CfeComponentTransfer in='a' result='b'%3E%3CfeFuncA type='gamma' amplitude='3.1' exponent='1.5' offset='-0.2'/%3E%3C/feComponentTransfer%3E%3CfeGaussianBlur in='b' stdDeviation='1.4' result='g'/%3E%3CfeFlood flood-color='%23f0247d' result='p'/%3E%3CfeComposite in='p' in2='g' operator='in'/%3E%3C/filter%3E%3ClinearGradient id='f' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23000'/%3E%3Cstop offset='.34' stop-color='%23222'/%3E%3Cstop offset='.72' stop-color='%23fff'/%3E%3Cstop offset='1' stop-color='%23ddd'/%3E%3C/linearGradient%3E%3Cmask id='m' maskContentUnits='objectBoundingBox'%3E%3Crect width='1' height='1' fill='url(%23f)'/%3E%3C/mask%3E%3C/defs%3E%3Cg mask='url(%23m)'%3E%3Crect width='1600' height='1000' filter='url(%23s)'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: cover;
+  background-position: center bottom;
+  background-repeat: no-repeat;
+}
+
+
+/* Muted greys were unreadable against this background — zinc-600 in particular is nearly the
+   same value as the panels it sits on. Raising the floor here fixes every hint, caption and
+   helper line at once instead of chasing them class by class.
+
+   Declared after the Tailwind import so it wins on source order; same specificity, later rule. */
+.text-zinc-600 { color: #b8b8c0; }
+.text-zinc-500 { color: #d6d6dc; }
+.text-zinc-400 { color: #ececf0; }
+.text-zinc-300 { color: #f6f6f8; }

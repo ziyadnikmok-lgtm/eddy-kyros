@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-electron/
+build/
+.pnpm-store/
+pnpm-lock.yaml
+package-lock.json
+*.log
+userdata/

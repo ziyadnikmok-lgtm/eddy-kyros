@@ -1,0 +1,39 @@
+#!/bin/sh
+# Kyros secret guard -- last line before GitHub.
+#
+# pre-commit can be skipped with --no-verify, and every commit made before this
+# guard existed carries no proof it was ever checked. Publishing is the
+# irreversible step, so re-check the whole range actually being pushed.
+#
+# stdin: <local ref> <local sha> <remote ref> <remote sha>
+
+ROOT=$(git rev-parse --show-toplevel) || exit 1
+Z=0000000000000000000000000000000000000000
+
+PY=""
+for C in python py python3; do
+    if command -v "$C" >/dev/null 2>&1; then PY="$C"; break; fi
+done
+if [ -z "$PY" ]; then
+    echo "PUSH REFUSED -- secret guard could not run: no python on PATH." >&2
+    exit 2
+fi
+
+STATUS=0
+while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
+    [ "$LOCAL_SHA" = "$Z" ] && continue          # branch deletion, nothing to send
+
+    if [ "$REMOTE_SHA" = "$Z" ]; then
+        # New branch on the remote: diff against whatever it already has, else
+        # against the empty tree -- i.e. check EVERY file being published.
+        BASE=$(git rev-parse --verify --quiet friend/main) \
+            || BASE=$(git rev-parse --verify --quiet origin/main) \
+            || BASE=$(git hash-object -t tree /dev/null)
+    else
+        BASE="$REMOTE_SHA"
+    fi
+
+    "$PY" "$ROOT/tools/secret_guard.py" --range "$BASE..$LOCAL_SHA" || STATUS=1
+done
+
+exit $STATUS
