@@ -20,7 +20,7 @@ import { createEddyCollection } from '../lib/eddyCollectionStore';
 import { createPageStore } from '../lib/pageStateStore';
 // isPosePromptBroken is deliberately no longer imported here: the broken-prompt notice was demoted
 // out of the generate flow and now lives only on the Pose tab, where it can be acted on.
-import { poseSentence, readPoseView } from '../lib/poseText';
+import { poseSentence, readPoseView, readPoseExpression } from '../lib/poseText';
 import { runPool } from '../lib/runPool';
 import { cn } from '../lib/utils';
 import { downloadBlob, stripEnabled } from '../lib/stripMetadata';
@@ -367,7 +367,7 @@ const buildTextFor = (v, view) => {
   return view === 'back' ? (o.backText || '') : (o.text || '');
 };
 
-function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex, faceIndex, nsfw, wantsNude, wantsBody, undressChip, tweak, poseFaceless, lightingText, poseView = 'front', buildText = '' }) {
+function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex, faceIndex, nsfw, wantsNude, wantsBody, undressChip, tweak, poseFaceless, lightingText, poseView = 'front', buildText = '', expressionText = '' }) {
   // Back-facing poses take a different final body clause — see BACK_VIEW_BODY_SCOPE.
   const isBackView = poseView === 'back';
   const lines = [];
@@ -459,6 +459,10 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
     }
   }
   if (poseText) lines.push(`POSE: ${poseText}`);
+  // The pose photo's own facial expression. Stated next to the pose it came from, and kept to the
+  // one sentence the vision pass wrote — this is a look to copy, not a second identity rule, so it
+  // deliberately sits BEFORE the face-lock and FINAL CHECK lines that pin who she is.
+  if (expressionText) lines.push(`EXPRESSION — copy the face she is making: ${expressionText}`);
   // TEXT-ONLY POSE — what makes the "pose photo NOT sent" toggle actually change the result.
   //
   // Every pose enforcement line below is gated on poseIndex because each one points at "image N".
@@ -704,6 +708,19 @@ const INSTRUCTION_PRESETS = [
 
 // The chips that REMOVE clothing. If one of these is in the instruction, the "keep her outfit"
 // rule must stand down instead of fighting it.
+// The Expression chips' expanded texts. A chip is an explicit choice and must WIN over the pose
+// photo's own expression — otherwise clicking "Biting lip" and picking a tongue-out pose sends
+// both, and the model averages two faces. Same wants*/suppress pattern as BODY_CHANGE_TEXTS.
+const EXPRESSION_TEXTS = [
+  'A sultry heavy-lidded seductive look straight down the lens, lips slightly parted.',
+  'She is biting her lower lip, heavy-lidded eyes locked on the camera.',
+  'Her mouth is open in a soft moan, eyes half-closed, head tilted back in pleasure.',
+  'Flushed cheeks, breathless parted lips, aroused heavy-lidded eyes.',
+  'Wide innocent doe eyes and softly parted lips, looking up at the camera.',
+  'Her tongue is out, extended past her lower lip, eyes on the camera.',
+  'Her mouth is open wide, jaw relaxed, looking straight at the camera.',
+];
+
 const BODY_CHANGE_TEXTS = [
   'She has a LARGE full bust with deep natural cleavage.',
   'She has a VERY LARGE heavy bust, noticeably fuller than in the photo, with deep cleavage.',
@@ -2832,6 +2849,7 @@ export default function EddyGeneratePage() {
   const undressChip = UNDRESS_TEXTS.some((t) => instruction.includes(t));
   const wantsNude = nsfw || undressChip;
   const wantsBody = BODY_CHANGE_TEXTS.some((t) => instruction.includes(t));
+  const wantsExpression = EXPRESSION_TEXTS.some((t) => instruction.includes(t));
 
   const previewPrompt = useMemo(() => {
     const first = combos[0];
@@ -2858,11 +2876,14 @@ export default function EddyGeneratePage() {
       wantsBody,
       poseView: previewPoseView,
       buildText: wantsBody ? '' : buildTextFor(build, previewPoseView),
+      // Suppressed when an Expression chip is active (the chip is the explicit choice) or when
+      // FACELESS is on for this pose — there is no face in frame to give an expression to.
+      expressionText: (wantsExpression || (faceless || POSE_FACELESS_RE.test(String(ps?.prompt || '')))) ? '' : readPoseExpression(ps?.prompt),
       undressChip,
       poseFaceless: !!poseIndex && (faceless || POSE_FACELESS_RE.test(String(ps?.prompt || ''))),
       lightingText: lightingTextFor(lighting),
     });
-  }, [combos, outfits, poses, instruction, baseImage, faceImage, outfitThumbs, poseThumbs, nsfw, wantsNude, wantsBody, undressChip, faceless, lighting, sendPoseImage, build]);
+  }, [combos, outfits, poses, instruction, baseImage, faceImage, outfitThumbs, poseThumbs, nsfw, wantsNude, wantsBody, undressChip, faceless, lighting, sendPoseImage, build, wantsExpression]);
 
   const addChip = (text) => setInstruction((prev) => (prev.includes(text) ? prev : `${prev} ${text}`.trim()));
 
@@ -3110,6 +3131,7 @@ export default function EddyGeneratePage() {
       let poseText = '';
       let poseFaceless = false;
       let poseView = 'front';
+      let poseExpression = '';
       if (combo.poseId) {
         const poseItem = poses.find((p) => p.id === combo.poseId);
         // The pose photo IS sent: a body position is far easier to copy than to describe, so
@@ -3118,6 +3140,7 @@ export default function EddyGeneratePage() {
         // front/back/closeup, read off the same saved JSON the description comes from — decides
         // below whether the outfit's back-view text is used instead of its front one.
         poseView = readPoseView(poseItem?.prompt);
+        poseExpression = readPoseExpression(poseItem?.prompt);
         // Faceless is the page TOGGLE. The text detector adds a second way in — if a pose's own
         // prompt says faceless, honour it even with the toggle off — but the toggle is the main switch.
         poseFaceless = faceless || POSE_FACELESS_RE.test(String(poseItem?.prompt || ''));
@@ -3151,7 +3174,7 @@ export default function EddyGeneratePage() {
 
       // poseFaceless only bites when the pose IMAGE is actually sent (poseIndex) — a text-only pose
       // has no framing to match.
-      prompt = buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex, faceIndex, nsfw, wantsNude, wantsBody, undressChip, tweak, poseFaceless: poseFaceless && !!poseIndex, lightingText: lightingTextFor(lighting), poseView, buildText: wantsBody ? '' : buildTextFor(build, poseView) });
+      prompt = buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex, faceIndex, nsfw, wantsNude, wantsBody, undressChip, tweak, poseFaceless: poseFaceless && !!poseIndex, lightingText: lightingTextFor(lighting), poseView, buildText: wantsBody ? '' : buildTextFor(build, poseView), expressionText: (wantsExpression || poseFaceless) ? '' : poseExpression });
     }
 
     const feedId = `eddy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -3330,7 +3353,7 @@ export default function EddyGeneratePage() {
     }
 
     return { image: first, videoPrompt: poseVideoPrompt, uid: resultUid };
-  }, [sourceImages, aspectRatio, baseImage, resolution, perRunImages, nsfw, wantsNude, wantsBody, undressChip, instruction, faceImage, outfits, poses, poseStore, libraryStore, submitVideoJob, notify, sendPoseImage, faceless, lighting, build, engine]);
+  }, [sourceImages, aspectRatio, baseImage, resolution, perRunImages, nsfw, wantsNude, wantsBody, undressChip, instruction, faceImage, outfits, poses, poseStore, libraryStore, submitVideoJob, notify, sendPoseImage, faceless, lighting, build, engine, wantsExpression]);
 
   // Keep the ref pointed at the latest generateCombo every render, so the mount-time rehydrate
   // effect's rebuilt regenerate closures reach the current one at click time (see the ref's comment).

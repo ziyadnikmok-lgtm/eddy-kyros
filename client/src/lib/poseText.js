@@ -63,6 +63,31 @@ export function readPoseDescription(text) {
   return null;
 }
 
+/**
+ * The FACIAL EXPRESSION the pose photo shows — subject.features from the same saved block.
+ *
+ * The vision brief has always written this field (59 of 60 real poses carry it: "Subtle smirk with
+ * a direct, seductive gaze", "playful expression with her tongue sticking out") and nothing has
+ * ever read it, so every pose's expression was captured and then discarded — a pose picked FOR its
+ * look generated with whatever face the model felt like (owner, 2026-08-06).
+ *
+ * Returns '' when the field is missing, unreadable, or is one of the placeholder/faceless values
+ * that must never reach a prompt: the template ships a literal "<her facial expression and gaze,
+ * read from the photo>" placeholder, and a faceless pose's features say so rather than describing
+ * a face. Both are worse than saying nothing.
+ */
+export function readPoseExpression(text) {
+  const raw = String(text || '').trim();
+  if (!raw.startsWith('{') && !raw.startsWith('"')) return '';
+  const parsed = tryParsePoseJson(raw);
+  const v = parsed?.subject?.features;
+  if (typeof v !== 'string') return '';
+  const t = v.trim();
+  if (!t || t.startsWith('<')) return '';           // unfilled template placeholder
+  if (/^faceless/i.test(t)) return '';              // no face to describe
+  return t;
+}
+
 const POSE_VIEWS = new Set(['front', 'back', 'closeup']);
 
 /**
