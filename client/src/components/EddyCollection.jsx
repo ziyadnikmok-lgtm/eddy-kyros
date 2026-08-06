@@ -265,6 +265,18 @@ export default function EddyCollection({
 
   // The single entry point every add/import/describe path uses, so "an outfit gets both views"
   // is decided in ONE place. Adding a new upload route later cannot silently skip the back pass.
+  // Outfits that have a front description but no back-view one. Only meaningful in the Outfit tab.
+  //
+  // WHY A SWEEP AND NOT JUST NEW UPLOADS: describeAuto writes both views from now on, but a
+  // collection built before that exists entirely without back text — 113 outfits here — and every
+  // back-facing pose using one of them silently falls back to the front description. That is the
+  // exact mismatch the view labels were added to remove, so the existing library has to be
+  // backfillable or the feature only works for outfits added later (owner, 2026-08-06).
+  const missingBackTargets = useMemo(() => {
+    if (describeKind !== 'outfit') return [];
+    return visible.filter((i) => (thumbs[i.id] || i.url) && i.prompt?.trim() && !i.backPrompt?.trim());
+  }, [describeKind, visible, thumbs]);
+
   const [describingBacks, setDescribingBacks] = useState(false);
 
   /**
@@ -305,18 +317,6 @@ export default function EddyCollection({
   // when reference images get added ahead of writing what they show. Scoped to `visible`, not
   // `selected` like Blur all faces / Export all: the point of this button is to sweep every
   // missing prompt in the current view without first having to tick 97 boxes.
-  // Outfits that have a front description but no back-view one. Only meaningful in the Outfit tab.
-  //
-  // WHY A SWEEP AND NOT JUST NEW UPLOADS: describeAuto writes both views from now on, but a
-  // collection built before that exists entirely without back text — 113 outfits here — and every
-  // back-facing pose using one of them silently falls back to the front description. That is the
-  // exact mismatch the view labels were added to remove, so the existing library has to be
-  // backfillable or the feature only works for outfits added later (owner, 2026-08-06).
-  const missingBackTargets = useMemo(() => {
-    if (describeKind !== 'outfit') return [];
-    return visible.filter((i) => (thumbs[i.id] || i.url) && i.prompt?.trim() && !i.backPrompt?.trim());
-  }, [describeKind, visible, thumbs]);
-
   const missingDescribeTargets = useMemo(() => {
     if (!describeKind) return [];
     // Same "has a picture" check the per-card button uses (thumbs OR a server url) — an item
