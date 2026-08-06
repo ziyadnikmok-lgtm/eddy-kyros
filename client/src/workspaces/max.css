@@ -7,11 +7,9 @@
 
    See eddy.css for the full "what you can / cannot change here" notes — they are identical.
 
-   Max is a curated subset by design: Character, Generate, Photo Match and Scene Recreate only —
-   his own `[data-nav-group="max"]` section (defined in App.jsx's NAV_SECTIONS) carries those four,
-   and everything else the shared sidebar would otherwise show is hidden below. Gemini and Account
-   are already gone via `engines: ['seedream']` on his workspace.js entry (same trick as Eddy) —
-   only the seedream-tagged sections need hiding here.
+   Max's sidebar is Eddy's, unchanged (owner, 2026-08-06: "duplicate mine to him") — same
+   `engines: ['seedream']` on his workspace.js entry, same NAV_SECTIONS he already sees, nothing
+   hidden here. This file is color only.
    ═══════════════════════════════════════════════════════════════════════════════════════════ */
 
 :root[data-workspace="max"] {
@@ -44,13 +42,4 @@
   & .smoke-deep {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1600' height='1000' viewBox='0 0 1600 1000' preserveAspectRatio='xMidYMid slice'%3E%3Cdefs%3E%3Cfilter id='s' x='-25%' y='-25%' width='150%' height='150%' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.004 0.009' numOctaves='6' seed='29' stitchTiles='stitch' result='t'/%3E%3CfeColorMatrix in='t' type='luminanceToAlpha' result='a'/%3E%3CfeComponentTransfer in='a' result='b'%3E%3CfeFuncA type='gamma' amplitude='3.1' exponent='1.5' offset='-0.2'/%3E%3C/feComponentTransfer%3E%3CfeGaussianBlur in='b' stdDeviation='1.4' result='g'/%3E%3CfeFlood flood-color='%232563eb' result='p'/%3E%3CfeComposite in='p' in2='g' operator='in'/%3E%3C/filter%3E%3ClinearGradient id='f' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23000'/%3E%3Cstop offset='.34' stop-color='%23222'/%3E%3Cstop offset='.72' stop-color='%23fff'/%3E%3Cstop offset='1' stop-color='%23ddd'/%3E%3C/linearGradient%3E%3Cmask id='m' maskContentUnits='objectBoundingBox'%3E%3Crect width='1' height='1' fill='url(%23f)'/%3E%3C/mask%3E%3C/defs%3E%3Cg mask='url(%23m)'%3E%3Crect width='1600' height='1000' filter='url(%23s)'/%3E%3C/g%3E%3C/svg%3E");
   }
-
-  /* Hide every shared section except his own "Max" group — Gemini/Account are already gone via
-     the seedream-only engine list, so only the other seedream-tagged and untagged sections need
-     hiding here. */
-  & [data-nav-group="eddy"] { display: none; }
-  & [data-nav-group="seedream-seedance"] { display: none; }
-  & [data-nav-group="video"] { display: none; }
-  & [data-nav-group="media-grab"] { display: none; }
-  & [data-nav-group="content"] { display: none; }
 }
