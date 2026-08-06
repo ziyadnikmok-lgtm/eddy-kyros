@@ -2216,6 +2216,20 @@ const stateStore = createPageStore('eddy-generate-state');
 const resultsStore = createPageStore('eddy-results-v1');
 
 /**
+ * Saved MODELS — a named set of {main photo, face close-up, build}.
+ *
+ * The page has never known a character's NAME: "Grace" was only ever whichever photos happened to
+ * be in the two slots, and `Her build` was one global setting. That works while there is exactly
+ * one character and breaks the moment there are two — swap Grace's photos for Sienna's and Grace's
+ * "Very large" silently applies to Sienna until you remember to change it (owner, 2026-08-06).
+ * Binding the build to the model is the whole point of saving them together.
+ *
+ * IndexedDB rather than localStorage: these hold two full data-URL photos each, which would blow
+ * a 5MB localStorage quota after a couple of models.
+ */
+const modelsStore = createPageStore('eddy-models-v1');
+
+/**
  * The persisted shape of one result tile.
  *
  * ONLY light fields — deliberately NOT base64Data, NOT the face reference, NOT the regenerate/
@@ -2320,6 +2334,9 @@ export default function EddyGeneratePage() {
   // has cached or given up on — a stalled fetch otherwise leaves a tile on "Loading…" with no way
   // to retry short of reloading the whole app and losing the results column.
   const [imgNonce, setImgNonce] = useState(0);
+  // [{ name, baseImage, faceImage, build }] — see modelsStore.
+  const [models, setModels] = useState([]);
+  const [activeModel, setActiveModel] = useState('');
   // Set by Cancel, cleared when a run starts. A ref, not state: runPool reads it through a closure
   // on every claim and must see the CURRENT value — a state variable captured when run() was
   // called would still read false long after the click. `cancelTick` exists only to re-render the
@@ -2560,6 +2577,69 @@ export default function EddyGeneratePage() {
     })();
     return () => { alive = false; };
   }, []);
+
+  // Saved models, read once on mount. Kept in its own store so a corrupt page-state read can never
+  // take the model list with it.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const list = await modelsStore.get('models', []);
+      const active = await modelsStore.get('active', '');
+      if (!alive) return;
+      if (Array.isArray(list)) setModels(list);
+      if (typeof active === 'string') setActiveModel(active);
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  /**
+   * Load a saved model into the page: both photos AND its build.
+   *
+   * The build travels with the model deliberately — that pairing is the reason this exists. Loading
+   * Sienna while Grace's "Very large" stayed selected is precisely the silent mistake a name-less
+   * page made unavoidable.
+   */
+  const loadModel = useCallback((name) => {
+    const m = models.find((x) => x.name === name);
+    if (!m) return;
+    setBaseImage(m.baseImage || '');
+    setFaceImage(m.faceImage || '');
+    setBuild(m.build || 'auto');
+    setActiveModel(name);
+    modelsStore.set('active', name);
+    notify(`Loaded ${name}`, 'success');
+  }, [models, notify]);
+
+  /**
+   * Save the current photos + build under a name, replacing that name if it already exists.
+   *
+   * Overwrite is by NAME rather than appending, so re-saving after swapping a face close-up updates
+   * the model instead of leaving two entries called "Sienna" and no way to tell which is current.
+   */
+  const saveModel = useCallback(async () => {
+    const name = (window.prompt('Save these photos and build as a model:', activeModel || '') || '').trim();
+    if (!name) return;
+    if (!baseImage) { notify('Add the main photo first', 'error'); return; }
+    const entry = { name, baseImage, faceImage, build };
+    const next = [...models.filter((m) => m.name !== name), entry].sort((a, b) => a.name.localeCompare(b.name));
+    setModels(next);
+    setActiveModel(name);
+    const ok = await modelsStore.set('models', next);
+    await modelsStore.set('active', name);
+    // A quota refusal must not look like a save: these are two full photos and the store CAN fill.
+    notify(ok ? `Saved ${name}` : `Could not save ${name} — storage is full`, ok ? 'success' : 'error');
+  }, [activeModel, baseImage, faceImage, build, models, notify]);
+
+  const deleteModel = useCallback(async () => {
+    if (!activeModel) return;
+    if (!window.confirm(`Delete the saved model "${activeModel}"? The photos stay in your Library.`)) return;
+    const next = models.filter((m) => m.name !== activeModel);
+    setModels(next);
+    setActiveModel('');
+    await modelsStore.set('models', next);
+    await modelsStore.set('active', '');
+    notify(`Deleted ${activeModel}`, 'success');
+  }, [activeModel, models, notify]);
 
   useEffect(() => {
     const snap = { baseImage, faceImage, pickedOutfits, pickedPoses, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, build, engine };
@@ -3974,7 +4054,33 @@ export default function EddyGeneratePage() {
 
       {/* The two source photos */}
       <Card className="p-4 space-y-3">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-zinc-300">Photos</h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-zinc-300">Photos</h3>
+          {/* MODEL — a named {main photo, face close-up, build} set. Selecting one loads all three
+              together, which is the point: the build has to travel with the model or Grace's
+              "Very large" silently follows Sienna's photos in. */}
+          <span className="flex items-center gap-2">
+            {models.length > 0 && (
+              <select
+                value={activeModel}
+                onChange={(e) => (e.target.value ? loadModel(e.target.value) : setActiveModel(''))}
+                title="Load a saved model — photos and build together"
+                className="rounded-lg border border-white/[0.07] bg-white/[0.02] px-2.5 py-1 text-xs text-zinc-300 cursor-pointer"
+              >
+                <option value="">Model…</option>
+                {models.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
+              </select>
+            )}
+            <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs" onClick={saveModel}
+              title="Save the current photos and build under a name">
+              {activeModel ? `Save / update ${activeModel}` : 'Save as model'}
+            </Btn>
+            {activeModel && (
+              <button type="button" onClick={deleteModel} title={`Delete ${activeModel}`}
+                className="px-1 text-xs text-zinc-600 hover:text-red-400 cursor-pointer">×</button>
+            )}
+          </span>
+        </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <ImageSlot
             title="1 · Main photo"
