@@ -21,6 +21,7 @@
 export const WORKSPACES = [
   { id: 'eddy', label: 'Eddy', swatch: '#f0247d', engines: ['seedream'] },
   { id: 'ziyad', label: 'Ziyad', swatch: '#9b3df0', engines: ['seedream', 'gemini'] },
+  { id: 'max', label: 'Max', swatch: '#2563eb', engines: ['seedream'] },
 ];
 
 /** Engines a workspace offers; falls back to both so an unknown id is never left with none. */

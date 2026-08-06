@@ -9,6 +9,10 @@
    ═══════════════════════════════════════════════════════════════════════════════════════════ */
 
 :root[data-workspace="ziyad"] {
+  /* Max has his own curated section (Character/Generate/Photo Match/Scene Recreate) built from
+     the same shared pages — his tab shows it, mine doesn't need the duplicate entries. */
+  & [data-nav-group="max"] { display: none; }
+
   /* Violet. The ramp keeps every step's lightness and chroma from the default rose and rotates
      only the HUE (→300), so contrast and readability stay exactly as they were tuned. */
   --color-rose-50: oklch(96.9% .015 300);

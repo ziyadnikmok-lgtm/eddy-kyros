@@ -13,6 +13,7 @@
    without touching a single component. */
 @import "./workspaces/eddy.css";
 @import "./workspaces/ziyad.css";
+@import "./workspaces/max.css";
 
 /* Everything in the app is sized in rem, so the root font size scales the whole interface at
    once — labels, chips, body copy, buttons. Bumping individual classes one at a time was

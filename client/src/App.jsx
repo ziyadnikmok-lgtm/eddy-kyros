@@ -214,7 +214,22 @@ const NAV_SECTIONS = [
       { id: 'seedreamEdit', label: 'Seedream 5 Pro' },
       { id: 'outfitSwapSeedream', label: 'Outfit Swap' },
       { id: 'photoMatchSeedream', label: 'Photo Match' },
+      { id: 'sceneRecreateSeedream', label: 'Scene Recreate' },
       { id: 'poseRemixSeedream', label: 'Pose Remix' },
+    ],
+  },
+  // Max's own section — a curated subset (Character, Generate, Photo Match, Scene Recreate)
+  // reusing the exact same shared pages as Eddy/Seedream above. Only visible on his tab: hidden
+  // on Eddy/Ziyad via `data-nav-group="max"` in their CSS, while max.css hides every OTHER
+  // section so this is the only thing he sees.
+  {
+    engine: 'seedream',
+    label: 'Max',
+    items: [
+      { id: 'eddyCharacter', label: 'Character' },
+      { id: 'seedreamGenerate', label: 'Generate' },
+      { id: 'photoMatchSeedream', label: 'Photo Match' },
+      { id: 'sceneRecreateSeedream', label: 'Scene Recreate' },
     ],
   },
   {

@@ -28,6 +28,10 @@
    ═══════════════════════════════════════════════════════════════════════════════════════════ */
 
 :root[data-workspace="eddy"] {
+  /* Max has his own curated section (Character/Generate/Photo Match/Scene Recreate) built from
+     the same shared pages — his tab shows it, mine doesn't need the duplicate entries. */
+  & [data-nav-group="max"] { display: none; }
+
   /* NOTE: Gemini is already gone from this tab — not by CSS, but by config:
      `engines: ['seedream']` on the eddy entry in src/lib/workspace.js. That removes the engine
      switcher AND makes sure the engine can never sit on 'gemini' here (hiding the button alone

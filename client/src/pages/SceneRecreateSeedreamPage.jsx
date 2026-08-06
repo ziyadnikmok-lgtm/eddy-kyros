@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { seedream as seedreamApi, gallery as galleryApi, characters as charApi, scene as sceneApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import CharacterPicker from '../components/CharacterPicker';
-import { Card, Btn, Select, Textarea, Badge, Spinner, CopyBtn } from '../components/UI';
+import { Card, Btn, Select, Textarea, Toggle, Badge, Spinner, CopyBtn } from '../components/UI';
 import CompareSlider from '../components/CompareSlider';
+import { autoBlurFace } from '../lib/autoBlurFace';
+import ManualBlurModal from '../components/BlurByHand';
 import { SEEDREAM_ASPECT_RATIOS, SEEDREAM_RESOLUTIONS, SEEDREAM_MAX_IMAGES, seedreamCost } from '../config/photoModes';
 import { pushPending, resolvePending, failPending } from '../lib/generationFeed';
 import { consumeSourceHandoff } from '../lib/sourceHandoff';
@@ -182,7 +184,12 @@ async function urlToImagePayload(url) {
   return parseDataUrl(dataUrl);
 }
 
-const _cache = { sceneChanges: '', extra: '', aspectRatio: 'auto', resolution: '1K', aiReadScene: true };
+// blurSource defaults OFF here (unlike Photo Match): this page never sends the source photo to
+// the image generator at all -- Seedream only ever gets the character refs + Gemini's TEXT scene
+// description (see runOne below), so the identity-leak risk blur protects against elsewhere
+// literally cannot happen on this page. Blurring only cost Gemini's pose/scene read accuracy for
+// no real benefit, so it's opt-in here instead of opt-out (owner, 2026-08-05).
+const _cache = { sceneChanges: '', extra: '', aspectRatio: 'auto', resolution: '1K', aiReadScene: true, blurSource: false };
 // Images are too big for _cache/localStorage — IndexedDB so they survive a reload.
 const store = createPageStore('kyros-scene-recreate-seedream-state');
 
@@ -199,6 +206,16 @@ export default function SceneRecreateSeedreamPage() {
   const [resolution, setResolution] = useState(_cache.resolution);
   // AI-read: Gemini describes the reference to text so Seedream never sees the source person.
   const [aiReadScene, setAiReadScene] = useState(_cache.aiReadScene);
+  // Even in AI-read mode, Gemini's VISION call still receives the real source photo to write
+  // its scene description from -- blurring is about that input, not about Seedream (which never
+  // gets the source at all, see runOne below). Same toggle/detect/manual-blur pattern as Photo
+  // Match, minus the "don't reproduce the blur" prompt line -- nothing downstream ever renders
+  // this image, so there's no generator that could copy the blur box.
+  const [blurSource, setBlurSource] = useState(_cache.blurSource ?? true);
+  const blurSourceRef = useRef(blurSource);
+  useEffect(() => { blurSourceRef.current = blurSource; }, [blurSource]);
+  const [blurringAll, setBlurringAll] = useState(false);
+  const [manualBlurId, setManualBlurId] = useState(null);  // source id being hand-blurred, or null
 
   const [galleryImages, setGalleryImages] = useState([]);
   const [galleryLoading, setGalleryLoading] = useState(false);
@@ -243,6 +260,7 @@ export default function SceneRecreateSeedreamPage() {
   useEffect(() => { _cache.aspectRatio = aspectRatio; }, [aspectRatio]);
   useEffect(() => { _cache.resolution = resolution; }, [resolution]);
   useEffect(() => { _cache.aiReadScene = aiReadScene; }, [aiReadScene]);
+  useEffect(() => { _cache.blurSource = blurSource; }, [blurSource]);
   useEffect(() => { try { sessionStorage.setItem(SPEND_KEY, String(sessionSpend)); } catch { /* ignore */ } }, [sessionSpend]);
 
   // Pull the full character (with its references) once selected.
@@ -310,12 +328,50 @@ export default function SceneRecreateSeedreamPage() {
     if (room <= 0) { notify(`Maximum ${MAX_SOURCES} source photos`, 'error'); return; }
     const valid = Array.from(files || []).filter((f) => /^image\/(png|jpeg|jpg|webp)$/i.test(f.type)).slice(0, room);
     if (!valid.length) return;
-    const added = await Promise.all(valid.map(async (f) => ({
-      id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      dataUrl: await fileToDataUrl(f),
-    })));
+    const added = await Promise.all(valid.map(async (f) => {
+      const dataUrl = await fileToDataUrl(f);
+      const id = `s-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      if (!blurSourceRef.current) return { id, dataUrl, blurred: false };
+      const out = await autoBlurFace(dataUrl);
+      return { id, dataUrl: out.dataUrl, blurred: out.blurred };
+    }));
+    if (blurSourceRef.current) {
+      const missed = added.filter((a) => !a.blurred).length;
+      if (missed) notify(`${missed} photo(s): no face found to blur — use "Blur all" or click a photo to blur by hand`, 'error');
+    }
     setSources((prev) => [...prev, ...added]);
   }, [sources.length, notify]);
+
+  // Re-run face detection over every source that isn't already blurred, in AGGRESSIVE mode (a
+  // stronger pass than the quick one at add-time). Only un-blurred sources are touched, so
+  // pressing it twice is safe and it never re-blurs a face that's already gone.
+  const blurAllFaces = useCallback(async () => {
+    const targets = sources.filter((s) => !s.blurred);
+    if (!targets.length) { notify('Every source is already blurred', 'info'); return; }
+    setBlurringAll(true);
+    let blurred = 0; let missed = 0;
+    const updated = await Promise.all(sources.map(async (s) => {
+      if (s.blurred) return s;
+      const out = await autoBlurFace(s.dataUrl, { aggressive: true });
+      if (out.blurred) { blurred += 1; return { ...s, dataUrl: out.dataUrl, blurred: true }; }
+      missed += 1;
+      return s;
+    }));
+    setSources(updated);
+    setBlurringAll(false);
+    if (blurred && !missed) notify(`Blurred ${blurred} face${blurred === 1 ? '' : 's'} ✨`, 'success');
+    else if (blurred) notify(`Blurred ${blurred}; ${missed} still had no detectable face — click those to blur by hand`, 'error');
+    else notify('No faces detected — click a photo to blur by hand', 'error');
+  }, [sources, notify]);
+
+  // Apply a hand-drawn blur box from the modal and mark that source blurred.
+  const applyManualBlur = useCallback((id, newDataUrl) => {
+    setSources((prev) => prev.map((s) => (s.id === id ? { ...s, dataUrl: newDataUrl, blurred: true } : s)));
+    setManualBlurId(null);
+    notify('Face blurred by hand ✨', 'success');
+  }, [notify]);
+
+  const unblurredCount = sources.filter((s) => !s.blurred).length;
 
   useEffect(() => {
     const onPaste = async (e) => {
@@ -526,6 +582,22 @@ export default function SceneRecreateSeedreamPage() {
             </div>
           </div>
 
+          <div className="flex items-center justify-between gap-2">
+            <Toggle checked={blurSource} onChange={setBlurSource} label="Blur source face" />
+            {sources.length > 0 && blurSource && (
+              <Btn variant="secondary" className="!rounded-lg !py-1 !px-2.5 !text-[0.6875rem]" onClick={blurAllFaces} disabled={blurringAll || unblurredCount === 0}>
+                {blurringAll ? <Spinner size={12} /> : null}
+                {unblurredCount > 0 ? `Blur all faces (${unblurredCount})` : 'All blurred ✓'}
+              </Btn>
+            )}
+          </div>
+          {blurSource && (
+            <p className="text-[0.625rem] leading-relaxed text-emerald-400/80 -mt-1">
+              Faces are blurred as photos are added, before Gemini ever reads the scene from them.
+              Turn off before adding if you want the original sent for analysis.
+            </p>
+          )}
+
           <div
             className={cn('rounded-xl border-2 border-dashed p-3 transition-colors', dragging ? 'border-rose-500 bg-rose-500/[0.06]' : 'border-zinc-800/60')}
             onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
@@ -535,8 +607,19 @@ export default function SceneRecreateSeedreamPage() {
             {sources.length ? (
               <div className="grid [grid-template-columns:repeat(auto-fill,minmax(90px,1fr))] gap-2">
                 {sources.map((s) => (
-                  <div key={s.id} className="relative">
-                    <img src={s.dataUrl} alt="" className="w-full aspect-[3/4] object-cover rounded-lg border border-zinc-800/60 bg-zinc-950" />
+                  <div key={s.id} className="relative group">
+                    {/* Click the photo to blur a region by hand — the fallback for a face the
+                        detector missed. The amber ring flags exactly those un-blurred photos. */}
+                    <button type="button" onClick={() => setManualBlurId(s.id)} title="Click to blur a region by hand"
+                      className={cn('block w-full rounded-lg border overflow-hidden cursor-pointer',
+                        blurSource && !s.blurred ? 'border-amber-500/70 ring-1 ring-amber-500/40' : 'border-zinc-800/60')}>
+                      <img src={s.dataUrl} alt="" className="w-full aspect-[3/4] object-cover bg-zinc-950" />
+                    </button>
+                    {blurSource && (
+                      s.blurred
+                        ? <span className="absolute bottom-1 left-1 rounded bg-emerald-600/90 px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-white pointer-events-none">Blurred</span>
+                        : <span className="absolute bottom-1 left-1 rounded bg-amber-600/90 px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-white pointer-events-none">Face — tap</span>
+                    )}
                     <button onClick={() => setSources((prev) => prev.filter((x) => x.id !== s.id))}
                       className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-zinc-800 border border-zinc-600 text-zinc-400 text-xs flex items-center justify-center hover:text-white cursor-pointer">×</button>
                   </div>
@@ -767,6 +850,14 @@ export default function SceneRecreateSeedreamPage() {
           </Card>
         )}
       </div>
+
+      {manualBlurId && sources.some((s) => s.id === manualBlurId) && (
+        <ManualBlurModal
+          src={sources.find((s) => s.id === manualBlurId).dataUrl}
+          onApply={(newDataUrl) => applyManualBlur(manualBlurId, newDataUrl)}
+          onClose={() => setManualBlurId(null)}
+        />
+      )}
     </div>
   );
 }
