@@ -3180,6 +3180,11 @@ export default function EddyGeneratePage() {
           model: 'flash',
           aspectRatio: ratio,
           imageSize: resolution,
+          // buildPrompt already states which image is the subject, which is the pose diagram and
+          // which is the face — so the route must send it verbatim. Its default 'wrapped' mode
+          // prepends "keep the original pose and composition" and calls every image a source photo
+          // to preserve, which contradicts this prompt line for line.
+          promptMode: 'raw',
         }));
         const got = d && (d.galleryId || d.base64Data);
         data = { provider: 'gemini', images: got ? [{ galleryId: d.galleryId, mimeType: d.mimeType, base64Data: d.base64Data }] : [] };

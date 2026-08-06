@@ -123,6 +123,9 @@ router.post('/edit', express.json({ limit: '100mb' }), requirePlanCapacity(), as
       images,        // array of { base64, mimeType }
       prompt,
       characterId = null,
+      // 'raw' sends the caller's prompt VERBATIM with the images and nothing else — see the
+      // promptMode branch below for why that is a separate mode and not the default.
+      promptMode = 'wrapped',
       model = 'flash',
       aspectRatio = 'auto',
       imageSize = '2K',
@@ -274,6 +277,26 @@ router.post('/edit', express.json({ limit: '100mb' }), requirePlanCapacity(), as
       }
 
       parts.push({ text: `USER EDITING PROMPT: ${effectivePrompt}` });
+    } else if (promptMode === 'raw') {
+      /**
+       * RAW: images in the caller's order, then the caller's prompt, and nothing else.
+       *
+       * WHY THIS MODE EXISTS: the wrapped branch below prepends "Keep the original subject, POSE,
+       * background, lighting, and composition unless the instruction explicitly asks to change
+       * them" and calls every image "the source image to edit". That is right for the Nano Bypass
+       * page, where you are editing one photo. It is exactly wrong for a caller that builds its own
+       * multi-image prompt: Eddy's prompt says image 1 is the subject, image 2 is a POSE DIAGRAM
+       * whose pose must REPLACE image 1's, and image 3 is a face reference — so the wrapper was
+       * telling the model to keep the very pose the prompt was there to change, and labelling the
+       * pose diagram as another source photo to preserve (owner, 2026-08-06, "with nano it doesn't
+       * work"). Two contradictory instruction sets in one request, the wrapper's stated first.
+       *
+       * Raw is opt-in rather than the default so the Nano Bypass page's behaviour is untouched.
+       */
+      for (const src of sourceImages) {
+        parts.push({ inlineData: { mimeType: src.mimeType, data: src.data } });
+      }
+      parts.push({ text: effectivePrompt });
     } else {
       // Fallback/standard behavior when no identity references are used
       parts.push({
