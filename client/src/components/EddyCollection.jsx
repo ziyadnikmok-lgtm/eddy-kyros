@@ -265,6 +265,37 @@ export default function EddyCollection({
 
   // The single entry point every add/import/describe path uses, so "an outfit gets both views"
   // is decided in ONE place. Adding a new upload route later cannot silently skip the back pass.
+  const [describingBacks, setDescribingBacks] = useState(false);
+
+  /**
+   * Backfill backPrompt across the visible outfits, one at a time.
+   *
+   * Sequential on purpose — the same reason every other sweep in this file is: Vertex rate-limits a
+   * parallel fan-out and half the descriptions come back empty. describe() already retries a 429
+   * with backoff, so a long run finishes rather than stopping partway.
+   *
+   * Re-reads the store per item instead of trusting the memo: the list it started from is a stale
+   * closure the moment the first write lands.
+   */
+  const describeBackViews = useCallback(async () => {
+    const targets = missingBackTargets;
+    if (!targets.length) return;
+    setDescribingBacks(true);
+    let ok = 0;
+    try {
+      for (const it of targets) {
+        const src = thumbs[it.id];
+        if (!src) continue;
+        // eslint-disable-next-line no-await-in-loop -- sequential on purpose, see above
+        if (await describe(it.id, src, { field: 'backPrompt', kind: 'outfitBack' })) ok += 1;
+      }
+    } finally {
+      setDescribingBacks(false);
+      await refresh();
+    }
+    notify(`Described ${ok} of ${targets.length} back views`, ok ? 'success' : 'error');
+  }, [missingBackTargets, thumbs, describe, refresh, notify]);
+
   const describeAuto = useCallback(
     (id, dataUrl) => (describeKind === 'outfit' ? describeOutfitBothViews(id, dataUrl) : describe(id, dataUrl)),
     [describeKind, describe, describeOutfitBothViews],
@@ -274,6 +305,18 @@ export default function EddyCollection({
   // when reference images get added ahead of writing what they show. Scoped to `visible`, not
   // `selected` like Blur all faces / Export all: the point of this button is to sweep every
   // missing prompt in the current view without first having to tick 97 boxes.
+  // Outfits that have a front description but no back-view one. Only meaningful in the Outfit tab.
+  //
+  // WHY A SWEEP AND NOT JUST NEW UPLOADS: describeAuto writes both views from now on, but a
+  // collection built before that exists entirely without back text — 113 outfits here — and every
+  // back-facing pose using one of them silently falls back to the front description. That is the
+  // exact mismatch the view labels were added to remove, so the existing library has to be
+  // backfillable or the feature only works for outfits added later (owner, 2026-08-06).
+  const missingBackTargets = useMemo(() => {
+    if (describeKind !== 'outfit') return [];
+    return visible.filter((i) => (thumbs[i.id] || i.url) && i.prompt?.trim() && !i.backPrompt?.trim());
+  }, [describeKind, visible, thumbs]);
+
   const missingDescribeTargets = useMemo(() => {
     if (!describeKind) return [];
     // Same "has a picture" check the per-card button uses (thumbs OR a server url) — an item
@@ -1222,6 +1265,13 @@ export default function EddyCollection({
             {!describingAll && unlabeledViewTargets.length > 0 && (
               <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm !border-blue-500/40 !text-blue-200" onClick={labelViews} disabled={labelingViews}>
                 {labelingViews ? 'Labelling…' : `Label ${unlabeledViewTargets.length} pose${unlabeledViewTargets.length === 1 ? '' : 's'}`}
+              </Btn>
+            )}
+            {/* Back-view descriptions for outfits that predate the two-prompt upload (2026-08-06).
+                Writes ONLY backPrompt — the front description is never touched. */}
+            {!describingAll && missingBackTargets.length > 0 && (
+              <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm !border-blue-500/40 !text-blue-200" onClick={describeBackViews} disabled={describingBacks}>
+                {describingBacks ? 'Describing backs…' : `Describe ${missingBackTargets.length} back view${missingBackTargets.length === 1 ? '' : 's'}`}
               </Btn>
             )}
             {/* Same rule as the unreadable sweep: only shown when there is something to clean, and it
