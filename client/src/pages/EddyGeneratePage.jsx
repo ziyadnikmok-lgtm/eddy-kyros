@@ -1697,7 +1697,17 @@ function ResultTile({ item, src, selected, busy, error, favorited, onToggleFavor
   // a regenerate that swaps in a new picture shows the placeholder again instead of holding the
   // old image's "loaded" state.
   const [imgLoaded, setImgLoaded] = useState(false);
-  useEffect(() => { setImgLoaded(false); }, [src]);
+  const imgRef = useRef(null);
+  useEffect(() => {
+    setImgLoaded(false);
+    // A CACHED image completes BEFORE React attaches onLoad, so that event never fires and the
+    // tile stays at opacity-0 behind a permanent "Loading…" — which is exactly what leaving Eddy
+    // and coming back looked like: every picture present, none of them visible, reported as data
+    // loss (owner, 2026-08-06). Nothing was lost; the reveal was just waiting on an event that had
+    // already happened. Asking the element directly is the only reliable answer.
+    const el = imgRef.current;
+    if (el && el.complete && el.naturalWidth > 0) setImgLoaded(true);
+  }, [src]);
 
   // Focus the note the moment it opens. Regenerate-with-a-fix is a "type the correction" action,
   // and making the user hunt for the field they just revealed is the friction this flow removes.
@@ -1813,6 +1823,7 @@ function ResultTile({ item, src, selected, busy, error, favorited, onToggleFavor
                   </span>
                 )}
                 <img
+                  ref={imgRef}
                   src={src}
                   alt=""
                   // LAZY, NOT EAGER. A browser opens ~6 connections per host, so 120 eager tiles

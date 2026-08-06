@@ -277,6 +277,17 @@ export default function EddyCollection({
     return visible.filter((i) => (thumbs[i.id] || i.url) && i.prompt?.trim() && !i.backPrompt?.trim());
   }, [describeKind, visible, thumbs]);
 
+  /**
+   * The item shown full-size, or '' for none.
+   *
+   * Clicking a tile did NOTHING here — the Generate page has had a large view for ages, so a
+   * Library of 505 images was the one place you could not actually look at one, and there was
+   * nothing to dismiss either (owner, 2026-08-06: "i click image doesnt show and i can click in
+   * nothing for it go out"). Held as an ID rather than an index so arrowing through the grid
+   * survives a delete or a folder-filter change mid-view.
+   */
+  const [lightboxId, setLightboxId] = useState('');
+
   const [describingBacks, setDescribingBacks] = useState(false);
 
   /**
@@ -307,6 +318,36 @@ export default function EddyCollection({
     }
     notify(`Described ${ok} of ${targets.length} back views`, ok ? 'success' : 'error');
   }, [missingBackTargets, thumbs, describe, refresh, notify]);
+
+  // Esc closes, arrows step. Bound only while the lightbox is open so the grid's own keyboard
+  // behaviour is untouched the rest of the time.
+  const stepLightbox = useCallback((delta) => {
+    setLightboxId((cur) => {
+      const i = visible.findIndex((x) => x.id === cur);
+      if (i < 0) return cur;
+      const next = visible[i + delta];
+      return next ? next.id : cur;      // stop at the ends rather than wrapping
+    });
+  }, [visible]);
+
+  useEffect(() => {
+    if (!lightboxId) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setLightboxId('');
+      else if (e.key === 'ArrowRight') stepLightbox(1);
+      else if (e.key === 'ArrowLeft') stepLightbox(-1);
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightboxId, stepLightbox]);
+
+  // An item can vanish under the lightbox — deleted, or filtered out by a folder change. Close
+  // rather than leaving an overlay pinned over nothing.
+  useEffect(() => {
+    if (lightboxId && !visible.some((x) => x.id === lightboxId)) setLightboxId('');
+  }, [lightboxId, visible]);
 
   const describeAuto = useCallback(
     (id, dataUrl) => (describeKind === 'outfit' ? describeOutfitBothViews(id, dataUrl) : describe(id, dataUrl)),
@@ -1433,7 +1474,9 @@ export default function EddyCollection({
                     // contain, not cover, on prompt cards: a pose is judged by the whole body,
                     // and h-28 + cover cropped every image down to a thin band of its middle.
                     style={withPrompt ? { maxHeight: imgH } : undefined}
-                    className={cn('w-full rounded-lg bg-zinc-950',
+                    onClick={() => setLightboxId(it.id)}
+                    title="Click to view large"
+                    className={cn('w-full rounded-lg bg-zinc-950 cursor-zoom-in',
                       withPrompt ? 'object-contain' : 'aspect-[3/4] object-cover')}
                   />
                   )
@@ -1620,6 +1663,42 @@ export default function EddyCollection({
           }}
         />
       )}
+
+      {/* LARGE VIEW. Deliberately view-only — every action already lives on the card behind it, and
+          a second set here would be two places to keep in step. Dismisses on the backdrop, on ×,
+          and on Escape; arrows step through the CURRENT filter. */}
+      {lightboxId && (() => {
+        const it = visible.find((x) => x.id === lightboxId);
+        const src = it && (thumbs[it.id] || it.url);
+        if (!src) return null;
+        const i = visible.findIndex((x) => x.id === lightboxId);
+        return (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
+            // Backdrop-only: the check keeps a click that STARTED on the image from closing when
+            // the pointer drifts off it, which makes a large view feel broken.
+            onClick={(e) => { if (e.target === e.currentTarget) setLightboxId(''); }}
+          >
+            <img src={src} alt={it.name} className="max-h-full max-w-full rounded-xl object-contain" />
+
+            <button type="button" onClick={() => setLightboxId('')} aria-label="Close"
+              className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 text-lg text-white hover:bg-white/20 cursor-pointer">×</button>
+
+            {i > 0 && (
+              <button type="button" onClick={() => stepLightbox(-1)} aria-label="Previous"
+                className="absolute left-4 flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-xl text-white hover:bg-white/20 cursor-pointer">‹</button>
+            )}
+            {i < visible.length - 1 && (
+              <button type="button" onClick={() => stepLightbox(1)} aria-label="Next"
+                className="absolute right-4 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-xl text-white hover:bg-white/20 cursor-pointer">›</button>
+            )}
+
+            <span className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs text-zinc-300">
+              {i + 1} / {visible.length}{it.name ? ` · ${it.name}` : ''} — Esc to close, ← → to move
+            </span>
+          </div>
+        );
+      })()}
     </div>
   );
 }
