@@ -8,7 +8,7 @@ import BlurByHand from './BlurByHand';
 import { eddyVision, gallery as galleryApi, video as videoApi } from '../services/api';
 import { cn } from '../lib/utils';
 import { downloadBlob } from '../lib/stripMetadata';
-import { isPosePromptBroken } from '../lib/poseText';
+import { isPosePromptBroken, hasPoseView, readPoseView, mergePoseView, poseSentence } from '../lib/poseText';
 
 /**
  * Eddy's shared collection UI — folders on top, items below, drop/paste/upload to add.
@@ -118,6 +118,9 @@ export default function EddyCollection({
   const [folders, setFolders] = useState([]);
   const [items, setItems] = useState([]);
   const [thumbs, setThumbs] = useState({});      // id -> dataUrl ('' for prompt-only items)
+  // Outfits only: the back-view crop alongside the front one in `thumbs`, keyed the same way.
+  // '' means no back image saved yet — the generate page falls back to the front crop for those.
+  const [backThumbs, setBackThumbs] = useState({});
   // The favorited item ids, read from the store's small `favorites` key — NOT from item.favorite.
   // A Set so the per-card star fill, the "★ Favorite (N)" count and the favOnly filter all derive
   // from one source that a big-index rewrite can never clobber. Loaded in refresh() below.
@@ -147,6 +150,8 @@ export default function EddyCollection({
   const [describing, setDescribing] = useState({});
   const [describeProgress, setDescribeProgress] = useState(null);
   const [describingAll, setDescribingAll] = useState(false);
+  const [labelingViews, setLabelingViews] = useState(false);
+  const [labelingOne, setLabelingOne] = useState({});
   // Checked once per loop iteration rather than aborting the in-flight fetch — Stop means "don't
   // start the next one", not "cut off the request already in the air".
   const describeAllStopRef = useRef(false);
@@ -176,8 +181,13 @@ export default function EddyCollection({
     const map = {};
     await Promise.all(i.map(async (it) => { map[it.id] = await store.getImage(it.id); }));
     setThumbs(map);
+    if (describeKind === 'outfit') {
+      const backMap = {};
+      await Promise.all(i.map(async (it) => { backMap[it.id] = await store.getBackImage(it.id); }));
+      setBackThumbs(backMap);
+    }
     setLoading(false);
-  }, [store]);
+  }, [store, describeKind]);
 
   useEffect(() => { refresh(); }, [refresh, refreshKey]);
 
@@ -194,7 +204,11 @@ export default function EddyCollection({
     return oldestFirst ? [...base].sort((a, b) => a.createdAt - b.createdAt) : base;
   }, [items, activeFolder, favOnly, favIds, oldestFirst]);
 
-  const describe = useCallback(async (id, dataUrl, { retries = 3 } = {}) => {
+  // field: which index column the result is written to. Outfits write their normal front
+  // description to 'prompt' (the default) and their back-view crop's description to
+  // 'backPrompt' — same brief, same kind ('outfit' reads only the garment either way), just a
+  // second column so generation can pick whichever matches the selected pose's view.
+  const describe = useCallback(async (id, dataUrl, { retries = 3, field = 'prompt', kind } = {}) => {
     const mt = (dataUrl.match(/^data:([^;]+);base64,/) || [])[1] || 'image/jpeg';
     setDescribing((d) => ({ ...d, [id]: true }));
     try {
@@ -203,7 +217,7 @@ export default function EddyCollection({
       let r;
       for (let attempt = 0; ; attempt += 1) {
         try {
-          r = await eddyVision.describe({ image: dataUrl, mimeType: mt, kind: describeKind });
+          r = await eddyVision.describe({ image: dataUrl, mimeType: mt, kind: kind || describeKind });
           break;
         } catch (err) {
           const rateLimited = /429|quota|exhaust|rate/i.test(err?.message || '');
@@ -219,7 +233,7 @@ export default function EddyCollection({
       if (!text && reason) notify(reason, 'error');
       // A refusal must not overwrite the prompt with an empty string -- that would quietly
       // weaken every generation that used this item.
-      if (text) await store.updateItem(id, { prompt: text });
+      if (text) await store.updateItem(id, { [field]: text });
       await refresh();
       return Boolean(text);
     } catch (err) {
@@ -229,6 +243,32 @@ export default function EddyCollection({
       setDescribing((d) => ({ ...d, [id]: false }));
     }
   }, [store, describeKind, refresh, notify]);
+
+  /**
+   * Describe an outfit twice from ONE photo: the garment as shown (-> prompt) and the same garment
+   * seen from behind (-> backPrompt, via the `outfitBack` brief).
+   *
+   * Generation picks between them by the selected pose's view label, so an outfit with no back
+   * description silently falls back to its front text on a back-facing pose — the mismatch this
+   * whole feature exists to remove. Doing it at upload time is what makes that never happen: the
+   * alternative was a second photo per outfit, and most outfits only ever have the one product shot.
+   *
+   * The front description is awaited FIRST and its result is what the caller gets. The back pass is
+   * a bonus: if it fails (rate limit, refusal) the outfit is still fully usable, so its failure is
+   * swallowed rather than reported as the upload failing.
+   */
+  const describeOutfitBothViews = useCallback(async (id, dataUrl) => {
+    const ok = await describe(id, dataUrl);
+    try { await describe(id, dataUrl, { field: 'backPrompt', kind: 'outfitBack' }); } catch { /* front is enough */ }
+    return ok;
+  }, [describe]);
+
+  // The single entry point every add/import/describe path uses, so "an outfit gets both views"
+  // is decided in ONE place. Adding a new upload route later cannot silently skip the back pass.
+  const describeAuto = useCallback(
+    (id, dataUrl) => (describeKind === 'outfit' ? describeOutfitBothViews(id, dataUrl) : describe(id, dataUrl)),
+    [describeKind, describe, describeOutfitBothViews],
+  );
 
   // Items with a picture but no pose prompt yet — what a Pose folder accumulates by the dozen
   // when reference images get added ahead of writing what they show. Scoped to `visible`, not
@@ -248,6 +288,15 @@ export default function EddyCollection({
   const brokenPromptTargets = useMemo(() => {
     if (describeKind !== 'pose') return [];
     return visible.filter((i) => (thumbs[i.id] || i.url) && isPosePromptBroken(i.prompt));
+  }, [describeKind, visible, thumbs]);
+
+  // Cards with a usable pose but no front/back/closeup classification yet — every pose saved
+  // before this feature existed (2026-08-06). Deliberately separate from brokenPromptTargets:
+  // these have a GOOD description already, so labelling them must never touch it (see labelViews
+  // / mergePoseView) the way redescribeBroken's full rewrite is allowed to for a broken card.
+  const unlabeledViewTargets = useMemo(() => {
+    if (describeKind !== 'pose') return [];
+    return visible.filter((i) => (thumbs[i.id] || i.url) && !isPosePromptBroken(i.prompt) && i.prompt?.trim() && !hasPoseView(i.prompt));
   }, [describeKind, visible, thumbs]);
 
   // Duplicate STARS: several cards sharing one title all ended up favorited, because a collection
@@ -294,6 +343,83 @@ export default function EddyCollection({
     notify(`Re-described ${ok} of ${brokenPromptTargets.length}`, ok ? 'success' : 'error');
   }, [brokenPromptTargets, describe, thumbs, notify]);
 
+  /**
+   * Classifies front/back/closeup on ONE card WITHOUT touching its existing description — calls
+   * the dedicated /classify-pose-view endpoint (NOT the shared `describe()` helper, which
+   * regenerates and overwrites the whole pose_action block) and merges only the returned view
+   * into the saved JSON via mergePoseView. The existing description is sent along as context (its
+   * words — "facing away", "over her shoulder" — often settle what the bare image leaves
+   * ambiguous), read via poseSentence so the classifier sees the plain sentence, not raw JSON.
+   * Shared by the bulk sweep below and the per-card "Retry label" button so the two can never
+   * drift.
+   */
+  const labelOneView = useCallback(async (it, dataUrl) => {
+    if (!dataUrl) return false;
+    const mt = (dataUrl.match(/^data:([^;]+);base64,/) || [])[1] || 'image/jpeg';
+    let r;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        r = await eddyVision.classifyPoseView({ image: dataUrl, mimeType: mt, description: poseSentence(it.prompt) });
+        break;
+      } catch (err) {
+        const rateLimited = /429|quota|exhaust|rate/i.test(err?.message || '');
+        if (!rateLimited || attempt >= 3) throw err;
+        await new Promise((res) => setTimeout(res, 2000 * (attempt + 1)));
+      }
+    }
+    const view = r?.view ?? r?.data?.view ?? '';
+    if (!view) return false;
+    await store.updateItem(it.id, { prompt: mergePoseView(it.prompt, view) });
+    return true;
+  }, [store]);
+
+  const retryLabelOne = useCallback(async (it) => {
+    setLabelingOne((s) => ({ ...s, [it.id]: true }));
+    try {
+      const ok = await labelOneView(it, thumbs[it.id]);
+      await refresh();
+      notify(ok ? 'Labelled' : 'Could not classify that pose', ok ? 'success' : 'error');
+    } catch (err) {
+      notify(err.message || 'Could not classify that pose', 'error');
+    } finally {
+      setLabelingOne((s) => ({ ...s, [it.id]: false }));
+    }
+  }, [labelOneView, thumbs, refresh, notify]);
+
+  // Loops passes until either every card is labelled or a whole pass makes zero progress — a
+  // card can fail for a reason a retry fixes (a dropped connection, a malformed reply) or for one
+  // it can't (no image ever attached), and the only way to tell the two apart is to keep going
+  // until progress actually stops. Re-reads the store fresh each pass rather than trusting the
+  // memoized unlabeledViewTargets, which is a stale closure once a pass starts writing labels.
+  // Sequential within a pass for the same rate-limit reason as redescribeBroken/
+  // describeAllMissing: a batch this size in parallel trips Vertex's 429 and half come back empty.
+  const labelViews = useCallback(async () => {
+    const total = unlabeledViewTargets.length;
+    if (!total) return;
+    setLabelingViews(true);
+    let done = 0;
+    for (let pass = 1; ; pass += 1) {
+      const remaining = (await store.listItems()).filter(
+        (i) => !isPosePromptBroken(i.prompt) && i.prompt?.trim() && !hasPoseView(i.prompt)
+      );
+      if (!remaining.length) break;
+      let progressed = 0;
+      for (const it of remaining) {
+        try {
+          const dataUrl = await store.getImage(it.id);
+          if (await labelOneView(it, dataUrl)) { progressed += 1; done += 1; }
+        } catch { /* one failed card should not stop the pass — the stall check below catches it */ }
+      }
+      if (!progressed) {
+        notify(`Labelled ${done} of ${total} — ${remaining.length} stuck (no image, or the AI keeps refusing them)`, done ? 'success' : 'error');
+        break;
+      }
+      if (done >= total) { notify(`Labelled all ${total}`, 'success'); break; }
+    }
+    setLabelingViews(false);
+    await refresh();
+  }, [unlabeledViewTargets, store, labelOneView, refresh, notify]);
+
   const stopDescribeAll = useCallback(() => {
     describeAllStopRef.current = true;
   }, []);
@@ -321,7 +447,7 @@ export default function EddyCollection({
         // Matching the existing single-item button beats inventing a new store method for one
         // caller.
         // eslint-disable-next-line no-await-in-loop -- sequential on purpose, see above
-        const ok = await describe(it.id, thumbs[it.id]);
+        const ok = await describeAuto(it.id, thumbs[it.id]);
         if (ok) succeeded += 1; else failed += 1;
       }
     } finally {
@@ -399,7 +525,7 @@ export default function EddyCollection({
         setDescribeProgress({ done: n, total: stored.length });
         // eslint-disable-next-line no-await-in-loop -- sequential on purpose: parallel vision
         // calls on a 50-image batch trip the rate limit immediately.
-        const ok = await describe(item.id, src.dataUrl);
+        const ok = await describeAuto(item.id, src.dataUrl);
         if (ok === false) failed += 1;
       }
       setDescribeProgress(null);
@@ -467,7 +593,7 @@ export default function EddyCollection({
       notify(`Added ${stored.length || payload.length} from Gallery`, 'success');
       setLibOpen(false); setLibPicked([]);
       await refresh();
-      if (describeKind) for (const it of (stored || [])) { await describe(it.id, payload[0]?.dataUrl); }
+      if (describeKind) for (const it of (stored || [])) { await describeAuto(it.id, payload[0]?.dataUrl); }
     } catch (err) {
       notify(err.message || 'Could not add those', 'error');
     } finally { setLibBusy(false); }
@@ -506,11 +632,36 @@ export default function EddyCollection({
       await refresh();
       notify(hadImage ? `${isVid ? 'Video' : 'Image'} changed${hadPrompt ? ' · prompt kept' : ''}` : `${isVid ? 'Video' : 'Image'} attached`, 'success');
       // Writing a description is only wanted for a card that has no prompt of its own.
-      if (describeKind && !hadPrompt) await describe(id, original);
+      if (describeKind && !hadPrompt) await describeAuto(id, original);
     } catch (err) {
       notify(err.message || 'Could not attach that image', 'error');
     }
   }, [store, refresh, notify, describeKind, describe, autoBlur, mediaKind, items, thumbs]);
+
+  /**
+   * Outfits only: attach the BACK view crop, held alongside the front picture rather than
+   * replacing it — and auto-describe it into its OWN `backPrompt` field. This matters because
+   * EddyGeneratePage never sends the outfit picture itself (a flat product photo flattened the
+   * bust when it was tried — see that page's comment), only the outfit TEXT. So the back crop's
+   * job is entirely to produce a back-view description; without describing it here, attaching a
+   * back image would do nothing for generation at all. readPoseView picks backPrompt over prompt
+   * when the selected pose is back-facing.
+   */
+  const attachBackTo = useCallback(async (id, file) => {
+    if (!/^image\/(png|jpe?g|webp)$/i.test(file.type)) {
+      notify('Use PNG, JPG or WebP', 'error');
+      return;
+    }
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      await store.setBackImage(id, dataUrl);
+      await refresh();
+      notify('Back view attached', 'success');
+      if (describeKind === 'outfit') await describe(id, dataUrl, { field: 'backPrompt' });
+    } catch (err) {
+      notify(err.message || 'Could not attach that image', 'error');
+    }
+  }, [store, refresh, notify, describeKind, describe]);
 
   // Drag anywhere on the page, not only over the drop card. A file dropped outside a handler
   // makes the window navigate to it, which looks like the app crashing.
@@ -621,6 +772,61 @@ export default function EddyCollection({
     else notify(`Downloaded ${saved} of ${picked.length} — the rest failed`, 'error');
   };
 
+  // Save every image (or just the selected ones) into a FOLDER. These images live in IndexedDB, not
+  // as files, so this is the only way to get them onto disk. In Electron the user picks/names the
+  // folder and each file is written into it; a plain browser has no folder API, so it falls back to
+  // individual downloads (they all land in Downloads).
+  const isElectron = Boolean(window.electronAPI?.isElectron);
+  const saveToFolder = async () => {
+    const picked = selected.length ? visible.filter((i) => selected.includes(i.id)) : items;
+    const files = [];
+    for (let idx = 0; idx < picked.length; idx += 1) {
+      const it = picked[idx];
+      const dataUrl = thumbs[it.id] || await store.getImage(it.id);
+      const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || '');
+      if (!m) continue;   // a prompt-only card with no picture — nothing to save
+      const ext = (m[1].split('/')[1] || 'png').replace('jpeg', 'jpg');
+      const nm = String(it.name || it.prompt || it.id).replace(/[^a-z0-9._-]+/gi, '_').replace(/^[_.-]+|[_.-]+$/g, '').slice(0, 50) || 'image';
+      files.push({ fileName: `${String(idx + 1).padStart(3, '0')}_${nm}.${ext}`, b64: m[2] });
+    }
+    if (!files.length) { notify('No images to save — these cards have no picture', 'error'); return; }
+    const bytesOf = (b64) => { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i += 1) a[i] = bin.charCodeAt(i); return a; };
+
+    const folderName = `${String(title || 'eddy').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-images`;
+
+    if (isElectron && window.electronAPI?.autoDownloadFolder && window.electronAPI?.saveFileToFolder) {
+      // Zero-dialog path: goes straight to Downloads/<name>-images, no picker, one click.
+      const directory = await window.electronAPI.autoDownloadFolder({ folderName });
+      if (!directory) { notify('Could not create a folder in Downloads', 'error'); return; }
+      let n = 0;
+      for (const f of files) {
+        try { await window.electronAPI.saveFileToFolder({ directory, fileName: f.fileName, data: bytesOf(f.b64) }); n += 1; }
+        catch { /* skip a bad one, keep the rest */ }
+      }
+      notify(`Saved ${n} image${n === 1 ? '' : 's'} to Downloads/${folderName} ✨`, 'success');
+    } else if (isElectron && window.electronAPI?.chooseDownloadFolder && window.electronAPI?.saveFileToFolder) {
+      const directory = await window.electronAPI.chooseDownloadFolder({
+        title: `Choose where to save the ${(title || 'these').toLowerCase()} images`,
+        folderName,
+      });
+      if (!directory) return;
+      let n = 0;
+      for (const f of files) {
+        try { await window.electronAPI.saveFileToFolder({ directory, fileName: f.fileName, data: bytesOf(f.b64) }); n += 1; }
+        catch { /* skip a bad one, keep the rest */ }
+      }
+      notify(`Saved ${n} image${n === 1 ? '' : 's'} to the folder ✨`, 'success');
+    } else {
+      let n = 0;
+      for (const f of files) {
+        await downloadBlob(new Blob([bytesOf(f.b64)]), f.fileName);
+        await new Promise((r) => setTimeout(r, 200));   // browsers drop rapid-fire downloads
+        n += 1;
+      }
+      notify(`Downloaded ${n} image${n === 1 ? '' : 's'} to your Downloads`, 'success');
+    }
+  };
+
   // Export the whole collection as the same JSON shape the importer takes, so a file exported
   // here can be handed to someone else and imported straight into their app.
   const exportAll = async () => {
@@ -636,7 +842,14 @@ export default function EddyCollection({
         // Pose cards carry a video prompt alongside the pose prompt. Without it here, an export
         // of 36 poses would come back needing 36 video prompts retyped by hand.
         videoPrompt: it.videoPrompt || '',
+        // An outfit card can carry a second, back-view description, which generation picks over
+        // `prompt` whenever the chosen pose is labelled back-facing. It is written by describing
+        // a separately uploaded back photo, so leaving it out of the export means the receiving
+        // side silently falls back to the front description for every back pose — the exact
+        // mismatch the back image was uploaded to prevent.
+        backPrompt: it.backPrompt || '',
         image: thumbs[it.id] || '',   // data URL for a stored image, '' for prompt-only
+        backImage: backThumbs[it.id] || '',
         folder: folders.find((f) => f.id === it.folderId)?.name || '',
         // Stars travel WITH the export. Favorites live in their own key keyed by item id, and an
         // import mints new ids — so without this the ★ set had to be rebuilt by hand every time a
@@ -1004,6 +1217,13 @@ export default function EddyCollection({
                 Re-describe {brokenPromptTargets.length} unreadable
               </Btn>
             )}
+            {/* front/back/closeup classification (2026-08-06) — only shown when there is
+                something to label, and never touches an existing description (mergePoseView). */}
+            {!describingAll && unlabeledViewTargets.length > 0 && (
+              <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm !border-blue-500/40 !text-blue-200" onClick={labelViews} disabled={labelingViews}>
+                {labelingViews ? 'Labelling…' : `Label ${unlabeledViewTargets.length} pose${unlabeledViewTargets.length === 1 ? '' : 's'}`}
+              </Btn>
+            )}
             {/* Same rule as the unreadable sweep: only shown when there is something to clean, and it
                 names the count so a collection full of duplicates cannot look tidy. */}
             {dupeFavCount > 0 && (
@@ -1017,6 +1237,11 @@ export default function EddyCollection({
             {items.length > 0 && (
               <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={exportAll}>
                 {selected.length ? `Export ${selected.length}` : 'Export all'}
+              </Btn>
+            )}
+            {items.length > 0 && (
+              <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={saveToFolder}>
+                {selected.length ? `Save ${selected.length} to Downloads` : 'Save all to Downloads'}
               </Btn>
             )}
             <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={openLibrary}>
@@ -1203,6 +1428,30 @@ export default function EddyCollection({
                 </button>
               </div>
 
+              {/* Outfits only: the back-view crop, alongside the front picture above rather than
+                  replacing it. See attachBackTo / store.setBackImage — generation picks whichever
+                  matches the selected pose's view. */}
+              {describeKind === 'outfit' && (
+                backThumbs[it.id] ? (
+                  <div className="relative">
+                    <img src={backThumbs[it.id]} alt="Back view" className="w-full rounded-lg bg-zinc-950 object-contain" style={{ maxHeight: 120 }} />
+                    <span className="absolute bottom-1 left-1 rounded bg-black/80 px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-zinc-300">Back view</span>
+                    <label className="absolute right-1 top-1 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-black/70 text-xs text-zinc-300 hover:text-rose-300" title="Replace back view">
+                      ↻
+                      <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+                        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) attachBackTo(it.id, f); }} />
+                    </label>
+                  </div>
+                ) : (
+                  <label className="flex h-9 cursor-pointer items-center justify-between rounded-lg bg-white/[0.02] px-3 text-[0.6875rem] text-zinc-500 transition hover:bg-white/[0.05] hover:text-zinc-300">
+                    <span>No back view</span>
+                    <span className="text-rose-400">+ Add back view</span>
+                    <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+                      onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) attachBackTo(it.id, f); }} />
+                  </label>
+                )
+              )}
+
               {withPrompt && (
                 <Input
                   value={it.name || ''}
@@ -1238,9 +1487,25 @@ export default function EddyCollection({
               )}
               {withPrompt && describeKind && (thumbs[it.id] || it.url) && (
                 <Btn variant="secondary" className="!w-full !rounded-lg !py-1 !text-[0.6875rem]"
-                  disabled={describing[it.id]} onClick={() => describe(it.id, thumbs[it.id])}>
+                  disabled={describing[it.id]} onClick={() => describeAuto(it.id, thumbs[it.id])}>
                   {describing[it.id] ? 'Reading…' : it.prompt ? 'Re-describe with AI' : 'Describe with AI'}
                 </Btn>
+              )}
+              {/* front/back/closeup — shows what generation will actually pick the outfit crop
+                  by (see readPoseView in EddyGeneratePage). "Retry label" re-classifies WITHOUT
+                  touching the description above (labelOneView / mergePoseView), unlike
+                  Re-describe with AI which rewrites everything. */}
+              {withPrompt && describeKind === 'pose' && !isPosePromptBroken(it.prompt) && it.prompt?.trim() && (thumbs[it.id] || it.url) && (
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2 py-1">
+                  <span className={cn('text-[0.6875rem] font-bold uppercase tracking-wide',
+                    hasPoseView(it.prompt) ? 'text-blue-300' : 'text-zinc-600')}>
+                    {hasPoseView(it.prompt) ? readPoseView(it.prompt) : 'unlabeled'}
+                  </span>
+                  <button className="text-[0.6875rem] text-zinc-500 hover:text-blue-300 cursor-pointer disabled:opacity-40"
+                    disabled={labelingOne[it.id]} onClick={() => retryLabelOne(it)}>
+                    {labelingOne[it.id] ? 'Labelling…' : 'Retry label'}
+                  </button>
+                </div>
               )}
               {/* A pose whose saved prompt yields no pose_action.description is silently dropped
                   from the generation prompt. Without this the card looks fine — it shows a

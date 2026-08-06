@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { seedream as seedreamApi, gallery as galleryApi, video as videoApi, library as libraryApi } from '../services/api';
+import { seedream as seedreamApi, nanoBypass as nanoBypassApi, gallery as galleryApi, video as videoApi, library as libraryApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Select, Textarea, Spinner } from '../components/UI';
 import {
@@ -20,7 +20,7 @@ import { createEddyCollection } from '../lib/eddyCollectionStore';
 import { createPageStore } from '../lib/pageStateStore';
 // isPosePromptBroken is deliberately no longer imported here: the broken-prompt notice was demoted
 // out of the generate flow and now lives only on the Pose tab, where it can be acted on.
-import { poseSentence } from '../lib/poseText';
+import { poseSentence, readPoseView } from '../lib/poseText';
 import { runPool } from '../lib/runPool';
 import { cn } from '../lib/utils';
 import { downloadBlob, stripEnabled } from '../lib/stripMetadata';
@@ -28,6 +28,45 @@ import { downloadBlob, stripEnabled } from '../lib/stripMetadata';
 // How many generations are in flight at once. Each one re-encodes every source image server
 // side, so this trades raw speed for not crashing the backend.
 const PARALLEL_REQUESTS = 6;
+
+// Vertex allows far fewer concurrent image calls than our own backend does, and going over does not
+// slow down — it 429s (RESOURCE_EXHAUSTED) and the image is LOST, because nothing in this stack
+// retries a 429. At 6 in flight a Gemini batch burned its quota in the first few seconds and the
+// rest failed (owner, 2026-08-06). runPool queues the remainder either way, so a lower cap costs
+// wall-clock, not images.
+const GEMINI_PARALLEL_REQUESTS = 2;
+
+// Above this many picked items the summary list becomes a thumbnail grid instead of text rows.
+// Eight is about what fits without the Generate button leaving the screen.
+const COMPACT_PICKED = 8;
+const parallelFor = (engine) => (engine === 'gemini' ? GEMINI_PARALLEL_REQUESTS : PARALLEL_REQUESTS);
+
+/**
+ * Retry a generation call that came back rate-limited, backing off between attempts.
+ *
+ * Nothing else in this stack retries a 429: wavespeedService._fetchWithRetry retries connection
+ * failures only, and Vertex's RESOURCE_EXHAUSTED surfaces straight through as a thrown error. So a
+ * quota bump did not slow a batch down, it DELETED images from it — and until the retry panel
+ * existed you could not even tell which ones. Lowering concurrency makes that rarer; it cannot make
+ * it impossible, because quota is shared with everything else hitting the same project.
+ *
+ * Only 429 / RATE_LIMITED is retried. Every other failure is returned to the caller untouched: a
+ * bad prompt or a missing key fails the same way on attempt four as on attempt one, and retrying it
+ * would just spend three more calls to reach the same place.
+ */
+async function withRateLimitRetry(fn, { attempts = 4, baseDelayMs = 4000 } = {}) {
+  for (let i = 0; ; i += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      const limited = err?.status === 429 || err?.code === 'RATE_LIMITED';
+      if (!limited || i >= attempts - 1) throw err;
+      // Linear, not exponential: quota windows here refill on a clock rather than easing off under
+      // load, so a long tail of doubling waits buys nothing over an even spacing.
+      await new Promise((r) => setTimeout(r, baseDelayMs * (i + 1)));
+    }
+  }
+}
 
 // Videos are heavier per-request than images (each submission reads the full source image off
 // disk, base64s it, and waits on Muapi's create-task call) and the render itself is slow — a
@@ -80,9 +119,13 @@ const CAMERA_LOCK_INSTRUCTION = '\n\nCAMERA LOCK: perfectly static locked-off ca
 // though the prompt never mentioned any. Saying nothing about audio is read as "your choice" — the
 // ban has to be explicit, and last, so it is the final word.
 //
+// THE BAN IS MUSIC ONLY. An earlier version banned ALL audio ("completely silent") and the clips
+// came back with no voice, no breathing, no room tone — which is not what was wanted. Her sound is
+// the point; only the invented backing track is not. Keep this wording narrow.
+//
 // MONEY-SAFETY, same rule as the camera lock: no "Duration:" label and no "<N> seconds" phrase, so
 // parseDurationSeconds() cannot key on it and the billed length cannot move.
-const NO_AUDIO_INSTRUCTION = '\n\nNO AUDIO — CRITICAL: the clip is COMPLETELY SILENT. Do NOT generate any music, soundtrack, score, song, beat, background audio, ambience, sound effects, voice, speech, moaning or breathing sound. No audio track of any kind. Silent video only.';
+const NO_AUDIO_INSTRUCTION = '\n\nNO MUSIC — CRITICAL: do NOT add any music, soundtrack, score, song or backing beat. Natural sound is fine and wanted — her voice, speech, breathing and the room\'s own ambience. The ban is on MUSIC only, not on audio.';
 
 // Strips music / audio / sound cues out of a video prompt before it is dispatched. Seedance is
 // image-to-video and renders a SILENT clip, so any "Audio:/Music:/Sound:" bullet or a "background
@@ -98,6 +141,13 @@ const NO_AUDIO_INSTRUCTION = '\n\nNO AUDIO — CRITICAL: the clip is COMPLETELY 
 //  - "moans"/"breathy" (a visible facial action) and "beat" (a rhythm/movement word) are NOT touched
 //    — the request was music, not the performance.
 //  - "Duration:" is never an audio label, so the billed length is never removed. MONEY-SAFE.
+// The prompts carry an "Avoid overacting / no exaggerated expressions" bullet in their IMPORTANT
+// block. It directly CANCELS the FACIAL PERFORMANCE block above it — one asks for a mobile, reacting
+// face (lip bites, brow flicks, blinks, a visible swallow), the other tells the model to keep the
+// face still. Given a preserve rule and a contradicting rule the model splits the difference and you
+// get neither, so the contradiction is deleted rather than argued with. Only the acting ban goes;
+// "Avoid AI glossy look / plastic skin" and the rest of the IMPORTANT bullets are untouched.
+const OVERACTING_LINE = /^\s*[*\-•·]?\s*avoid\s+over-?acting\b/i;
 const AUDIO_LABEL_LINE = /^\s*[*\-•·]?\s*(audio|music|soundtrack|sound design|sound effects?|sfx|song|voice ?over)\s*:/i;
 const AUDIO_PHRASE = /\b(?:background |soft |upbeat |sensual |ambient |gentle )?music(?:al)?\b|\bsoundtrack\b|\ba song\b|\bsings? along\b|\bsinging along\b|\bhumming a tune\b|\bto the beat of the music\b|\bset to music\b|\bASMR\b/gi;
 function stripAudioCues(text) {
@@ -105,6 +155,7 @@ function stripAudioCues(text) {
   const out = [];
   for (const line of String(text).split('\n')) {
     if (AUDIO_LABEL_LINE.test(line)) continue;               // whole sound-labelled bullet/header goes
+    if (OVERACTING_LINE.test(line)) continue;                // the expression-killing bullet goes too
     let l = line.replace(AUDIO_PHRASE, '');
     // Tidy the artifacts a removed mid-sentence phrase leaves behind ("  ", " ,", " .", "to the .").
     l = l.replace(/\bto the\s+([.,;])/gi, '$1').replace(/\s{2,}/g, ' ').replace(/\s+([,.;:])/g, '$1').replace(/,\s*,/g, ',');
@@ -165,6 +216,17 @@ async function urlToDataUrl(url) {
 // happen UNDER the clothes on both paths, and two hand-copied strings would drift. Verbatim the
 // wording that was reported-and-fixed (a hoodie, breasts out); do not soften it.
 const CLOTHED_FIGURE_LOCK = 'CLOTHED FIGURE — CRITICAL, OVERRIDES THE BUST INSTRUCTION ABOVE: she stays FULLY DRESSED. The garment stays completely on and covers her breasts and torso exactly as much as the outfit does — the neckline and coverage are unchanged. Any increase in bust or figure shows ONLY as the fabric stretching and straining over a fuller shape underneath. Do NOT open, lower, lift, unzip, pull up, pull aside or remove any clothing; do NOT expose breasts, nipples, areola or any skin the outfit covers. Read "cleavage" and "fuller bust" as the silhouette THROUGH the clothing, never as bare skin.';
+
+// Scopes a body/bust instruction to what a BACK-facing pose can actually show.
+//
+// WHY THIS IS NEEDED: the body chips are written in front-of-body language — "deep cleavage",
+// "the neckline is pushed out by them", "fuller chest". On a back-facing pose none of that is in
+// frame, and the model has only two ways to satisfy the words: ignore them, or TURN HER AROUND to
+// bring her chest into view. The second one silently destroys the pose, which is the one thing the
+// pose label exists to protect (owner, 2026-08-06). So the instruction is not dropped — hips, waist
+// and build read perfectly well from behind, and dropping it would ignore a chip that was
+// deliberately clicked — it is re-aimed, and the re-orientation is banned outright.
+const BACK_VIEW_BODY_SCOPE = 'BACK VIEW — HER FACING DIRECTION IS FIXED: this shot is taken from BEHIND her. Her back, shoulders and the BACK of the outfit face the camera, exactly as the pose shows. Any figure or bust wording above applies ONLY to what is visible from behind: her overall build and weight, her hips, her waist, the width of her back and shoulders. Words like "cleavage", "neckline", "fuller chest" and "deep cleavage" describe a side of her body this shot does not show — express them through her build alone. Do NOT turn, twist, rotate or re-angle her toward the camera, do NOT bring her chest or the front of the garment into frame, and do NOT change the pose in any way to make a bust instruction visible.';
 
 /**
  * Resolves a result's SOURCE pose id, with a fallback for results that predate `combo` — pure and
@@ -248,7 +310,66 @@ const LIGHTING_OPTIONS = [
 ];
 const lightingTextFor = (v) => (LIGHTING_OPTIONS.find((o) => o.value === v)?.text || '');
 
-function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex, faceIndex, nsfw, wantsNude, wantsBody, undressChip, tweak, poseFaceless, lightingText }) {
+/**
+ * HER BUILD — a standing fact about the character, NOT a change to her.
+ *
+ * This is deliberately separate from the BODY instruction chips, and the difference is the whole
+ * point. A chip sets `wantsBody`, which SWITCHES OFF both bust-preservation locks (the early
+ * "her BREAST size … match image 1" and the final "BUST AND BODY — FINAL"), because those locks
+ * exist to stop a deliberate enlargement being cancelled. That is right for "make her bigger than
+ * the photo" and wrong for "this is what she looks like": a character whose reference photo ALREADY
+ * shows the target build was losing her strongest protection in order to state a size she already
+ * had (owner, 2026-08-06 — Grace is large, another model is medium, and each wants her own build
+ * held, not altered).
+ *
+ * So these options never touch `wantsBody`. They ride WITH the preservation locks, naming the size
+ * the locks are holding, which is exactly what a lock cannot do on its own — "the size in image 1"
+ * is unfalsifiable to the model when a slimmer pose stand-in is also in the payload.
+ *
+ * 'auto' is the default and emits nothing: the locks alone, i.e. the behaviour that shipped before
+ * this existed.
+ */
+const BUILD_OPTIONS = [
+  { value: 'auto', label: 'From photo', text: '', backText: '' },
+  { value: 'petite', label: 'Petite',
+    text: 'She is petite and slim with a small bust — that is her natural build, exactly as in image 1, and it is preserved, not changed.',
+    backText: 'She is petite and slim with narrow hips and a slender back — that is her natural build, exactly as in image 1, and it is preserved, not changed.' },
+  { value: 'medium', label: 'Medium',
+    text: 'She has a medium, natural bust and an average build — that is her natural figure, exactly as in image 1, and it is preserved, not changed.',
+    backText: 'She has an average, natural build with proportionate hips and waist — that is her natural figure, exactly as in image 1, and it is preserved, not changed.' },
+  { value: 'full', label: 'Full',
+    text: 'She has a full, shapely bust and curvy figure — that is her natural build, exactly as in image 1, and it is preserved, not changed.',
+    backText: 'She has a full, curvy figure with shapely hips and a narrow waist — that is her natural build, exactly as in image 1, and it is preserved, not changed.' },
+  { value: 'large', label: 'Large',
+    text: 'She has a LARGE, heavy, full bust with deep natural cleavage and a curvy figure — that is her natural build, exactly as in image 1, and it is preserved, not changed. Never render her smaller, flatter or more athletic than this.',
+    backText: 'She has a full, curvy figure with wide shapely hips and a narrow waist — that is her natural build, exactly as in image 1, and it is preserved, not changed. Never render her slimmer or more athletic than this.' },
+  { value: 'verylarge', label: 'Very large',
+    text: 'She has a VERY LARGE, heavy, extremely full bust — big, weighty and rounded, sitting wide on her chest with deep natural cleavage between them — and a strongly curvy figure. That is her natural build, exactly as in image 1, and it is preserved, not changed. Never render her smaller, flatter, perkier or more athletic than this.',
+    backText: 'She has a strongly curvy figure with wide shapely hips and a narrow waist — that is her natural build, exactly as in image 1, and it is preserved, not changed. Never render her slimmer or more athletic than this.' },
+];
+
+/**
+ * The build line for a given view.
+ *
+ * BACK POSES GET A DIFFERENT SENTENCE, NOT THE SAME ONE. Every front variant above names the bust
+ * and, at the larger sizes, "deep natural cleavage" — and a back-facing shot shows none of that.
+ * Feeding it anyway recreates precisely the failure BACK_VIEW_BODY_SCOPE was written to stop: the
+ * model can only satisfy cleavage wording by twisting her toward the camera, which destroys the
+ * pose (owner, 2026-08-06 — "ignore it if it is a back pose").
+ *
+ * Suppressing it outright was the other option and is worse: hips, waist and back width DO read
+ * from behind, and those are exactly what a slimmer pose stand-in pulls her toward. So the back
+ * variants keep the same anchoring job using only what the camera can actually see.
+ */
+const buildTextFor = (v, view) => {
+  const o = BUILD_OPTIONS.find((x) => x.value === v);
+  if (!o) return '';
+  return view === 'back' ? (o.backText || '') : (o.text || '');
+};
+
+function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex, faceIndex, nsfw, wantsNude, wantsBody, undressChip, tweak, poseFaceless, lightingText, poseView = 'front', buildText = '' }) {
+  // Back-facing poses take a different final body clause — see BACK_VIEW_BODY_SCOPE.
+  const isBackView = poseView === 'back';
   const lines = [];
 
   // A per-image retry note typed on the review gate's card ("her hand is broken", "make the light
@@ -302,6 +423,11 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
     // explicitly. Fires ONLY when no body chip is active (wantsBody) — a deliberate enlargement or
     // slim must not be cancelled by this lock.
     lines.push(`Her whole BODY comes from image 1 and must be preserved exactly: her body WEIGHT and build, her overall SIZE, her BREAST size and chest fullness, her waist, her hips and her figure all match image 1.${poseIndex ? ' Copy ONLY the POSITION and camera from the pose diagram — take NOTHING about the pose stand-in’s body: not her weight, not her size, not her bust, not her build.' : ''} Do NOT slim her down, shrink her bust, or average her figure toward a thinner or smaller-busted default: if image 1 shows a full, heavy, curvy figure, the result shows exactly that same weight and fullness.`);
+    // Names the build the lock above is holding. "The size in image 1" is unfalsifiable to the
+    // model when a slimmer pose stand-in sits in the same payload; a stated size is not. Suppressed
+    // when a BODY chip is active — a chip is an explicit change, and describing her current build
+    // beside it would be the same contradiction that broke 'Bigger bust, clothed'.
+    if (buildText) lines.push(`HER BUILD: ${buildText}`);
   }
 
   // Outfit and pose are prompts that MIX into one image. Any attached picture is only an
@@ -333,11 +459,26 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
     }
   }
   if (poseText) lines.push(`POSE: ${poseText}`);
+  // TEXT-ONLY POSE — what makes the "pose photo NOT sent" toggle actually change the result.
+  //
+  // Every pose enforcement line below is gated on poseIndex because each one points at "image N".
+  // With no pose image there is no N, so ALL of them drop — and what remains is a bare "POSE: ..."
+  // sentence with nothing telling the model that image 1's own pose is not to be kept. The reliably
+  // observed outcome of that is image 1's pose surviving untouched, which reads as "the toggle does
+  // nothing" when in fact the prompt simply stopped asking. So the diagram's job is restated in
+  // words: same three demands (ignore the reference pose, own the camera, own the framing), sourced
+  // from the description instead of from a picture.
+  if (poseText && !poseIndex) {
+    lines.push(`IGNORE THE POSE SHE IS IN IN HER REFERENCE PHOTOS. Whatever she is doing in image 1 — how she sits, leans, holds her arms, where the camera was standing, how close it was — is NOT used. Her body position, her limbs, the CAMERA ANGLE and the crop come ONLY from the POSE description above.`);
+    lines.push(hasTweak
+      ? `POSE MATCH: build the shot from the POSE description — her body position, the camera angle it implies and how much of her is in frame — except where the CORRECTION at the end says otherwise.`
+      : `POSE MATCH — TOP PRIORITY FOR THE SHOT: build the shot from the POSE description above and follow it exactly — every limb angle, the hands, the feet, the head tilt, the torso arch and twist, and the camera position and framing it describes. Do NOT default to a level, straight-on camera or to a standard full-body crop, and do NOT fall back to the pose in image 1.`);
+  }
   if (poseIndex) {
     lines.push(`Image ${poseIndex} is a POSE DIAGRAM, not a person. A DIFFERENT woman appears in it and she is NOT the subject — she is a stand-in showing the shape to copy.`);
     // The pose counterpart to "ignore what she is wearing in the references". Without it image 1's
     // pose survives into the result and the diagram is ignored — the exact failure reported.
-    lines.push(`IGNORE THE POSE SHE IS IN IN HER REFERENCE PHOTOS. Whatever she is doing in image 1 — how she sits, leans, holds her arms, how close the camera is — is NOT used. Her body position, her limbs, the camera angle and the crop come ONLY from image ${poseIndex}. Image 1 supplies who she is and the room; image ${poseIndex} supplies the shot.`);
+    lines.push(`IGNORE THE POSE SHE IS IN IN HER REFERENCE PHOTOS. Whatever she is doing in image 1 — how she sits, leans, holds her arms, where the camera was standing, how close it was — is NOT used. Her body position, her limbs, the CAMERA ANGLE and the crop come ONLY from image ${poseIndex}. Image 1 supplies who she is and the room; image ${poseIndex} supplies the shot, including where the camera is.`);
     // The absolute "EXACTLY" is dropped when a tweak exists: it is the line most likely to be
     // the thing the user is trying to override ("her hand is broken", "turn her head towards me")
     // and an unqualified EXACTLY standing against that produces neither the pose nor the fix.
@@ -347,6 +488,12 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
     // Stated after the pose clause on purpose. The face lock was being set out early and then
     // buried under later instructions, and the model kept taking the stand-in's face.
     lines.push(`The face and body of the woman in image ${poseIndex} must NOT appear in the result. Her face is not the subject's face. Copy her POSITION and the CAMERA, nothing about who she is.`);
+    // "Nothing about who she is" was being read as face-only in practice — reported: the output's
+    // BODY SIZE (chest, waist, hips, overall build) was drifting toward the pose diagram woman's
+    // proportions instead of staying locked to the character. Naming size/proportions explicitly,
+    // separately from the pose/position instruction above, is the same fix pattern that worked for
+    // Scene Recreate's identical chest-size leak (owner, 2026-08-06).
+    lines.push(`Body SIZE is NOT part of the pose. Her chest size, waist, hips and overall build come ONLY from image 1 — take her exact proportions from there and hold them. The pose diagram's proportions are irrelevant and must never be copied, matched or averaged toward, even though her position, limbs and camera angle come from image ${poseIndex}.`);
   }
 
   // Nothing pins her clothing when no outfit is chosen — deliberately. The model is left free
@@ -402,8 +549,33 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
   // duplication: the early line establishes it, this one enforces it.
   // Only when no body chip is active — a deliberate enlargement/slim must not be overridden.
   if (!wantsBody) {
-    lines.push(`BUST AND BODY — FINAL, OVERRIDES THE OUTFIT AND THE POSE: her breasts are the size they are in image 1. Large, heavy and full if that is what image 1 shows. The clothing stretches over them; the neckline is pushed out by them.${poseIndex ? ` The woman in image ${poseIndex} is only a shape to copy — her chest, her build and her weight are NOT hers.` : ''} Do NOT render a smaller, flatter or more athletic chest than image 1. Do NOT let a garment, a pose or a default body shape reduce her bust.`);
+    // The neckline half of this only makes sense front-on. On a back view it is replaced with the
+    // build-and-hips wording, so the lock still holds her figure without describing a neckline the
+    // camera cannot see — which would invite the same turn-her-around failure BACK_VIEW_BODY_SCOPE
+    // exists to stop.
+    lines.push(isBackView
+      ? `BUST AND BODY — FINAL, OVERRIDES THE OUTFIT AND THE POSE: her body is the body in image 1 — the same weight, the same build, the same hips, waist and back. Full and heavy if that is what image 1 shows.${poseIndex ? ` The woman in image ${poseIndex} is only a shape to copy — her build and her weight are NOT hers.` : ''} Do NOT slim her down or average her toward a thinner or more athletic default. Do NOT let a garment, a pose or a default body shape reshape her figure.`
+      : `BUST AND BODY — FINAL, OVERRIDES THE OUTFIT AND THE POSE: her breasts are the size they are in image 1. Large, heavy and full if that is what image 1 shows. The clothing stretches over them; the neckline is pushed out by them.${poseIndex ? ` The woman in image ${poseIndex} is only a shape to copy — her chest, her build and her weight are NOT hers.` : ''} Do NOT render a smaller, flatter or more athletic chest than image 1. Do NOT let a garment, a pose or a default body shape reduce her bust.`);
+    // Restated last with the lock it belongs to, same reason the lock itself is restated here.
+    if (buildText) lines.push(`HER BUILD — FINAL: ${buildText}`);
+    // What the GARMENT does about that build. HER BUILD describes her body; nothing was telling the
+    // clothing to show it, so a large build under an outfit came back flattened — the shape was
+    // stated and then hidden (owner, 2026-08-06, "under clothes it doesn't boost the volume").
+    // CLOTHED_FIGURE_LOCK covers this on the chip path, but it is gated on wantsBody, so the build
+    // dropdown — the whole point of which is to avoid setting wantsBody — never got it.
+    // Skipped when she is undressed: there is no garment to strain. Kept short on purpose, this
+    // prompt runs close to Seedream's ~5.3k 422 cap.
+    if (buildText && !wantsNude) {
+      lines.push(isBackView
+        ? 'THROUGH THE CLOTHES: the garment takes HER shape — the fabric pulls taut across her hips and seat and her full curves read clearly through it. Never flatten her under the outfit.'
+        : 'THROUGH THE CLOTHES: the garment takes HER shape — the fabric strains and pulls across her chest, the neckline is pushed out and open by her bust, and her full volume reads clearly through the material. Never flatten her under the outfit.');
+    }
   }
+  // Stated AFTER the bust block on purpose, following this file's own rule that the later line
+  // wins: whatever front-of-body wording survived above, this is the last word on which way she
+  // faces. Fires on every back pose, not only when a body chip is on — the block above ships
+  // chest language either way.
+  if (isBackView) lines.push(BACK_VIEW_BODY_SCOPE);
 
   // FRAMING IS STATED LAST, on purpose. It used to sit up with the pose block, where the setting
   // rules, the background rule and the final check all came AFTER it — and this file already learned
@@ -411,6 +583,13 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
   // under the ones that follow. A tight close-up pose kept coming back as a wide shot. Placed here it
   // is the last thing read before the identity check, competing with nothing.
   if (poseIndex) {
+    // CAMERA ANGLE is a separate fact from framing and was the missing piece: framing says how much
+    // of her is in frame, ANGLE says where the camera is standing. A chest close-up shot from below
+    // and the same close-up shot from above are identical in framing and completely different
+    // images. Stated first of the two, both at the end where nothing competes with them.
+    lines.push(hasTweak
+      ? `CAMERA ANGLE: put the camera where the pose diagram's camera is — same height, same direction, same tilt — except where the CORRECTION at the end says otherwise.`
+      : `CAMERA ANGLE — MATCH THE POSE DIAGRAM EXACTLY: the camera sits in the SAME position relative to her as in the diagram. Same HEIGHT (below her looking up, level with her, or above her looking down), same DIRECTION (from the front, from the side, from behind, or overhead), same TILT and the same perspective. If the diagram looks UP at her from below, the result looks up at her from below. If it looks DOWN from above, the result looks down from above. If it is a POV down her own body, the result is that same POV. Do NOT re-shoot the pose from a different position, and do NOT default to a level, straight-on camera.`);
     lines.push(hasTweak
       ? `FRAMING: match the pose diagram's crop and camera distance — the same part of her body fills the frame — except where the CORRECTION at the end says otherwise.`
       : `FRAMING — THIS OVERRIDES EVERYTHING ABOUT THE SHOT: match the pose diagram's crop EXACTLY. The result is framed on the SAME part of her body, at the SAME camera distance and zoom. If the diagram is a tight close-up of her chest and torso, the result is that same tight close-up — do NOT zoom out, step back or widen to show more of her, and do NOT widen to show the outfit. If the diagram is a full-body shot, the result is full-body. How much of her body is visible, and where the frame cuts her, must match the diagram.`);
@@ -419,6 +598,14 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
     if (poseFaceless) {
       lines.push(`If her face is OUT of frame in the pose diagram — cropped above the chin, turned away, or below the frame — keep it out of frame in the result too. Do NOT pan, tilt up or re-frame to bring her face into view.`);
     }
+    // POSE MATCH, stated LAST of the pose group and kept SHORT on purpose: this prompt already runs
+    // near Seedream's length cap (~5.3k chars = a 422), so this is a tight final reinforcement, not a
+    // re-statement. The camera/framing locks above cover WHERE the camera is and HOW MUCH is in frame;
+    // this is the blunt final word on the body silhouette — trace it, do not reinterpret it. Softened
+    // under a tweak so a correction ("turn her head") is not fighting an absolute EXACT.
+    lines.push(hasTweak
+      ? `POSE MATCH: trace image ${poseIndex}'s silhouette — limb angles, hands, feet, head tilt, torso twist — except where the CORRECTION says otherwise.`
+      : `POSE MATCH — TOP PRIORITY FOR THE SHOT: reproduce image ${poseIndex}'s pose EXACTLY, joint for joint — every limb angle, the hands, the feet, the head tilt, the torso arch and twist. Trace the silhouette; do NOT reinterpret or "improve" it.`);
   }
 
   // The identity lock demands a face by default (portrait or a normal pose). ONLY when the FACELESS
@@ -520,6 +707,14 @@ const INSTRUCTION_PRESETS = [
 const BODY_CHANGE_TEXTS = [
   'She has a LARGE full bust with deep natural cleavage.',
   'She has a VERY LARGE heavy bust, noticeably fuller than in the photo, with deep cleavage.',
+  // 'Bigger bust, clothed' was MISSING from this list, and its absence inverted the chip.
+  // wantsBody stayed false, so buildPrompt took its no-body-change path and stated — twice, the
+  // second time in the final, winning position — "her breasts are the size they are in image 1,
+  // do NOT render a larger or smaller chest". The chip asked for a bigger bust and the prompt
+  // answered "keep it exactly as it is", with the keep-it line read last. Worse, CLOTHED_FIGURE_LOCK
+  // is gated on wantsBody too, so the ONE chip whose whole purpose is "bigger, but stay dressed"
+  // was the one chip that never got the stay-dressed lock (owner, 2026-08-06).
+  'She has a LARGE full bust that fills out the top she is already wearing',
   'She has a curvier hourglass figure — fuller bust and hips with a narrow waist.',
   'She has a slimmer, more slender figure.',
 ];
@@ -1183,7 +1378,7 @@ function StarIcon({ filled }) {
  * unmount cleanup IS the close path). When Generate video is pressed the gate portals ON TOP of
  * this (appended to body later, equal z-index) and its own scroll-lock nests cleanly over this one.
  */
-function ResultLightbox({ src, item, busy, favorited, onToggleFavorite, note, setNote, canRegenerate, canAnimate, canClearVideoPrompt, onRegenerate, onAnimate, onClearVideoPrompt, onRemove, onDownload, onClose }) {
+function ResultLightbox({ src, item, busy, favorited, onToggleFavorite, note, setNote, canRegenerate, canAnimate, canClearVideoPrompt, noVideo, vpOpen, setVpOpen, vpText, setVpText, onRegenerate, onAnimate, onClearVideoPrompt, onDuplicateWithPrompt, onRemove, onDownload, onClose }) {
   const fade = useFadeIn();
   useScrollLock();
   const inputRef = useRef(null);
@@ -1310,6 +1505,17 @@ function ResultLightbox({ src, item, busy, favorited, onToggleFavorite, note, se
               Clear video prompt
             </button>
           )}
+          {/* Same paste-a-different-video-prompt control as the tile, sharing its vpOpen/vpText state
+              so opening it from the tile or from here shows the same in-progress text. */}
+          <button
+            type="button"
+            onClick={() => { setVpText(''); setVpOpen((v) => !v); }}
+            disabled={Boolean(busy)}
+            title="Makes a new copy of this image with your pasted video prompt — the original and its own video prompt are left untouched."
+            className={cn('rounded-lg border px-3 py-2 text-xs font-medium transition', GATE_FOCUS, TILE_BTN)}
+          >
+            {noVideo ? 'Duplicate with a video prompt' : 'Duplicate with a different video prompt'}
+          </button>
           <button
             type="button"
             onClick={onDownload}
@@ -1334,6 +1540,48 @@ function ResultLightbox({ src, item, busy, favorited, onToggleFavorite, note, se
             Remove
           </button>
         </div>
+        {vpOpen && !busy && (
+          <div className="space-y-1.5 rounded-lg border border-white/[0.07] bg-black/25 p-2">
+            {/* The prompt it HAS today, for reference only — the box below is not seeded from it. */}
+            {item.videoPrompt && (
+              <p className={cn('text-xs leading-snug line-clamp-2', GATE_MUTED)}>This image currently has: {item.videoPrompt}</p>
+            )}
+            <textarea
+              autoFocus
+              value={vpText}
+              onChange={(e) => setVpText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setVpOpen(false); } }}
+              rows={5}
+              placeholder="Paste your video prompt here..."
+              className={cn(
+                'w-full resize-y rounded-lg border bg-black/30 px-2.5 py-2 text-sm outline-none transition placeholder:text-[#5a5a67]',
+                GATE_FOCUS, GATE_HAIRLINE, GATE_TEXT, 'focus:border-white/25',
+              )}
+            />
+            <div className="flex gap-2">
+              {/* Disabled on empty so an accidental click can't silently wipe an existing prompt —
+                  clearing on purpose is still "Clear video prompt" above. */}
+              <button
+                type="button"
+                onClick={() => { onDuplicateWithPrompt(vpText); setVpOpen(false); }}
+                disabled={!vpText.trim()}
+                className={cn(
+                  'flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition', GATE_FOCUS,
+                  vpText.trim() ? TILE_BTN : cn('cursor-not-allowed border-white/[0.05]', GATE_MUTED),
+                )}
+              >
+                Create duplicate
+              </button>
+              <button
+                type="button"
+                onClick={() => setVpOpen(false)}
+                className={cn('rounded-lg border px-3 py-2 text-xs font-medium transition', GATE_FOCUS, GATE_HAIRLINE, GATE_MUTED)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
         {busy && <p className={cn('text-[0.6875rem]', GATE_MUTED)}>{busy}…</p>}
       </div>
     </div>,
@@ -1369,7 +1617,7 @@ function ResultLightbox({ src, item, busy, favorited, onToggleFavorite, note, se
  * regenerate note below expands INSIDE the tile's own cell for the same reason — the grid rows
  * are auto-sized, so one tile growing never moves the tiles beside it out from under the cursor.
  */
-function ResultTile({ item, src, selected, busy, error, favorited, onToggleFavorite, onToggle, onRegenerate, onAnimate, onRemove, onClearVideoPrompt }) {
+function ResultTile({ item, src, selected, busy, error, favorited, onToggleFavorite, onToggle, onRegenerate, onAnimate, onRemove, onClearVideoPrompt, onDuplicateWithPrompt }) {
   // Needed here so a download that could not be cleaned can SAY so — the old empty catch is how a
   // raw file left this page unnoticed.
   const { notify } = useApp();
@@ -1386,6 +1634,11 @@ function ResultTile({ item, src, selected, busy, error, favorited, onToggleFavor
   // tile carries a real `regenerate` and keeps the full control. Animate is unaffected: it was
   // rebuilt from persisted fields, so it works on rehydrated tiles too.
   const canRegenerate = Boolean(item.regenerate);
+  // A clip that is FINISHED and lives on our disk — the only case where Download can hand back a
+  // video. `videoStatus === 'done'` alone is not enough: a provider-hosted clip has no local file,
+  // so downloadVideo would refuse it (it cannot be metadata-stripped) and the button would do
+  // nothing. Falling back to the image there is the honest behaviour.
+  const readyClip = item.videoStatus === 'done' && Boolean(localClipFilename(item.videoUrl));
 
   // THE PER-TILE CORRECTION NOTE, and the one place the precedence question is settled.
   //
@@ -1404,11 +1657,30 @@ function ResultTile({ item, src, selected, busy, error, favorited, onToggleFavor
   const [noteOpen, setNoteOpen] = useState(false);
   const [note, setNote] = useState('');
   const noteRef = useRef(null);
+  // A user-PASTED VIDEO PROMPT, wholesale replacing whatever this tile inherited from its pose. Its
+  // own disclosure, independent of the regenerate note above (different action, different money path
+  // — this one drives Generate video, not Regenerate). Deliberately starts EMPTY every time it opens
+  // — this is "drop in a different prompt", not "edit the existing one" — so a paste lands clean with
+  // no old text to select-and-delete first. The current prompt (if any) is shown as a small reference
+  // caption instead, so overwriting it isn't done blind.
+  const [vpOpen, setVpOpen] = useState(false);
+  const [vpText, setVpText] = useState('');
+  const vpRef = useRef(null);
   // The click-to-open large view. Opened by clicking the IMAGE (below); the tile's own inline
   // actions stay exactly where they were, so the lightbox is an additional way in, not a
   // replacement. It renders `note`/`setNote` and this tile's handlers, so it shares the tile's
   // state rather than forking a second correction box.
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  // Whether the picture has actually arrived over the wire.
+  //
+  // A finished tile draws its buttons the moment the result exists, but the image itself is a
+  // separate HTTP fetch — and a 60-image batch fires 60 of them at once, so tiles sat blank for
+  // seconds looking like a bug ("WTF there is some bug I can't see it" — owner, 2026-08-06; the
+  // pictures did arrive, just slowly). Nothing was broken and nothing said so. Keyed on `src` so
+  // a regenerate that swaps in a new picture shows the placeholder again instead of holding the
+  // old image's "loaded" state.
+  const [imgLoaded, setImgLoaded] = useState(false);
+  useEffect(() => { setImgLoaded(false); }, [src]);
 
   // Focus the note the moment it opens. Regenerate-with-a-fix is a "type the correction" action,
   // and making the user hunt for the field they just revealed is the friction this flow removes.
@@ -1512,7 +1784,36 @@ function ResultTile({ item, src, selected, busy, error, favorited, onToggleFavor
           )}
         >
           {src
-            ? <img src={src} alt="" className="h-full w-full object-cover" loading="lazy" />
+            ? (
+              <span className="relative block h-full w-full">
+                {/* Sits BEHIND the image and is removed on load, so a slow fetch reads as
+                    "loading" rather than as a broken tile. eager, not lazy: these are the
+                    images you just paid for and are waiting on — deferring the ones below the
+                    fold is what made a long batch look half-empty while scrolling. */}
+                {!imgLoaded && (
+                  <span className={cn('absolute inset-0 flex animate-pulse items-center justify-center bg-white/[0.04] text-[0.625rem]', GATE_MUTED)}>
+                    Loading…
+                  </span>
+                )}
+                <img
+                  src={src}
+                  alt=""
+                  // LAZY, NOT EAGER. A browser opens ~6 connections per host, so 120 eager tiles
+                  // queue 120 fetches and every one of them sits on "Loading…" for a long time —
+                  // observed on a 120-image run (owner, 2026-08-06). eager was set here when a
+                  // batch meant a handful of tiles and it did not survive contact with a real
+                  // batch: lazy fetches what is on screen, which is the only part you can look at.
+                  loading="lazy"
+                  decoding="async"
+                  onLoad={() => setImgLoaded(true)}
+                  // A broken/expired URL must not leave the shimmer pulsing forever — clearing the
+                  // flag lets the empty tile settle instead of animating a picture that will never come.
+                  onError={() => setImgLoaded(true)}
+                  className={cn('h-full w-full object-cover transition-opacity duration-200 motion-reduce:transition-none',
+                    imgLoaded ? 'opacity-100' : 'opacity-0')}
+                />
+              </span>
+            )
             : <span className={cn('flex h-full w-full items-center justify-center text-xs', GATE_MUTED)}>No preview</span>}
         </button>
         )}
@@ -1620,12 +1921,17 @@ function ResultTile({ item, src, selected, busy, error, favorited, onToggleFavor
           >
             Generate video
           </button>
+          {/* VIDEO WINS. Once a tile has been animated the clip IS the tile — saving its still frame
+              instead was the reported bug (Download handed back a PNG on a finished video). Matches
+              what "Download all" already does. Falls back to the image while the clip is still
+              rendering or when the tile was never animated, and the label says which you will get. */}
           <button
             type="button"
-            onClick={download}
+            onClick={readyClip ? downloadVideo : download}
+            title={readyClip ? 'Saves the video (metadata removed)' : 'Saves the image (metadata removed)'}
             className={cn(TILE_ACTION, GATE_FOCUS, TILE_BTN)}
           >
-            Download
+            {readyClip ? 'Download video' : 'Download'}
           </button>
           {/* Same muted-red-on-hover treatment and the same promise as the bulk bar's Remove: it
               clears the tile off this column and the picture stays in the Library. Carries no
@@ -1669,6 +1975,73 @@ function ResultTile({ item, src, selected, busy, error, favorited, onToggleFavor
           </button>
         )}
 
+        {/* PASTE a different video prompt onto this tile — wholesale replacement, not an edit of
+            what's there. Always offered: a pose-less tile can get a first prompt, and a tile with
+            one can be handed a completely different one. Opens EMPTY (see the vpText comment above)
+            and autofocuses, so pasting is the only step. */}
+        <button
+          type="button"
+          onClick={() => { setVpText(''); setVpOpen((v) => !v); }}
+          disabled={Boolean(busy)}
+          title="Makes a new copy of this image with your pasted video prompt — the original and its own video prompt are left untouched."
+          className={cn(
+            'w-full rounded-md border px-2 py-1 text-[0.625rem] transition', GATE_FOCUS,
+            busy
+              ? cn('cursor-not-allowed border-white/[0.05]', GATE_MUTED)
+              : cn(GATE_HAIRLINE, GATE_TEXT, 'hover:border-white/25'),
+          )}
+        >
+          {noVideo ? 'Duplicate with a video prompt' : 'Duplicate with a different video prompt'}
+        </button>
+
+        {vpOpen && !busy && (
+          <div className="space-y-1 rounded-lg border border-white/[0.07] bg-black/25 p-1.5">
+            {/* The prompt it HAS today, for reference only — the box below is not seeded from it. */}
+            {item.videoPrompt && (
+              <p className={cn('text-[0.5625rem] leading-tight line-clamp-2', GATE_MUTED)}>
+                This image currently has: {item.videoPrompt}
+              </p>
+            )}
+            <textarea
+              ref={vpRef}
+              autoFocus
+              value={vpText}
+              onChange={(e) => setVpText(e.target.value)}
+              // Escape closes without saving, matching the regenerate note. Enter is left alone (a
+              // real newline) since a video prompt is prose, not a one-line correction.
+              onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setVpOpen(false); } }}
+              rows={4}
+              placeholder="Paste your video prompt here..."
+              className={cn(
+                'w-full resize-y rounded-md border bg-black/30 px-2 py-1.5 text-[0.625rem] leading-snug outline-none transition placeholder:text-[#5a5a67]',
+                GATE_FOCUS, GATE_HAIRLINE, GATE_TEXT, 'focus:border-white/25',
+              )}
+            />
+            <div className="flex gap-1.5">
+              {/* Disabled on empty so an accidental click here can't silently wipe an existing
+                  prompt — clearing on purpose is still "Clear video prompt" above. */}
+              <button
+                type="button"
+                onClick={() => { onDuplicateWithPrompt(vpText); setVpOpen(false); }}
+                disabled={!vpText.trim()}
+                className={cn(
+                  TILE_ACTION, GATE_FOCUS, 'flex-1',
+                  vpText.trim() ? cn('cursor-pointer', GATE_HAIRLINE, GATE_TEXT, 'hover:border-white/25') : cn('cursor-not-allowed border-white/[0.05]', GATE_MUTED),
+                )}
+              >
+                Create duplicate
+              </button>
+              <button
+                type="button"
+                onClick={() => setVpOpen(false)}
+                className={cn(TILE_ACTION, GATE_FOCUS, 'cursor-pointer', GATE_MUTED, GATE_HAIRLINE)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* This tile's own correction note — see the precedence comment at the top of the
             component. Rendered only while open so a grid of twenty tiles is not a grid of twenty
             text fields. */}
@@ -1710,8 +2083,8 @@ function ResultTile({ item, src, selected, busy, error, favorited, onToggleFavor
 
         {/* Stated on the tile, not only in the confirmation: an image that can never animate
             should be obvious BEFORE it is selected and counted. */}
-        {noVideo && (
-          <p className={cn('text-center text-[0.5625rem] leading-tight', GATE_MUTED)}>No video prompt on this pose</p>
+        {noVideo && !vpOpen && (
+          <p className={cn('text-center text-[0.5625rem] leading-tight', GATE_MUTED)}>No video prompt on this pose — paste one above to create an animatable copy</p>
         )}
 
         {error && <p className="text-center text-[0.625rem] leading-tight text-[#d4736d]">{error}</p>}
@@ -1761,9 +2134,15 @@ function ResultTile({ item, src, selected, busy, error, favorited, onToggleFavor
           canRegenerate={canRegenerate}
           canAnimate={canAnimate}
           canClearVideoPrompt={canClearVideoPrompt}
+          noVideo={noVideo}
+          vpOpen={vpOpen}
+          setVpOpen={setVpOpen}
+          vpText={vpText}
+          setVpText={setVpText}
           onRegenerate={onRegenerate}
           onAnimate={onAnimate}
           onClearVideoPrompt={onClearVideoPrompt}
+          onDuplicateWithPrompt={onDuplicateWithPrompt}
           onRemove={onRemove}
           onDownload={download}
           onClose={() => setLightboxOpen(false)}
@@ -1818,6 +2197,42 @@ const stateStore = createPageStore('eddy-generate-state');
 // (or, for older data with no saved combo, the page's current outfit/pose selection) rebound to the
 // live generateCombo via a ref — so the button works after a reload, never a dead control.
 const resultsStore = createPageStore('eddy-results-v1');
+
+/**
+ * The persisted shape of one result tile.
+ *
+ * ONLY light fields — deliberately NOT base64Data, NOT the face reference, NOT the regenerate/
+ * submitVideo closures (a closure isn't even structured-cloneable). galleryId is all a tile needs to
+ * redraw; the rest is what Animate, Regenerate and the cost labels need.
+ *
+ * Extracted to module scope because TWO paths write it now: the debounced persist effect (mirrors
+ * `results` while the page is open) and generateCombo's completion, which writes a finished tile
+ * straight to storage when the page has been navigated away from — see the unmount note there.
+ */
+function liteResult(r) {
+  return {
+    uid: r.uid,
+    galleryId: r.galleryId,
+    imageId: r.imageId,
+    prompt: r.prompt,
+    videoPrompt: r.videoPrompt,
+    // Persisted so a rehydrated tile can still propagate a "clear video prompt" to its source pose.
+    poseId: r.poseId,
+    // The outfit+pose ids this image was generated from — the ONE run input a rebuilt Regenerate
+    // needs. Two small ids, plain and structured-cloneable.
+    combo: r.combo || null,
+    regenCost: r.regenCost,
+    aspectRatio: r.aspectRatio,
+    resolutionTier: r.resolutionTier,
+    videoStatus: r.videoStatus,
+    // Carry the clip fields so a reload rehydrates a PLAYABLE done tile (videoUrl) instead of a
+    // stuck spinner, and so a still-pending tile keeps the taskId the reconcile poll needs.
+    videoUrl: r.videoUrl,
+    videoTaskId: r.videoTaskId,
+    videoError: r.videoError,
+    hasClip: hasClip(r),
+  };
+}
 // Newest results are prepended, so the queue is capped from the OLD end. A working tray this large
 // is already unusual; the cap only exists so a user who never clears can't grow the store forever.
 const RESULTS_CAP = 120;
@@ -1830,6 +2245,16 @@ const _cache = {
   // faceless is OPT-IN (default off): only then is a pose allowed to crop her face out. lighting
   // defaults to 'auto' (keep image 1's own light).
   faceless: false, lighting: 'auto',
+  // sendPoseImage defaults ON because that is what this page has always done — the pose PHOTO is
+  // sent to Seedream alongside the pose sentence. Left as the default so flipping this feature on
+  // does not silently change the output of every existing workflow; the toggle is one click away
+  // for testing text-only poses (owner, 2026-08-06, "I will test with send image or no").
+  sendPoseImage: true,
+  // 'auto' emits nothing, i.e. exactly the behaviour that shipped before HER BUILD existed.
+  build: 'auto',
+  // Which image engine runs the generation. Seedream is the default because it is what this
+  // page has always used and what its cost quote is priced for.
+  engine: 'seedream',
 };
 
 export default function EddyGeneratePage() {
@@ -1867,6 +2292,23 @@ export default function EddyGeneratePage() {
   // FACELESS toggle — when ON, a pose is allowed to keep her face cropped out (honours the pose's
   // framing). OFF (default) renders her exact face and copies the pose normally.
   const [faceless, setFaceless] = useState(_cache.faceless);
+  // Whether the pose PHOTO goes to the provider, or only the one-sentence pose description.
+  // The picture stays visible in the picker either way — this governs the payload, nothing else.
+  const [sendPoseImage, setSendPoseImage] = useState(_cache.sendPoseImage ?? true);
+  // Her standing build — describes the character, never changes her. See BUILD_OPTIONS.
+  const [build, setBuild] = useState(_cache.build ?? 'auto');
+  // 'seedream' | 'gemini' — see the ENGINE switch in the UI and the branch in generateCombo.
+  const [engine, setEngine] = useState(_cache.engine ?? 'seedream');
+  // Bumped by "Reload images". Appended to every tile's URL so the browser re-requests pictures it
+  // has cached or given up on — a stalled fetch otherwise leaves a tile on "Loading…" with no way
+  // to retry short of reloading the whole app and losing the results column.
+  const [imgNonce, setImgNonce] = useState(0);
+  // Set by Cancel, cleared when a run starts. A ref, not state: runPool reads it through a closure
+  // on every claim and must see the CURRENT value — a state variable captured when run() was
+  // called would still read false long after the click. `cancelTick` exists only to re-render the
+  // button; nothing reads it for the decision.
+  const cancelRef = useRef(false);
+  const [cancelling, setCancelling] = useState(false);
   // Lighting choice — 'auto' keeps image 1's light; any other relights the scene (see LIGHTING_OPTIONS).
   const [lighting, setLighting] = useState(_cache.lighting);
   // FEATURE 1 — "Static camera": when ON, CAMERA_LOCK_INSTRUCTION is appended to every dispatched
@@ -1883,6 +2325,14 @@ export default function EddyGeneratePage() {
   const [inFlight, setInFlight] = useState(0);
   const [queued, setQueued] = useState(0);
   const [done, setDone] = useState(0);
+  // Combos that threw, kept so they can be re-run.
+  //
+  // A failed combo used to vanish: runCombo swallowed the throw, `done` still ticked, and the run
+  // ended on "52 of 60 done — the rest failed". Which eight? No tile, no record, nothing to click.
+  // On a 60-image run that is the difference between re-running 8 combos and re-running all 60 at
+  // full price. Each entry keeps the combo itself, so a retry reproduces exactly that pose/outfit
+  // pair rather than asking you to find it again by eye (owner, 2026-08-06).
+  const [failedCombos, setFailedCombos] = useState([]);
   const [results, setResults] = useState([]);
   // A result's favorite state is NOT stored on the result object and needs no dedicated set of its own:
   // a result is favorited iff its SOURCE pose is favorited, and pose favorites already live in
@@ -1951,6 +2401,13 @@ export default function EddyGeneratePage() {
   // completes (with or without data), which is the only point after which `results` reflects
   // everything that should be stored.
   const hydratedRef = useRef(false);
+  // False once this page has been navigated away from. Generation keeps running after that (the
+  // request is never aborted and the image is still billed, saved to the gallery and filed into
+  // Eddy's Library) — but setResults is a no-op on an unmounted component, so the finished TILE was
+  // being dropped and you came back to "Nothing generated yet". generateCombo checks this and writes
+  // the finished tile straight to the store instead.
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
   // Always points at the LATEST component-level generateCombo (assigned every render just below its
   // definition). The mount-time rehydrate effect runs long before that definition executes and must
   // NOT depend on generateCombo directly — generateCombo changes identity on every keystroke into
@@ -1973,6 +2430,15 @@ export default function EddyGeneratePage() {
   // would re-run the mount rehydrate on every pick and re-read IndexedDB).
   const pickedOutfitsRef = useRef([]);
   const pickedPosesRef = useRef([]);
+  // Picking an outfit/pose tile mounts a new thumbnail-summary row directly ABOVE the still-open
+  // picker grid (the "picked" preview block), pushing the grid — and everything below it — down
+  // inside whichever element is actually scrolling. toggle() below captures+restores that
+  // element's scrollTop across the click so the picker visually stays put instead of jumping.
+  // Both refs are set because which one scrolls depends on breakpoint: the inner setup column
+  // scrolls independently at lg+, the outer page scrolls as one document below it (see the
+  // layout comment further down).
+  const setupScrollRef = useRef(null);
+  const pageScrollRef = useRef(null);
 
   // Re-read on every open, not just on mount. The page keeps a snapshot of the collections,
   // so an outfit added AFTER this page first loaded was invisible until a full reload.
@@ -2079,10 +2545,10 @@ export default function EddyGeneratePage() {
   }, []);
 
   useEffect(() => {
-    const snap = { baseImage, faceImage, pickedOutfits, pickedPoses, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting };
+    const snap = { baseImage, faceImage, pickedOutfits, pickedPoses, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, build, engine };
     Object.assign(_cache, snap);
     stateStore.set('state', snap);
-  }, [baseImage, faceImage, pickedOutfits, pickedPoses, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting]);
+  }, [baseImage, faceImage, pickedOutfits, pickedPoses, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, build, engine]);
 
   /**
    * Submits ONE video job and returns as soon as Muapi accepts it (a taskId) — the render finishes
@@ -2255,35 +2721,7 @@ export default function EddyGeneratePage() {
       const kept = results.slice(0, RESULTS_CAP);
       const pruned = results.length - kept.length;
       if (pruned > 0) console.warn(`[eddy-results] queue over ${RESULTS_CAP}; pruned ${pruned} oldest from persistence`);
-      // ONLY these light fields — deliberately NOT base64Data, NOT the face reference, NOT the
-      // regenerate/submitVideo closures (a closure isn't even structured-cloneable). galleryId is
-      // all a tile needs to redraw; the rest is what Animate and the cost labels need.
-      const lite = kept.map((r) => ({
-        uid: r.uid,
-        galleryId: r.galleryId,
-        imageId: r.imageId,
-        prompt: r.prompt,
-        videoPrompt: r.videoPrompt,
-        // Persisted so a rehydrated tile can still propagate a "clear video prompt" to its source pose.
-        poseId: r.poseId,
-        // The outfit+pose ids this image was generated from — the ONE run input a rebuilt Regenerate
-        // needs. Two small ids, plain and structured-cloneable: no base64, no face reference, no
-        // closures. On reload the rehydrate effect turns this back into a working regenerate closure;
-        // without it Regenerate stays disabled (older data), which is why it is persisted here.
-        combo: r.combo || null,
-        regenCost: r.regenCost,
-        aspectRatio: r.aspectRatio,
-        resolutionTier: r.resolutionTier,
-        videoStatus: r.videoStatus,
-        // Carry the clip fields so a reload rehydrates a PLAYABLE done tile (videoUrl) instead of a
-        // stuck spinner, and so a still-pending tile keeps the taskId the reconcile poll needs to
-        // finish it after reload. videoError re-shows why a failed clip failed.
-        videoUrl: r.videoUrl,
-        videoTaskId: r.videoTaskId,
-        videoError: r.videoError,
-        hasClip: hasClip(r),
-      }));
-      resultsStore.set('queue', lite);
+      resultsStore.set('queue', kept.map(liteResult));
     }, 400);
     return () => clearTimeout(t);
   }, [results]);
@@ -2403,12 +2841,14 @@ export default function EddyGeneratePage() {
     // Mirrors generateCombo's slot order exactly (main, pose, face, outfit) so the FINAL PROMPT panel
     // shows the real image numbers. An item only takes a slot when it has a stored image.
     let n = baseImage ? 1 : 0;
-    const poseIndex = ps && poseThumbs[ps.id] ? (n += 1) : 0;
+    const poseIndex = sendPoseImage && ps && poseThumbs[ps.id] ? (n += 1) : 0;
     const faceIndex = faceImage ? (n += 1) : 0;
     const outfitIndex = o && outfitThumbs[o.id] && !wantsNude ? (n += 1) : 0;
+    const previewPoseView = readPoseView(ps?.prompt);
+    const previewBackText = previewPoseView === 'back' ? o?.backPrompt?.trim() : '';
     return buildPrompt({
       instruction,
-      outfitText: o?.prompt?.trim() || '',
+      outfitText: previewBackText || o?.prompt?.trim() || '',
       poseText: stripPoseLighting(ps?.prompt || ''),
       outfitIndex,
       poseIndex,
@@ -2416,15 +2856,36 @@ export default function EddyGeneratePage() {
       nsfw,
       wantsNude,
       wantsBody,
+      poseView: previewPoseView,
+      buildText: wantsBody ? '' : buildTextFor(build, previewPoseView),
       undressChip,
       poseFaceless: !!poseIndex && (faceless || POSE_FACELESS_RE.test(String(ps?.prompt || ''))),
       lightingText: lightingTextFor(lighting),
     });
-  }, [combos, outfits, poses, instruction, baseImage, faceImage, outfitThumbs, poseThumbs, nsfw, wantsNude, wantsBody, undressChip, faceless, lighting]);
+  }, [combos, outfits, poses, instruction, baseImage, faceImage, outfitThumbs, poseThumbs, nsfw, wantsNude, wantsBody, undressChip, faceless, lighting, sendPoseImage, build]);
 
   const addChip = (text) => setInstruction((prev) => (prev.includes(text) ? prev : `${prev} ${text}`.trim()));
 
-  const toggle = (setter) => (id) => setter((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  // Run a picker state change without the page jumping. Capture BEFORE the state update, restore
+  // on the next frame (after React has re-rendered the new summary row and the browser would
+  // otherwise have scrolled) — see the setupScrollRef/pageScrollRef comment above for why both
+  // are captured. Shared by every pick action, so a new one cannot forget it and reintroduce the
+  // jump: picking the 40th tile in a long grid used to throw you back to the top of the page.
+  const keepScroll = (fn) => {
+    const setupEl = setupScrollRef.current;
+    const pageEl = pageScrollRef.current;
+    const setupTop = setupEl ? setupEl.scrollTop : null;
+    const pageTop = pageEl ? pageEl.scrollTop : null;
+    fn();
+    requestAnimationFrame(() => {
+      if (setupEl && setupTop !== null) setupEl.scrollTop = setupTop;
+      if (pageEl && pageTop !== null) pageEl.scrollTop = pageTop;
+    });
+  };
+
+  const toggle = (setter) => (id) => keepScroll(() => {
+    setter((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  });
 
   // Star / un-star a collection item from inside the picker. The favorite is stored in the same
   // store the collection tab uses, under its small `favorites` key (store.toggleFavorite) — NOT as a
@@ -2646,17 +3107,17 @@ export default function EddyGeneratePage() {
       let poseIndex = 0;
       let faceIndex = 0;
 
-      let outfitText = '';
-      if (combo.outfitId) {
-        outfitText = outfits.find((o) => o.id === combo.outfitId)?.prompt?.trim() || '';
-      }
       let poseText = '';
       let poseFaceless = false;
+      let poseView = 'front';
       if (combo.poseId) {
         const poseItem = poses.find((p) => p.id === combo.poseId);
         // The pose photo IS sent: a body position is far easier to copy than to describe, so
         // the picture does the work the words cannot.
         poseText = stripPoseLighting(poseSentence(poseItem?.prompt));
+        // front/back/closeup, read off the same saved JSON the description comes from — decides
+        // below whether the outfit's back-view text is used instead of its front one.
+        poseView = readPoseView(poseItem?.prompt);
         // Faceless is the page TOGGLE. The text detector adds a second way in — if a pose's own
         // prompt says faceless, honour it even with the toggle off — but the toggle is the main switch.
         poseFaceless = faceless || POSE_FACELESS_RE.test(String(poseItem?.prompt || ''));
@@ -2664,8 +3125,22 @@ export default function EddyGeneratePage() {
         // result, so every result has to carry whether it CAN be animated. An empty one is not an
         // error — it means this image's pose has no video prompt, which the tile says outright.
         poseVideoPrompt = (poseItem?.videoPrompt || '').trim();
-        const img = parseDataUrl(await poseStore.getImage(combo.poseId));
+        // THE toggle's only job. poseIndex stays 0 when it is off, and buildPrompt keys every
+        // pose-image clause off poseIndex — so the prompt stops referring to an image that is not
+        // in the payload, rather than pointing at a slot that no longer exists.
+        const img = sendPoseImage ? parseDataUrl(await poseStore.getImage(combo.poseId)) : null;
         if (img) { payload.push(img); poseIndex = payload.length; }
+      }
+
+      // The outfit's back-view description is used ONLY when the picked pose is back-facing and
+      // that description actually exists — an outfit with no back crop described yet just keeps
+      // using its front text, exactly as it always has. See attachBackTo in EddyCollection.jsx
+      // for where backPrompt gets written (owner, 2026-08-06).
+      let outfitText = '';
+      if (combo.outfitId) {
+        const outfitItem = outfits.find((o) => o.id === combo.outfitId);
+        const backText = poseView === 'back' ? outfitItem?.backPrompt?.trim() : '';
+        outfitText = backText || outfitItem?.prompt?.trim() || '';
       }
       if (faceImg) { payload.push(faceImg); faceIndex = payload.length; }
       // OUTFIT IMAGE IS NOT SENT — tried, and reverted. The product photo shows the garment flat or
@@ -2676,19 +3151,43 @@ export default function EddyGeneratePage() {
 
       // poseFaceless only bites when the pose IMAGE is actually sent (poseIndex) — a text-only pose
       // has no framing to match.
-      prompt = buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex, faceIndex, nsfw, wantsNude, wantsBody, undressChip, tweak, poseFaceless: poseFaceless && !!poseIndex, lightingText: lightingTextFor(lighting) });
+      prompt = buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex, faceIndex, nsfw, wantsNude, wantsBody, undressChip, tweak, poseFaceless: poseFaceless && !!poseIndex, lightingText: lightingTextFor(lighting), poseView, buildText: wantsBody ? '' : buildTextFor(build, poseView) });
     }
 
     const feedId = `eddy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    pushPending({ id: feedId, prompt, imageModel: 'Seedream 5.0 Pro Edit', aspectRatio: ratio, resolutionTier: resolution });
+    const engineLabel = engine === 'gemini' ? 'Gemini 3.1 Flash (Nano Bypass)' : 'Seedream 5.0 Pro Edit';
+    pushPending({ id: feedId, prompt, imageModel: engineLabel, aspectRatio: ratio, resolutionTier: resolution });
 
     // Only the API call is in the try. Wrapping the success path too meant a throw AFTER the
     // image came back marked a generation you already paid for as failed.
     let data;
     try {
-      // Same model, same per-image price on both paths — an edit is tagged so it is distinguishable
-      // in the gallery without changing what it costs.
-      data = await seedreamApi.edit({ images: payload, prompt, aspectRatio: ratio, resolution, tags: isEdit ? ['eddy', 'edit'] : ['eddy'] });
+      if (engine === 'gemini') {
+        // GEMINI (Nano Bypass) path. Same payload — parseDataUrl already yields the
+        // { base64, mimeType } shape this route wants, which is why no conversion happens here.
+        // The route picks Vertex over a raw Gemini key by itself (apiKeyManager.shouldUseVertexBackend),
+        // so "bypass" needs no flag from the client.
+        //
+        // Its reply is a SINGLE image ({ base64Data, mimeType, galleryId }) where Seedream returns
+        // { images: [...] }. Normalised to Seedream's shape right here so everything downstream —
+        // the tile, the gallery save, Regenerate, Animate — keeps reading `data.images[0]` and none
+        // of it has to know which engine ran.
+        // request() already unwraps the envelope to json.data, so this IS
+        // { base64Data, mimeType, galleryId, model }.
+        const d = await withRateLimitRetry(() => nanoBypassApi.edit({
+          images: payload,
+          prompt,
+          model: 'flash',
+          aspectRatio: ratio,
+          imageSize: resolution,
+        }));
+        const got = d && (d.galleryId || d.base64Data);
+        data = { provider: 'gemini', images: got ? [{ galleryId: d.galleryId, mimeType: d.mimeType, base64Data: d.base64Data }] : [] };
+      } else {
+        // Same model, same per-image price on both paths — an edit is tagged so it is distinguishable
+        // in the gallery without changing what it costs.
+        data = await withRateLimitRetry(() => seedreamApi.edit({ images: payload, prompt, aspectRatio: ratio, resolution, tags: isEdit ? ['eddy', 'edit'] : ['eddy'] }));
+      }
     } catch (err) {
       // Marked failed on the feed here (the feed card belongs to this call), then rethrown so
       // the caller decides what a failure means: the batch pool keeps going, Regenerate shows
@@ -2704,8 +3203,9 @@ export default function EddyGeneratePage() {
 
     const first = (data.images || [])[0];
     if (!first) {
-      failPending(feedId, 'Seedream returned no image');
-      throw new Error('Seedream returned no image');
+      const who = engine === 'gemini' ? 'Gemini' : 'Seedream';
+      failPending(feedId, `${who} returned no image`);
+      throw new Error(`${who} returned no image`);
     }
     // The tile this image ended up on. A regenerate swaps into an existing tile, so its uid is
     // the one it was given; a fresh image gets a new one below. Returned to the caller so it can
@@ -2717,7 +3217,7 @@ export default function EddyGeneratePage() {
         galleryId: first.galleryId,
         imageId: first.imageId,
         prompt,
-        imageModel: 'Seedream 5.0 Pro Edit',
+        imageModel: engineLabel,
         aspectRatio: ratio,
         resolutionTier: resolution,
         mimeType: first.mimeType,
@@ -2778,6 +3278,34 @@ export default function EddyGeneratePage() {
           // recovered from its persisted aspectRatio, so both paths dispatch identically.
           submitVideo: (job) => submitVideoJob(job, videoRatio),
         }, ...prev]);
+
+        // NAVIGATED AWAY MID-GENERATION. setResults above did nothing (the component is gone) and
+        // the debounced persist effect will never run, so without this the finished tile is lost and
+        // the page reads "Nothing generated yet" on return — even though the image was billed and
+        // saved. Write it to the SAME store the rehydrate reads, newest-first, capped identically.
+        // Read-modify-write is safe here: the effect that also writes this key only runs while the
+        // page is mounted, which is exactly when this branch does not fire.
+        if (!mountedRef.current) {
+          try {
+            const stored = await resultsStore.get('queue', []);
+            const row = liteResult({
+              uid,
+              galleryId: first.galleryId,
+              imageId: first.imageId,
+              prompt,
+              videoPrompt: poseVideoPrompt,
+              poseId: combo.poseId || null,
+              combo: { outfitId: combo.outfitId || null, poseId: combo.poseId || null },
+              regenCost: perImageCost,
+              aspectRatio: ratio,
+              resolutionTier: resolution,
+            });
+            await resultsStore.set('queue', [row, ...stored].slice(0, RESULTS_CAP));
+          } catch {
+            // Best-effort recovery only — the image is already safe in the gallery and Eddy's
+            // Library, so a failed write here must never turn a paid generation into an error.
+          }
+        }
       }
       // Everything Eddy makes shows up in Eddy's Library. Stored as a reference to the
       // server copy, not as bytes, so a 25-image batch costs the browser almost nothing.
@@ -2797,7 +3325,7 @@ export default function EddyGeneratePage() {
     }
 
     return { image: first, videoPrompt: poseVideoPrompt, uid: resultUid };
-  }, [sourceImages, aspectRatio, baseImage, resolution, perRunImages, nsfw, wantsNude, wantsBody, undressChip, instruction, faceImage, outfits, poses, poseStore, libraryStore, submitVideoJob, notify]);
+  }, [sourceImages, aspectRatio, baseImage, resolution, perRunImages, nsfw, wantsNude, wantsBody, undressChip, instruction, faceImage, outfits, poses, poseStore, libraryStore, submitVideoJob, notify, sendPoseImage, faceless, lighting, build, engine]);
 
   // Keep the ref pointed at the latest generateCombo every render, so the mount-time rehydrate
   // effect's rebuilt regenerate closures reach the current one at click time (see the ref's comment).
@@ -2810,7 +3338,11 @@ export default function EddyGeneratePage() {
   pickedOutfitsRef.current = pickedOutfits;
   pickedPosesRef.current = pickedPoses;
 
-  const run = useCallback(async () => {
+  // `only` re-runs an explicit list instead of the live pose × outfit grid — that is how "Retry N
+  // failed" replays exactly the combos that threw, at the price of those combos alone, without
+  // touching what is currently picked in the pickers.
+  const run = useCallback(async (only) => {
+    const batch = Array.isArray(only) && only.length ? only : combos;
     if (!baseImage) { notify('Add the main photo first', 'error'); return; }
     if (overCap) { notify(`That's ${perRunImages} images per run — Seedream takes ${SEEDREAM_MAX_IMAGES}`, 'error'); return; }
 
@@ -2847,8 +3379,10 @@ export default function EddyGeneratePage() {
 
     // Nothing is reset here: another batch may still be running and its results and counters
     // must survive this one starting.
+    cancelRef.current = false;
+    setCancelling(false);
     setInFlight((n) => n + 1);
-    setQueued((n) => n + combos.length);
+    setQueued((n) => n + batch.length);
     warnedProvider.current = false;
 
     const charPayload = sourceImages.map(parseDataUrl).filter(Boolean);
@@ -2881,12 +3415,23 @@ export default function EddyGeneratePage() {
     // The batch wrapper: everything generateCombo deliberately leaves out. One bad combo must
     // not abandon the rest, so a throw is absorbed here — generateCombo has already marked its
     // own feed card failed with the real reason.
+    let attempted = 0;
     const runCombo = async (combo) => {
+      attempted += 1;
       try {
         const res = await generateCombo(combo, { runCtx });
         out.push(res);
-      } catch {
-        // Reason already surfaced on the feed card by generateCombo.
+        // A retry that SUCCEEDS clears its own entry, so the "Retry N failed" count always equals
+        // what is still outstanding rather than what has ever failed.
+        setFailedCombos((prev) => prev.filter((f) => f.combo !== combo));
+      } catch (err) {
+        // The reason is already on the feed card; this keeps the COMBO so it can be re-run.
+        // Deduped by combo identity — retrying a combo that fails again must not stack a second
+        // entry and inflate the count.
+        setFailedCombos((prev) => [
+          ...prev.filter((f) => f.combo !== combo),
+          { combo, message: err?.message || 'Generation failed' },
+        ]);
       }
       setDone((n) => n + 1);
     };
@@ -2903,22 +3448,26 @@ export default function EddyGeneratePage() {
     // taken on a finished result (the per-tile Animate button and the bulk Generate video action),
     // and both of those quote their cost and wait for a confirmation first.
     try {
-      await runPool(combos, PARALLEL_REQUESTS, runCombo);
+      await runPool(batch, parallelFor(engine), runCombo, () => cancelRef.current);
     } finally {
       // finally, always: a rejection anywhere in the pool skipped this, leaving the counter
       // stuck above zero -- permanent "1 batch running" plus a beforeunload warning on every
       // navigation for the rest of the session.
       setInFlight((n) => n - 1);
     }
-    if (out.length === combos.length) notify(`${out.length} image${out.length === 1 ? '' : 's'} done ✨`, 'success');
-    else if (out.length) notify(`${out.length} of ${combos.length} done — the rest failed`, 'error');
+    if (cancelRef.current) {
+      // Cancelled is NOT failed: the unsent combos were never attempted and never charged, so they
+      // must not be reported as failures (nor land in the retry panel, which prices a re-run).
+      notify(`Cancelled — ${out.length} image${out.length === 1 ? '' : 's'} kept, ${Math.max(0, batch.length - attempted)} never sent`, 'success');
+    } else if (out.length === batch.length) notify(`${out.length} image${out.length === 1 ? '' : 's'} done ✨`, 'success');
+    else if (out.length) notify(`${out.length} of ${batch.length} done — the rest failed`, 'error');
     else notify('Every generation failed', 'error');
     // run() now only builds the batch snapshot (runCtx) and drives the pool; the prompt/face/outfit/
     // pose reads moved into the hoisted generateCombo, so those are its deps, not run's. What remains
     // here is exactly what run() itself reads: the guards, the ctx inputs, and generateCombo. sourceImages
     // is an unmemoized array literal today, so it rebuilds run() every render — listed anyway so
     // memoizing it later can't silently turn charPayload into a stale (previous-face) closure.
-  }, [baseImage, overCap, perRunImages, aspectRatio, combos, sourceImages, resolution, nsfw, libraryStore, notify, generateCombo]);
+  }, [baseImage, overCap, perRunImages, aspectRatio, combos, sourceImages, resolution, nsfw, libraryStore, notify, generateCombo, engine]);
 
   /* -------------------------------------------------------------------------------------------
    * The inline results flow. Everything below acts on RESULTS, never on the page's live controls:
@@ -3168,11 +3717,14 @@ export default function EddyGeneratePage() {
    *     pose no longer re-inherits the bad prompt (generateCombo reads poseItem.videoPrompt).
    *
    * poseId isn't always there to key off: results generated before poseId existed, or rehydrated
-   * from the persisted queue, can carry a videoPrompt with no (or a dangling) poseId. Rather than
-   * give up and leave the bad prompt sitting in the Pose tab, fall back to matching by the prompt
-   * TEXT itself — any pose whose videoPrompt is identical (trimmed) is almost certainly where this
-   * result's prompt came from, so it gets cleared too. Every path is narrated back to the user so
-   * nothing claims success it didn't deliver.
+   * from the persisted queue, can carry a videoPrompt with no (or a dangling) poseId. This USED TO
+   * fall back to clearing every pose whose videoPrompt was identical (trimmed) text — removed. That
+   * heuristic assumes identical text means the same pose, which silently clears OTHER, unrelated
+   * poses too whenever more than one happens to share the same wording (a copy-pasted template, a
+   * short generic phrase) — an ambiguous match spreading a supposedly single-tile action onto data
+   * the user never selected. Reported as "it deleted things too". Now: a poseId that resolves to a
+   * real pose is the ONLY case that touches the pose store; anything else clears the result alone
+   * and says so honestly, rather than guessing which pose(s) to mutate.
    *
    * No money path is touched — nothing is billed, dispatched or refunded here; it only edits strings.
    */
@@ -3182,17 +3734,15 @@ export default function EddyGeneratePage() {
     // control is disabled in that state too, but guarding here keeps it safe if called any other way.
     if (!target || !target.videoPrompt) return;
 
-    // Captured before the result is cleared below — needed for the text-match fallback.
-    const clearedPrompt = target.videoPrompt;
     const poseId = target.poseId;
 
     // Clear on the result first — this is the source of truth the tile renders and the persist
     // effect stores, so the tile updates and the change survives a reload regardless of the pose write.
     setResults((prev) => prev.map((r) => (r.uid === uid ? { ...r, videoPrompt: '' } : r)));
 
-    // Propagate to the source pose (or its text-match fallbacks) so future generations don't
-    // re-inherit the rejected prompt. Only the videoPrompt field is patched — a pose's image and
-    // text prompt are left untouched (this is never a pose delete). updateItem goes through the
+    // Propagate to the source pose ONLY when poseId resolves to a real, still-existing pose — a
+    // positive identification, not a guess. Only the videoPrompt field is patched — a pose's image
+    // and text prompt are left untouched (this is never a pose delete). updateItem goes through the
     // store's serialized write queue, so concurrent clears don't clobber each other's index writes.
     (async () => {
       try {
@@ -3200,34 +3750,66 @@ export default function EddyGeneratePage() {
         const direct = poseId ? poseItems.find((p) => p.id === poseId) : null;
 
         if (direct) {
-          // The result's poseId resolves to a real pose — the unchanged direct path.
           await poseStore.updateItem(direct.id, { videoPrompt: '' });
           notify('Video prompt cleared — this pose won’t animate until you give it a new one', 'success');
           return;
         }
 
-        // No poseId, or it pointed at a pose that no longer exists: fall back to matching by exact
-        // prompt text. Clear EVERY pose whose videoPrompt equals this one (not just the first) —
-        // a bad prompt copy-pasted across several poses should be scrubbed from all of them.
-        const needle = clearedPrompt.trim();
-        const matches = needle ? poseItems.filter((p) => (p.videoPrompt || '').trim() === needle) : [];
-
-        if (matches.length) {
-          await Promise.all(matches.map((p) => poseStore.updateItem(p.id, { videoPrompt: '' })));
-          notify(
-            `Video prompt cleared — and removed from ${matches.length} matching pose card${matches.length === 1 ? '' : 's'}`,
-            'success',
-          );
-        } else {
-          // Truly nothing to propagate to — say so honestly rather than implying a pose was updated.
-          notify('Video prompt cleared on this result (no matching pose found)', 'success');
-        }
+        // No poseId, or it pointed at a pose that no longer exists: there is no reliable single pose
+        // to identify, so nothing in the Pose tab is touched — only this result's own copy is cleared.
+        notify('Video prompt cleared on this result (no source pose found, so nothing there was changed)', 'success');
       } catch (err) {
         // The tile is already cleared regardless; surface the pose-write failure rather than swallow it.
         notify(`Cleared it here, but couldn't update the source pose: ${err?.message || 'unknown error'}`, 'error');
       }
     })();
   }, [results, poseStore, notify]);
+
+  /**
+   * DUPLICATE a result with a pasted-in video prompt — same image, same character, same outfit/pose,
+   * as a brand NEW tile. The original is never touched: its own videoPrompt, video status and any
+   * clip it already made stay exactly as they were. This is "give me a second copy of this image so
+   * I can try a different video idea on it", not an edit of the one that's already there.
+   *
+   * regenerate/submitVideo are REBUILT to target the NEW uid rather than copied from the source —
+   * copying the source's `regenerate` as-is would silently regenerate (overwrite the picture behind)
+   * the ORIGINAL tile the first time it was pressed on the duplicate, since that closure was built
+   * closing over the original's own uid. Rebuilt via generateComboRef + the persisted combo, the
+   * exact same shape a RELOAD-rehydrated tile uses (see the rehydrate effect above) — a real,
+   * already-exercised path, not a one-off hack.
+   */
+  const duplicateResultWithPrompt = useCallback((uid, text) => {
+    const clean = String(text || '').trim();
+    if (!clean) return;   // the Save button is disabled on empty; guard here too if ever called otherwise
+    const src = results.find((r) => r.uid === uid);
+    if (!src) return;
+    const newUid = `eddy-res-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // Resolve the source pose NOW, from the ORIGINAL, before its videoPrompt is overwritten below.
+    // resolveSourcePoseId's fallback path matches by videoPrompt TEXT when combo.poseId is missing or
+    // stale — exactly the case for an older/rehydrated result — and that text is the very thing this
+    // duplicate is about to replace. Left alone, the duplicate would carry a pasted prompt that
+    // matches no pose's text, and favoriting it would dead-end with "generated without a saved pose"
+    // even though the ORIGINAL still resolved fine. Baking the resolved id into combo.poseId (and the
+    // legacy top-level poseId clearVideoPromptFor reads) fixes it for good, not just this once.
+    const resolvedPoseId = resolveSourcePoseId(src, poses);
+    const combo = { outfitId: src.combo?.outfitId ?? null, poseId: resolvedPoseId ?? src.combo?.poseId ?? null };
+    setResults((prev) => [{
+      ...src,
+      uid: newUid,
+      combo,
+      poseId: resolvedPoseId ?? src.poseId ?? null,
+      videoPrompt: clean,
+      // A fresh copy has made no clip of its own — the ORIGINAL keeps whatever video status it had;
+      // this one starts exactly like a brand-new, never-animated result.
+      videoStatus: undefined,
+      videoUrl: undefined,
+      videoTaskId: undefined,
+      videoError: undefined,
+      regenerate: (tweak) => generateComboRef.current(combo, { tweak, replaceUid: newUid }),
+      submitVideo: (job) => submitVideoJob(job, toVideoAspectRatio(src.aspectRatio || 'auto')),
+    }, ...prev]);
+    notify('Duplicated with your new video prompt ✨', 'success');
+  }, [results, poses, notify, submitVideoJob]);
 
   /**
    * Resolves the jobs FIRST and parks them on the confirmation, so what is confirmed is exactly
@@ -3316,7 +3898,7 @@ export default function EddyGeneratePage() {
      * answer at that width. App.jsx's SELF_SCROLL_PAGES is what gives this element a real height
      * to divide up in the first place.
      */
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto animate-in lg:flex-row lg:gap-5 lg:overflow-hidden">
+    <div ref={pageScrollRef} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto animate-in lg:flex-row lg:gap-5 lg:overflow-hidden">
       {/* LEFT — the setup form. Fixed width at lg+: it is a form, and a form stretched across a
           wide monitor is harder to read, not easier. The right column takes the rest.
 
@@ -3331,6 +3913,7 @@ export default function EddyGeneratePage() {
           type up made everything inside bigger while the column stayed the same, so the setup side
           just got more cramped. Driven by a CSS var so the value can live in state. */}
       <div
+        ref={setupScrollRef}
         style={{ '--eddy-setup-w': `${setupWidth}px` }}
         className="w-full shrink-0 space-y-4 lg:w-[var(--eddy-setup-w)] lg:min-h-0 lg:overflow-y-auto lg:pr-2"
       >
@@ -3393,34 +3976,100 @@ export default function EddyGeneratePage() {
         {[
           { key: 'pose', label: 'Pose', picked: pickedPoses, items: poses, thumbs: poseThumbs, folders: poseFolders, store: poseStore, favIds: favSets.pose, empty: 'Nothing in Eddy · Pose yet.' },
           { key: 'outfit', label: 'Outfit', picked: pickedOutfits, items: outfits, thumbs: outfitThumbs, folders: outfitFolders, store: outfitStore, favIds: favSets.outfit, empty: 'Nothing in Eddy · Outfit yet.' },
-        ].map((slot) => (
+        ].map((slot) => {
+          // What the grid is actually showing right now, computed ONCE and handed to both the
+          // grid and the select-all button. The two must never disagree: a button that selects
+          // items the grid is not showing would silently add poses from a folder you filtered out.
+          // Favorite is a MOVE, not a copy: starring an item pulls it OUT of All and its folder so
+          // it is never picked again by accident — it lives ONLY under the Favorite filter until
+          // un-starred. So the two non-favorite views exclude favorited ids; the Favorite view is
+          // the only place they appear. (Requested: "move them from any folder... i dont use them
+          // again unless i click favorite".)
+          const visible = favFilter[slot.key]
+            ? slot.items.filter((i) => slot.favIds.has(i.id))
+            : (folderFilter[slot.key]
+              ? slot.items.filter((i) => i.folderId === folderFilter[slot.key] && !slot.favIds.has(i.id))
+              : slot.items.filter((i) => !slot.favIds.has(i.id)));
+          const setPicked = slot.key === 'outfit' ? setPickedOutfits : setPickedPoses;
+          const allVisiblePicked = visible.length > 0 && visible.every((i) => slot.picked.includes(i.id));
+          return (
           <Card key={slot.key} data-picker-slot={slot.key} className="p-4 space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <h3 className="text-sm font-semibold uppercase tracking-wider text-zinc-300">
                 {slot.label} {slot.picked.length > 0 && <span className="text-rose-400">· {slot.picked.length}</span>}
               </h3>
-              <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs"
-                onClick={() => { if (!openPickers[slot.key]) loadAll(); setOpenPickers((o) => ({ ...o, [slot.key]: !o[slot.key] })); }}>
-                {openPickers[slot.key] ? 'Hide' : 'Choose'}
-              </Btn>
+              <span className="flex items-center gap-2">
+                {/* Picking a whole folder one tile at a time is the slowest thing in this page —
+                    60 poses is 60 clicks. Scoped to the CURRENT filter, not the whole collection,
+                    so "All" plus this button is the only way to take everything; a folder chip
+                    plus this button takes just that folder. Flips to Clear once everything on
+                    screen is picked, so the same button undoes it. */}
+                {openPickers[slot.key] && visible.length > 0 && (
+                  <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs"
+                    title={allVisiblePicked
+                      ? `Unpick these ${visible.length}`
+                      : `Pick all ${visible.length} shown${favFilter[slot.key] || folderFilter[slot.key] ? ' in this filter' : ''}`}
+                    onClick={() => keepScroll(() => {
+                      const ids = visible.map((i) => i.id);
+                      setPicked((prev) => (allVisiblePicked
+                        ? prev.filter((x) => !ids.includes(x))
+                        // Existing picks from OTHER filters are kept — this adds, it does not replace.
+                        : [...prev, ...ids.filter((id) => !prev.includes(id))]));
+                    })}>
+                    {allVisiblePicked ? 'Clear' : `Select all ${visible.length}`}
+                  </Btn>
+                )}
+                <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs"
+                  onClick={() => { if (!openPickers[slot.key]) loadAll(); setOpenPickers((o) => ({ ...o, [slot.key]: !o[slot.key] })); }}>
+                  {openPickers[slot.key] ? 'Hide' : 'Choose'}
+                </Btn>
+              </span>
             </div>
 
+            {/* THE PICKED LIST.
+                Above COMPACT_PICKED it switches to a thumbnail grid. Sixty picked poses rendered as
+                sixty 3-line rows is roughly a metre of scrolling between the picker and the
+                Generate button — reported as exactly that ("for pose i scroll too much").
+                The grid says the same thing (which ones, and remove) in a fraction of the height.
+
+                And the text is poseSentence(), NOT it.prompt: a pose stores the whole JSON block,
+                so these rows were showing three lines of `{"reference_priority": {"instruction":
+                "This is the FIRST and MOST IMPORTANT rule…` — identical on every card and telling
+                you nothing about which pose it is. Outfits keep their raw text, which IS prose. */}
             {slot.picked.length > 0 && (
-              <div className="space-y-1.5">
-                {slot.picked.map((id) => {
-                  const it = slot.items.find((i) => i.id === id);
-                  return (
-                    <div key={id} className="flex items-start gap-2 rounded-lg bg-white/[0.02] p-1.5">
+              slot.picked.length > COMPACT_PICKED ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {slot.picked.map((id) => (
+                    <button key={id} type="button" title="Click to remove"
+                      onClick={() => toggle(setPicked)(id)}
+                      className="group relative h-12 w-12 shrink-0 overflow-hidden rounded-md bg-white/[0.04] cursor-pointer">
                       {slot.thumbs[id]
-                        ? <img src={slot.thumbs[id]} alt="" className="h-12 w-12 shrink-0 rounded-md object-cover bg-zinc-950" />
-                        : <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-white/[0.04] text-[0.5rem] uppercase text-zinc-600">No pic</span>}
-                      <p className="line-clamp-3 text-[0.625rem] leading-tight text-zinc-400">{it?.prompt || 'Empty prompt'}</p>
-                      <button onClick={() => toggle(slot.key === 'outfit' ? setPickedOutfits : setPickedPoses)(id)}
-                        className="ml-auto shrink-0 px-1 text-xs text-zinc-600 hover:text-red-400 cursor-pointer" title="Remove">×</button>
-                    </div>
-                  );
-                })}
-              </div>
+                        ? <img src={slot.thumbs[id]} alt="" loading="lazy" className="h-full w-full object-cover" />
+                        : <span className="flex h-full w-full items-center justify-center text-[0.5rem] uppercase text-zinc-600">No pic</span>}
+                      <span className="absolute inset-0 hidden items-center justify-center bg-black/70 text-sm font-bold text-red-300 group-hover:flex">×</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {slot.picked.map((id) => {
+                    const it = slot.items.find((i) => i.id === id);
+                    const label = slot.key === 'pose'
+                      ? (poseSentence(it?.prompt) || 'No pose text — the picture carries it')
+                      : (it?.prompt || 'Empty prompt');
+                    return (
+                      <div key={id} className="flex items-start gap-2 rounded-lg bg-white/[0.02] p-1.5">
+                        {slot.thumbs[id]
+                          ? <img src={slot.thumbs[id]} alt="" loading="lazy" className="h-12 w-12 shrink-0 rounded-md object-cover bg-zinc-950" />
+                          : <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-white/[0.04] text-[0.5rem] uppercase text-zinc-600">No pic</span>}
+                        <p className="line-clamp-3 text-[0.625rem] leading-tight text-zinc-400">{label}</p>
+                        <button onClick={() => toggle(setPicked)(id)}
+                          className="ml-auto shrink-0 px-1 text-xs text-zinc-600 hover:text-red-400 cursor-pointer" title="Remove">×</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )
             )}
 
             {openPickers[slot.key] && (slot.folders.length > 0 || slot.favIds.size > 0) && (
@@ -3460,26 +4109,18 @@ export default function EddyGeneratePage() {
 
             {openPickers[slot.key] && (
               <PickerGrid
-                // Favorite is a MOVE, not a copy: starring an item pulls it OUT of All and its folder so
-              // it is never picked again by accident — it lives ONLY under the Favorite filter until
-              // un-starred. So the two non-favorite views exclude favorited ids; the Favorite view is
-              // the only place they appear. (Requested: "move them from any folder... i dont use them
-              // again unless i click favorite".)
-              items={favFilter[slot.key]
-                  ? slot.items.filter((i) => slot.favIds.has(i.id))
-                  : (folderFilter[slot.key]
-                    ? slot.items.filter((i) => i.folderId === folderFilter[slot.key] && !slot.favIds.has(i.id))
-                    : slot.items.filter((i) => !slot.favIds.has(i.id)))}
+                items={visible}
                 thumbs={slot.thumbs}
                 selected={slot.picked}
                 favIds={slot.favIds}
-                onToggle={toggle(slot.key === 'outfit' ? setPickedOutfits : setPickedPoses)}
+                onToggle={toggle(setPicked)}
                 onToggleFavorite={(id) => togglePickFavorite(slot.store, id)}
                 empty={slot.empty}
               />
             )}
           </Card>
-        ))}
+          );
+        })}
       </div>
 
       {/* Instruction — the only text you write */}
@@ -3545,6 +4186,43 @@ export default function EddyGeneratePage() {
             </span>
           </span>
         </button>
+        {/* POSE PHOTO toggle — governs the PAYLOAD only. ON sends the pose picture to the provider
+            alongside its description (what this page has always done); OFF sends the one-sentence
+            description alone and the picture never leaves your machine. The pose card keeps showing
+            its image either way — this is not a "hide the thumbnail" switch.
+            Worth actually A/B-ing: a picture carries arch depth and hand placement that one sentence
+            cannot, but it also drags its own body along, which is what every BUST/BODY lock in
+            buildPrompt is fighting. With it OFF those locks have no competing reference at all. */}
+        <button
+          onClick={() => setSendPoseImage((v) => !v)}
+          aria-pressed={sendPoseImage}
+          title={sendPoseImage
+            ? 'The pose photo is uploaded with each generation'
+            : 'Only the pose description is sent — the photo stays local'}
+          className={cn(
+            'group flex items-center gap-3 rounded-xl border px-3 py-2 transition cursor-pointer',
+            sendPoseImage
+              ? 'border-rose-500/60 bg-rose-500/10 shadow-[0_0_22px_-6px] shadow-rose-500/70'
+              : 'border-white/[0.07] bg-white/[0.02] hover:border-zinc-600',
+          )}
+        >
+          <span className={cn('relative h-6 w-11 shrink-0 rounded-full transition-colors',
+            sendPoseImage ? 'bg-rose-500' : 'bg-zinc-700')}>
+            <span className={cn(
+              'absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all',
+              sendPoseImage ? 'left-[22px]' : 'left-0.5',
+            )} />
+          </span>
+          <span className="text-left leading-tight">
+            <span className={cn('block text-sm font-bold tracking-wide',
+              sendPoseImage ? 'text-rose-300' : 'text-zinc-400')}>
+              POSE PHOTO {sendPoseImage ? 'SENT' : 'NOT SENT'}
+            </span>
+            <span className="block text-[0.625rem] text-zinc-500">
+              {sendPoseImage ? 'Photo + description go to the model' : 'Description only — photo stays local'}
+            </span>
+          </span>
+        </button>
         </div>
         </div>
         <div className="space-y-2">
@@ -3584,6 +4262,11 @@ export default function EddyGeneratePage() {
         {/* Lighting — 'Match photo' keeps image 1's own light; the others relight the scene with a
             soft, natural look while keeping the same background. */}
         <Select label="Lighting" options={LIGHTING_OPTIONS.map((o) => ({ value: o.value, label: o.label }))} value={lighting} onChange={(e) => setLighting(e.target.value)} />
+        {/* HER BUILD — per-character, and the reason it is a SELECT and not another BODY chip: it
+            states her figure without setting wantsBody, so the bust-preservation locks stay ON.
+            Grace sits on Large/Very large, a medium model on Medium; each keeps her own build held.
+            Ignored while a BODY chip is active — a chip is an explicit change and wins. */}
+        <Select label="Her build" options={BUILD_OPTIONS.map((o) => ({ value: o.value, label: o.label }))} value={build} onChange={(e) => setBuild(e.target.value)} />
 
         {overCap && (
           <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
@@ -3601,13 +4284,67 @@ export default function EddyGeneratePage() {
         {/* Generates immediately — no confirm popup (user removed it). The price stays ON the button
             so the cost is still shown before the click; only the extra modal is gone. The VIDEO gate
             is untouched: video is the expensive path and still confirms per result. */}
+        {/* ENGINE — the SAME page, run through a different image model. One page rather than a
+            duplicated file so every fix to the pose/outfit/prompt logic lands on both engines at
+            once; the two would otherwise drift, which is exactly how the pose-body-size fix ended
+            up applied on one branch and not the other.
+            Gemini routes through Nano Bypass, which selects Vertex on its own when credentials
+            exist — no bypass flag is passed from here. Every other control on this page (pose
+            photo toggle, Her build, NSFW, faceless, framing) is engine-agnostic and applies to
+            both, because they all shape the PROMPT, not the request. */}
+        <div className="flex gap-2 rounded-xl border border-white/[0.07] bg-white/[0.02] p-1">
+          {[['seedream', 'Seedream'], ['gemini', 'Gemini nano']].map(([id, label]) => (
+            <button key={id} type="button" onClick={() => setEngine(id)} aria-pressed={engine === id}
+              className={cn('flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer',
+                engine === id ? 'bg-rose-500/20 text-rose-300' : 'text-zinc-500 hover:text-zinc-300')}>
+              {label}
+            </button>
+          ))}
+        </div>
         <Btn className="w-full" disabled={!baseImage || overCap} onClick={() => run()}>
-          Generate {combos.length} image{combos.length === 1 ? '' : 's'} · ${totalCost.toFixed(3)}
+          {/* NO DOLLAR FIGURE ON GEMINI, deliberately. seedreamCost prices Muapi's published
+              Seedream rates; this repo has no ground truth for Gemini/Vertex image cost, and the
+              amber money rule means a number shown here is read as authoritative. An absent price
+              is honest; a guessed one is not. */}
+          Generate {combos.length} image{combos.length === 1 ? '' : 's'}{engine === 'gemini' ? '' : ` · $${totalCost.toFixed(3)}`}
         </Btn>
         {inFlight > 0 && (
-          <p className="text-center text-xs text-zinc-500">
-            {done}/{queued} done · {inFlight} batch{inFlight === 1 ? '' : 'es'} running, {PARALLEL_REQUESTS} at a time — start another whenever
-          </p>
+          <div className="space-y-1.5">
+            <p className="text-center text-xs text-zinc-500">
+              {done}/{queued} done · {inFlight} batch{inFlight === 1 ? '' : 'es'} running, {parallelFor(engine)} at a time — start another whenever
+            </p>
+            {/* CANCEL — stops the QUEUE, not the requests already sent. Those are billed the moment
+                they leave, so aborting them would pay for images you never see; they finish and are
+                kept. Everything still waiting is never sent and never charged. Labelled to say so,
+                because "Cancel" on a paid run has to be unambiguous about what it costs. */}
+            <Btn variant="secondary" className="w-full !py-1.5 !text-xs" disabled={cancelling}
+              onClick={() => { cancelRef.current = true; setCancelling(true); }}>
+              {cancelling
+                ? 'Cancelling — letting the in-flight ones finish…'
+                : `Cancel the ${Math.max(0, queued - done)} not sent yet`}
+            </Btn>
+          </div>
+        )}
+        {/* The failures from the last run, and the one click that replays them. Shown once the
+            batch is idle so it cannot be mistaken for live progress, and it survives until the
+            retry succeeds or you dismiss it — a 60-image run that loses 8 is otherwise 8 images
+            you cannot identify, let alone re-make without paying for all 60 again. */}
+        {failedCombos.length > 0 && inFlight === 0 && (
+          <div className="space-y-1.5 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] p-2.5">
+            <p className="text-xs text-amber-200/80">
+              {failedCombos.length} image{failedCombos.length === 1 ? '' : 's'} failed
+              <span className="text-amber-200/50"> · {failedCombos[0].message}</span>
+            </p>
+            <div className="flex gap-2">
+              <Btn className="flex-1 !py-1.5 !text-xs" disabled={!baseImage}
+                onClick={() => run(failedCombos.map((f) => f.combo))}>
+                Retry {failedCombos.length} failed{engine === 'gemini' ? '' : ` · $${(failedCombos.length * seedreamCost(resolution, Math.max(1, perRunImages))).toFixed(3)}`}
+              </Btn>
+              <Btn variant="secondary" className="!py-1.5 !px-3 !text-xs" onClick={() => setFailedCombos([])}>
+                Dismiss
+              </Btn>
+            </div>
+          </div>
         )}
       </Card>
       </div>
@@ -3664,6 +4401,18 @@ export default function EddyGeneratePage() {
                   anyBusy ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:border-red-400 hover:text-red-300')}
               >
                 Clear all
+              </button>
+              {/* RELOAD IMAGES — re-requests every tile's picture. Not a page refresh: the results
+                  column, the selection and the pending queue all survive, which a browser reload
+                  would throw away. For the case where a fetch stalled or failed and the tile is
+                  stuck on "Loading…" with nothing to click. */}
+              <button
+                type="button"
+                onClick={() => setImgNonce((n) => n + 1)}
+                title="Re-request every image — use if tiles are stuck on Loading…"
+                className={cn(HDR_BTN, GATE_FOCUS, 'cursor-pointer hover:border-zinc-400 hover:text-zinc-200')}
+              >
+                Reload images
               </button>
               {/* DOWNLOAD ALL — saves every result: its VIDEO when it has one, else its image. Same
                   metadata-clean path as a tile's own Download, so a bulk save is never the raw file. */}
@@ -3782,8 +4531,12 @@ export default function EddyGeneratePage() {
                 item={r}
                 // The saved server copy, which is what exists after a regenerate too. base64Data
                 // is only a fallback for whatever the response happened to carry.
+                // imgNonce is appended so "Reload images" produces a URL the browser has not
+                // cached, which is the only way to make it re-request a picture it believes it
+                // already has (or already failed on). Left off entirely at nonce 0 so the normal
+                // URL stays cacheable across renders.
                 src={r.galleryId
-                  ? galleryApi.imageUrl(r.galleryId)
+                  ? `${galleryApi.imageUrl(r.galleryId)}${imgNonce ? `${galleryApi.imageUrl(r.galleryId).includes('?') ? '&' : '?'}r=${imgNonce}` : ''}`
                   : (r.base64Data ? `data:${r.mimeType || 'image/png'};base64,${r.base64Data}` : null)}
                 selected={selectedUids.has(r.uid)}
                 busy={busyUids[r.uid]}
@@ -3802,6 +4555,7 @@ export default function EddyGeneratePage() {
                 onAnimate={() => openVideoConfirmFor([r.uid])}
                 onRemove={() => removeUids([r.uid])}
                 onClearVideoPrompt={() => clearVideoPromptFor(r.uid)}
+                onDuplicateWithPrompt={(text) => duplicateResultWithPrompt(r.uid, text)}
               />
               );
             })}

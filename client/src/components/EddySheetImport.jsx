@@ -207,6 +207,10 @@ export default function EddySheetImport({ dbName, label = 'poses', onImported })
         // Carried straight through, same as title — a pose's video prompt is its own field, not
         // something to fold into or derive from the pose prompt.
         videoPrompt: (d.videoPrompt || '').trim(),
+        // An outfit's back-view description and photo, carried through so a set exported with
+        // back views arrives with them. Absent on every pose row and on any older export.
+        backPrompt: (d.backPrompt || '').trim(),
+        backImage: d.backImage || '',
         folder,
         name: (d.title || '').trim() || `import-${i + 1}`,
         // Carried from the export so a re-import restores the ★ set directly, rather than relying on

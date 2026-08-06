@@ -5,7 +5,7 @@ import CharacterPicker from '../components/CharacterPicker';
 import { Card, Btn, Select, Textarea, Toggle, Badge, Spinner, CopyBtn } from '../components/UI';
 import CompareSlider from '../components/CompareSlider';
 import { autoBlurFace } from '../lib/autoBlurFace';
-import ManualBlurModal from '../components/BlurByHand';
+import ManualBlurModal from '../components/ManualBlurModal';
 import { SEEDREAM_ASPECT_RATIOS, SEEDREAM_RESOLUTIONS, SEEDREAM_MAX_IMAGES, seedreamCost } from '../config/photoModes';
 import { pushPending, resolvePending, failPending } from '../lib/generationFeed';
 import { consumeSourceHandoff } from '../lib/sourceHandoff';

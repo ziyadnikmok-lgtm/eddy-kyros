@@ -29,7 +29,8 @@ const POSE_TEMPLATE = {
     "clothing": "Same outfit as reference image"
   },
   "pose_action": {
-    "description": "<THE POSE \u2014 the one field that must be written from the photo>"
+    "description": "<THE POSE \u2014 the one field that must be written from the photo>",
+    "view": "<front, back or closeup \u2014 the one word that must be written from the photo>"
   },
   "scene": {
     "environment": "Same background and setting as the reference image",
@@ -53,6 +54,35 @@ const POSE_TEMPLATE = {
   ]
 };
 
+/**
+ * The front/back/closeup rule, written once because two callers ask it — the full pose
+ * description brief below and the standalone /classify-pose-view route — and a drifting copy
+ * would mean a pose classified one way when described and the other way when re-labelled.
+ *
+ * WHY IT ASKS ABOUT THE GARMENT AND NOT THE FACE: the first version of this rule said "back"
+ * required that her face NOT be visible. Checked against the real 60-pose library (owner,
+ * 2026-08-06, every image reviewed by eye), that rule mislabels a large share of the actual
+ * back poses: the most common back shot in this library is a look-back-over-the-shoulder, where
+ * the torso, spine and the BACK of the outfit face the camera but a profile sliver of face is
+ * still visible. Those were being called "front", which is the one answer that breaks the
+ * feature — the whole point of the label is to pick the back-view outfit description, and a
+ * back-facing body wearing a front-described garment is exactly the mismatch it exists to stop.
+ * So the question is which side of the CLOTHING the camera sees, which is the side that has to
+ * be described.
+ */
+const VIEW_RULE = [
+  'Classify the VIEW as exactly one word, decided by which side of her OUTFIT the camera sees,',
+  'not by whether her face is visible:',
+  '"back" when the camera is looking at the back of her body — spine, shoulder blades, the back',
+  'of the top, the seat of the leggings — and this still counts when she twists to look back over',
+  'her shoulder so part of her face shows, because the garment facing the camera is its back;',
+  '"closeup" when the shot is cropped so tight to her face, head, shoulders or chest that the',
+  'outfit is mostly out of frame and neither its front nor its back could be described from it;',
+  'otherwise "front", which covers every angle where the front of the outfit is the side facing',
+  'the camera, including side and three-quarter shots.',
+  'When genuinely torn between front and back, answer "front".',
+].join(' ');
+
 const BRIEFS = {
   // An outfit reference is usually a product shot: a garment on a mannequin, flat on a bed, or
   // worn. Only the CLOTHING matters — describing the body or setting would drag them into the
@@ -63,6 +93,36 @@ const BRIEFS = {
     'Cover: type of garment, colour, fabric and transparency, cut and neckline, straps or fastenings, any lace, embroidery or pattern, and length.',
     'Do NOT describe the mannequin, the body, the person, the background, the bedding or any label or watermark.',
     'Do not start with "This is" — just describe the garment. No preamble, no quotes.',
+  ].join(' '),
+  /**
+   * The SAME garment seen from behind, inferred from the front photo.
+   *
+   * WHY INFERRED AND NOT PHOTOGRAPHED: a back-view pose needs the back of the outfit described, and
+   * outfits arrive as a single product shot — requiring a second uploaded photo per outfit made the
+   * feature depend on source material that mostly does not exist. A garment's back is largely
+   * determined by its front (a halter ties at the neck and leaves the back open; a zip-back dress
+   * closes; a thong bodysuit is bare below the waist), so this is a reasoned description rather
+   * than a guess. Where it genuinely cannot be known, the brief says to describe the ordinary
+   * construction for that garment type instead of inventing detail — a plausible plain back beats
+   * a confidently wrong one, and beats the front description being used on a back pose, which is
+   * what happened before this existed (owner, 2026-08-06).
+   *
+   * An explicitly uploaded back photo still WINS: attachBackTo overwrites backPrompt by describing
+   * the real thing with the `outfit` brief above.
+   */
+  outfitBack: [
+    'Look at this photo of a clothing item. It shows the garment from the FRONT.',
+    'Describe how the SAME garment looks from BEHIND, in one or two sentences, so it can be',
+    'recreated on a different person seen from the back.',
+    'Work out the back from the front: a halter neck leaves the back bare, a bodysuit or thong is',
+    'cut high and bare across the seat, a bra fastens with a band and clasp, a dress may zip or',
+    'lace up, straps cross or run straight down. Keep the colour, fabric, transparency, lace,',
+    'embroidery and pattern exactly as they are on the front.',
+    'Where the back genuinely cannot be told from this photo, describe the ordinary construction',
+    'for that type of garment — never invent decorative detail that is not implied by the front.',
+    'Do NOT describe the mannequin, the body, the person, the background, the bedding or any label',
+    'or watermark. Do not mention the front, the photo, or that you are inferring.',
+    'Do not start with "This is" — just describe the garment from behind. No preamble, no quotes.',
   ].join(' '),
   // Returns coordinates, not prose. The client blurs the region on canvas — Gemini cannot edit
   // an image here, but it can say where the face is, which is all that is needed.
@@ -99,7 +159,9 @@ const BRIEFS = {
     'someone else could recreate it: stance or kneel or recline, back arch, where each arm and',
     'hand is, leg and knee position, foot position, head tilt and gaze direction. One flowing',
     'sentence, no bullet points.',
-    'Fill "subject.features" with her facial expression, gaze and makeup only.',
+    'Fill "pose_action.view" with one word.', VIEW_RULE,
+    'Fill "subject.features" with her facial expression, gaze and makeup only — if the view is',
+    '"back" and no face is visible, describe her hair and the back of her head instead.',
     'Copy EVERY other field exactly as given — do not reword, translate or add fields.',
     'Do NOT describe her clothing, the background or the lighting anywhere: those fields already',
     'say to take them from the reference image.',
@@ -133,6 +195,7 @@ const POSE_LIMIT = POSE_TEMPLATE_JSON.length + 2000;
 
 const RESPONSE_LIMITS = {
   outfit: PROSE_LIMIT,
+  outfitBack: PROSE_LIMIT,
   environment: PROSE_LIMIT,
   // A bounding box is ~50 chars. The cap here is a pure abuse guard, never a real ceiling.
   facebox: PROSE_LIMIT,
@@ -197,6 +260,54 @@ router.post('/describe', async (req, res, next) => {
     }
 
     res.json({ success: true, data: { text, declined: false } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/eddy/classify-pose-view
+ * Body: { image: base64 | dataUrl, mimeType, description?: string }
+ * -> { view: 'front' | 'back' | 'closeup' }
+ *
+ * Classifies front/back/closeup WITHOUT rewriting the saved pose description — /describe above
+ * (re)generates the whole pose_action block; this only ever returns one word, so it is safe to
+ * merge into an existing, possibly hand-edited, description without touching it (see
+ * mergePoseView on the client, EddyCollection.jsx's labelOneView).
+ *
+ * `description` is passed in ON PURPOSE (owner, 2026-08-06): the saved pose_action.description
+ * already carries clues a bare image sometimes does not — "back arch", "facing away", "over her
+ * shoulder" — so classification reads both the picture and the text that was written for it,
+ * not the image alone. Optional: an image-only pose (no prompt yet) still classifies fine off
+ * the picture.
+ */
+router.post('/classify-pose-view', async (req, res, next) => {
+  try {
+    const { image, mimeType, description } = req.body || {};
+    if (!image || typeof image !== 'string') throw new AppError('"image" base64 is required', 400, 'VALIDATION_ERROR');
+    if (!mimeType || typeof mimeType !== 'string') throw new AppError('"mimeType" is required', 400, 'VALIDATION_ERROR');
+
+    const m = image.match(/^data:image\/\w+;base64,(.+)$/);
+    const base64 = m ? m[1] : image;
+
+    const apiKey = apiKeyManager.getActiveKeyOrNull();
+    if (!apiKey && !apiKeyManager.shouldUseVertexBackend?.()) {
+      throw new AppError('Add a Gemini or Vertex key to let the AI read the image', 400, 'GEMINI_KEY_REQUIRED');
+    }
+
+    const descHint = String(description || '').trim().slice(0, 800);
+    const prompt = [
+      'Look at this photo of a posed subject.',
+      descHint ? `Its saved pose description reads: "${descHint}". Use it alongside the photo — it may already say things like "facing away" or "over her shoulder" that settle the answer.` : '',
+      VIEW_RULE,
+      'Reply with ONLY that one word — no punctuation, no explanation.',
+    ].filter(Boolean).join(' ');
+
+    const raw = await geminiService.analyzeImageWithPrompt(apiKey, base64, mimeType, prompt);
+    const word = String(typeof raw === 'string' ? raw : raw?.text || '').trim().toLowerCase().replace(/[^a-z]/g, '');
+    const view = ['front', 'back', 'closeup'].includes(word) ? word : 'front';
+
+    res.json({ success: true, data: { view } });
   } catch (err) {
     next(err);
   }

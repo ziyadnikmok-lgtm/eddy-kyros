@@ -155,12 +155,18 @@ export function createEddyCollection(dbName) {
           // reversible and an unblurred copy can still be shared.
           if (it.original) await store.set(`img:${id}:alt`, it.original);
         }
+        // An outfit's back-view photo rides in under its own key, exactly where attachBackTo
+        // writes it, so an imported outfit arrives with the same two pictures it was exported
+        // with. Its failure is non-fatal on purpose: losing the back photo is a degraded outfit,
+        // where skipping the item would lose the front one too.
+        if (it.backImage) await store.set(`img:${id}:back`, it.backImage);
         // url points at an image the server already stored. Generated pictures use it so a batch of
         // 25 does not pour tens of megabytes into IndexedDB just to be looked at.
         // videoPrompt travels with the item the same way prompt does — without it here, importing
         // a pose sheet (or re-importing an exported one) would silently drop the video prompt even
         // though the importer built it correctly, because this allowlist never carried it through.
         added.push({ id, srcIndex: idx, name: it.name || 'image', prompt: it.prompt || '', videoPrompt: it.videoPrompt || '', url: it.url || '',
+          ...(it.backPrompt ? { backPrompt: it.backPrompt } : {}),
           ...(it.original ? { blurred: true } : {}),
           folderId: folderId || null, createdAt: t0 + added.length });
       }
@@ -179,6 +185,7 @@ export function createEddyCollection(dbName) {
       // No delete-key primitive; blanking releases the bytes and the id is gone from the index.
       await store.set(`img:${id}`, '');
       await store.set(`img:${id}:alt`, '');   // the spare copy goes too, or its bytes linger
+      await store.set(`img:${id}:back`, '');  // and the back-view copy, on outfits that have one
     },
 
     /**
@@ -214,6 +221,25 @@ export function createEddyCollection(dbName) {
     async setImage(id, dataUrl) {
       await write(`img:${id}`, dataUrl);
       return true;
+    },
+
+    /**
+     * The back-view crop of an outfit, held under its own key alongside the front picture in
+     * `img:<id>` — a separate slot, not a swap like alt: generation needs BOTH available at once
+     * (front by default, back when the picked pose is back-facing — see readPoseView), not one
+     * active copy at a time.
+     */
+    async setBackImage(id, dataUrl) {
+      await write(`img:${id}:back`, dataUrl);
+      return true;
+    },
+
+    async getBackImage(id) {
+      return store.get(`img:${id}:back`, '');
+    },
+
+    async hasBackImage(id) {
+      return Boolean(await store.get(`img:${id}:back`, ''));
     },
 
     _updateItem: async function(id, patch) {

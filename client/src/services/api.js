@@ -263,6 +263,13 @@ export const video = {
   },
 };
 
+export const videoEdit = {
+  // Multipart: sourceFilename + overlay_<i> PNGs + JSON fields. The server caps ffmpeg at 5 min;
+  // the client waits LONGER (7 min) so a near-cap encode is still received as success instead of the
+  // client aborting first and falsely reporting "failed" while the clip actually saved to the gallery.
+  export: (formData) => request('/video-edit', { method: 'POST', body: formData, timeoutMs: 7 * 60_000 }),
+};
+
 export const videoCompose = {
   compose: (formData) => request('/video-compose', { method: 'POST', body: formData, timeoutMs: LONG_TIMEOUT_MS }),
   extractTextOverlay: (formData) => request('/video-compose/extract-text-overlay', { method: 'POST', body: formData, timeoutMs: VIDEO_ANALYZE_TIMEOUT_MS }),
@@ -273,6 +280,7 @@ export const characters = {
   get: (id) => request(`/characters/${id}`),
   create: (data) => request('/characters', { method: 'POST', body: data }),
   update: (id, data) => request(`/characters/${id}`, { method: 'PATCH', body: data }),
+  duplicate: (id) => request(`/characters/${id}/duplicate`, { method: 'POST' }),
   remove: (id) => request(`/characters/${id}`, { method: 'DELETE' }),
   addReference: (id, data) => request(`/characters/${id}/references`, { method: 'POST', body: data }),
   toggleReference: (id, refId) => request(`/characters/${id}/references/${refId}/toggle`, { method: 'PATCH' }),
@@ -399,6 +407,7 @@ export const library = {
 
 export const eddyVision = {
   describe: (body) => request('/eddy/describe', { method: 'POST', body }),
+  classifyPoseView: (body) => request('/eddy/classify-pose-view', { method: 'POST', body }),
 };
 
 export const poseRemix = {

@@ -58,6 +58,7 @@ const LoraDatasetPage = lazy(() => import('./pages/LoraDatasetPage'));
 const ApiKeysPage = lazy(() => import('./pages/ApiKeysPage'));
 const VideoPage = lazy(() => import('./pages/VideoPage'));
 const VideoGalleryPage = lazy(() => import('./pages/VideoGalleryPage'));
+const VideoEditorPage = lazy(() => import('./pages/VideoEditorPage'));
 const SeedanceVideoPage = lazy(() => import('./pages/SeedanceVideoPage'));
 const SeedanceOmniPage = lazy(() => import('./pages/SeedanceOmniPage'));
 const SeedreamEditPage = lazy(() => import('./pages/SeedreamEditPage'));
@@ -126,6 +127,7 @@ const NAV_ICONS = {
   pasteInbox: IconClipboard,
   gallery: IconImage,
   imageEditor: IconRulerPen,
+  videoEditor: IconVideo,
   characters: IconUsers,
   keys: IconKey,
   billing: IconCreditCards,
@@ -177,6 +179,7 @@ const NAV_COLORS = {
   pasteInbox:     ['#c084fc', '#7c3aed'],
   gallery:        ['#fcd34d', '#d97706'],
   imageEditor:    ['#f9a8d4', '#db2777'],
+  videoEditor:    ['#c4b5fd', '#7c3aed'],
   characters:     ['#c4b5fd', '#7c3aed'],
   keys:           ['#94a3b8', '#475569'],
   billing:        ['#86efac', '#16a34a'],
@@ -218,20 +221,6 @@ const NAV_SECTIONS = [
       { id: 'poseRemixSeedream', label: 'Pose Remix' },
     ],
   },
-  // Max's own section — a curated subset (Character, Generate, Photo Match, Scene Recreate)
-  // reusing the exact same shared pages as Eddy/Seedream above. Only visible on his tab: hidden
-  // on Eddy/Ziyad via `data-nav-group="max"` in their CSS, while max.css hides every OTHER
-  // section so this is the only thing he sees.
-  {
-    engine: 'seedream',
-    label: 'Max',
-    items: [
-      { id: 'eddyCharacter', label: 'Character' },
-      { id: 'seedreamGenerate', label: 'Generate' },
-      { id: 'photoMatchSeedream', label: 'Photo Match' },
-      { id: 'sceneRecreateSeedream', label: 'Scene Recreate' },
-    ],
-  },
   {
     engine: 'seedream',
     label: 'Video',
@@ -257,6 +246,7 @@ const NAV_SECTIONS = [
       { id: 'library', label: 'Gallery' },
       { id: 'pasteInbox', label: 'Paste Inbox' },
       { id: 'imageEditor', label: 'Image Editor' },
+      { id: 'videoEditor', label: 'Video Editor' },
     ],
   },
   {
@@ -308,6 +298,7 @@ const FEED_HIDDEN_PAGES = new Set([
   'gallery',
   'videoGallery',
   'imageEditor',
+  'videoEditor',
   'characters',
   'keys',
   'billing',
@@ -342,6 +333,9 @@ const SELF_SCROLL_PAGES = new Set([
   // Mirrors EddyGeneratePage's two-column shell (fixed left setup column, flex-1 right results
   // column, both independently scrollable) — same layout, same need for a bounded height.
   'instagramReel',
+  // The video editor lays out its own header / tools+preview+adjust / timeline and needs a bounded
+  // height to hang them from — same reason as Eddy.
+  'videoEditor',
 ]);
 
 const NAV_COLLAPSED_KEY = 'kyros_nav_collapsed';
@@ -396,7 +390,7 @@ const PAGE_DESCRIPTIONS = {
   nsfwGenerate: 'WaveSpeed Turbo LoRA — uncensored image generation',
   batch: 'Generate multiple images in parallel',
   video: 'Generate videos from images using AI',
-  seedanceVideo: 'Muapi Seedance 2 — turn a grabbed frame or gallery photo into a short video',
+  seedanceVideo: 'Muapi Seedance 2 Omni — show it photos of your model and it builds a fresh video of her (reference, not a first frame)',
   seedanceOmni: 'Reference a real video and recreate its motion with your model — plus reusable trained characters',
   seedreamEdit: "Muapi Seedream 5.0 Pro Edit — ByteDance's flagship image editor, up to 10 reference images",
   seedreamGenerate: "Pick your character, type a prompt — Seedream 5.0 Pro generates a new photo of her.",
@@ -425,6 +419,7 @@ const PAGE_DESCRIPTIONS = {
   library: 'Browse and manage all generated images and videos',
   pasteInbox: 'Save pasted images for quick reuse in Photo Match or Scene Recreate',
   imageEditor: 'Crop, adjust and touch up any image in your gallery',
+  videoEditor: 'Trim, add stickers and text, and adjust any video from your gallery',
   gallery: 'Browse and manage all generated images',
   videoGallery: 'Browse and manage all generated videos',
   characters: 'Manage character identities and references',
@@ -486,6 +481,7 @@ const PAGES = {
   auto: AutoGeneratorPage,
   gallery: GalleryPage,
   imageEditor: ImageEditorPage,
+  videoEditor: VideoEditorPage,
   characters: CharactersPage,
   keys: ApiKeysPage,
   billing: BillingPage,
