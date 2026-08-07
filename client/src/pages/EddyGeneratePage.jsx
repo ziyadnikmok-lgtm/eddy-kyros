@@ -800,6 +800,32 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore }) {
    * so nothing that used to be reachable here disappeared. If the gallery request fails the picker
    * still opens on the local collection rather than showing nothing.
    */
+  /**
+   * Download every saved photo in this slot.
+   *
+   * Sequential with a small gap: browsers silently drop rapid-fire programmatic downloads, and a
+   * partial save that reports success is worse than a slow one. Goes through downloadBlob so these
+   * get the same metadata strip + fresh capture time as any other download.
+   */
+  const saveAll = async () => {
+    const slot = dbName.replace('eddy-slot-', '');
+    let n = 0;
+    for (const sv of saved) {
+      const m = /^data:([^;]+);base64,(.+)$/.exec(sv.dataUrl || '');
+      if (!m) continue;
+      const bin = atob(m[2]);
+      const buf = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i += 1) buf[i] = bin.charCodeAt(i);
+      const ext = (m[1].split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+      n += 1;
+      // eslint-disable-next-line no-await-in-loop -- sequential on purpose, see above
+      await downloadBlob(new Blob([buf], { type: m[1] }), `${slot}-${String(n).padStart(2, '0')}.${ext}`);
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    notify(n ? `Saved ${n} ${slot} photo${n === 1 ? '' : 's'}` : 'Nothing to save', n ? 'success' : 'error');
+  };
+
   const openLibrary = async () => {
     if (showLibrary) { setShowLibrary(false); return; }
     setShowLibrary(true);
@@ -855,6 +881,19 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore }) {
           <button onClick={openLibrary} className="text-[0.6875rem] text-zinc-500 hover:text-white cursor-pointer">
             {showLibrary ? 'Close' : 'Library'}
           </button>
+          {/* SAVE ALL — writes this slot's saved reference photos to disk.
+              These live ONLY in IndexedDB: they are not in the gallery, not in uploads/, and the
+              blob store keeps them in a wrapped form that cannot be read back out of the profile
+              directory. So there was no way to hand a character's own reference set to anyone
+              without re-uploading it by hand (owner, 2026-08-07 — wanted Grace's base and face
+              refs in a folder for a partner). Files are named <slot>-01.jpg… so base and face stay
+              apart once they are sitting in the same download folder. */}
+          {saved.length > 0 && (
+            <button onClick={saveAll} className="text-[0.6875rem] text-zinc-500 hover:text-white cursor-pointer"
+              title={`Download all ${saved.length} saved photos in this slot`}>
+              Save all {saved.length}
+            </button>
+          )}
           {value && (
             <button onClick={() => onChange('')} className="text-[0.6875rem] text-zinc-500 hover:text-red-400 cursor-pointer">Clear</button>
           )}
