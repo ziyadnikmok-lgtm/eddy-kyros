@@ -172,6 +172,93 @@ export default function EddyCharacterPage() {
     }
   };
 
+  /**
+   * Import characters from an exported JSON file.
+   *
+   * The tab could ONLY pull from the server Characters API — there was no way to take a character
+   * someone sent you as a file, which is how they actually get shared (owner, 2026-08-07: Eddy
+   * sent six over Telegram and nothing here could read them).
+   *
+   * Tolerant about the name field on purpose. Our own export writes `folder`, the collection
+   * exporter writes `title`, and Eddy's file uses `character` — three names for one thing, and
+   * rejecting two of them would just push the mismatch onto whoever is sending the file.
+   *
+   * Grouped by name so one file can carry several characters, and `role` is carried through, so a
+   * photo marked BASE stays the base — which is what Base Image Generation reads to decide which
+   * reference leads.
+   */
+  const importFromFile = async (file) => {
+    if (!file) return;
+    setImporting('file');
+    try {
+      const rows = JSON.parse(await file.text());
+      if (!Array.isArray(rows)) throw new Error('That file is not a character export');
+
+      const groups = new Map();
+      for (const r of rows) {
+        const name = String(r?.character || r?.folder || r?.title || '').trim();
+        const img = r?.image || r?.dataUrl || '';
+        if (!name || !String(img).startsWith('data:')) continue;
+        if (!groups.has(name)) groups.set(name, []);
+        groups.get(name).push({ dataUrl: img, name, role: r.role || '' });
+      }
+      if (!groups.size) throw new Error('No characters with images in that file');
+
+      let chars = 0, imgs = 0, lost = 0;
+      for (const [name, images] of groups) {
+        // ensureFolder, not find-then-create — same race that once produced two "Grace" folders.
+        // eslint-disable-next-line no-await-in-loop
+        const folder = await store.ensureFolder(name);
+        // eslint-disable-next-line no-await-in-loop
+        const stored = await store.addItems(images, folder.id);
+        // addItems skips an item whose bytes blew the quota rather than throwing, so a partial
+        // import must be REPORTED — a 21MB reference silently vanishing is worse than a warning.
+        lost += (images.length - stored.length) + (stored.failed || 0);
+        // Re-apply role: addItems only carries the fields it knows about.
+        for (let i = 0; i < stored.length; i += 1) {
+          const role = images[i]?.role;
+          // eslint-disable-next-line no-await-in-loop
+          if (role) await store.updateItem(stored[i].id, { role });
+        }
+        chars += 1; imgs += stored.length;
+      }
+      await refresh();
+      notify(
+        lost ? `Imported ${chars} character${chars === 1 ? '' : 's'}, ${imgs} image${imgs === 1 ? '' : 's'} — ${lost} too large to store`
+             : `Imported ${chars} character${chars === 1 ? '' : 's'}, ${imgs} image${imgs === 1 ? '' : 's'}`,
+        lost ? 'error' : 'success',
+      );
+    } catch (err) {
+      notify(err.message || 'Could not read that file', 'error');
+    } finally {
+      setImporting('');
+    }
+  };
+
+  /** Export every character as the same shape importFromFile reads, so a file round-trips. */
+  const exportAll = async () => {
+    try {
+      const rows = [];
+      for (const f of folders) {
+        for (const it of items.filter((i) => i.folderId === f.id)) {
+          // eslint-disable-next-line no-await-in-loop
+          const dataUrl = thumbs[it.id] || await store.getImage(it.id);
+          if (dataUrl) rows.push({ character: f.name, image: dataUrl, role: it.role || '' });
+        }
+      }
+      if (!rows.length) { notify('Nothing to export', 'error'); return; }
+      const blob = new Blob([JSON.stringify(rows)], { type: 'application/json' });
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = href; a.download = 'eddy-character.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 10000);
+      notify(`Exported ${rows.length} image${rows.length === 1 ? '' : 's'}`, 'success');
+    } catch (err) {
+      notify(err.message || 'Export failed', 'error');
+    }
+  };
+
   const removeCharacter = async (id) => {
     for (const it of items.filter((i) => i.folderId === id)) await store.removeItem(it.id);
     await store.deleteFolder(id);
@@ -254,6 +341,17 @@ export default function EddyCharacterPage() {
           <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm ml-auto" onClick={loadImportable}>
             {importList ? 'Close' : 'Import from Characters'}
           </Btn>
+          {/* Import a character someone SENT you. Reads `character`, `folder` or `title` as the
+              name, so an export from this tab, from the collection exporter, or from a partner's
+              build all work without anyone having to reshape the file first. */}
+          <label className={cn('rounded-lg border border-zinc-600 bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-100 transition',
+            importing === 'file' ? 'opacity-60' : 'cursor-pointer hover:border-zinc-500')}>
+            {importing === 'file' ? 'Importing…' : 'Import file'}
+            <input type="file" accept="application/json,.json" className="hidden"
+              disabled={importing === 'file'}
+              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; importFromFile(f); }} />
+          </label>
+          <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={exportAll}>Export all</Btn>
         </div>
 
         {importList && (
