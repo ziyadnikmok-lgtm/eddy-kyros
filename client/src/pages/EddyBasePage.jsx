@@ -137,8 +137,25 @@ export default function EddyBasePage() {
   const [folderPick, setFolderPick] = useState(false);
   const [baseFolders, setBaseFolders] = useState([]);
 
+  /**
+   * Load the Base Library folders WITH a cover image and a count.
+   *
+   * A bare list of names is only usable if you remember what you called things. The cover is the
+   * folder's newest image, which is the one you most likely just put there (owner, 2026-08-08).
+   */
   const openFolderPick = useCallback(async () => {
-    try { setBaseFolders(await baseStore.listFolders()); } catch { setBaseFolders([]); }
+    try {
+      const [fs_, its] = await Promise.all([baseStore.listFolders(), baseStore.listItems()]);
+      const rows = await Promise.all(fs_.map(async (f) => {
+        const mine = its.filter((i) => i.folderId === f.id);
+        const newest = [...mine].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+        let cover = null;
+        try { cover = newest ? (newest.url || await baseStore.getImage(newest.id)) : null; } catch { cover = null; }
+        return { ...f, count: mine.length, cover };
+      }));
+      // Busiest first — the folder you are filing into is rarely the empty one.
+      setBaseFolders(rows.sort((a, b) => b.count - a.count));
+    } catch { setBaseFolders([]); }
     setFolderPick(true);
   }, [baseStore]);
 
@@ -460,8 +477,14 @@ export default function EddyBasePage() {
             <div className="max-h-64 space-y-1 overflow-y-auto">
               {baseFolders.map((f) => (
                 <button key={f.id} type="button" onClick={() => fileTo(f.id)}
-                  className="w-full rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 py-2 text-left text-xs text-zinc-300 hover:border-rose-500/60 cursor-pointer">
-                  {f.name}
+                  className="flex w-full items-center gap-3 rounded-lg border border-white/[0.07] bg-white/[0.02] p-2 text-left hover:border-rose-500/60 cursor-pointer">
+                  {f.cover
+                    ? <img src={f.cover} alt="" loading="lazy" className="h-12 w-12 shrink-0 rounded-md object-cover bg-zinc-950" />
+                    : <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-white/[0.04] text-[0.5rem] uppercase text-zinc-600">Empty</span>}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold text-zinc-200">{f.name}</span>
+                    <span className="block text-xs text-zinc-500">{f.count} image{f.count === 1 ? '' : 's'}</span>
+                  </span>
                 </button>
               ))}
               {!baseFolders.length && <p className="px-1 py-2 text-xs text-zinc-500">No folders yet — make one below.</p>}
