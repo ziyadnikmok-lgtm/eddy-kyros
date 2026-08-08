@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Card, Btn, Spinner } from '../components/UI';
 import { useApp } from '../context/AppContext';
 import { seedream as seedreamApi } from '../services/api';
@@ -28,16 +28,34 @@ const RATIOS = ['3:4', '4:5', '1:1', '9:16', '16:9', '2:3', '3:2'];
 const RESOLUTIONS = ['1K', '2K'];
 
 /**
- * WaveSpeed's per-image rate for nano-banana-2, by resolution.
+ * WaveSpeed's published per-image rate for nano-banana-2, by resolution.
  *
- * null until the real published numbers are in. A guessed rate on a paid API is worse than no
- * rate: the button is where spend is agreed, and a wrong figure there is quietly misleading every
- * time it is read. Seedream's own rates ($0.045 / $0.090) live in config/photoModes.js and came
- * from Muapi's published spec, not from estimation — this follows the same rule.
- *
- * Fill both numbers and the cost appears on the button automatically; nothing else needs changing.
+ * Read off WaveSpeed's own model page for this endpoint, not estimated: 0.5k $0.045, 1k $0.07,
+ * 2k $0.105, 4k $0.14 — 2K is the standard rate x1.5, 4K x2. Only the two tiers this page offers
+ * are listed. Web-search and image-search each add $0.014 there, and both are sent false by the
+ * service, so neither applies here.
  */
-const NANO2_COST = { '1K': null, '2K': null };
+const NANO2_COST = { '1K': 0.07, '2K': 0.105 };
+/**
+ * Retry a rate-limited call, backing off between attempts — the same contract EddyGeneratePage
+ * uses, and here for the same reason: nothing else in this stack retries a 429, so a quota bump
+ * does not slow a run down, it DELETES an image from it.
+ *
+ * Only 429 / RATE_LIMITED is retried. Everything else is returned untouched, because a bad prompt
+ * or a missing key fails identically on attempt four.
+ */
+async function withRateLimitRetry(fn, { attempts = 4, baseDelayMs = 4000 } = {}) {
+  for (let i = 0; ; i += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      const limited = err?.status === 429 || err?.code === 'RATE_LIMITED';
+      if (!limited || i >= attempts - 1) throw err;
+      await new Promise((r) => setTimeout(r, baseDelayMs * (i + 1)));
+    }
+  }
+}
+
 const nano2Cost = (res, n) => {
   const each = NANO2_COST[res];
   return typeof each === 'number' ? each * Math.max(1, n) : null;
@@ -77,9 +95,39 @@ export default function EddyBasePage() {
   const [ratio, setRatio] = useState('3:4');
   const [resolution, setResolution] = useState('2K');
   const [count, setCount] = useState(1);
-  const [busy, setBusy] = useState(false);
+  // How many generations are in the air. A COUNT, not a boolean: the button stays live so another
+  // run can be started while one is still going, which a boolean 'busy' made impossible — the page
+  // locked up behind a single request and there was no sign of it anywhere but the button label
+  // (owner, 2026-08-08).
+  const [inFlight, setInFlight] = useState(0);
+  // Monotonic, so placeholder keys from overlapping runs never collide.
+  const runSeq = useRef(0);
   const [loading, setLoading] = useState(true);
   const [results, setResults] = useState([]);   // [{ dataUrl }] this session
+
+  const retryOne = useCallback(async (key) => {
+    const run = lastRun.current;
+    if (!run) { notify('Nothing to retry from — generate again', 'error'); return; }
+    setResults((prev) => prev.map((r) => (r.key === key ? { key, pending: true } : r)));
+    setInFlight((k) => k + 1);
+    try {
+      const d = await withRateLimitRetry(() => seedreamApi.edit({
+        images: run.payload, prompt: run.prompt, model: 'nano2',
+        aspectRatio: run.ratio, resolution: run.resolution, tags: ['eddy', 'base'],
+      }));
+      const first = (d?.images || [])[0];
+      if (!first?.base64Data) throw new Error('No image came back');
+      const dataUrl = `data:${first.mimeType || 'image/png'};base64,${first.base64Data}`;
+      const folder = await baseStore.ensureFolder(run.charName);
+      const stored = await baseStore.addItems([{ dataUrl, prompt: run.prompt, name: `base-${Date.now()}` }], folder.id);
+      setResults((prev) => prev.map((r) => (r.key === key ? { key, dataUrl, itemId: stored?.[0]?.id || null } : r)));
+    } catch (err) {
+      setResults((prev) => prev.map((r) => (r.key === key ? { key, error: err?.message || 'Generation failed' } : r)));
+      notify(err?.message || 'Retry failed', 'error');
+    } finally {
+      setInFlight((k) => Math.max(0, k - 1));
+    }
+  }, [baseStore, notify]);
 
   const [picked, setPicked] = useState([]);        // result indexes ticked
   const [folderPick, setFolderPick] = useState(false);
@@ -101,7 +149,7 @@ export default function EddyBasePage() {
    * counted as moved.
    */
   const fileTo = useCallback(async (folderId) => {
-    const rows = (picked.length ? picked : results.map((_, i) => i)).map((i) => results[i]).filter(Boolean);
+    const rows = (picked.length ? picked : results.map((_, i) => i)).map((i) => results[i]).filter((r) => r && !r.pending && !r.error);
     const movable = rows.filter((r) => r.itemId);
     if (!movable.length) { notify('Those are not in the Library yet', 'error'); return; }
     try {
@@ -115,6 +163,13 @@ export default function EddyBasePage() {
     const skipped = rows.length - movable.length;
     notify(`${movable.length} moved${skipped ? ` · ${skipped} not in the Library` : ''}`, skipped ? 'error' : 'success');
   }, [picked, results, baseStore, notify]);
+
+  /**
+   * The settings a run was started with, kept so a failed tile can be retried exactly as it was.
+   * Reading the live controls instead would silently retry at whatever ratio/character is selected
+   * NOW, which is not the image you asked to retry.
+   */
+  const lastRun = useRef(null);
 
   const refresh = useCallback(async () => {
     const [f, i] = await Promise.all([charStore.listFolders(), charStore.listItems()]);
@@ -156,46 +211,64 @@ export default function EddyBasePage() {
     }
     if (!payload.length) { notify('That character has no reference photos', 'error'); return; }
 
-    setBusy(true);
     const prompt = buildBasePrompt(instruction, payload.length);
+    const charName = chars.find((c) => c.id === charId)?.name || 'Base';
+    lastRun.current = { payload, prompt, charName, ratio, resolution };
+    // A placeholder per image, added BEFORE the first request so the panel fills the moment you
+    // click. Keyed so a slow one can be replaced in place while later clicks add their own.
+    const keys = Array.from({ length: count }, (_, n) => `p-${runSeq.current++}-${n}`);
+    setResults((prev) => [...keys.map((key) => ({ key, pending: true })), ...prev]);
+    setInFlight((n) => n + count);
     let made = 0;
     try {
       for (let n = 0; n < count; n += 1) {
         // eslint-disable-next-line no-await-in-loop -- serial on purpose: each call re-uploads and
         // polls, and this page is never asked for more than a handful at a time.
-        const d = await seedreamApi.edit({
+        const d = await withRateLimitRetry(() => seedreamApi.edit({
           images: payload,
           prompt,
           model: 'nano2',
           aspectRatio: ratio,
           resolution,
           tags: ['eddy', 'base'],
-        });
+        }));
         const first = (d?.images || [])[0];
-        if (!first?.base64Data) continue;
+        if (!first?.base64Data) {
+          setResults((prev) => prev.map((r) => (r.key === keys[n] ? { key: keys[n], error: 'No image came back' } : r)));
+          setInFlight((k) => k - 1);
+          continue;
+        }
         const dataUrl = `data:${first.mimeType || 'image/png'};base64,${first.base64Data}`;
         // Straight into Base Library, filed under the character's own name, so a generated base
         // is usable from the Generate page's Main photo slot without a save step.
         // eslint-disable-next-line no-await-in-loop
-        const folder = await baseStore.ensureFolder(chars.find((c) => c.id === charId)?.name || 'Base');
+        const folder = await baseStore.ensureFolder(charName);
         // eslint-disable-next-line no-await-in-loop
         const stored = await baseStore.addItems([{ dataUrl, prompt: instruction.trim(), name: `base-${Date.now()}` }], folder.id);
         // The Base Library row id is kept on the result. Filing it into a different folder later is
         // then a folderId update on THAT row — a move, not a second copy of the same picture.
-        setResults((prev) => [{ dataUrl, itemId: stored?.[0]?.id || null }, ...prev]);
+        // Replace THIS run's placeholder rather than prepending, so results stay in the order the
+        // panel already showed them and a second run started meanwhile is not pushed around.
+        setResults((prev) => prev.map((r) => (r.key === keys[n] ? { key: keys[n], dataUrl, itemId: stored?.[0]?.id || null } : r)));
+        setInFlight((k) => k - 1);
         made += 1;
       }
       notify(made ? `${made} base image${made === 1 ? '' : 's'} saved to Base Library` : 'Nothing came back', made ? 'success' : 'error');
     } catch (err) {
-      notify(err?.message || 'Generation failed', 'error');
-    } finally {
-      setBusy(false);
+      // A failure KEEPS its tile and states why, instead of vanishing. Silent loss is the exact
+      // bug that made a 60-image Seedream run come back as 29 with nothing to point at, and the
+      // reason is what tells you whether to retry or fix the prompt (owner, 2026-08-08).
+      const why = err?.message || 'Generation failed';
+      setResults((prev) => prev.map((r) => (r.pending && keys.includes(r.key) ? { key: r.key, error: why } : r)));
+      setInFlight((k) => Math.max(0, k - (count - made)));
+      notify(why, 'error');
     }
   }, [charId, instruction, refs, thumbs, charStore, baseStore, chars, ratio, resolution, count, notify]);
 
   if (loading) return <div className="flex justify-center py-16"><Spinner size={28} /></div>;
 
-  const allPicked = results.length > 0 && picked.length === results.length;
+  const doneCount = results.filter((r) => !r.pending && !r.error).length;
+  const allPicked = doneCount > 0 && picked.length === doneCount;
 
   return (
     <div className="flex w-full flex-col gap-4 lg:flex-row lg:items-start">
@@ -298,13 +371,13 @@ export default function EddyBasePage() {
             ))}
           </span>
         </div>
-        <Btn className="w-full !py-3.5 !text-base" disabled={busy || !charId || !instruction.trim()} onClick={generate}>
-          {busy
-            ? 'Generating…'
-            : `Generate ${count} base image${count === 1 ? '' : 's'}${
-                nano2Cost(resolution, count) !== null ? ` · $${nano2Cost(resolution, count).toFixed(3)}` : ''}`}
+        {/* Never disabled by an in-flight run — starting another while one is going is the point. */}
+        <Btn className="w-full !py-3.5 !text-base" disabled={!charId || !instruction.trim()} onClick={generate}>
+          {`Generate ${count} base image${count === 1 ? '' : 's'}${
+            nano2Cost(resolution, count) !== null ? ` · $${nano2Cost(resolution, count).toFixed(3)}` : ''}`}
         </Btn>
         <p className="text-center text-xs text-zinc-600">
+          {inFlight > 0 && <span className="text-rose-300">{inFlight} generating — start another whenever · </span>}
           Nano Banana 2 (WaveSpeed) · {resolution}{refs.length ? ` · sends all ${Math.min(refs.length, MAX_REFS)} of her reference photos` : ''} · saved into Base Library under her name.
         </p>
       </Card>
@@ -320,7 +393,7 @@ export default function EddyBasePage() {
           {results.length > 0 && (
             <>
               <button type="button"
-                onClick={() => setPicked(allPicked ? [] : results.map((_, i) => i))}
+                onClick={() => setPicked(allPicked ? [] : results.map((_, i) => i).filter((i) => !results[i].pending && !results[i].error))}
                 className="rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 py-1.5 text-sm font-semibold text-zinc-400 hover:border-zinc-600 cursor-pointer">
                 {allPicked ? 'Clear' : `Select all ${results.length}`}
               </button>
@@ -337,9 +410,26 @@ export default function EddyBasePage() {
           </p>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {results.map((r, i) => (
-              // eslint-disable-next-line react/no-array-index-key -- append-only, never reordered
-              <button key={i} type="button"
+            {results.map((r, i) => (r.error ? (
+              <span key={r.key}
+                className="flex aspect-[3/4] flex-col items-center justify-center gap-2 rounded-lg border-2 border-amber-500/40 bg-amber-500/[0.06] p-3 text-center">
+                <span className="text-xs text-amber-200/90">{r.error}</span>
+                <button type="button" onClick={() => retryOne(r.key)}
+                  className="rounded-lg border border-amber-500/50 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/15 cursor-pointer">
+                  Retry
+                </button>
+                <button type="button" onClick={() => setResults((prev) => prev.filter((x) => x.key !== r.key))}
+                  className="text-[0.625rem] text-zinc-500 hover:text-zinc-300 cursor-pointer">Dismiss</button>
+              </span>
+            ) : r.pending ? (
+              // A reserved slot, so a click has visible effect immediately instead of the panel
+              // sitting empty for the length of the request.
+              <span key={r.key}
+                className="flex aspect-[3/4] animate-pulse items-center justify-center rounded-lg border-2 border-dashed border-white/[0.07] bg-white/[0.02] text-xs text-zinc-600">
+                Generating…
+              </span>
+            ) : (
+              <button key={r.key || i} type="button"
                 onClick={() => setPicked((p) => (p.includes(i) ? p.filter((x) => x !== i) : [...p, i]))}
                 className={cn('relative overflow-hidden rounded-lg border-2 bg-zinc-950 cursor-pointer',
                   picked.includes(i) ? 'border-rose-500' : 'border-transparent hover:border-zinc-600')}>
@@ -348,7 +438,7 @@ export default function EddyBasePage() {
                   <span className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-md bg-rose-500 text-[0.625rem] font-bold text-white">✓</span>
                 )}
               </button>
-            ))}
+            )))}
           </div>
         )}
       </Card>
