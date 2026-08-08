@@ -190,18 +190,31 @@ export default function EddyBasePage() {
           <h3 className="text-base font-semibold uppercase tracking-wider text-zinc-200">Character</h3>
           <p className="text-sm text-zinc-500">Her saved reference photos are sent as the identity to hold.</p>
         </div>
+          {/* Each character shows her own face BEFORE you pick her. Name-only chips meant choosing
+              between six people by reading labels, when the whole point is that you recognise her
+              on sight (owner, 2026-08-08). The tile is her BASE photo when one is marked, else her
+              earliest — the same image that will lead the reference payload. */}
         {chars.length === 0 ? (
           <p className="text-xs text-zinc-500">No characters yet — add one in the Character tab first.</p>
         ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {chars.map((c) => (
-              <button key={c.id} type="button" onClick={() => setCharId(c.id)}
-                className={cn('rounded-full border px-4 py-2 text-sm font-semibold transition cursor-pointer',
-                  charId === c.id ? 'border-rose-500 bg-rose-500/15 text-rose-300'
-                                  : 'border-white/[0.07] bg-white/[0.02] text-zinc-400 hover:border-zinc-600')}>
-                {c.name} <span className="text-zinc-600">{items.filter((i) => i.folderId === c.id).length}</span>
-              </button>
-            ))}
+          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+            {chars.map((c) => {
+              const mine = items.filter((i) => i.folderId === c.id);
+              const lead = mine.find((i) => i.role === 'base') || [...mine].sort((a, b) => a.createdAt - b.createdAt)[0];
+              return (
+                <button key={c.id} type="button" onClick={() => setCharId(c.id)}
+                  className={cn('overflow-hidden rounded-xl border-2 text-left transition cursor-pointer',
+                    charId === c.id ? 'border-rose-500' : 'border-white/[0.07] hover:border-zinc-600')}>
+                  {lead && thumbs[lead.id]
+                    ? <img src={thumbs[lead.id]} alt="" loading="lazy" className="aspect-[3/4] w-full object-cover bg-zinc-950" />
+                    : <span className="flex aspect-[3/4] w-full items-center justify-center bg-white/[0.03] text-xs text-zinc-600">No photo</span>}
+                  <span className={cn('block px-2 py-1.5 text-xs font-semibold',
+                    charId === c.id ? 'bg-rose-500/15 text-rose-300' : 'bg-white/[0.02] text-zinc-400')}>
+                    {c.name} <span className="text-zinc-600">{mine.length}</span>
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
         {refs.length > 0 && (
