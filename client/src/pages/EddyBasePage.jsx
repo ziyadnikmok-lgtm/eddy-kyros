@@ -3,6 +3,7 @@ import { Card, Btn, Spinner } from '../components/UI';
 import { useApp } from '../context/AppContext';
 import { seedream as seedreamApi } from '../services/api';
 import { createEddyCollection } from '../lib/eddyCollectionStore';
+import { createPageStore } from '../lib/pageStateStore';
 import { cn } from '../lib/utils';
 
 /**
@@ -19,6 +20,19 @@ import { cn } from '../lib/utils';
  * the same gallery row and the same tagging as every other generation — nothing about it is a
  * side channel.
  */
+/**
+ * The Generated panel survives leaving the page.
+ *
+ * It was component state alone, so switching tabs unmounted the page and every tile vanished —
+ * the pictures were safe in Base Library, but the panel you were working in emptied itself and
+ * read as data loss (owner, 2026-08-08). Only the Base Library row id is persisted, never the
+ * bytes: a 2K png is megabytes of base64 and a session's worth would blow the store, while the
+ * image itself already lives in that collection and can be read back from it.
+ */
+const RESULTS_KEY = 'base-results';
+const RESULTS_CAP = 60;
+const resultsStore = createPageStore('eddy-base-results-v1');
+
 const CHAR_DB = 'eddy-character';
 const BASE_DB = 'eddy-base';
 
@@ -107,7 +121,44 @@ export default function EddyBasePage() {
   // Monotonic, so placeholder keys from overlapping runs never collide.
   const runSeq = useRef(0);
   const [loading, setLoading] = useState(true);
-  const [results, setResults] = useState([]);   // [{ dataUrl }] this session
+  const [results, setResults] = useState([]);   // [{ key, dataUrl, itemId } | { key, error }]
+  // False until the saved panel has been read back, so the persist effect below cannot write an
+  // empty array over the stored one during the first render.
+  const hydrated = useRef(false);
+
+  // Restore the panel: read the saved rows, then pull each picture out of Base Library by id.
+  // A row whose image is gone (deleted from the Library) is dropped rather than shown blank.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const saved = await resultsStore.get(RESULTS_KEY, []);
+        const rows = await Promise.all((Array.isArray(saved) ? saved : []).map(async (r) => {
+          if (r.error) return r;
+          if (!r.itemId) return null;
+          try {
+            const dataUrl = await baseStore.getImage(r.itemId);
+            return dataUrl ? { ...r, dataUrl } : null;
+          } catch { return null; }
+        }));
+        if (alive) setResults(rows.filter(Boolean));
+      } catch { /* nothing saved yet */ }
+      if (alive) hydrated.current = true;
+    })();
+    return () => { alive = false; };
+  }, [baseStore]);
+
+  // Persist on every change, minus the bytes and minus anything still in flight — a pending tile
+  // restored after a reload would spin forever, because the request that owned it is long gone.
+  useEffect(() => {
+    if (!hydrated.current) return;
+    const light = results
+      .filter((r) => !r.pending)
+      .slice(0, RESULTS_CAP)
+      .map((r) => (r.error ? { key: r.key, error: r.error } : { key: r.key, itemId: r.itemId || null }))
+      .filter((r) => r.error || r.itemId);
+    resultsStore.set(RESULTS_KEY, light);
+  }, [results]);
 
   const retryOne = useCallback(async (key) => {
     const run = lastRun.current;

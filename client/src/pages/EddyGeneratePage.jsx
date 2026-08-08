@@ -757,7 +757,7 @@ const UNDRESS_TEXTS = [
  * scrolling hundreds of finished results to find either (owner, 2026-08-07). pickerFolders adds
  * the folder chips, which is what makes "pick HER face" a two-click job.
  */
-function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerDb, pickerLabel, pickerFolders }) {
+function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerDb, pickerLabel, pickerFolders, pickerRole }) {
   const { notify } = useApp();
   const store = useMemo(() => createEddyCollection(dbName), [dbName]);
   // The collection the Library button browses. Falls back to the page's general library so a slot
@@ -784,7 +784,11 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
     let alive = true;
     (async () => {
       try {
-        const items = await pickStore.listItems();
+        const all = await pickStore.listItems();
+        // pickerRole narrows the strip to ONE image per character — the one marked BASE. The face
+        // slot was listing every reference photo of every character, so the row was a wall of
+        // near-identical crops and her actual identity shot was buried (owner, 2026-08-08).
+        const items = pickerRole ? all.filter((i) => i.role === pickerRole) : all;
         const rows = await Promise.all(
           [...items].sort((a2, b2) => (b2.createdAt || 0) - (a2.createdAt || 0)).slice(0, 12)
             .map(async (it) => ({ id: it.id, src: it.url || await pickStore.getImage(it.id) })),
@@ -794,7 +798,7 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
     })();
     return () => { alive = false; };
     // showLibrary is a dep so picking/adding in the picker refreshes the strip on close.
-  }, [pickStore, pickerDb, showLibrary]);
+  }, [pickStore, pickerDb, pickerRole, showLibrary]);
   const [library, setLibrary] = useState([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   // The gallery runs to thousands of images; mounting every <img> at once janks the open. Render a
@@ -890,7 +894,10 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
       if (pickerFolders) {
         try { setPickFolders(await pickStore.listFolders()); } catch { setPickFolders([]); }
       }
-      const items = await pickStore.listItems();
+      const all = await pickStore.listItems();
+      // Same narrowing as the strip, so opening the picker cannot show a different set to the row
+      // that sits under the slot.
+      const items = pickerRole ? all.filter((i) => i.role === pickerRole) : all;
       const local = await Promise.all(items.map(async (it) => ({
         id: `eddy:${it.id}`, folderId: it.folderId || null, src: it.url || await pickStore.getImage(it.id),
       })));
@@ -4404,6 +4411,7 @@ export default function EddyGeneratePage() {
             pickerDb="eddy-character"
             pickerLabel="Character"
             pickerFolders
+            pickerRole="base"
           />
         </div>
       </Card>
