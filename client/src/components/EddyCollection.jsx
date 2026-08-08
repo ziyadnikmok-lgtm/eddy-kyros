@@ -7,7 +7,7 @@ import { autoBlurFace } from '../lib/autoBlurFace';
 import BlurByHand from './BlurByHand';
 import { eddyVision, gallery as galleryApi, video as videoApi } from '../services/api';
 import { cn } from '../lib/utils';
-import { downloadBlob } from '../lib/stripMetadata';
+import { downloadBlob, stripMetadata, stripEnabled } from '../lib/stripMetadata';
 import { isPosePromptBroken, hasPoseView, readPoseView, mergePoseView, poseSentence } from '../lib/poseText';
 
 /**
@@ -908,10 +908,32 @@ export default function EddyCollection({
       if (!m) continue;   // a prompt-only card with no picture — nothing to save
       const ext = (m[1].split('/')[1] || 'png').replace('jpeg', 'jpg');
       const nm = String(it.name || it.prompt || it.id).replace(/[^a-z0-9._-]+/gi, '_').replace(/^[_.-]+|[_.-]+$/g, '').slice(0, 50) || 'image';
-      files.push({ fileName: `${String(idx + 1).padStart(3, '0')}_${nm}.${ext}`, b64: m[2] });
+      files.push({ fileName: `${String(idx + 1).padStart(3, '0')}_${nm}.${ext}`, b64: m[2], mime: m[1] });
     }
     if (!files.length) { notify('No images to save — these cards have no picture', 'error'); return; }
     const bytesOf = (b64) => { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i += 1) a[i] = bin.charCodeAt(i); return a; };
+
+    /**
+     * Bytes with the metadata stripped and a fresh capture time stamped — the SAME treatment the
+     * browser download path gets from downloadBlob.
+     *
+     * The Electron branches below handed `bytesOf(f.b64)` straight to disk, so the one-click bulk
+     * export — the path actually used on the desktop app — wrote files that still carried their
+     * C2PA provenance, generator name and prompt, while the per-card download beside it wrote
+     * clean ones (owner, 2026-08-08). Same button, same expectation, opposite result.
+     *
+     * Falls back to the raw bytes if stripping fails or is switched off: an unstripped file is
+     * better than no file, and stripEnabled() is a deliberate user setting.
+     */
+    const cleanBytes = async (f) => {
+      if (!stripEnabled()) return bytesOf(f.b64);
+      try {
+        const res = await stripMetadata(new Blob([bytesOf(f.b64)], { type: f.mime || 'image/png' }));
+        return new Uint8Array(await res.blob.arrayBuffer());
+      } catch {
+        return bytesOf(f.b64);
+      }
+    };
 
     const folderName = `${String(title || 'eddy').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-images`;
 
@@ -921,7 +943,8 @@ export default function EddyCollection({
       if (!directory) { notify('Could not create a folder in Downloads', 'error'); return; }
       let n = 0;
       for (const f of files) {
-        try { await window.electronAPI.saveFileToFolder({ directory, fileName: f.fileName, data: bytesOf(f.b64) }); n += 1; }
+        // eslint-disable-next-line no-await-in-loop -- sequential writes, and cleanBytes is async
+        try { await window.electronAPI.saveFileToFolder({ directory, fileName: f.fileName, data: await cleanBytes(f) }); n += 1; }
         catch { /* skip a bad one, keep the rest */ }
       }
       notify(`Saved ${n} image${n === 1 ? '' : 's'} to Downloads/${folderName} ✨`, 'success');
@@ -933,14 +956,15 @@ export default function EddyCollection({
       if (!directory) return;
       let n = 0;
       for (const f of files) {
-        try { await window.electronAPI.saveFileToFolder({ directory, fileName: f.fileName, data: bytesOf(f.b64) }); n += 1; }
+        // eslint-disable-next-line no-await-in-loop -- sequential writes, and cleanBytes is async
+        try { await window.electronAPI.saveFileToFolder({ directory, fileName: f.fileName, data: await cleanBytes(f) }); n += 1; }
         catch { /* skip a bad one, keep the rest */ }
       }
       notify(`Saved ${n} image${n === 1 ? '' : 's'} to the folder ✨`, 'success');
     } else {
       let n = 0;
       for (const f of files) {
-        await downloadBlob(new Blob([bytesOf(f.b64)]), f.fileName);
+        await downloadBlob(new Blob([bytesOf(f.b64)], { type: f.mime || 'image/png' }), f.fileName);
         await new Promise((r) => setTimeout(r, 200));   // browsers drop rapid-fire downloads
         n += 1;
       }
