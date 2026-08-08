@@ -65,6 +65,41 @@ export default function EddyBasePage() {
   const [loading, setLoading] = useState(true);
   const [results, setResults] = useState([]);   // [{ dataUrl }] this session
 
+  const [picked, setPicked] = useState([]);        // result indexes ticked
+  const [folderPick, setFolderPick] = useState(false);
+  const [baseFolders, setBaseFolders] = useState([]);
+
+  const openFolderPick = useCallback(async () => {
+    try { setBaseFolders(await baseStore.listFolders()); } catch { setBaseFolders([]); }
+    setFolderPick(true);
+  }, [baseStore]);
+
+  /**
+   * Move the ticked results into a Base Library folder.
+   *
+   * A MOVE: every result was already filed under the character's name when it was generated, so
+   * this re-points the existing row's folderId rather than adding a second copy — the same rule
+   * the Generate page's Send-to-Library follows, and for the same reason.
+   *
+   * Results with no itemId (their Library write failed) are skipped and reported, not silently
+   * counted as moved.
+   */
+  const fileTo = useCallback(async (folderId) => {
+    const rows = (picked.length ? picked : results.map((_, i) => i)).map((i) => results[i]).filter(Boolean);
+    const movable = rows.filter((r) => r.itemId);
+    if (!movable.length) { notify('Those are not in the Library yet', 'error'); return; }
+    try {
+      for (const r of movable) {
+        // eslint-disable-next-line no-await-in-loop -- serialized store, small writes
+        await baseStore.updateItem(r.itemId, { folderId });
+      }
+    } catch (err) { notify(err?.message || 'Could not move those', 'error'); return; }
+    setFolderPick(false);
+    setPicked([]);
+    const skipped = rows.length - movable.length;
+    notify(`${movable.length} moved${skipped ? ` · ${skipped} not in the Library` : ''}`, skipped ? 'error' : 'success');
+  }, [picked, results, baseStore, notify]);
+
   const refresh = useCallback(async () => {
     const [f, i] = await Promise.all([charStore.listFolders(), charStore.listItems()]);
     setChars(f);
@@ -128,8 +163,10 @@ export default function EddyBasePage() {
         // eslint-disable-next-line no-await-in-loop
         const folder = await baseStore.ensureFolder(chars.find((c) => c.id === charId)?.name || 'Base');
         // eslint-disable-next-line no-await-in-loop
-        await baseStore.addItems([{ dataUrl, prompt: instruction.trim(), name: `base-${Date.now()}` }], folder.id);
-        setResults((prev) => [{ dataUrl }, ...prev]);
+        const stored = await baseStore.addItems([{ dataUrl, prompt: instruction.trim(), name: `base-${Date.now()}` }], folder.id);
+        // The Base Library row id is kept on the result. Filing it into a different folder later is
+        // then a folderId update on THAT row — a move, not a second copy of the same picture.
+        setResults((prev) => [{ dataUrl, itemId: stored?.[0]?.id || null }, ...prev]);
         made += 1;
       }
       notify(made ? `${made} base image${made === 1 ? '' : 's'} saved to Base Library` : 'Nothing came back', made ? 'success' : 'error');
@@ -142,8 +179,12 @@ export default function EddyBasePage() {
 
   if (loading) return <div className="flex justify-center py-16"><Spinner size={28} /></div>;
 
+  const allPicked = results.length > 0 && picked.length === results.length;
+
   return (
-    <div className="w-full space-y-4">
+    <div className="flex w-full flex-col gap-4 lg:flex-row lg:items-start">
+      {/* LEFT — set it up. Same split as the Generate page so the two read as one app. */}
+      <div className="w-full space-y-4 lg:max-w-2xl">
       <Card className="space-y-3 p-4">
         <div>
           <h3 className="text-sm font-semibold uppercase tracking-wider text-zinc-300">Character</h3>
@@ -232,20 +273,87 @@ export default function EddyBasePage() {
           {busy ? 'Generating…' : `Generate ${count} base image${count === 1 ? '' : 's'}`}
         </Btn>
         <p className="text-center text-[0.625rem] text-zinc-600">
-          Nano Banana 2 (WaveSpeed) · sends all {Math.min(refs.length, MAX_REFS)} of her reference photos · saved into Base Library under her name.
+          Nano Banana 2 (WaveSpeed){refs.length ? ` · sends all ${Math.min(refs.length, MAX_REFS)} of her reference photos` : ''} · saved into Base Library under her name.
         </p>
       </Card>
 
-      {results.length > 0 && (
-        <Card className="space-y-2 p-4">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-zinc-300">This session</h3>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      </div>
+
+      {/* RIGHT — what came back, and where to file it. */}
+      <Card className="w-full flex-1 space-y-3 p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-zinc-300">
+            Generated {results.length > 0 && <span className="text-rose-400">· {results.length}</span>}
+          </h3>
+          {results.length > 0 && (
+            <>
+              <button type="button"
+                onClick={() => setPicked(allPicked ? [] : results.map((_, i) => i))}
+                className="rounded-lg border border-white/[0.07] bg-white/[0.02] px-2.5 py-1 text-[0.625rem] font-semibold text-zinc-400 hover:border-zinc-600 cursor-pointer">
+                {allPicked ? 'Clear' : `Select all ${results.length}`}
+              </button>
+              <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs ml-auto" onClick={openFolderPick}>
+                Send {picked.length || results.length} to a folder
+              </Btn>
+            </>
+          )}
+        </div>
+
+        {results.length === 0 ? (
+          <p className="py-16 text-center text-xs text-zinc-600">
+            Nothing yet — generated base photos land here, and are already saved to Base Library.
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {results.map((r, i) => (
-              // eslint-disable-next-line react/no-array-index-key -- these are append-only and never reordered
-              <img key={i} src={r.dataUrl} alt="" className="w-full rounded-lg bg-zinc-950 object-cover" />
+              // eslint-disable-next-line react/no-array-index-key -- append-only, never reordered
+              <button key={i} type="button"
+                onClick={() => setPicked((p) => (p.includes(i) ? p.filter((x) => x !== i) : [...p, i]))}
+                className={cn('relative overflow-hidden rounded-lg border-2 bg-zinc-950 cursor-pointer',
+                  picked.includes(i) ? 'border-rose-500' : 'border-transparent hover:border-zinc-600')}>
+                <img src={r.dataUrl} alt="" className="w-full object-cover" />
+                {picked.includes(i) && (
+                  <span className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-md bg-rose-500 text-[0.625rem] font-bold text-white">✓</span>
+                )}
+              </button>
             ))}
           </div>
-        </Card>
+        )}
+      </Card>
+
+      {/* FOLDER PICKER — the same Base Library folders the Base Library tab and the Main photo
+          slot read, so a folder made here shows up in both. */}
+      {folderPick && (
+        <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/70 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setFolderPick(false); }}>
+          <div className="w-full max-w-sm space-y-2 rounded-2xl border border-white/[0.07] bg-[#101017] p-4">
+            <h3 className="text-sm font-semibold text-zinc-200">
+              Move {picked.length || results.length} image{(picked.length || results.length) === 1 ? '' : 's'} to…
+            </h3>
+            <p className="text-xs text-zinc-500">They are already in Base Library — this just changes the folder.</p>
+            <div className="max-h-64 space-y-1 overflow-y-auto">
+              {baseFolders.map((f) => (
+                <button key={f.id} type="button" onClick={() => fileTo(f.id)}
+                  className="w-full rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 py-2 text-left text-xs text-zinc-300 hover:border-rose-500/60 cursor-pointer">
+                  {f.name}
+                </button>
+              ))}
+              {!baseFolders.length && <p className="px-1 py-2 text-xs text-zinc-500">No folders yet — make one below.</p>}
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Btn variant="secondary" className="flex-1 !py-1.5 !text-xs"
+                onClick={async () => {
+                  const name = (window.prompt('New Base Library folder name:') || '').trim();
+                  if (!name) return;
+                  try { const f = await baseStore.ensureFolder(name); await fileTo(f.id); }
+                  catch (err) { notify(err?.message || 'Could not make that folder', 'error'); }
+                }}>
+                + New folder
+              </Btn>
+              <Btn variant="ghost" className="!py-1.5 !px-3 !text-xs" onClick={() => setFolderPick(false)}>Cancel</Btn>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
