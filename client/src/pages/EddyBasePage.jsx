@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Card, Btn, Spinner } from '../components/UI';
 import { useApp } from '../context/AppContext';
-import { nanoBypass as nanoBypassApi } from '../services/api';
+import { seedream as seedreamApi } from '../services/api';
 import { createEddyCollection } from '../lib/eddyCollectionStore';
 import { cn } from '../lib/utils';
 
@@ -9,18 +9,15 @@ import { cn } from '../lib/utils';
  * Base — make a NEW base photo of a character you already have.
  *
  * The other Eddy pages all start from a base image you supply. This is where that image comes
- * from: pick a saved character, describe the shot, and her own reference photos are sent to Gemini
- * as the identity to hold. The result lands in Base Library, which is the only collection the
+ * from: pick a saved character, describe the shot, and her own reference photos are sent as the
+ * identity to hold. The result lands in Base Library, which is the only collection the
  * Generate page's "Main photo" slot ever needs to be pointed at.
  *
- * WHY GEMINI AND NOT SEEDREAM: this is an identity-preserving generation from reference photos
- * with no pose diagram and no outfit reference — exactly the shape Nano Bypass's character-
- * reference path is built for, and it is markedly cheaper per image than a Seedream edit.
- *
- * promptMode:'raw' is deliberate. The route's default wraps a caller's prompt in "keep the
- * original subject, POSE, background, lighting and composition", which is the opposite of asking
- * for a new shot — the same conflict that made Gemini generation look broken on the Eddy page
- * (owner, 2026-08-06). This page states its own identity rule and sends it verbatim.
+ * ENGINE: Nano Banana 2 edit on WaveSpeed (owner's choice, 2026-08-07 — endpoint and payload
+ * from WaveSpeed's own published example, not guessed). It goes through the shared
+ * /api/seedream/edit route with model:'nano2', so a base image gets the same imageStore write,
+ * the same gallery row and the same tagging as every other generation — nothing about it is a
+ * side channel.
  */
 const CHAR_DB = 'eddy-character';
 const BASE_DB = 'eddy-base';
@@ -32,7 +29,7 @@ const RATIOS = ['3:4', '4:5', '1:1', '9:16', '16:9'];
  *
  * Written here rather than left to the user because "make her on a balcony" with no identity
  * clause returns a stranger — the references are just pictures unless the prompt says what they
- * are for. Kept short: the whole prompt goes to Gemini verbatim.
+ * are for. Kept short: the whole prompt is sent verbatim.
  */
 function buildBasePrompt(instruction, refCount) {
   const refs = refCount === 1 ? 'The reference image shows' : `The ${refCount} reference images show`;
@@ -74,12 +71,19 @@ export default function EddyBasePage() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // Her reference photos, oldest first — the character page treats the earliest as the base face,
-  // so this keeps that same ordering when the references are handed to Gemini.
-  const refs = useMemo(
-    () => items.filter((i) => i.folderId === charId).sort((a, b) => a.createdAt - b.createdAt),
-    [items, charId],
-  );
+  /**
+   * Her references, with the one marked BASE in the Character tab FIRST.
+   *
+   * Order is not cosmetic: the model treats the leading image as the primary subject, and the
+   * Character tab already lets you mark which photo is the base face. Honouring that mark here is
+   * what makes "select the character and it uses the right face" true — sorting purely by date
+   * would hand it whichever photo happened to be uploaded first (owner, 2026-08-07).
+   */
+  const refs = useMemo(() => {
+    const mine = items.filter((i) => i.folderId === charId);
+    const rank = (i) => (i.role === 'base' ? 0 : i.role === 'body' ? 1 : 2);
+    return mine.sort((a, b) => rank(a) - rank(b) || a.createdAt - b.createdAt);
+  }, [items, charId]);
 
   const generate = useCallback(async () => {
     if (!charId) { notify('Pick a character first', 'error'); return; }
@@ -99,19 +103,19 @@ export default function EddyBasePage() {
     let made = 0;
     try {
       for (let n = 0; n < count; n += 1) {
-        // eslint-disable-next-line no-await-in-loop -- serial on purpose: Vertex rate-limits a
-        // parallel fan-out and this page is never asked for more than a handful at a time.
-        const d = await nanoBypassApi.edit({
+        // eslint-disable-next-line no-await-in-loop -- serial on purpose: each call re-uploads and
+        // polls, and this page is never asked for more than a handful at a time.
+        const d = await seedreamApi.edit({
           images: payload,
           prompt,
-          model: 'flash',
+          model: 'nano2',
           aspectRatio: ratio,
-          imageSize: '2K',
-          promptMode: 'raw',
+          resolution: '2K',
+          tags: ['eddy', 'base'],
         });
-        const b64 = d?.base64Data;
-        if (!b64) continue;
-        const dataUrl = `data:${d.mimeType || 'image/png'};base64,${b64}`;
+        const first = (d?.images || [])[0];
+        if (!first?.base64Data) continue;
+        const dataUrl = `data:${first.mimeType || 'image/png'};base64,${first.base64Data}`;
         // Straight into Base Library, filed under the character's own name, so a generated base
         // is usable from the Generate page's Main photo slot without a save step.
         // eslint-disable-next-line no-await-in-loop
@@ -155,8 +159,14 @@ export default function EddyBasePage() {
         {refs.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {refs.slice(0, 4).map((r) => (
-              <img key={r.id} src={thumbs[r.id]} alt="" loading="lazy"
-                className="h-16 w-16 rounded-md object-cover bg-zinc-950" />
+              <span key={r.id} className="relative">
+                <img src={thumbs[r.id]} alt="" loading="lazy"
+                  className="h-16 w-16 rounded-md object-cover bg-zinc-950" />
+                {/* Which photo is leading — set in the Character tab, honoured here. */}
+                {r.role === 'base' && (
+                  <span className="absolute left-0.5 top-0.5 rounded bg-rose-500 px-1 text-[0.5rem] font-bold text-white">BASE</span>
+                )}
+              </span>
             ))}
             {refs.length > 4 && (
               <span className="flex h-16 items-center px-2 text-[0.625rem] text-zinc-500">

@@ -529,6 +529,12 @@ async function downloadVideo(videoUrl, destDir) {
 // $0.003 per extra image), so switching provider does not change what a run costs.
 const SEEDREAM5_MODEL_ID = 'bytedance/seedream-v5.0-pro/edit';
 
+// Nano Banana 2 edit, on WaveSpeed. Model id and request shape taken from WaveSpeed's own
+// published example for this endpoint (owner supplied it, 2026-08-07) — not guessed.
+// NOTE it takes image URLs, not base64, which is why it reuses the same upload path and
+// content-keyed cache Seedream's edit uses rather than posting bytes.
+const NANO2_MODEL_ID = 'google/nano-banana-2/edit';
+
 // Every combo in a batch re-sends the same character photos, so without this a 30-image run
 // uploads them 30 times — re-encoding each with sharp and pushing it over the wire again.
 // Keyed by content, so identical bytes upload once and every later combo reuses the URL.
@@ -564,6 +570,99 @@ function _rememberUpload(hash, url) {
  * @param {{aspectRatio?: string, resolution?: string}} opts
  * @returns {{ images: Array<{base64Data: string, mimeType: string}>, modelUsed: string }}
  */
+/**
+ * Nano Banana 2 edit (WaveSpeed).
+ *
+ * Same shape as generateSeedream5Edit and deliberately so: identical upload path, identical
+ * content-keyed cache, identical poll. The ONLY differences are the endpoint, the two search
+ * flags this model accepts, and png output. Sharing the upload cache matters — a Base run and a
+ * Seedream run over the same character photos upload them once between them.
+ *
+ * `enable_web_search` / `enable_image_search` are sent explicitly false. They default on for some
+ * WaveSpeed models, and a base photo that quietly pulled in a web image would break the one thing
+ * this call exists to guarantee: that the person who comes back is the person in the references.
+ */
+async function generateNanoBanana2Edit(imageInputs, prompt, opts = {}) {
+  if (!Array.isArray(imageInputs) || !imageInputs.length) {
+    throw new AppError('At least one source image is required', 400, 'VALIDATION_ERROR');
+  }
+  if (imageInputs.length > 10) throw new AppError('Nano Banana 2 takes at most 10 images', 400, 'VALIDATION_ERROR');
+
+  const sharp = require('sharp');
+  const key = getApiKey();
+  const usedHashes = [];
+
+  const uploadedUrls = await Promise.all(imageInputs.map(async ({ base64 }) => {
+    let raw = base64;
+    const m = raw.match(/^data:[^;]+;base64,(.+)$/);
+    if (m) raw = m[1];
+    const hash = crypto.createHash('sha256').update(raw).digest('hex');
+    usedHashes.push(hash);
+    const cached = _cachedUpload(hash);
+    if (cached) return cached;
+    const pending = (async () => {
+      const jpegBuf = await sharp(Buffer.from(raw, 'base64')).jpeg({ quality: 95 }).toBuffer();
+      const tempPath = path.join(os.tmpdir(), `ws-nb2-${crypto.randomUUID()}.jpg`);
+      try {
+        fs.writeFileSync(tempPath, jpegBuf);
+        return await uploadFile(tempPath);
+      } finally {
+        try { fs.unlinkSync(tempPath); } catch {}
+      }
+    })();
+    _rememberUpload(hash, pending);
+    try {
+      return await pending;
+    } catch (err) {
+      _forgetUploads([hash]);
+      throw err;
+    }
+  }));
+
+  const resolution = String(opts.resolution || '1K').toLowerCase() === '2k' ? '2k' : '1k';
+  const body = {
+    prompt: prompt.trim(),
+    images: uploadedUrls,
+    aspect_ratio: opts.aspectRatio || '1:1',
+    resolution,
+    enable_web_search: false,
+    enable_image_search: false,
+    output_format: 'png',
+  };
+
+  log.info('nano2_edit_start', { imageCount: uploadedUrls.length, promptLen: prompt.length, resolution });
+
+  let resp;
+  try {
+    resp = await _fetchWithRetry(`${BASE_URL}/${NANO2_MODEL_ID}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (fetchErr) {
+    const cause = fetchErr?.cause?.message || fetchErr?.cause?.code || 'unknown';
+    throw new AppError(`Nano Banana 2 connection failed: ${String(cause).slice(0, 200)}`, 502, 'WAVESPEED_ERROR');
+  }
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    log.error('nano2_api_error', { status: resp.status, body: text.slice(0, 500) });
+    // Same reasoning as Seedream's: a 4xx here usually means the media URLs went stale, so stop
+    // handing them to later calls.
+    if (resp.status >= 400 && resp.status < 500 && resp.status !== 429) _forgetUploads(usedHashes);
+    if (resp.status === 401) throw new AppError('WaveSpeed auth failed - check your key', 401, 'INVALID_API_KEY');
+    if (resp.status === 429) throw new AppError('WaveSpeed rate limited', 429, 'RATE_LIMITED');
+    throw new AppError(`Nano Banana 2 error (${resp.status}): ${text.slice(0, 300)}`, 502, 'WAVESPEED_ERROR');
+  }
+
+  const json = await resp.json();
+  const data = json?.data || json;
+  if (data?.status === 'completed') return await _extractSeedDreamResults(data);
+  if (!data?.id) throw new AppError('Nano Banana 2 returned no task ID', 502, 'WAVESPEED_ERROR');
+  return await _pollSeedDreamResult(key, data.id);
+}
+
 async function generateSeedream5Edit(imageInputs, prompt, opts = {}) {
   if (!prompt?.trim()) throw new AppError('A prompt is required', 400, 'VALIDATION_ERROR');
   if (!Array.isArray(imageInputs) || imageInputs.length === 0) {
@@ -659,7 +758,9 @@ module.exports = {
   generateImg2Img,
   generateSeedDreamEdit,
   generateSeedream5Edit,
+  generateNanoBanana2Edit,
   SEEDREAM5_MODEL_ID,
+  NANO2_MODEL_ID,
   MODEL_ENDPOINTS,
   IMAGE_MODEL_ID,
   IMG2IMG_MODEL_ID,
