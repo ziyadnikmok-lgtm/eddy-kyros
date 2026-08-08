@@ -954,12 +954,26 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
       {value ? (
         <img src={value} alt="" className="aspect-[3/4] w-full rounded-lg object-cover bg-zinc-950" />
       ) : (
-        <label className="flex aspect-[3/4] cursor-pointer flex-col items-center justify-center rounded-lg bg-white/[0.02] px-3 text-center transition hover:bg-white/[0.05]">
-          <span className="text-xs text-zinc-500">Drop, paste or click</span>
-          <span className="mt-1 text-[0.625rem] text-zinc-600">{hint}</span>
-          <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
-            onChange={(e) => { take(e.target.files?.[0]); e.target.value = ''; }} />
-        </label>
+        <div className="flex aspect-[3/4] flex-col items-center justify-center gap-3 rounded-lg bg-white/[0.02] px-3 text-center">
+          {/* The collection comes FIRST on an empty slot: picking a saved base (or her face) is
+              the normal way to fill this, and dropping a file is the exception. Before this the
+              only affordance was a file input, so the Base Library you just generated into was
+              invisible from the one place it is meant to be used (owner, 2026-08-07). */}
+          {pickerDb && (
+            <button type="button" onClick={openLibrary}
+              className="rounded-lg border border-rose-500/60 bg-rose-500/10 px-4 py-2 text-xs font-semibold text-rose-300 transition hover:bg-rose-500/20 cursor-pointer">
+              Select from {pickerLabel || 'Library'}
+            </button>
+          )}
+          <label className="cursor-pointer">
+            <span className="text-[0.6875rem] text-zinc-500 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-300">
+              or drop, paste or click to upload
+            </span>
+            <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+              onChange={(e) => { take(e.target.files?.[0]); e.target.value = ''; }} />
+          </label>
+          <span className="text-[0.625rem] text-zinc-600">{hint}</span>
+        </div>
       )}
 
       {/* The picker used to be a 56px-thumbnail grid crammed into this slot at 180px tall — far too
@@ -1061,24 +1075,6 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
             ))}
           </div>
         </>
-      )}
-      {saved.length > 0 && (
-        <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1">
-          {saved.map((sv) => (
-            <span key={sv.id} className="group relative shrink-0">
-              <button onClick={() => onChange(sv.dataUrl)}
-                className={cn('block h-12 w-12 overflow-hidden rounded-md border transition cursor-pointer',
-                  value === sv.dataUrl ? 'border-rose-500 ring-2 ring-rose-500/40' : 'border-zinc-800/60 hover:border-zinc-600')}>
-                <img src={sv.dataUrl} alt="" className="h-full w-full object-cover bg-zinc-950" />
-              </button>
-              <button
-                onClick={async () => { await store.removeItem(sv.id); await refresh(); }}
-                title="Forget this one"
-                className="absolute -right-1 -top-1 hidden h-4 w-4 items-center justify-center rounded-full border border-zinc-600 bg-zinc-900 text-[0.5625rem] text-zinc-400 hover:text-red-400 group-hover:flex cursor-pointer"
-              >×</button>
-            </span>
-          ))}
-        </div>
       )}
     </div>
   );

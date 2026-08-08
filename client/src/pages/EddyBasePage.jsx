@@ -22,10 +22,12 @@ import { cn } from '../lib/utils';
 const CHAR_DB = 'eddy-character';
 const BASE_DB = 'eddy-base';
 
-// Base photos are always 3:4 — that is the frame every downstream Eddy flow expects, and a base
-// shot at another ratio has to be re-cropped before it is usable. Fixed rather than offered
-// (owner, 2026-08-07).
-const RATIO = '3:4';
+// 3:4 leads because it is the frame every downstream Eddy flow expects, but the rest are offered:
+// a base shot is still a normal image and there is no reason to force a crop (owner, 2026-08-07).
+const RATIOS = ['3:4', '4:5', '1:1', '9:16', '16:9', '2:3', '3:2'];
+const RESOLUTIONS = ['1K', '2K'];
+// The model's own limit, enforced server-side too.
+const MAX_REFS = 10;
 
 /**
  * The identity rule, prepended to whatever the user writes.
@@ -56,6 +58,8 @@ export default function EddyBasePage() {
   const [thumbs, setThumbs] = useState({});
   const [charId, setCharId] = useState('');
   const [instruction, setInstruction] = useState('');
+  const [ratio, setRatio] = useState('3:4');
+  const [resolution, setResolution] = useState('2K');
   const [count, setCount] = useState(1);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -90,10 +94,11 @@ export default function EddyBasePage() {
   const generate = useCallback(async () => {
     if (!charId) { notify('Pick a character first', 'error'); return; }
     if (!instruction.trim()) { notify('Describe the shot you want', 'error'); return; }
-    // Sent as identity references, capped at 4: past that the payload gets large for no gain, and
-    // the route rejects the whole request over its 60MB total.
+    // EVERY photo she has is sent, not a sample: more references hold identity better, and the
+    // owner adds them precisely so they get used (2026-08-07). Capped at 10 only because that is
+    // the model's own ceiling — the route rejects an 11th outright.
     const payload = [];
-    for (const r of refs.slice(0, 4)) {
+    for (const r of refs.slice(0, MAX_REFS)) {
       const dataUrl = thumbs[r.id] || await charStore.getImage(r.id);
       const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || '');
       if (m) payload.push({ base64: m[2], mimeType: m[1] });
@@ -111,8 +116,8 @@ export default function EddyBasePage() {
           images: payload,
           prompt,
           model: 'nano2',
-          aspectRatio: RATIO,
-          resolution: '2K',
+          aspectRatio: ratio,
+          resolution,
           tags: ['eddy', 'base'],
         });
         const first = (d?.images || [])[0];
@@ -133,7 +138,7 @@ export default function EddyBasePage() {
     } finally {
       setBusy(false);
     }
-  }, [charId, instruction, refs, thumbs, charStore, baseStore, chars, count, notify]);
+  }, [charId, instruction, refs, thumbs, charStore, baseStore, chars, ratio, resolution, count, notify]);
 
   if (loading) return <div className="flex justify-center py-16"><Spinner size={28} /></div>;
 
@@ -160,7 +165,7 @@ export default function EddyBasePage() {
         )}
         {refs.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
-            {refs.slice(0, 4).map((r) => (
+            {refs.slice(0, MAX_REFS).map((r) => (
               <span key={r.id} className="relative">
                 <img src={thumbs[r.id]} alt="" loading="lazy"
                   className="h-16 w-16 rounded-md object-cover bg-zinc-950" />
@@ -170,9 +175,9 @@ export default function EddyBasePage() {
                 )}
               </span>
             ))}
-            {refs.length > 4 && (
+            {refs.length > MAX_REFS && (
               <span className="flex h-16 items-center px-2 text-[0.625rem] text-zinc-500">
-                +{refs.length - 4} not sent
+                +{refs.length - MAX_REFS} over the {MAX_REFS}-image limit
               </span>
             )}
           </div>
@@ -189,6 +194,28 @@ export default function EddyBasePage() {
           className="w-full rounded-xl border border-white/[0.07] bg-black/30 p-3 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-rose-500/60 focus:outline-none"
         />
         <div className="flex flex-wrap items-center gap-3">
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[0.6875rem] uppercase tracking-wider text-zinc-500">Ratio</span>
+            {RATIOS.map((r) => (
+              <button key={r} type="button" onClick={() => setRatio(r)}
+                className={cn('rounded-lg border px-2 py-1 text-[0.625rem] font-semibold cursor-pointer',
+                  ratio === r ? 'border-rose-500 bg-rose-500/15 text-rose-300'
+                              : 'border-white/[0.07] bg-white/[0.02] text-zinc-500 hover:border-zinc-600')}>
+                {r}
+              </button>
+            ))}
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="text-[0.6875rem] uppercase tracking-wider text-zinc-500">Res</span>
+            {RESOLUTIONS.map((r) => (
+              <button key={r} type="button" onClick={() => setResolution(r)}
+                className={cn('rounded-lg border px-2 py-1 text-[0.625rem] font-semibold cursor-pointer',
+                  resolution === r ? 'border-rose-500 bg-rose-500/15 text-rose-300'
+                                   : 'border-white/[0.07] bg-white/[0.02] text-zinc-500 hover:border-zinc-600')}>
+                {r}
+              </button>
+            ))}
+          </span>
           <span className="flex items-center gap-1.5">
             <span className="text-[0.6875rem] uppercase tracking-wider text-zinc-500">How many</span>
             {[1, 2, 4].map((n) => (
@@ -205,7 +232,7 @@ export default function EddyBasePage() {
           {busy ? 'Generating…' : `Generate ${count} base image${count === 1 ? '' : 's'}`}
         </Btn>
         <p className="text-center text-[0.625rem] text-zinc-600">
-          3:4 · Nano Banana 2 · saved straight into Base Library, filed under her name.
+          Nano Banana 2 (WaveSpeed) · sends all {Math.min(refs.length, MAX_REFS)} of her reference photos · saved into Base Library under her name.
         </p>
       </Card>
 
