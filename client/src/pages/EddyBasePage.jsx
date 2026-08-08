@@ -184,11 +184,11 @@ export default function EddyBasePage() {
   return (
     <div className="flex w-full flex-col gap-4 lg:flex-row lg:items-start">
       {/* LEFT — set it up. Same split as the Generate page so the two read as one app. */}
-      <div className="w-full space-y-4 lg:max-w-2xl">
-      <Card className="space-y-3 p-4">
+      <div className="w-full space-y-4 lg:w-[46rem] lg:shrink-0">
+      <Card className="space-y-4 p-6">
         <div>
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-zinc-300">Character</h3>
-          <p className="text-[0.6875rem] text-zinc-500">Her saved reference photos are sent as the identity to hold.</p>
+          <h3 className="text-base font-semibold uppercase tracking-wider text-zinc-200">Character</h3>
+          <p className="text-sm text-zinc-500">Her saved reference photos are sent as the identity to hold.</p>
         </div>
         {chars.length === 0 ? (
           <p className="text-xs text-zinc-500">No characters yet — add one in the Character tab first.</p>
@@ -196,7 +196,7 @@ export default function EddyBasePage() {
           <div className="flex flex-wrap gap-1.5">
             {chars.map((c) => (
               <button key={c.id} type="button" onClick={() => setCharId(c.id)}
-                className={cn('rounded-full border px-3 py-1 text-xs font-semibold transition cursor-pointer',
+                className={cn('rounded-full border px-4 py-2 text-sm font-semibold transition cursor-pointer',
                   charId === c.id ? 'border-rose-500 bg-rose-500/15 text-rose-300'
                                   : 'border-white/[0.07] bg-white/[0.02] text-zinc-400 hover:border-zinc-600')}>
                 {c.name} <span className="text-zinc-600">{items.filter((i) => i.folderId === c.id).length}</span>
@@ -209,15 +209,15 @@ export default function EddyBasePage() {
             {refs.slice(0, MAX_REFS).map((r) => (
               <span key={r.id} className="relative">
                 <img src={thumbs[r.id]} alt="" loading="lazy"
-                  className="h-16 w-16 rounded-md object-cover bg-zinc-950" />
+                  className="h-28 w-28 rounded-lg object-cover bg-zinc-950" />
                 {/* Which photo is leading — set in the Character tab, honoured here. */}
                 {r.role === 'base' && (
-                  <span className="absolute left-0.5 top-0.5 rounded bg-rose-500 px-1 text-[0.5rem] font-bold text-white">BASE</span>
+                  <span className="absolute left-1 top-1 rounded bg-rose-500 px-1.5 py-0.5 text-[0.625rem] font-bold text-white">BASE</span>
                 )}
               </span>
             ))}
             {refs.length > MAX_REFS && (
-              <span className="flex h-16 items-center px-2 text-[0.625rem] text-zinc-500">
+              <span className="flex h-28 items-center px-2 text-xs text-zinc-500">
                 +{refs.length - MAX_REFS} over the {MAX_REFS}-image limit
               </span>
             )}
@@ -225,21 +225,21 @@ export default function EddyBasePage() {
         )}
       </Card>
 
-      <Card className="space-y-3 p-4">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-zinc-300">The shot</h3>
+      <Card className="space-y-4 p-6">
+        <h3 className="text-base font-semibold uppercase tracking-wider text-zinc-200">The shot</h3>
         <textarea
           value={instruction}
           onChange={(e) => setInstruction(e.target.value)}
-          rows={4}
+          rows={6}
           placeholder="Where she is, what she is wearing, how it is shot. e.g. sitting on a hotel bed in a white tank top, soft window light, phone selfie from slightly above."
-          className="w-full rounded-xl border border-white/[0.07] bg-black/30 p-3 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-rose-500/60 focus:outline-none"
+          className="w-full rounded-xl border border-white/[0.07] bg-black/30 p-4 text-base leading-relaxed text-zinc-200 placeholder:text-zinc-600 focus:border-rose-500/60 focus:outline-none"
         />
         <div className="flex flex-wrap items-center gap-3">
           <span className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[0.6875rem] uppercase tracking-wider text-zinc-500">Ratio</span>
+            <span className="text-xs uppercase tracking-wider text-zinc-500">Ratio</span>
             {RATIOS.map((r) => (
               <button key={r} type="button" onClick={() => setRatio(r)}
-                className={cn('rounded-lg border px-2 py-1 text-[0.625rem] font-semibold cursor-pointer',
+                className={cn('rounded-lg border px-3 py-1.5 text-sm font-semibold cursor-pointer',
                   ratio === r ? 'border-rose-500 bg-rose-500/15 text-rose-300'
                               : 'border-white/[0.07] bg-white/[0.02] text-zinc-500 hover:border-zinc-600')}>
                 {r}
@@ -247,10 +247,10 @@ export default function EddyBasePage() {
             ))}
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="text-[0.6875rem] uppercase tracking-wider text-zinc-500">Res</span>
+            <span className="text-xs uppercase tracking-wider text-zinc-500">Res</span>
             {RESOLUTIONS.map((r) => (
               <button key={r} type="button" onClick={() => setResolution(r)}
-                className={cn('rounded-lg border px-2 py-1 text-[0.625rem] font-semibold cursor-pointer',
+                className={cn('rounded-lg border px-3 py-1.5 text-sm font-semibold cursor-pointer',
                   resolution === r ? 'border-rose-500 bg-rose-500/15 text-rose-300'
                                    : 'border-white/[0.07] bg-white/[0.02] text-zinc-500 hover:border-zinc-600')}>
                 {r}
@@ -258,10 +258,10 @@ export default function EddyBasePage() {
             ))}
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="text-[0.6875rem] uppercase tracking-wider text-zinc-500">How many</span>
+            <span className="text-xs uppercase tracking-wider text-zinc-500">How many</span>
             {[1, 2, 4].map((n) => (
               <button key={n} type="button" onClick={() => setCount(n)}
-                className={cn('rounded-lg border px-2 py-1 text-[0.625rem] font-semibold cursor-pointer',
+                className={cn('rounded-lg border px-3 py-1.5 text-sm font-semibold cursor-pointer',
                   count === n ? 'border-rose-500 bg-rose-500/15 text-rose-300'
                               : 'border-white/[0.07] bg-white/[0.02] text-zinc-500 hover:border-zinc-600')}>
                 {n}
@@ -269,10 +269,10 @@ export default function EddyBasePage() {
             ))}
           </span>
         </div>
-        <Btn className="w-full" disabled={busy || !charId || !instruction.trim()} onClick={generate}>
+        <Btn className="w-full !py-3.5 !text-base" disabled={busy || !charId || !instruction.trim()} onClick={generate}>
           {busy ? 'Generating…' : `Generate ${count} base image${count === 1 ? '' : 's'}`}
         </Btn>
-        <p className="text-center text-[0.625rem] text-zinc-600">
+        <p className="text-center text-xs text-zinc-600">
           Nano Banana 2 (WaveSpeed){refs.length ? ` · sends all ${Math.min(refs.length, MAX_REFS)} of her reference photos` : ''} · saved into Base Library under her name.
         </p>
       </Card>
@@ -280,19 +280,19 @@ export default function EddyBasePage() {
       </div>
 
       {/* RIGHT — what came back, and where to file it. */}
-      <Card className="w-full flex-1 space-y-3 p-4">
+      <Card className="w-full flex-1 space-y-4 p-6">
         <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-zinc-300">
+          <h3 className="text-base font-semibold uppercase tracking-wider text-zinc-200">
             Generated {results.length > 0 && <span className="text-rose-400">· {results.length}</span>}
           </h3>
           {results.length > 0 && (
             <>
               <button type="button"
                 onClick={() => setPicked(allPicked ? [] : results.map((_, i) => i))}
-                className="rounded-lg border border-white/[0.07] bg-white/[0.02] px-2.5 py-1 text-[0.625rem] font-semibold text-zinc-400 hover:border-zinc-600 cursor-pointer">
+                className="rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 py-1.5 text-sm font-semibold text-zinc-400 hover:border-zinc-600 cursor-pointer">
                 {allPicked ? 'Clear' : `Select all ${results.length}`}
               </button>
-              <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs ml-auto" onClick={openFolderPick}>
+              <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm ml-auto" onClick={openFolderPick}>
                 Send {picked.length || results.length} to a folder
               </Btn>
             </>
@@ -300,11 +300,11 @@ export default function EddyBasePage() {
         </div>
 
         {results.length === 0 ? (
-          <p className="py-16 text-center text-xs text-zinc-600">
+          <p className="py-24 text-center text-sm text-zinc-600">
             Nothing yet — generated base photos land here, and are already saved to Base Library.
           </p>
         ) : (
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {results.map((r, i) => (
               // eslint-disable-next-line react/no-array-index-key -- append-only, never reordered
               <button key={i} type="button"

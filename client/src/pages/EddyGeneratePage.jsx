@@ -1060,6 +1060,16 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
         document.body,
       )}
 
+      {/* Always offered once the slot is FILLED too, not just when empty. Swapping the base photo
+          is the common action on this page, and with Base Library empty the row below the picture
+          was simply dead space (owner, 2026-08-07). Full width so it reads as part of the slot
+          rather than a stray control. */}
+      {pickerDb && value && (
+        <button type="button" onClick={openLibrary}
+          className="mt-2 w-full rounded-lg border border-rose-500/40 bg-rose-500/[0.07] px-3 py-2 text-xs font-semibold text-rose-300 transition hover:border-rose-500 hover:bg-rose-500/15 cursor-pointer">
+          Select from {pickerLabel || 'Library'}
+        </button>
+      )}
       {pickRecent.length > 0 && (
         <>
           <p className="mt-2 text-[0.625rem] uppercase tracking-wider text-zinc-600">
