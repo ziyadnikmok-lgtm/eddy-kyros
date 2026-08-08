@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { seedream as seedreamApi, nanoBypass as nanoBypassApi, gallery as galleryApi, video as videoApi, library as libraryApi } from '../services/api';
 import { useApp } from '../context/AppContext';
@@ -769,36 +769,6 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
   const [over, setOver] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
 
-  /**
-   * The strip under the slot: the PICKER collection's own images, newest first.
-   *
-   * It used to show `saved` — this slot's private upload history — which is not where base photos
-   * live any more. The point of the row is "pick one without opening anything", so it has to be
-   * the collection the button opens: Base Library for the main photo, Character for the face
-   * (owner, 2026-08-07). Uploads still go to the slot store and are appended after, so nothing
-   * you dropped in here is lost.
-   */
-  const [pickRecent, setPickRecent] = useState([]);
-  useEffect(() => {
-    if (!pickerDb) { setPickRecent([]); return undefined; }
-    let alive = true;
-    (async () => {
-      try {
-        const all = await pickStore.listItems();
-        // pickerRole narrows the strip to ONE image per character — the one marked BASE. The face
-        // slot was listing every reference photo of every character, so the row was a wall of
-        // near-identical crops and her actual identity shot was buried (owner, 2026-08-08).
-        const items = pickerRole ? all.filter((i) => i.role === pickerRole) : all;
-        const rows = await Promise.all(
-          [...items].sort((a2, b2) => (b2.createdAt || 0) - (a2.createdAt || 0)).slice(0, 12)
-            .map(async (it) => ({ id: it.id, src: it.url || await pickStore.getImage(it.id) })),
-        );
-        if (alive) setPickRecent(rows.filter((r) => r.src));
-      } catch { if (alive) setPickRecent([]); }
-    })();
-    return () => { alive = false; };
-    // showLibrary is a dep so picking/adding in the picker refreshes the strip on close.
-  }, [pickStore, pickerDb, pickerRole, showLibrary]);
   const [library, setLibrary] = useState([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   // The gallery runs to thousands of images; mounting every <img> at once janks the open. Render a
@@ -1076,22 +1046,6 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
           className="mt-2 w-full rounded-lg border border-rose-500/40 bg-rose-500/[0.07] px-3 py-2 text-xs font-semibold text-rose-300 transition hover:border-rose-500 hover:bg-rose-500/15 cursor-pointer">
           Select from {pickerLabel || 'Library'}
         </button>
-      )}
-      {pickRecent.length > 0 && (
-        <>
-          <p className="mt-2 text-[0.625rem] uppercase tracking-wider text-zinc-600">
-            From {pickerLabel || 'Library'} — click to use
-          </p>
-          <div className="mt-1 flex gap-1.5 overflow-x-auto pb-1">
-            {pickRecent.map((r) => (
-              <button key={r.id} type="button" onClick={() => pickFromLibrary(r.src)}
-                title={`Use this ${(pickerLabel || 'library').toLowerCase()} image`}
-                className="h-14 w-14 shrink-0 overflow-hidden rounded-md border-2 border-transparent bg-zinc-950 hover:border-rose-500 cursor-pointer">
-                <img src={r.src} alt="" loading="lazy" className="h-full w-full object-cover" />
-              </button>
-            ))}
-          </div>
-        </>
       )}
     </div>
   );
@@ -1545,11 +1499,19 @@ function ResultLightbox({ src, item, busy, favorited, onToggleFavorite, note, se
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
-      // Arrows step between results — but NOT while typing, or a correction with the word
-      // "left" in it would fly through the batch instead of landing in the box.
+      if (!onStep) return;
+      /**
+       * Arrows step between results — unless you are actually editing text.
+       *
+       * "Focused" is not the test. This lightbox focuses the correction box the moment it opens,
+       * so a blanket typing-check meant the arrows NEVER worked: focus was always in an input
+       * (owner, 2026-08-08). The honest question is whether the caret has anything to move over.
+       * An EMPTY box has nothing to navigate, so the arrow belongs to the gallery; once there is
+       * text in it the arrow belongs to the caret, and a correction containing "left" is safe.
+       */
       const t = e.target;
-      const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
-      if (typing || !onStep) return;
+      const editable = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+      if (editable && String(t.value ?? t.textContent ?? '').length > 0) return;
       if (e.key === 'ArrowRight') { e.preventDefault(); onStep(1); }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); onStep(-1); }
     };
@@ -2495,6 +2457,36 @@ function liteResult(r) {
 // is already unusual; the cap only exists so a user who never clears can't grow the store forever.
 const RESULTS_CAP = 120;
 
+/**
+ * Batch progress, held OUTSIDE the component.
+ *
+ * run() keeps going after you navigate away — the requests are in flight, they are billed, and
+ * generateCombo writes each finished tile straight to the store. But the counters were component
+ * state, so coming back showed nothing running and the page looked idle while six requests were
+ * still out (owner, 2026-08-08).
+ *
+ * A module-level object with subscribers survives the unmount, and run() updates it through the
+ * same closure it already uses. useSyncExternalStore reads it, so a page that mounts mid-batch
+ * picks up the live numbers instead of starting from zero.
+ */
+const _run = { inFlight: 0, queued: 0, done: 0 };
+const _runListeners = new Set();
+function _emitRun() { for (const fn of _runListeners) fn(); }
+function _bumpRun(patch) {
+  for (const k of Object.keys(patch)) _run[k] = Math.max(0, patch[k](_run[k]));
+  _emitRun();
+}
+function _subscribeRun(fn) { _runListeners.add(fn); return () => _runListeners.delete(fn); }
+// A stable snapshot: useSyncExternalStore compares by reference, so a fresh object every read
+// would loop forever. Rebuilt only when a counter actually changes.
+let _runSnap = { ..._run };
+function _getRunSnap() {
+  if (_runSnap.inFlight !== _run.inFlight || _runSnap.queued !== _run.queued || _runSnap.done !== _run.done) {
+    _runSnap = { ..._run };
+  }
+  return _runSnap;
+}
+
 const _cache = {
   baseImage: '', faceImage: '', pickedOutfits: [], pickedPoses: [], instruction: '',
   // staticCamera defaults ON: the user asked for the camera lock to be the standing default, so a
@@ -2546,6 +2538,30 @@ export default function EddyGeneratePage() {
   // Both pickers start open — the work is choosing, so hiding it behind a click was friction.
   const [openPickers, setOpenPickers] = useState({ outfit: true, pose: true });
   const [instruction, setInstruction] = useState(_cache.instruction);
+
+  /**
+   * A new base photo starts a new shoot, so the instruction clears with it.
+   *
+   * The instruction is the one field written FOR a particular picture — "much bigger bust",
+   * "oiled", a correction aimed at that shot. Carrying it onto the next base silently applied the
+   * last shoot's edits to a different photo, which is invisible until you read the FINAL PROMPT
+   * panel (owner, 2026-08-08). Clearing the text clears the chips too: they only ever append to it.
+   *
+   * Deliberately narrow. It fires ONLY when the base changes from one real photo to a DIFFERENT
+   * real photo:
+   *   - not on mount, or the saved instruction would be wiped by its own restore;
+   *   - not when the slot is cleared, so Clear does not also throw away what you typed;
+   *   - not when the same photo is re-picked.
+   */
+  const prevBaseRef = useRef(null);
+  useEffect(() => {
+    const prev = prevBaseRef.current;
+    prevBaseRef.current = baseImage;
+    if (prev === null) return;                    // first run: this is the restore, not a change
+    if (!baseImage || !prev) return;              // cleared, or filled for the first time
+    if (baseImage === prev) return;               // same picture
+    setInstruction('');
+  }, [baseImage]);
   const [nsfw, setNsfw] = useState(_cache.nsfw);
   // FACELESS toggle — when ON, a pose is allowed to keep her face cropped out (honours the pose's
   // framing). OFF (default) renders her exact face and copies the pose normally.
@@ -2586,9 +2602,13 @@ export default function EddyGeneratePage() {
   useEffect(() => { staticCameraRef.current = staticCamera; }, [staticCamera]);
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [resolution, setResolution] = useState(_cache.resolution);
-  const [inFlight, setInFlight] = useState(0);
-  const [queued, setQueued] = useState(0);
-  const [done, setDone] = useState(0);
+  // Read from the module-level store, so a batch started before you navigated away is still
+  // reported when you come back. The setters keep their old names and signatures.
+  const runProgress = useSyncExternalStore(_subscribeRun, _getRunSnap, _getRunSnap);
+  const { inFlight, queued, done } = runProgress;
+  const setInFlight = useCallback((fn) => _bumpRun({ inFlight: typeof fn === 'function' ? fn : () => fn }), []);
+  const setQueued = useCallback((fn) => _bumpRun({ queued: typeof fn === 'function' ? fn : () => fn }), []);
+  const setDone = useCallback((fn) => _bumpRun({ done: typeof fn === 'function' ? fn : () => fn }), []);
   // Combos that threw, kept so they can be re-run.
   //
   // A failed combo used to vanish: runCombo swallowed the throw, `done` still ticked, and the run

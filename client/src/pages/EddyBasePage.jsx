@@ -190,6 +190,16 @@ export default function EddyBasePage() {
    * move-afterwards step entirely (owner, 2026-08-08, "from base to base folder").
    */
   const [saveToId, setSaveToId] = useState('');
+
+  /**
+   * Picking a character resets the destination to her own folder.
+   *
+   * Without this, choosing a folder once made it sticky: switch from Grace to Mia and Mia's
+   * images kept landing in Grace's folder, silently, because the selector still held the old id.
+   * "Each character's images go to her own folder" only holds if selecting her says so
+   * (owner, 2026-08-08). An explicit folder choice still wins until the character changes again.
+   */
+  useEffect(() => { setSaveToId(''); }, [charId]);
   const [saveFolders, setSaveFolders] = useState([]);
   useEffect(() => {
     let alive = true;
