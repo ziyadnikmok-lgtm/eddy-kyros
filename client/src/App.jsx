@@ -72,6 +72,8 @@ const EddyLibraryPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ def
 const EddyOutfitPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.EddyOutfitPage })));
 const EddyPosePage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.EddyPosePage })));
 const EddyEnvironmentPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.EddyEnvironmentPage })));
+const EddyBaseLibraryPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.EddyBaseLibraryPage })));
+const EddyBasePage = lazy(() => import('./pages/EddyBasePage'));
 const VideoLibraryPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.VideoLibraryPage })));
 const EddyCharacterPage = lazy(() => import('./pages/EddyCharacterPage'));
 const ReformatPage = lazy(() => import('./pages/ReformatPage'));
@@ -112,6 +114,8 @@ const NAV_ICONS = {
   eddyOutfit: IconLayers,
   eddyPose: IconSwap,
   eddyEnvironment: IconGrid2,
+  eddyBase: IconGrid2,
+  eddyBaseLibrary: IconGrid2,
   videoLibrary: IconGrid2,
   eddyCharacter: IconUsers,
   postClone: IconCopies,
@@ -165,6 +169,8 @@ const NAV_COLORS = {
   eddyOutfit: ['#fdba74', '#ea580c'],
   eddyPose: ['#fda4af', '#e11d48'],
   eddyEnvironment: ['#a7f3d0', '#059669'],
+  eddyBase: ['#a7f3d0', '#059669'],
+  eddyBaseLibrary: ['#6ee7b7', '#047857'],
   videoLibrary: ['#c4b5fd', '#7c3aed'],
   eddyCharacter: ['#fcd34d', '#f59e0b'],
   postClone:      ['#d8b4fe', '#9333ea'],
@@ -205,7 +211,8 @@ const NAV_SECTIONS = [
       { id: 'eddyLibrary', label: 'Library' },
       { id: 'eddyOutfit', label: 'Outfit' },
       { id: 'eddyPose', label: 'Pose' },
-      { id: 'eddyEnvironment', label: 'Environment' },
+      { id: 'eddyBase', label: 'Base' },
+      { id: 'eddyBaseLibrary', label: 'Base Library' },
       { id: 'eddyCharacter', label: 'Character' },
     ],
   },
@@ -292,6 +299,8 @@ const FEED_HIDDEN_PAGES = new Set([
   'eddyOutfit',
   'eddyPose',
   'eddyEnvironment',
+  'eddyBase',
+  'eddyBaseLibrary',
   'videoLibrary',
   'eddyCharacter',
   'library',
@@ -403,6 +412,8 @@ const PAGE_DESCRIPTIONS = {
   eddyLibrary: 'All your Eddy images',
   eddyOutfit: 'Outfits, organised in folders',
   eddyPose: 'Your saved pose prompts',
+  eddyBase: 'Make a new base photo of a saved character, from her own references',
+  eddyBaseLibrary: 'Your generated base photos, filed by character',
   eddyCharacter: 'Characters from a base image — no prompt needed',
   auto: 'AI-planned multi-day content schedules',
   carousel: 'Generate slide variations from a source image',
@@ -476,6 +487,8 @@ const PAGES = {
   eddyOutfit: EddyOutfitPage,
   eddyPose: EddyPosePage,
   eddyEnvironment: EddyEnvironmentPage,
+  eddyBase: EddyBasePage,
+  eddyBaseLibrary: EddyBaseLibraryPage,
   videoLibrary: VideoLibraryPage,
   eddyCharacter: EddyCharacterPage,
   auto: AutoGeneratorPage,

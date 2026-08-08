@@ -117,6 +117,24 @@ export function EddyPosePage() {
   );
 }
 
+/**
+ * Base Library — where Base puts what it generates, and the only place the Generate page's
+ * "Main photo" slot needs to look. Kept separate from Eddy · Library (which is every result the
+ * page has ever produced) so a base photo is never lost in a pile of finished shots.
+ */
+export function EddyBaseLibraryPage() {
+  return (
+    <div className="w-full space-y-4">
+      <EddyCollection
+        dbName="eddy-base"
+        title="Eddy · Base Library"
+        subtitle="Base photos, filed by character. Generated in the Base tab, and picked from here as the Main photo on Generate."
+        promptLabel="base"
+      />
+    </div>
+  );
+}
+
 export function EddyEnvironmentPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   return (

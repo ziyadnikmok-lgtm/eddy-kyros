@@ -748,9 +748,23 @@ const UNDRESS_TEXTS = [
  * their own history in IndexedDB, so a face you shot once is one click away forever instead of
  * being re-dropped every session. Anything in Eddy's Library can be pulled in too.
  */
-function ImageSlot({ title, hint, value, onChange, dbName, libraryStore }) {
+/**
+ * pickerDb / pickerLabel / pickerFolders — where the "Library" button looks.
+ *
+ * The two slots want DIFFERENT sources and always did: the Main photo is a BASE photo (Base
+ * Library, filed per character) and the Face close-up is one of a character's own references
+ * (Character tab, browsed per character). Pointing both at the general Eddy Library meant
+ * scrolling hundreds of finished results to find either (owner, 2026-08-07). pickerFolders adds
+ * the folder chips, which is what makes "pick HER face" a two-click job.
+ */
+function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerDb, pickerLabel, pickerFolders }) {
   const { notify } = useApp();
   const store = useMemo(() => createEddyCollection(dbName), [dbName]);
+  // The collection the Library button browses. Falls back to the page's general library so a slot
+  // with no pickerDb behaves exactly as before.
+  const pickStore = useMemo(() => (pickerDb ? createEddyCollection(pickerDb) : libraryStore), [pickerDb, libraryStore]);
+  const [pickFolders, setPickFolders] = useState([]);
+  const [pickFolder, setPickFolder] = useState(null);
   const [saved, setSaved] = useState([]);          // [{ id, dataUrl }]
   const [over, setOver] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
@@ -832,17 +846,27 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore }) {
     setLibraryLoading(true);
     setLibraryShown(LIBRARY_PAGE);   // every open starts at the first page, not where you left off
     const rows = [];
-    try {
-      const data = await libraryApi.list();
-      for (const it of (data?.items || [])) {
-        if (it.mediaType === 'image' && it.previewUrl) rows.push({ id: it.id, src: it.previewUrl });
+    // The server gallery is only worth mixing in for the GENERAL library. A slot pointed at Base
+    // Library or Character wants that collection and nothing else — folding thousands of gallery
+    // rows in would bury the handful you came for.
+    if (!pickerDb) {
+      try {
+        const data = await libraryApi.list();
+        for (const it of (data?.items || [])) {
+          if (it.mediaType === 'image' && it.previewUrl) rows.push({ id: it.id, src: it.previewUrl });
+        }
+      } catch {
+        // Gallery unreachable — fall through to the local collection below.
       }
-    } catch {
-      // Gallery unreachable — fall through to the local collection below.
     }
     try {
-      const items = await libraryStore.listItems();
-      const local = await Promise.all(items.map(async (it) => ({ id: `eddy:${it.id}`, src: it.url || await libraryStore.getImage(it.id) })));
+      if (pickerFolders) {
+        try { setPickFolders(await pickStore.listFolders()); } catch { setPickFolders([]); }
+      }
+      const items = await pickStore.listItems();
+      const local = await Promise.all(items.map(async (it) => ({
+        id: `eddy:${it.id}`, folderId: it.folderId || null, src: it.url || await pickStore.getImage(it.id),
+      })));
       rows.push(...local.filter((r) => r.src));
     } catch { /* local collection unreadable — the gallery rows above still stand */ }
     setLibrary(rows);
@@ -879,7 +903,7 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore }) {
         <span className="text-xs font-semibold text-zinc-300">{title}</span>
         <span className="flex items-center gap-2">
           <button onClick={openLibrary} className="text-[0.6875rem] text-zinc-500 hover:text-white cursor-pointer">
-            {showLibrary ? 'Close' : 'Library'}
+            {showLibrary ? 'Close' : (pickerLabel || 'Library')}
           </button>
           {/* SAVE ALL — writes this slot's saved reference photos to disk.
               These live ONLY in IndexedDB: they are not in the gallery, not in uploads/, and the
@@ -947,8 +971,29 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore }) {
               <p className="py-16 text-center text-sm text-zinc-500">No images found.</p>
             ) : (
               <>
+                {/* FOLDER CHIPS — the character (or base-library) folders. This is what turns
+                    "find her face close-up" into two clicks instead of scrolling a whole
+                    collection. Only rendered for a slot that asked for them. */}
+                {pickerFolders && pickFolders.length > 0 && (
+                  <div className="mb-3 flex flex-wrap gap-1.5">
+                    <button type="button" onClick={() => setPickFolder(null)}
+                      className={cn('rounded-full border px-3 py-1 text-xs font-semibold transition cursor-pointer',
+                        pickFolder === null ? 'border-rose-500 bg-rose-500/15 text-rose-300'
+                                            : 'border-white/[0.07] bg-white/[0.02] text-zinc-400 hover:border-zinc-600')}>
+                      All
+                    </button>
+                    {pickFolders.map((f) => (
+                      <button key={f.id} type="button" onClick={() => setPickFolder(f.id)}
+                        className={cn('rounded-full border px-3 py-1 text-xs font-semibold transition cursor-pointer',
+                          pickFolder === f.id ? 'border-rose-500 bg-rose-500/15 text-rose-300'
+                                              : 'border-white/[0.07] bg-white/[0.02] text-zinc-400 hover:border-zinc-600')}>
+                        {f.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(200px,1fr))]">
-                  {library.slice(0, libraryShown).map((l) => (
+                  {library.filter((l) => !pickFolder || l.folderId === pickFolder).slice(0, libraryShown).map((l) => (
                     <button
                       key={l.id}
                       onClick={() => pickFromLibrary(l.src)}
@@ -958,7 +1003,7 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore }) {
                     </button>
                   ))}
                 </div>
-                {libraryShown < library.length && (
+                {libraryShown < library.filter((l) => !pickFolder || l.folderId === pickFolder).length && (
                   <button
                     type="button"
                     onClick={() => setLibraryShown((n) => n + LIBRARY_PAGE)}
@@ -3930,6 +3975,53 @@ export default function EddyGeneratePage() {
     }
   }, [notify]);
 
+  const [libFolders, setLibFolders] = useState([]);
+  const [filingTo, setFilingTo] = useState(false);
+
+  // The Library's folders, for the "file these into…" picker. Re-read when the picker opens so a
+  // folder created in the Library tab since this page mounted is offered.
+  const openFilePicker = useCallback(async () => {
+    try { setLibFolders(await libraryStore.listFolders()); } catch { setLibFolders([]); }
+    setFilingTo(true);
+  }, [libraryStore]);
+
+  /**
+   * File results into a Library folder and clear them out of the results panel.
+   *
+   * MOVES, it does not copy. Every result was ALREADY added to the Library at generation time
+   * (see the libraryStore.addItems call in generateCombo, which files into "Eddy" / "Eddy NSFW"),
+   * so adding again would leave two entries for one picture. This finds the existing Library row
+   * by its gallery URL and re-points its folderId; only a result with no Library row yet — one
+   * whose filing failed at generation — gets added fresh.
+   *
+   * The image itself is untouched on the server. "Delete from here" means the results panel only;
+   * the picture lives in the Library, which is the whole point of moving it there.
+   */
+  const fileToLibrary = useCallback(async (folderId, list) => {
+    const targets = (list || []).filter((r) => r.galleryId);
+    if (!targets.length) { notify('Nothing to file — these have no saved image yet', 'error'); return; }
+    let moved = 0, added = 0;
+    try {
+      const existing = await libraryStore.listItems();
+      const byUrl = new Map(existing.filter((i) => i.url).map((i) => [i.url, i]));
+      for (const r of targets) {
+        const url = galleryApi.imageUrl(r.galleryId);
+        const hit = byUrl.get(url);
+        // eslint-disable-next-line no-await-in-loop -- serialized store, and these are small writes
+        if (hit) { await libraryStore.updateItem(hit.id, { folderId }); moved += 1; }
+        // eslint-disable-next-line no-await-in-loop
+        else { await libraryStore.addItems([{ url, prompt: r.prompt || '', name: `eddy-${r.uid}` }], folderId); added += 1; }
+      }
+    } catch (err) {
+      notify(err?.message || 'Could not file those', 'error');
+      return;
+    }
+    removeUidsRef.current?.(targets.map((r) => r.uid));
+    setSelectedUids(new Set());
+    setFilingTo(false);
+    notify(`${moved + added} sent to the Library${added ? ` (${added} newly added)` : ''}`, 'success');
+  }, [libraryStore, notify]);
+
   const removeUids = useCallback((uids) => {
     // Only ever keyed by uid. A result's videoPrompt, regenerate closure and submitVideo closure
     // all live on the result object itself, so filtering the array cannot re-pair any surviving
@@ -3962,6 +4054,14 @@ export default function EddyGeneratePage() {
 
     notify(`Removed ${doomed.size} from results — still in your Library`, 'success');
   }, [busyUids, notify]);
+
+  // Always points at the CURRENT removeUids. fileToLibrary is defined above it (it owns the
+  // picker state that sits with the other results controls) and must clear the tiles it just
+  // filed — reading through a ref avoids reordering the file or listing a not-yet-defined
+  // callback in a dependency array, which is the temporal-dead-zone crash this page has already
+  // shipped once today.
+  const removeUidsRef = useRef(null);
+  removeUidsRef.current = removeUids;
 
   const removeSelected = useCallback(() => removeUids([...selectedUids]), [removeUids, selectedUids]);
 
@@ -4241,6 +4341,9 @@ export default function EddyGeneratePage() {
             onChange={setBaseImage}
             dbName="eddy-slot-base"
             libraryStore={libraryStore}
+            pickerDb="eddy-base"
+            pickerLabel="Base"
+            pickerFolders
           />
           <ImageSlot
             title="2 · Face close-up"
@@ -4249,6 +4352,9 @@ export default function EddyGeneratePage() {
             onChange={setFaceImage}
             dbName="eddy-slot-face"
             libraryStore={libraryStore}
+            pickerDb="eddy-character"
+            pickerLabel="Character"
+            pickerFolders
           />
         </div>
       </Card>
@@ -4688,6 +4794,18 @@ export default function EddyGeneratePage() {
               >
                 Clear all
               </button>
+              {/* SEND TO LIBRARY — files the ticked results (or all of them) into a Library folder
+                  and clears them out of this panel. A MOVE, not a copy: see fileToLibrary. */}
+              <button
+                type="button"
+                onClick={openFilePicker}
+                disabled={anyBusy || !results.length}
+                title="Move these into a Library folder and clear them from here"
+                className={cn(HDR_BTN, GATE_FOCUS,
+                  anyBusy || !results.length ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:border-zinc-400 hover:text-zinc-200')}
+              >
+                Send {selectedResults.length || results.length} to Library
+              </button>
               {/* RELOAD IMAGES — re-requests every tile's picture. Not a page refresh: the results
                   column, the selection and the pending queue all survive, which a browser reload
                   would throw away. For the case where a fetch stalled or failed and the tile is
@@ -5031,6 +5149,45 @@ export default function EddyGeneratePage() {
         )}
       </div>
 
+      {/* FOLDER PICKER for Send to Library. Parent scope, beside the other page-level overlays —
+          it reads results/selectedResults/libraryStore, none of which exist inside a tile.
+          Writes into the SAME store the Library tab reads, so a folder made here shows up there. */}
+      {filingTo && (
+        <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/70 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setFilingTo(false); }}>
+          <div className={cn('w-full max-w-sm space-y-2 rounded-2xl border p-4', GATE_HAIRLINE, GATE_PANEL)}>
+            <h3 className="text-sm font-semibold text-zinc-200">
+              Send {selectedResults.length || results.length} image{(selectedResults.length || results.length) === 1 ? '' : 's'} to…
+            </h3>
+            <p className={cn('text-xs', GATE_MUTED)}>They move into the Library and leave this panel. The pictures are not deleted.</p>
+            <div className="max-h-64 space-y-1 overflow-y-auto">
+              {libFolders.map((f) => (
+                <button key={f.id} type="button"
+                  onClick={() => fileToLibrary(f.id, selectedResults.length ? selectedResults : results)}
+                  className="w-full rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 py-2 text-left text-xs text-zinc-300 hover:border-rose-500/60 cursor-pointer">
+                  {f.name}
+                </button>
+              ))}
+              {!libFolders.length && <p className={cn('px-1 py-2 text-xs', GATE_MUTED)}>No folders yet — make one below.</p>}
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Btn variant="secondary" className="flex-1 !py-1.5 !text-xs"
+                onClick={async () => {
+                  const name = (window.prompt('New Library folder name:') || '').trim();
+                  if (!name) return;
+                  try {
+                    const f = await libraryStore.ensureFolder(name);
+                    await fileToLibrary(f.id, selectedResults.length ? selectedResults : results);
+                  } catch (err) { notify(err?.message || 'Could not make that folder', 'error'); }
+                }}>
+                + New folder
+              </Btn>
+              <Btn variant="ghost" className="!py-1.5 !px-3 !text-xs" onClick={() => setFilingTo(false)}>Cancel</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
       {videoConfirm && (
         // Cancelling simply drops the parked jobs — setVideoConfirm(null) is the only thing that
         // happens, and submitVideo is never reached, so zero video requests are dispatched.
@@ -5045,6 +5202,7 @@ export default function EddyGeneratePage() {
           onCancel={() => setVideoConfirm(null)}
         />
       )}
+
     </div>
   );
 }

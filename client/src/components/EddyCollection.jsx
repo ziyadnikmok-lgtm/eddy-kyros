@@ -842,18 +842,52 @@ export default function EddyCollection({
     }
   };
 
+  /**
+   * Remove each image from the collection once it has been saved to disk.
+   *
+   * OFF by default and remembered per collection. It turns a folder into a QUEUE — save a batch,
+   * they leave, what remains is what still needs doing — which is the point when a folder is a
+   * to-post pile rather than an archive (owner, 2026-08-07).
+   *
+   * Only ever removes files that actually SAVED. A 401 or a failed fetch leaves the image exactly
+   * where it was, because deleting on a failed download is unrecoverable: these live in IndexedDB
+   * and nowhere else, so there is no copy to restore from.
+   */
+  const [purgeOnDownload, setPurgeOnDownload] = useState(() => {
+    try { return localStorage.getItem(`kyros.purgeOnDownload.${dbName}`) === 'on'; } catch { return false; }
+  });
+  const togglePurge = () => {
+    setPurgeOnDownload((v) => {
+      const next = !v;
+      try { localStorage.setItem(`kyros.purgeOnDownload.${dbName}`, next ? 'on' : 'off'); } catch { /* storage blocked */ }
+      return next;
+    });
+  };
+
   const downloadSelected = async () => {
     const picked = visible.filter((i) => selected.includes(i.id));
     let saved = 0;
+    const done = [];
     for (const it of picked) {
-      if (await download(it)) saved += 1;
+      // eslint-disable-next-line no-await-in-loop -- sequential on purpose, see the gap below
+      if (await download(it)) { saved += 1; done.push(it.id); }
       // Browsers drop rapid-fire downloads; a short gap makes a multi-file save reliable.
+      // eslint-disable-next-line no-await-in-loop
       await new Promise((r) => setTimeout(r, 250));
+    }
+    if (purgeOnDownload && done.length) {
+      for (const id of done) {
+        // eslint-disable-next-line no-await-in-loop -- serialized store
+        try { await store.removeItem(id); } catch { /* keep going; a stuck row is not worth losing the rest */ }
+      }
+      setSelected((prev) => prev.filter((id) => !done.includes(id)));
+      await refresh();
     }
     // An expired session 401s every fetch. Announcing the selection size put a success toast on
     // top of twenty failures, and it was the one left on screen.
-    if (saved === picked.length) notify(`Downloaded ${saved} image${saved === 1 ? '' : 's'}`, 'success');
-    else notify(`Downloaded ${saved} of ${picked.length} — the rest failed`, 'error');
+    const gone = purgeOnDownload && done.length ? ` · ${done.length} removed from this folder` : '';
+    if (saved === picked.length) notify(`Downloaded ${saved} image${saved === 1 ? '' : 's'}${gone}`, 'success');
+    else notify(`Downloaded ${saved} of ${picked.length} — the rest failed${gone}`, 'error');
   };
 
   // Save every image (or just the selected ones) into a FOLDER. These images live in IndexedDB, not
@@ -1409,6 +1443,19 @@ export default function EddyCollection({
             {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
           <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs" onClick={downloadSelected}>Download</Btn>
+          {/* Turns this folder into a queue: saved images leave, what remains is what is still to
+              do. Off by default, remembered per collection, and it only ever drops files that
+              actually saved — these live in IndexedDB alone, so a delete on a failed download
+              could not be undone. */}
+          <button type="button" onClick={togglePurge} aria-pressed={purgeOnDownload}
+            title={purgeOnDownload
+              ? 'Downloaded images are removed from this folder'
+              : 'Downloaded images stay in this folder'}
+            className={cn('rounded-lg border px-2.5 py-1 text-[0.625rem] font-semibold transition cursor-pointer',
+              purgeOnDownload ? 'border-rose-500 bg-rose-500/15 text-rose-300'
+                              : 'border-white/[0.07] bg-white/[0.02] text-zinc-500 hover:border-zinc-600')}>
+            {purgeOnDownload ? '✓ Remove after download' : 'Remove after download'}
+          </button>
           <Btn className="!rounded-lg !py-1 !px-3 !text-xs" onClick={deleteSelected}>Delete selected</Btn>
           <Btn variant="ghost" className="!rounded-lg !py-1 !px-3 !text-xs" onClick={() => setSelected([])}>Cancel</Btn>
           <button onClick={() => setSelected(visible.map((i) => i.id))}
