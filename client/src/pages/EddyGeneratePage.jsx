@@ -765,6 +765,10 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
   const pickStore = useMemo(() => (pickerDb ? createEddyCollection(pickerDb) : libraryStore), [pickerDb, libraryStore]);
   const [pickFolders, setPickFolders] = useState([]);
   const [pickFolder, setPickFolder] = useState(null);
+  const [saved, setSaved] = useState([]);          // [{ id, dataUrl }]
+  const [over, setOver] = useState(false);
+  const [showLibrary, setShowLibrary] = useState(false);
+
   /**
    * The strip under the slot: the PICKER collection's own images, newest first.
    *
@@ -791,9 +795,6 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
     return () => { alive = false; };
     // showLibrary is a dep so picking/adding in the picker refreshes the strip on close.
   }, [pickStore, pickerDb, showLibrary]);
-  const [saved, setSaved] = useState([]);          // [{ id, dataUrl }]
-  const [over, setOver] = useState(false);
-  const [showLibrary, setShowLibrary] = useState(false);
   const [library, setLibrary] = useState([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   // The gallery runs to thousands of images; mounting every <img> at once janks the open. Render a
