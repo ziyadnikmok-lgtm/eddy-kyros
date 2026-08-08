@@ -830,10 +830,23 @@ export default function EddyCollection({
       }
       ext = ext.replace('jpeg', 'jpg').replace('quicktime', 'mov');
 
-      // downloadBlob strips generator metadata before saving, so nothing posted carries the
-      // prompt or the model name. It needs a Blob, which a data URL is not.
-      const blob = revoke ? await (await fetch(href)).blob() : await (await fetch(src)).blob();
-      if (revoke) URL.revokeObjectURL(href);
+      // downloadBlob strips generator metadata and stamps a fresh capture time before saving, so
+      // nothing posted carries the prompt or the model name. It needs a Blob, which a data URL is
+      // not — but do NOT fetch() a data: URL to get one. Electron's CSP blocks that, and every
+      // download of a locally-stored image died on "Failed to fetch" while remote ones worked
+      // (owner, 2026-08-08). Decoding the base64 is both allowed and cheaper.
+      let blob;
+      if (revoke) {
+        blob = await (await fetch(href)).blob();
+        URL.revokeObjectURL(href);
+      } else {
+        const m2 = /^data:([^;]+);base64,(.+)$/.exec(src);
+        if (!m2) throw new Error('unreadable image data');
+        const bin = atob(m2[2]);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+        blob = new Blob([bytes], { type: m2[1] });
+      }
       await downloadBlob(blob, `${base}.${ext}`);
       return true;
     } catch (err) {
@@ -1571,9 +1584,15 @@ export default function EddyCollection({
                   <button onClick={() => download(it)} title="Download"
                     className="absolute right-8 top-1 h-6 w-6 rounded-full bg-black/70 text-xs text-zinc-300 hover:text-white cursor-pointer">↓</button>
                 )}
-                <input type="checkbox" title="Select" checked={selected.includes(it.id)}
-                  onChange={() => toggleSelect(it.id)}
-                  className="absolute left-1 top-1 h-4 w-4 cursor-pointer accent-rose-500" />
+                {/* A 16px checkbox on a 320px tile is a pixel hunt. The padded label gives it a
+                    32px hit area without making the box itself huge, and the whole strip is
+                    clickable rather than just the square (owner, 2026-08-08). */}
+                <label title="Select"
+                  className="absolute left-0 top-0 flex h-9 w-9 cursor-pointer items-center justify-center rounded-tl-lg">
+                  <input type="checkbox" checked={selected.includes(it.id)}
+                    onChange={() => toggleSelect(it.id)}
+                    className="h-5 w-5 cursor-pointer accent-rose-500" />
+                </label>
                 {oldestFirst && visible[0]?.id === it.id && (
                   <span className="absolute left-1 top-1 rounded-md bg-rose-500 px-1.5 py-0.5 text-[0.5625rem] font-bold text-white">BASE</span>
                 )}
