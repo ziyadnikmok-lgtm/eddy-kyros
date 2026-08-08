@@ -43,4 +43,16 @@
      --color-rose-500: oklch(64.5% .246 70);
      --color-rose-600: oklch(58.6% .253 70);
   */
+
+  /* RESTORED 2026-08-08. This is Eddy's own rule (commit 7c47cc15, 2026-07-24). It was
+     deleted by mistake when a full copy of this file was pushed over the branch — the
+     copy came from a tree that never had it. Nothing about it conflicted; it was simply
+     overwritten. Do not remove it again: it is a per-tab preference, not shared styling. */
+  /* No prompt-on-hover in the picker tiles. The shared component fades the prompt
+     text in over a thumbnail on hover (kept for Ziyad, who uses it to tell near-
+     identical poses apart). Eddy does not want it, so hide it here — scoped to this
+     tab only. It is the one transition-opacity span inside the picker grid. */
+  & [data-picker-grid] span.transition-opacity {
+    display: none;
+  }
 }
