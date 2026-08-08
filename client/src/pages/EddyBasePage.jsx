@@ -26,6 +26,22 @@ const BASE_DB = 'eddy-base';
 // a base shot is still a normal image and there is no reason to force a crop (owner, 2026-08-07).
 const RATIOS = ['3:4', '4:5', '1:1', '9:16', '16:9', '2:3', '3:2'];
 const RESOLUTIONS = ['1K', '2K'];
+
+/**
+ * WaveSpeed's per-image rate for nano-banana-2, by resolution.
+ *
+ * null until the real published numbers are in. A guessed rate on a paid API is worse than no
+ * rate: the button is where spend is agreed, and a wrong figure there is quietly misleading every
+ * time it is read. Seedream's own rates ($0.045 / $0.090) live in config/photoModes.js and came
+ * from Muapi's published spec, not from estimation — this follows the same rule.
+ *
+ * Fill both numbers and the cost appears on the button automatically; nothing else needs changing.
+ */
+const NANO2_COST = { '1K': null, '2K': null };
+const nano2Cost = (res, n) => {
+  const each = NANO2_COST[res];
+  return typeof each === 'number' ? each * Math.max(1, n) : null;
+};
 // The model's own limit, enforced server-side too.
 const MAX_REFS = 10;
 
@@ -283,10 +299,13 @@ export default function EddyBasePage() {
           </span>
         </div>
         <Btn className="w-full !py-3.5 !text-base" disabled={busy || !charId || !instruction.trim()} onClick={generate}>
-          {busy ? 'Generating…' : `Generate ${count} base image${count === 1 ? '' : 's'}`}
+          {busy
+            ? 'Generating…'
+            : `Generate ${count} base image${count === 1 ? '' : 's'}${
+                nano2Cost(resolution, count) !== null ? ` · $${nano2Cost(resolution, count).toFixed(3)}` : ''}`}
         </Btn>
         <p className="text-center text-xs text-zinc-600">
-          Nano Banana 2 (WaveSpeed){refs.length ? ` · sends all ${Math.min(refs.length, MAX_REFS)} of her reference photos` : ''} · saved into Base Library under her name.
+          Nano Banana 2 (WaveSpeed) · {resolution}{refs.length ? ` · sends all ${Math.min(refs.length, MAX_REFS)} of her reference photos` : ''} · saved into Base Library under her name.
         </p>
       </Card>
 
