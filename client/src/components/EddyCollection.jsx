@@ -345,6 +345,24 @@ export default function EddyCollection({
 
   // An item can vanish under the lightbox — deleted, or filtered out by a folder change. Close
   // rather than leaving an overlay pinned over nothing.
+  /**
+   * Swipe between images, same rules as the Generate page's large view so the two behave alike.
+   *
+   * Pointer events rather than touch, so a trackpad drag counts. A 60px threshold on X with the
+   * vertical delta required to be smaller keeps a scroll from registering as a swipe.
+   */
+  const swipe = useRef(null);
+  const onPointerDown = (e) => { swipe.current = { x: e.clientX, y: e.clientY }; };
+  const onPointerUp = (e) => {
+    const st = swipe.current;
+    swipe.current = null;
+    if (!st) return;
+    const dx = e.clientX - st.x;
+    const dy = e.clientY - st.y;
+    if (Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx)) return;
+    stepLightbox(dx < 0 ? 1 : -1);        // drag left = forward, as every gallery behaves
+  };
+
   useEffect(() => {
     if (lightboxId && !visible.some((x) => x.id === lightboxId)) setLightboxId('');
   }, [lightboxId, visible]);
@@ -1774,7 +1792,10 @@ export default function EddyCollection({
             // the pointer drifts off it, which makes a large view feel broken.
             onClick={(e) => { if (e.target === e.currentTarget) setLightboxId(''); }}
           >
-            <img src={src} alt={it.name} className="max-h-full max-w-full rounded-xl object-contain" />
+            <img src={src} alt={it.name} draggable={false}
+              onPointerDown={onPointerDown} onPointerUp={onPointerUp}
+              onClick={(e) => e.stopPropagation()}
+              className="max-h-full max-w-full select-none rounded-xl object-contain" />
 
             <button type="button" onClick={() => setLightboxId('')} aria-label="Close"
               className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 text-lg text-white hover:bg-white/20 cursor-pointer">×</button>
@@ -1789,7 +1810,7 @@ export default function EddyCollection({
             )}
 
             <span className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs text-zinc-300">
-              {i + 1} / {visible.length}{it.name ? ` · ${it.name}` : ''} — Esc to close, ← → to move
+              {i + 1} / {visible.length}{it.name ? ` · ${it.name}` : ''} — Esc to close, ← → or swipe
             </span>
           </div>
         );
