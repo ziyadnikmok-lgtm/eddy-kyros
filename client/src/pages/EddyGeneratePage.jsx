@@ -1434,7 +1434,7 @@ function StarIcon({ filled }) {
  * unmount cleanup IS the close path). When Generate video is pressed the gate portals ON TOP of
  * this (appended to body later, equal z-index) and its own scroll-lock nests cleanly over this one.
  */
-function ResultLightbox({ src, item, busy, favorited, onToggleFavorite, note, setNote, canRegenerate, canAnimate, canClearVideoPrompt, noVideo, vpOpen, setVpOpen, vpText, setVpText, onRegenerate, onAnimate, onClearVideoPrompt, onDuplicateWithPrompt, onRemove, onDownload, onClose }) {
+function ResultLightbox({ src, item, busy, favorited, onToggleFavorite, note, setNote, canRegenerate, canAnimate, canClearVideoPrompt, noVideo, vpOpen, setVpOpen, vpText, setVpText, onRegenerate, onAnimate, onClearVideoPrompt, onDuplicateWithPrompt, onRemove, onDownload, onClose, onStep, pos }) {
   const fade = useFadeIn();
   useScrollLock();
   const inputRef = useRef(null);
@@ -1442,11 +1442,38 @@ function ResultLightbox({ src, item, busy, favorited, onToggleFavorite, note, se
   // Escape closes, matching every other overlay and gate in this app. Focus the note on open so the
   // large view is immediately a "type the correction" surface, the same intent as the tile's note.
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
+      // Arrows step between results — but NOT while typing, or a correction with the word
+      // "left" in it would fly through the batch instead of landing in the box.
+      const t = e.target;
+      const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+      if (typing || !onStep) return;
+      if (e.key === 'ArrowRight') { e.preventDefault(); onStep(1); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); onStep(-1); }
+    };
     window.addEventListener('keydown', onKey);
     inputRef.current?.focus();
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, onStep]);
+
+  /**
+   * Swipe, for the trackpad/touch half of "slide to the other one".
+   *
+   * Threshold on X and a cap on Y so a vertical scroll through a long correction box is never
+   * read as a swipe. Pointer events rather than touch events so a trackpad drag works too.
+   */
+  const swipe = useRef(null);
+  const onPointerDown = (e) => { swipe.current = { x: e.clientX, y: e.clientY }; };
+  const onPointerUp = (e) => {
+    const st = swipe.current;
+    swipe.current = null;
+    if (!st || !onStep) return;
+    const dx = e.clientX - st.x;
+    const dy = e.clientY - st.y;
+    if (Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx)) return;
+    onStep(dx < 0 ? 1 : -1);        // drag left = go forward, as every gallery behaves
+  };
 
   return createPortal(
     // Backdrop closes — nothing here spends money, so dismissing is the safe default (same rule as
@@ -1480,12 +1507,53 @@ function ResultLightbox({ src, item, busy, favorited, onToggleFavorite, note, se
         <StarIcon filled={favorited} />
       </button>
 
-      {/* The large image. stopPropagation so a click ON the picture does not close the view. */}
-      <div className="flex min-h-0 w-full flex-1 items-center justify-center" onClick={(e) => e.stopPropagation()}>
+      {/* PREV / NEXT. Rendered only when the parent supplied a stepper, so nothing changes for a
+          single-result view. Positioned over the image area rather than the controls, and they
+          stopPropagation like every other control here so a click never reaches the backdrop. */}
+      {onStep && (
+        <>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onStep(-1); }}
+            aria-label="Previous image"
+            title="Previous (←)"
+            className={cn('absolute left-2 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full border text-2xl sm:left-4', GATE_FOCUS, GATE_HAIRLINE, GATE_PANEL, GATE_MUTED, 'cursor-pointer hover:text-[#e8e8f0]')}
+          >
+            ‹
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onStep(1); }}
+            aria-label="Next image"
+            title="Next (→)"
+            className={cn('absolute right-2 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full border text-2xl sm:right-4', GATE_FOCUS, GATE_HAIRLINE, GATE_PANEL, GATE_MUTED, 'cursor-pointer hover:text-[#e8e8f0]')}
+          >
+            ›
+          </button>
+        </>
+      )}
+
+      {/* The large image. stopPropagation so a click ON the picture does not close the view.
+          Pointer handlers here (not on the backdrop) so a swipe starts on the picture itself. */}
+      <div
+        className="flex min-h-0 w-full flex-1 items-center justify-center"
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={onPointerDown}
+        onPointerUp={onPointerUp}
+      >
         {src
-          ? <img src={src} alt="" className={cn('max-h-full max-w-full rounded-xl object-contain', fade)} />
+          ? <img src={src} alt="" draggable={false}
+              className={cn('max-h-full max-w-full select-none rounded-xl object-contain', fade)} />
           : <span className={GATE_MUTED}>No preview</span>}
       </div>
+
+      {/* Where you are in the batch — without it, stepping through 60 results gives no sense of
+          progress or of having reached the end. */}
+      {pos && (
+        <span className={cn('shrink-0 rounded-full px-3 py-1 text-xs', GATE_PANEL, GATE_MUTED)}>
+          {pos} — ← → or swipe
+        </span>
+      )}
 
       {/* The per-image controls — the SAME note state and the SAME handlers the tile uses. */}
       <div
@@ -1673,7 +1741,7 @@ function ResultLightbox({ src, item, busy, favorited, onToggleFavorite, note, se
  * regenerate note below expands INSIDE the tile's own cell for the same reason — the grid rows
  * are auto-sized, so one tile growing never moves the tiles beside it out from under the cursor.
  */
-function ResultTile({ item, src, selected, busy, error, favorited, onToggleFavorite, onToggle, onRegenerate, onAnimate, onRemove, onClearVideoPrompt, onDuplicateWithPrompt }) {
+function ResultTile({ item, src, selected, busy, error, favorited, onToggleFavorite, onToggle, onRegenerate, onAnimate, onRemove, onClearVideoPrompt, onDuplicateWithPrompt, openLightbox, onOpenLightbox, onCloseLightbox, onStepLightbox, lightboxPos }) {
   // Needed here so a download that could not be cleaned can SAY so — the old empty catch is how a
   // raw file left this page unnoticed.
   const { notify } = useApp();
@@ -1726,7 +1794,13 @@ function ResultTile({ item, src, selected, busy, error, favorited, onToggleFavor
   // actions stay exactly where they were, so the lightbox is an additional way in, not a
   // replacement. It renders `note`/`setNote` and this tile's handlers, so it shares the tile's
   // state rather than forking a second correction box.
-  const [lightboxOpen, setLightboxOpen] = useState(false);
+  // OWNED BY THE PARENT, not by the tile. It used to be tile-local `useState`, which made
+  // stepping to the next image impossible: a tile knows nothing about its neighbours, so the
+  // large view was a dead end you had to close before opening another (owner, 2026-08-07).
+  // The parent holds the open uid and the ordering; the tile still RENDERS the lightbox, so it
+  // keeps sharing this tile's note/handlers rather than forking a second correction box.
+  const lightboxOpen = openLightbox;
+  const setLightboxOpen = (v) => (v ? onOpenLightbox?.() : onCloseLightbox?.());
   // Whether the picture has actually arrived over the wire.
   //
   // A finished tile draws its buttons the moment the result exists, but the image itself is a
@@ -2213,6 +2287,8 @@ function ResultTile({ item, src, selected, busy, error, favorited, onToggleFavor
           onRemove={onRemove}
           onDownload={download}
           onClose={() => setLightboxOpen(false)}
+          onStep={onStepLightbox}
+          pos={lightboxPos}
         />
       )}
     </div>
@@ -2384,6 +2460,9 @@ export default function EddyGeneratePage() {
   // has cached or given up on — a stalled fetch otherwise leaves a tile on "Loading…" with no way
   // to retry short of reloading the whole app and losing the results column.
   const [imgNonce, setImgNonce] = useState(0);
+  // Which result is showing in the large view, by uid. Held here rather than in the tile because
+  // stepping to the next image needs the ORDERING, which only the grid knows.
+  const [lightboxUid, setLightboxUid] = useState(null);
   // [{ name, baseImage, faceImage, build }] — see modelsStore.
   const [models, setModels] = useState([]);
   const [activeModel, setActiveModel] = useState('');
@@ -3639,6 +3718,29 @@ export default function EddyGeneratePage() {
   // Clamped at zero because `done` and `queued` are updated from separate state updaters and can
   // be observed a render apart.
   const pendingCount = Math.max(0, queued - done);
+  /**
+   * Move the large view N places through the CURRENT results order.
+   *
+   * Clamped rather than wrapping: arriving back at the first image after the last one reads as a
+   * bug, and the position counter makes the end obvious. Reads `results` at call time via the
+   * functional update, so a batch that lands while the view is open steps into the new images
+   * instead of a stale snapshot.
+   */
+  const stepLightbox = useCallback((delta) => {
+    setLightboxUid((cur) => {
+      const i = results.findIndex((r) => r.uid === cur);
+      if (i < 0) return cur;
+      const next = results[i + delta];
+      return next ? next.uid : cur;
+    });
+  }, [results]);
+
+  // A result can be removed while its large view is open. Close rather than leaving an overlay
+  // pinned over an image that no longer exists.
+  useEffect(() => {
+    if (lightboxUid && !results.some((r) => r.uid === lightboxUid)) setLightboxUid(null);
+  }, [lightboxUid, results]);
+
   const selectedResults = useMemo(
     () => results.filter((r) => selectedUids.has(r.uid)),
     [results, selectedUids],
@@ -4732,6 +4834,11 @@ export default function EddyGeneratePage() {
                 favorited={srcPoseId ? favSets.pose.has(srcPoseId) : false}
                 onToggleFavorite={() => toggleResultFavorite(r)}
                 onToggle={() => toggleResult(r.uid)}
+                openLightbox={lightboxUid === r.uid}
+                onOpenLightbox={() => setLightboxUid(r.uid)}
+                onCloseLightbox={() => setLightboxUid(null)}
+                onStepLightbox={results.length > 1 ? stepLightbox : undefined}
+                lightboxPos={`${results.findIndex((x) => x.uid === r.uid) + 1} / ${results.length}`}
                 // Each scoped to this ONE result and routed through the same three functions the
                 // bulk bar calls — so a lone result is fully operable without ever being selected,
                 // and there is no second implementation of any of them to drift.
