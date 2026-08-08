@@ -896,7 +896,10 @@ export default function EddyCollection({
   // individual downloads (they all land in Downloads).
   const isElectron = Boolean(window.electronAPI?.isElectron);
   const saveToFolder = async () => {
-    const picked = selected.length ? visible.filter((i) => selected.includes(i.id)) : items;
+    // `visible`, NOT `items`: inside a folder, "Save all" must mean this folder. Using the
+    // whole collection meant standing in a 12-image folder and getting all 500 back, with no
+    // way to download just the folder you were looking at (owner, 2026-08-08).
+    const picked = selected.length ? visible.filter((i) => selected.includes(i.id)) : visible;
     const files = [];
     for (let idx = 0; idx < picked.length; idx += 1) {
       const it = picked[idx];
@@ -1364,9 +1367,11 @@ export default function EddyCollection({
                 {selected.length ? `Export ${selected.length}` : 'Export all'}
               </Btn>
             )}
-            {items.length > 0 && (
+            {visible.length > 0 && (
               <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={saveToFolder}>
-                {selected.length ? `Save ${selected.length} to Downloads` : 'Save all to Downloads'}
+                {selected.length
+                  ? `Save ${selected.length} to Downloads`
+                  : `Save ${visible.length}${activeFolder || favOnly ? ' in this folder' : ''} to Downloads`}
               </Btn>
             )}
             <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={openLibrary}>

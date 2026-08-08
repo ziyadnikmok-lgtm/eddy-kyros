@@ -133,6 +133,22 @@ export default function EddyBasePage() {
     }
   }, [baseStore, notify]);
 
+  /**
+   * Where new images are filed. '' means "a folder named after the character", which is the old
+   * behaviour and still the default — but picking a destination before generating removes the
+   * move-afterwards step entirely (owner, 2026-08-08, "from base to base folder").
+   */
+  const [saveToId, setSaveToId] = useState('');
+  const [saveFolders, setSaveFolders] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try { const f = await baseStore.listFolders(); if (alive) setSaveFolders(f); } catch { /* none yet */ }
+    })();
+    return () => { alive = false; };
+    // results is a dep so a folder created by the picker shows up here without a reload.
+  }, [baseStore, results]);
+
   const [picked, setPicked] = useState([]);        // result indexes ticked
   const [folderPick, setFolderPick] = useState(false);
   const [baseFolders, setBaseFolders] = useState([]);
@@ -212,6 +228,9 @@ export default function EddyBasePage() {
    * what makes "select the character and it uses the right face" true — sorting purely by date
    * would hand it whichever photo happened to be uploaded first (owner, 2026-08-07).
    */
+  // The selected character's name — used by the Save-to label and as the default folder.
+  const charName = useMemo(() => chars.find((c) => c.id === charId)?.name || '', [chars, charId]);
+
   const refs = useMemo(() => {
     const mine = items.filter((i) => i.folderId === charId);
     const rank = (i) => (i.role === 'base' ? 0 : i.role === 'body' ? 1 : 2);
@@ -233,8 +252,7 @@ export default function EddyBasePage() {
     if (!payload.length) { notify('That character has no reference photos', 'error'); return; }
 
     const prompt = buildBasePrompt(instruction, payload.length);
-    const charName = chars.find((c) => c.id === charId)?.name || 'Base';
-    lastRun.current = { payload, prompt, charName, ratio, resolution };
+    lastRun.current = { payload, prompt, charName: charName || 'Base', ratio, resolution };
     // A placeholder per image, added BEFORE the first request so the panel fills the moment you
     // click. Keyed so a slow one can be replaced in place while later clicks add their own.
     const keys = Array.from({ length: count }, (_, n) => `p-${runSeq.current++}-${n}`);
@@ -263,7 +281,10 @@ export default function EddyBasePage() {
         // Straight into Base Library, filed under the character's own name, so a generated base
         // is usable from the Generate page's Main photo slot without a save step.
         // eslint-disable-next-line no-await-in-loop
-        const folder = await baseStore.ensureFolder(charName);
+        // The chosen destination wins; falling back to her name keeps the old behaviour intact.
+        const folder = saveToId
+          ? { id: saveToId }
+          : await baseStore.ensureFolder(charName || 'Base');
         // eslint-disable-next-line no-await-in-loop
         const stored = await baseStore.addItems([{ dataUrl, prompt: instruction.trim(), name: `base-${Date.now()}` }], folder.id);
         // The Base Library row id is kept on the result. Filing it into a different folder later is
@@ -284,7 +305,7 @@ export default function EddyBasePage() {
       setInFlight((k) => Math.max(0, k - (count - made)));
       notify(why, 'error');
     }
-  }, [charId, instruction, refs, thumbs, charStore, baseStore, chars, ratio, resolution, count, notify]);
+  }, [charId, instruction, refs, thumbs, charStore, baseStore, charName, ratio, resolution, count, saveToId, notify]);
 
   if (loading) return <div className="flex justify-center py-16"><Spinner size={28} /></div>;
 
@@ -379,6 +400,15 @@ export default function EddyBasePage() {
                 {r}
               </button>
             ))}
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="text-xs uppercase tracking-wider text-zinc-500">Save to</span>
+            <select value={saveToId} onChange={(e) => setSaveToId(e.target.value)}
+              title="Which Base Library folder new images are filed into"
+              className="rounded-lg border border-white/[0.07] bg-white/[0.02] px-2.5 py-1.5 text-sm text-zinc-300 cursor-pointer">
+              <option value="">Her name{charName ? ` (${charName})` : ''}</option>
+              {saveFolders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </select>
           </span>
           <span className="flex items-center gap-1.5">
             <span className="text-xs uppercase tracking-wider text-zinc-500">How many</span>
