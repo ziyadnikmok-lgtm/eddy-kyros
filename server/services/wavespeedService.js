@@ -369,17 +369,31 @@ async function generateSeedDreamEdit(imageInputs, prompt, opts = {}) {
   return await _pollSeedDreamResult(key, taskId);
 }
 
-async function _pollSeedDreamResult(key, taskId) {
-  const deadline = Date.now() + SEEDDREAM_MAX_POLL_MS;
+/**
+ * `maxMs` / `label` default to Seedream's so existing callers are untouched.
+ *
+ * WHY THEY ARE PARAMETERS: nano-banana-2 shares this poller, and a real run of it reported
+ * 182,769 ms of inference alone — against a 180,000 ms deadline. The job had COMPLETED on
+ * WaveSpeed and the picture was sitting at its output URL; we gave up four seconds early, told
+ * the user "SeedDream edit timed out" on a page that has nothing to do with Seedream, and still
+ * paid for the image (owner, 2026-08-08, with the prediction JSON to prove it).
+ *
+ * The lesson is that a timeout on an already-billed job is a pure loss, so the ceiling belongs
+ * near the model's worst case rather than near its average.
+ */
+async function _pollSeedDreamResult(key, taskId, { maxMs = SEEDDREAM_MAX_POLL_MS, label = 'SeedDream edit' } = {}) {
+  const deadline = Date.now() + maxMs;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, SEEDDREAM_POLL_INTERVAL_MS));
     const res = await getTaskStatus(taskId);
     if (res.status === 'completed') return await _extractSeedDreamResults(res);
     if (res.status === 'failed') {
-      throw new AppError(`SeedDream edit failed: ${res.error || 'unknown'}`, 502, 'WAVESPEED_FAILED');
+      throw new AppError(`${label} failed: ${res.error || 'unknown'}`, 502, 'WAVESPEED_FAILED');
     }
   }
-  throw new AppError('SeedDream edit timed out', 504, 'WAVESPEED_TIMEOUT');
+  // Name the id: the prediction usually finishes moments later, and its result URL is
+  // https://api.wavespeed.ai/api/v3/predictions/<id>/result — recoverable rather than lost.
+  throw new AppError(`${label} timed out after ${Math.round(maxMs / 1000)}s (prediction ${taskId})`, 504, 'WAVESPEED_TIMEOUT');
 }
 
 async function _extractSeedDreamResults(data) {
@@ -534,6 +548,10 @@ const SEEDREAM5_MODEL_ID = 'bytedance/seedream-v5.0-pro/edit';
 // NOTE it takes image URLs, not base64, which is why it reuses the same upload path and
 // content-keyed cache Seedream's edit uses rather than posting bytes.
 const NANO2_MODEL_ID = 'google/nano-banana-2/edit';
+// Nano Banana 2 is SLOW: a measured run spent 182.8s in inference alone, before queue time.
+// Ten minutes is deliberately far above that — the cost of waiting is a spinner, the cost of
+// giving up early is an image that was generated, billed, and thrown away.
+const NANO2_MAX_POLL_MS = 600_000;
 
 // Every combo in a batch re-sends the same character photos, so without this a 30-image run
 // uploads them 30 times — re-encoding each with sharp and pushing it over the wire again.
@@ -660,7 +678,7 @@ async function generateNanoBanana2Edit(imageInputs, prompt, opts = {}) {
   const data = json?.data || json;
   if (data?.status === 'completed') return await _extractSeedDreamResults(data);
   if (!data?.id) throw new AppError('Nano Banana 2 returned no task ID', 502, 'WAVESPEED_ERROR');
-  return await _pollSeedDreamResult(key, data.id);
+  return await _pollSeedDreamResult(key, data.id, { maxMs: NANO2_MAX_POLL_MS, label: 'Nano Banana 2' });
 }
 
 async function generateSeedream5Edit(imageInputs, prompt, opts = {}) {

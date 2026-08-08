@@ -195,7 +195,11 @@ export const keys = {
 };
 
 export const seedream = {
-  edit: (body) => request('/seedream/edit', { method: 'POST', body }),
+  // `opts` passes through to request() — Base uses it to raise timeoutMs, because Nano Banana 2
+  // shares this route and runs far longer than Seedream (a measured 182.8s of inference against
+  // the 5-minute default is close enough to the edge that a slow queue would abort a job that has
+  // already been billed).
+  edit: (body, opts) => request('/seedream/edit', { method: 'POST', body, ...opts }),
 };
 
 export const instagramReel = {

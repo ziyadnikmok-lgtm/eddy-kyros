@@ -36,6 +36,10 @@ const RESOLUTIONS = ['1K', '2K'];
  * service, so neither applies here.
  */
 const NANO2_COST = { '1K': 0.07, '2K': 0.105 };
+
+// Just above the server's own 10-minute poll ceiling, so a slow job ends with the server's
+// specific message (which names the prediction id) rather than a bare client abort.
+const NANO2_CLIENT_TIMEOUT_MS = 11 * 60_000;
 /**
  * Retry a rate-limited call, backing off between attempts — the same contract EddyGeneratePage
  * uses, and here for the same reason: nothing else in this stack retries a 429, so a quota bump
@@ -114,7 +118,7 @@ export default function EddyBasePage() {
       const d = await withRateLimitRetry(() => seedreamApi.edit({
         images: run.payload, prompt: run.prompt, model: 'nano2',
         aspectRatio: run.ratio, resolution: run.resolution, tags: ['eddy', 'base'],
-      }));
+      }, { timeoutMs: NANO2_CLIENT_TIMEOUT_MS }));
       const first = (d?.images || [])[0];
       if (!first?.base64Data) throw new Error('No image came back');
       const dataUrl = `data:${first.mimeType || 'image/png'};base64,${first.base64Data}`;
@@ -231,7 +235,7 @@ export default function EddyBasePage() {
           aspectRatio: ratio,
           resolution,
           tags: ['eddy', 'base'],
-        }));
+        }, { timeoutMs: NANO2_CLIENT_TIMEOUT_MS }));
         const first = (d?.images || [])[0];
         if (!first?.base64Data) {
           setResults((prev) => prev.map((r) => (r.key === keys[n] ? { key: keys[n], error: 'No image came back' } : r)));
