@@ -22,7 +22,10 @@ import { cn } from '../lib/utils';
 const CHAR_DB = 'eddy-character';
 const BASE_DB = 'eddy-base';
 
-const RATIOS = ['3:4', '4:5', '1:1', '9:16', '16:9'];
+// Base photos are always 3:4 — that is the frame every downstream Eddy flow expects, and a base
+// shot at another ratio has to be re-cropped before it is usable. Fixed rather than offered
+// (owner, 2026-08-07).
+const RATIO = '3:4';
 
 /**
  * The identity rule, prepended to whatever the user writes.
@@ -53,7 +56,6 @@ export default function EddyBasePage() {
   const [thumbs, setThumbs] = useState({});
   const [charId, setCharId] = useState('');
   const [instruction, setInstruction] = useState('');
-  const [ratio, setRatio] = useState('3:4');
   const [count, setCount] = useState(1);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -109,7 +111,7 @@ export default function EddyBasePage() {
           images: payload,
           prompt,
           model: 'nano2',
-          aspectRatio: ratio,
+          aspectRatio: RATIO,
           resolution: '2K',
           tags: ['eddy', 'base'],
         });
@@ -131,7 +133,7 @@ export default function EddyBasePage() {
     } finally {
       setBusy(false);
     }
-  }, [charId, instruction, refs, thumbs, charStore, baseStore, chars, ratio, count, notify]);
+  }, [charId, instruction, refs, thumbs, charStore, baseStore, chars, count, notify]);
 
   if (loading) return <div className="flex justify-center py-16"><Spinner size={28} /></div>;
 
@@ -188,17 +190,6 @@ export default function EddyBasePage() {
         />
         <div className="flex flex-wrap items-center gap-3">
           <span className="flex items-center gap-1.5">
-            <span className="text-[0.6875rem] uppercase tracking-wider text-zinc-500">Ratio</span>
-            {RATIOS.map((r) => (
-              <button key={r} type="button" onClick={() => setRatio(r)}
-                className={cn('rounded-lg border px-2 py-1 text-[0.625rem] font-semibold cursor-pointer',
-                  ratio === r ? 'border-rose-500 bg-rose-500/15 text-rose-300'
-                              : 'border-white/[0.07] bg-white/[0.02] text-zinc-500 hover:border-zinc-600')}>
-                {r}
-              </button>
-            ))}
-          </span>
-          <span className="flex items-center gap-1.5">
             <span className="text-[0.6875rem] uppercase tracking-wider text-zinc-500">How many</span>
             {[1, 2, 4].map((n) => (
               <button key={n} type="button" onClick={() => setCount(n)}
@@ -214,7 +205,7 @@ export default function EddyBasePage() {
           {busy ? 'Generating…' : `Generate ${count} base image${count === 1 ? '' : 's'}`}
         </Btn>
         <p className="text-center text-[0.625rem] text-zinc-600">
-          Saved straight into Base Library, filed under her name.
+          3:4 · Nano Banana 2 · saved straight into Base Library, filed under her name.
         </p>
       </Card>
 

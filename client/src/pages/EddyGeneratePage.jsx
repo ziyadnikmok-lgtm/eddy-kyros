@@ -765,6 +765,32 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
   const pickStore = useMemo(() => (pickerDb ? createEddyCollection(pickerDb) : libraryStore), [pickerDb, libraryStore]);
   const [pickFolders, setPickFolders] = useState([]);
   const [pickFolder, setPickFolder] = useState(null);
+  /**
+   * The strip under the slot: the PICKER collection's own images, newest first.
+   *
+   * It used to show `saved` — this slot's private upload history — which is not where base photos
+   * live any more. The point of the row is "pick one without opening anything", so it has to be
+   * the collection the button opens: Base Library for the main photo, Character for the face
+   * (owner, 2026-08-07). Uploads still go to the slot store and are appended after, so nothing
+   * you dropped in here is lost.
+   */
+  const [pickRecent, setPickRecent] = useState([]);
+  useEffect(() => {
+    if (!pickerDb) { setPickRecent([]); return undefined; }
+    let alive = true;
+    (async () => {
+      try {
+        const items = await pickStore.listItems();
+        const rows = await Promise.all(
+          [...items].sort((a2, b2) => (b2.createdAt || 0) - (a2.createdAt || 0)).slice(0, 12)
+            .map(async (it) => ({ id: it.id, src: it.url || await pickStore.getImage(it.id) })),
+        );
+        if (alive) setPickRecent(rows.filter((r) => r.src));
+      } catch { if (alive) setPickRecent([]); }
+    })();
+    return () => { alive = false; };
+    // showLibrary is a dep so picking/adding in the picker refreshes the strip on close.
+  }, [pickStore, pickerDb, showLibrary]);
   const [saved, setSaved] = useState([]);          // [{ id, dataUrl }]
   const [over, setOver] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
@@ -1019,6 +1045,22 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
         document.body,
       )}
 
+      {pickRecent.length > 0 && (
+        <>
+          <p className="mt-2 text-[0.625rem] uppercase tracking-wider text-zinc-600">
+            From {pickerLabel || 'Library'} — click to use
+          </p>
+          <div className="mt-1 flex gap-1.5 overflow-x-auto pb-1">
+            {pickRecent.map((r) => (
+              <button key={r.id} type="button" onClick={() => pickFromLibrary(r.src)}
+                title={`Use this ${(pickerLabel || 'library').toLowerCase()} image`}
+                className="h-14 w-14 shrink-0 overflow-hidden rounded-md border-2 border-transparent bg-zinc-950 hover:border-rose-500 cursor-pointer">
+                <img src={r.src} alt="" loading="lazy" className="h-full w-full object-cover" />
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       {saved.length > 0 && (
         <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1">
           {saved.map((sv) => (
