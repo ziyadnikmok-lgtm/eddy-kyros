@@ -39,6 +39,37 @@ const GEMINI_PARALLEL_REQUESTS = 2;
 // Above this many picked items the summary list becomes a thumbnail grid instead of text rows.
 // Eight is about what fits without the Generate button leaving the screen.
 const COMPACT_PICKED = 8;
+
+/**
+ * Folder-tree helpers for the pickers.
+ *
+ * Once collections gained subfolders, this picker listed EVERY folder in one flat row — parents
+ * and children side by side — and clicking a parent showed nothing, because its items live in its
+ * children and the filter was an exact folderId match (owner, 2026-08-08: "so ugly and show
+ * nothing when they all have").
+ */
+const childrenOfIn = (folders, pid) => folders.filter((f) => (f.parentId || null) === (pid || null));
+
+/** A folder's id plus every id beneath it. Cycle-safe, so bad data cannot hang the render. */
+function subtreeOf(folders, id) {
+  const out = new Set([id]);
+  for (let pass = 0; pass < 50; pass += 1) {
+    const before = out.size;
+    for (const f of folders) if (f.parentId && out.has(f.parentId)) out.add(f.id);
+    if (out.size === before) break;
+  }
+  return out;
+}
+
+/** Root → … → active, for the breadcrumb. */
+function pathTo(folders, id) {
+  const byId = new Map(folders.map((f) => [f.id, f]));
+  const path = [];
+  const seen = new Set();
+  let cur = id ? byId.get(id) : null;
+  while (cur && !seen.has(cur.id)) { seen.add(cur.id); path.unshift(cur); cur = cur.parentId ? byId.get(cur.parentId) : null; }
+  return path;
+}
 const parallelFor = (engine) => (engine === 'gemini' ? GEMINI_PARALLEL_REQUESTS : PARALLEL_REQUESTS);
 
 /**
@@ -4457,7 +4488,10 @@ export default function EddyGeneratePage() {
           const visible = favFilter[slot.key]
             ? slot.items.filter((i) => slot.favIds.has(i.id))
             : (folderFilter[slot.key]
-              ? slot.items.filter((i) => i.folderId === folderFilter[slot.key] && !slot.favIds.has(i.id))
+              // Subtree, not an exact match: a parent whose items all sit in its children showed
+              // an empty grid.
+              ? (() => { const ids = subtreeOf(slot.folders, folderFilter[slot.key]);
+                  return slot.items.filter((i) => ids.has(i.folderId) && !slot.favIds.has(i.id)); })()
               : slot.items.filter((i) => !slot.favIds.has(i.id)));
           const setPicked = slot.key === 'outfit' ? setPickedOutfits : setPickedPoses;
           const allVisiblePicked = visible.length > 0 && visible.every((i) => slot.picked.includes(i.id));
@@ -4554,25 +4588,37 @@ export default function EddyGeneratePage() {
                                         : 'border-white/[0.07] bg-white/[0.02] text-zinc-400 hover:border-zinc-600')}>
                   <StarIcon filled={favFilter[slot.key]} /> Favorite <span className="text-zinc-600">{slot.items.filter((i) => slot.favIds.has(i.id)).length}</span>
                 </button>
-                {[{ id: null, name: 'All' }, ...slot.folders].map((f) => {
-                  // A folder is active only while Favorite is OFF — the two are one exclusive view.
-                  const active = folderFilter[slot.key] === f.id && !favFilter[slot.key];
-                  // Counting per folder so an empty one is obvious before you click it. Favorited items
-                  // are excluded here too — they have MOVED to the Favorite view — so the badge equals
-                  // what the grid actually shows, not a phantom higher number.
-                  const n = f.id
-                    ? slot.items.filter((i) => i.folderId === f.id && !slot.favIds.has(i.id)).length
-                    : slot.items.filter((i) => !slot.favIds.has(i.id)).length;
-                  return (
-                    <button key={f.id || 'all'} type="button"
+                {/* BREADCRUMB, then the CURRENT level only. Listing every folder flat is what turned
+                      this into a wall of chips once subfolders existed; each crumb walks back up. */}
+                  {pathTo(slot.folders, folderFilter[slot.key]).map((f) => (
+                    <button key={`crumb-${f.id}`} type="button"
                       onClick={() => { setFolderFilter((prev) => ({ ...prev, [slot.key]: f.id })); setFavFilter((prev) => ({ ...prev, [slot.key]: false })); }}
-                      className={cn('rounded-full border px-2.5 py-1 text-[0.625rem] font-semibold transition cursor-pointer',
-                        active ? 'border-rose-500/60 bg-rose-500/15 text-rose-300'
-                               : 'border-white/[0.07] bg-white/[0.02] text-zinc-400 hover:border-zinc-600')}>
-                      {f.name} <span className="text-zinc-600">{n}</span>
+                      className="rounded-full border border-white/[0.07] bg-white/[0.02] px-2.5 py-1 text-[0.625rem] font-semibold text-zinc-500 hover:border-zinc-600 cursor-pointer">
+                      {f.name} ›
                     </button>
-                  );
-                })}
+                  ))}
+                  {[{ id: null, name: 'All' }, ...childrenOfIn(slot.folders, folderFilter[slot.key])].map((f) => {
+                    // A folder is active only while Favorite is OFF — the two are one exclusive view.
+                    const active = folderFilter[slot.key] === f.id && !favFilter[slot.key];
+                    // Counts span the SUBTREE, so a parent never reads 0 while its children hold the
+                    // items. Favorited items stay excluded — they have MOVED to the Favorite view — so
+                    // the badge equals what the grid actually shows.
+                    const n = f.id
+                      ? (() => { const ids = subtreeOf(slot.folders, f.id);
+                          return slot.items.filter((i) => ids.has(i.folderId) && !slot.favIds.has(i.id)).length; })()
+                      : slot.items.filter((i) => !slot.favIds.has(i.id)).length;
+                    const kids = f.id ? childrenOfIn(slot.folders, f.id).length : 0;
+                    return (
+                      <button key={f.id || 'all'} type="button"
+                        onClick={() => { setFolderFilter((prev) => ({ ...prev, [slot.key]: f.id })); setFavFilter((prev) => ({ ...prev, [slot.key]: false })); }}
+                        className={cn('rounded-full border px-2.5 py-1 text-[0.625rem] font-semibold transition cursor-pointer',
+                          active ? 'border-rose-500/60 bg-rose-500/15 text-rose-300'
+                                 : 'border-white/[0.07] bg-white/[0.02] text-zinc-400 hover:border-zinc-600')}>
+                        {f.name} <span className="text-zinc-600">{n}</span>
+                        {kids > 0 && <span className="ml-0.5 text-zinc-600">›{kids}</span>}
+                      </button>
+                    );
+                  })}
               </div>
             )}
 
