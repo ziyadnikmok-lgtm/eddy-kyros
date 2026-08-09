@@ -70,6 +70,32 @@ const MAX_NANO_FOLDER = 'Max Nano';
  * Earliest rather than newest for the fallback: the Character tab treats the first image as her
  * base face, so this agrees with what that tab already shows.
  */
+/**
+ * Which Library folder a result is filed into.
+ *
+ * THE CHARACTER WINS. Results used to land in a flat "Eddy" folder no matter whose face was in
+ * them, so a whole fleet of characters piled into one bucket -- reported 2026-08-09. The comment at
+ * the filing site already claimed results filed under the character's name; the code beneath it did
+ * nothing of the sort. Now Grace's go to "Grace" and Gwen's to "Gwen".
+ *
+ * Max Nano NESTS rather than replaces: its output still gathers under "Max Nano" (asked for by
+ * name) with a per-character folder inside it, so that tab keeps its own pile AND stays sorted.
+ *
+ * With no character chosen the old behaviour stands, NSFW split included -- there is no name to
+ * file under, and inventing one would be worse than the generic folder.
+ */
+async function resolveLibraryFolder(libraryStore, { maxNano, nsfw, characterName }) {
+  const who = String(characterName || '').trim();
+  if (maxNano) {
+    const root = await libraryStore.ensureFolder(MAX_NANO_FOLDER);
+    if (!who) return root?.id || null;
+    const sub = await libraryStore.ensureFolder(who, root?.id || null);
+    return sub?.id || root?.id || null;
+  }
+  if (who) return (await libraryStore.ensureFolder(who))?.id || null;
+  return (await libraryStore.ensureFolder(nsfw ? 'Eddy NSFW' : 'Eddy'))?.id || null;
+}
+
 function oneRowPerFolder(items, role) {
   const byFolder = new Map();
   for (const it of items) {
@@ -927,7 +953,7 @@ const UNDRESS_TEXTS = [
  * scrolling hundreds of finished results to find either (owner, 2026-08-07). pickerFolders adds
  * the folder chips, which is what makes "pick HER face" a two-click job.
  */
-function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerDb, pickerLabel, pickerFolders, pickerRole, pickerStrip }) {
+function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerDb, pickerLabel, pickerFolders, pickerRole, pickerStrip, onPickFolder }) {
   const { notify } = useApp();
   const store = useMemo(() => createEddyCollection(dbName), [dbName]);
   // The collection the Library button browses. Falls back to the page's general library so a slot
@@ -957,7 +983,7 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
         const items = pickerRole ? oneRowPerFolder(all, pickerRole) : all;
         const rows = await Promise.all(
           [...items].sort((a2, b2) => (b2.createdAt || 0) - (a2.createdAt || 0)).slice(0, 12)
-            .map(async (it) => ({ id: it.id, src: it.url || await pickStore.getImage(it.id) })),
+            .map(async (it) => ({ id: it.id, folderId: it.folderId || null, src: it.url || await pickStore.getImage(it.id) })),
         );
         if (alive) setPickRecent(rows.filter((r) => r.src));
       } catch { if (alive) setPickRecent([]); }
@@ -1075,12 +1101,29 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
   };
 
   // A Library entry is a URL to the server copy, so it has to be fetched before it can be sent.
-  const pickFromLibrary = async (src) => {
+  const pickFromLibrary = async (src, folderId = null) => {
+    /**
+     * Reports the folder the picture came from, not just the picture.
+     *
+     * In the Character collection a FOLDER IS A CHARACTER, so its name is the only thing that says
+     * which character was chosen. Without this the Generate page had the face but no idea whose it
+     * was, and every result filed under a generic "Eddy" folder -- the bug reported on 2026-08-09,
+     * where the comment at the filing site claimed "results file under the character's name" while
+     * the code beneath it did nothing of the sort.
+     */
+    const report = async () => {
+      if (!onPickFolder) return;
+      if (!folderId) { onPickFolder(''); return; }
+      try {
+        const fs = await pickStore.listFolders();
+        onPickFolder(fs.find((f) => f.id === folderId)?.name || '');
+      } catch { onPickFolder(''); }
+    };
     try {
-      if (src.startsWith('data:')) { await use(src); setShowLibrary(false); return; }
+      if (src.startsWith('data:')) { await use(src); await report(); setShowLibrary(false); return; }
       const blob = await (await fetch(src, { credentials: 'include' })).blob();
       const reader = new FileReader();
-      reader.onload = () => { use(reader.result); setShowLibrary(false); };
+      reader.onload = async () => { await use(reader.result); await report(); setShowLibrary(false); };
       reader.readAsDataURL(blob);
     } catch {
       notify('Could not load that image', 'error');
@@ -1211,7 +1254,7 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
                   {library.filter((l) => !pickFolder || l.folderId === pickFolder).slice(0, libraryShown).map((l) => (
                     <button
                       key={l.id}
-                      onClick={() => pickFromLibrary(l.src)}
+                      onClick={() => pickFromLibrary(l.src, l.folderId)}
                       className="group aspect-[3/4] overflow-hidden rounded-xl border-2 border-zinc-700 bg-zinc-950 transition hover:border-rose-500 cursor-pointer"
                     >
                       <img src={l.src} alt="" className="h-full w-full object-cover transition group-hover:scale-[1.03]" loading="lazy" />
@@ -1241,7 +1284,7 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
           </p>
           <div className="mt-1 flex gap-1.5 overflow-x-auto pb-1">
             {pickRecent.map((r) => (
-              <button key={r.id} type="button" onClick={() => pickFromLibrary(r.src)}
+              <button key={r.id} type="button" onClick={() => pickFromLibrary(r.src, r.folderId)}
                 title={`Use this ${(pickerLabel || 'library').toLowerCase()} image`}
                 className={cn('h-14 w-14 shrink-0 overflow-hidden rounded-md border-2 bg-zinc-950 cursor-pointer',
                   value === r.src ? 'border-rose-500' : 'border-transparent hover:border-rose-500')}>
@@ -2730,7 +2773,7 @@ function _getRunSnap() {
 }
 
 const _cache = {
-  baseImage: '', faceImage: '', pickedOutfits: [], pickedPoses: [], instruction: '',
+  baseImage: '', faceImage: '', characterName: '', pickedOutfits: [], pickedPoses: [], instruction: '',
   // staticCamera defaults ON: the user asked for the camera lock to be the standing default, so a
   // fresh page (or one whose stored value predates this feature) starts with movement/zoom locked out.
   nsfw: false, aspectRatio: 'auto', resolution: '1K', staticCamera: true,
@@ -2790,6 +2833,9 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
 
   const [baseImage, setBaseImage] = useState(_cache.baseImage);   // identity + setting
   const [faceImage, setFaceImage] = useState(_cache.faceImage);   // close-up, face only
+  // WHOSE face it is -- the Character collection's folder name. Set when a face is picked, and
+  // the only thing that lets a result be filed under her name instead of a generic bucket.
+  const [characterName, setCharacterName] = useState(_cache.characterName || '');
   const [pickedOutfits, setPickedOutfits] = useState(_cache.pickedOutfits);
   const [pickedPoses, setPickedPoses] = useState(_cache.pickedPoses);
   // Both pickers start open — the work is choosing, so hiding it behind a click was friction.
@@ -3125,6 +3171,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       if (!alive || !saved) return;
       setBaseImage((v) => v || saved.baseImage || '');
       setFaceImage((v) => v || saved.faceImage || '');
+      setCharacterName((v) => v || saved.characterName || '');
       setPickedOutfits((v) => (v.length ? v : saved.pickedOutfits || []));
       setPickedPoses((v) => (v.length ? v : saved.pickedPoses || []));
       setInstruction((v) => (v ? v : saved.instruction || ''));
@@ -3185,6 +3232,9 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     if (!m) return;
     setBaseImage(m.baseImage || '');
     setFaceImage(m.faceImage || '');
+    // A saved model IS a character, so loading one names her too -- otherwise picking Grace from
+    // the model row filed her results in the generic folder while picking her face did not.
+    setCharacterName(m.name || '');
     setBuild(m.build || 'auto');
     setActiveModel(name);
     modelsStore.set('active', name);
@@ -3223,10 +3273,10 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   }, [activeModel, models, notify]);
 
   useEffect(() => {
-    const snap = { baseImage, faceImage, pickedOutfits, pickedPoses, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine };
+    const snap = { baseImage, faceImage, characterName, pickedOutfits, pickedPoses, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine };
     Object.assign(_cache, snap);
     stateStore.set('state', snap);
-  }, [baseImage, faceImage, pickedOutfits, pickedPoses, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine]);
+  }, [baseImage, faceImage, characterName, pickedOutfits, pickedPoses, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine]);
 
   /**
    * Submits ONE video job and returns as soon as Muapi accepts it (a taskId) — the render finishes
@@ -3749,7 +3799,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     let libFolderId = runCtx ? runCtx.libFolderId : null;
     if (!runCtx) {
       try {
-        libFolderId = (await libraryStore.ensureFolder(maxNano ? MAX_NANO_FOLDER : (nsfw ? 'Eddy NSFW' : 'Eddy')))?.id || null;
+        libFolderId = await resolveLibraryFolder(libraryStore, { maxNano, nsfw, characterName });
       } catch {
         // Filing is a convenience; a failure here must not cost you the generation.
       }
@@ -4070,7 +4120,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     }
 
     return { image: first, videoPrompt: poseVideoPrompt, uid: resultUid };
-  }, [sourceImages, aspectRatio, baseImage, resolution, perRunImages, nsfw, wantsNude, wantsBody, undressChip, instruction, faceImage, outfits, poses, poseStore, outfitStore, libraryStore, submitVideoJob, notify, sendPoseImage, sendOutfitImage, faceless, lighting, build, engine, wantsExpression]);
+  }, [sourceImages, aspectRatio, baseImage, resolution, perRunImages, nsfw, characterName, wantsNude, wantsBody, undressChip, instruction, faceImage, outfits, poses, poseStore, outfitStore, libraryStore, submitVideoJob, notify, sendPoseImage, sendOutfitImage, faceless, lighting, build, engine, wantsExpression]);
 
   // Keep the ref pointed at the latest generateCombo every render, so the mount-time rehydrate
   // effect's rebuilt regenerate closures reach the current one at click time (see the ref's comment).
@@ -4160,7 +4210,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // "Gwen". Resolved once per run so a 25-image batch doesn't hunt for it 25 times.
     let libFolderId = null;
     try {
-      libFolderId = (await libraryStore.ensureFolder(maxNano ? MAX_NANO_FOLDER : (nsfw ? 'Eddy NSFW' : 'Eddy')))?.id || null;
+      libFolderId = await resolveLibraryFolder(libraryStore, { maxNano, nsfw, characterName });
     } catch {
       // Filing is a convenience; a failure here must not cost you the generation.
     }
@@ -4228,7 +4278,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // here is exactly what run() itself reads: the guards, the ctx inputs, and generateCombo. sourceImages
     // is an unmemoized array literal today, so it rebuilds run() every render — listed anyway so
     // memoizing it later can't silently turn charPayload into a stale (previous-face) closure.
-  }, [baseImage, overCap, perRunImages, aspectRatio, combos, sourceImages, resolution, nsfw, libraryStore, notify, generateCombo, engine, pickedOutfits, pickedPoses]);
+  }, [baseImage, overCap, perRunImages, aspectRatio, combos, sourceImages, resolution, nsfw, characterName, libraryStore, notify, generateCombo, engine, pickedOutfits, pickedPoses]);
 
   /* -------------------------------------------------------------------------------------------
    * The inline results flow. Everything below acts on RESULTS, never on the page's live controls:
@@ -4835,6 +4885,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             pickerLabel="Character"
             pickerFolders
             pickerRole="base"
+            onPickFolder={setCharacterName}
             pickerStrip
           />
         </div>

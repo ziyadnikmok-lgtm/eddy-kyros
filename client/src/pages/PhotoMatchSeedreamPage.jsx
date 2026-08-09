@@ -12,6 +12,7 @@ import { NSFW_PRESETS, nudeState, NUDE_LINE } from '../lib/nsfwPresets';
 import { createPageStore } from '../lib/pageStateStore';
 import { cn } from '../lib/utils';
 import { autoBlurFace } from '../lib/autoBlurFace';
+import ManualBlurModal from '../components/ManualBlurModal';
 
 const ASPECT_OPTIONS = [{ value: 'auto', label: 'Auto (match source)' }, ...SEEDREAM_ASPECT_RATIOS.map((r) => ({ value: r, label: r }))];
 const RES_OPTIONS = SEEDREAM_RESOLUTIONS.map((r) => ({ value: r, label: r }));
@@ -40,7 +41,7 @@ const SPEND_KEY = 'kyros.photoMatchSeedream.sessionSpend';
 // spelled out twice.
 const SEEDREAM_PROMPT_BUDGET = 3000;
 
-function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRecreate, varyBackground, allowExpressionChange, allowHairChange, allowBodyChange, wantsNude, addGenericNudeLine, sourceFaceBlurred }) {
+function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRecreate, varyBackground, allowExpressionChange, allowHairChange, allowBodyChange, allowLightingChange, faceless, wantsNude, addGenericNudeLine, sourceFaceBlurred }) {
   const who = characterName || 'the character';
   const n = Math.max(1, refCount);
   const refs = n > 1 ? `images 1-${n}` : 'image 1';
@@ -48,44 +49,65 @@ function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRec
 
   // Identity comes from the refs. Each allow* flag drops its clause so a preset that overrides
   // that attribute (hair/body) doesn't fight the base prompt. Hair/body default ON = from refs.
+  // When faceless, the face is intentionally hidden — don't ask the model to match it here (the
+  // final lock handles the faceless case), but skin/hair/body still come from the refs.
   const identity = [
-    'face, skin tone, makeup (keep bold/dark lips)',
+    faceless ? 'skin tone' : 'face, skin tone, makeup (keep bold/dark lips)',
     allowHairChange ? null : 'hair',
     allowBodyChange ? null : 'body/figure/chest',
   ].filter(Boolean).join(', ');
 
   // Scene comes from the source. Outfit only when dressed; expression only when no Mood preset
-  // has taken it over (else the two cancel).
+  // has taken it over (else the two cancel); lighting only when no Lighting preset overrides it.
+  // 'framing/camera' is pulled OUT into its own emphasised line below — folded into this list it
+  // was one word among eight and the model re-framed to a stock portrait anyway.
   const scene = [
     'background', 'pose', 'hands/props',
     wantsNude ? null : 'outfit',
     allowExpressionChange ? null : 'expression',
-    'lighting', 'framing/camera',
+    allowLightingChange ? null : 'lighting',
   ].filter(Boolean).join(', ');
 
   const parts = [
-    // Roles by image index, and the never-use-source-face guarantee, stated up front and hard.
+    // Roles by image index, stated up front and hard.
     `${refs} = ${who} = the ONLY face/body source. ${src} = scene only — NEVER an identity reference.`,
     exactRecreate
       ? `Reproduce ${src} exactly — same background, pose, props, framing, lighting${wantsNude ? '' : ', outfit'} — changing only the person to ${who}${wantsNude ? ', and remove her clothing as instructed below' : ''}.`
       : `A new photo of ${who} in ${src}'s scene, not a retouch of ${src}.`,
     `From ${refs}, match exactly: ${identity}. Where ${src} disagrees, ${refs} win.`,
     `From ${src}: ${scene}.`,
-    // The forceful restatement — this is the guarantee whose loss reads as the bug.
-    `NEVER take face, skin, hair or body from ${src}: that person is an anonymous stand-in, discard her completely. The output face MUST be recognisably ${refs}; if unsure, use ${refs}.`,
+    // #4 — camera as its own instruction. Seedream copies the pose but defaults to a flattering
+    // eye-level portrait crop unless the SHOT itself is pinned; this is what "same camera angle"
+    // in Eddy needed spelled out separately from framing.
+    `CAMERA: reproduce ${src}'s exact shot — the same camera angle, the same lens height, the same distance and the same crop/framing. A low-angle, high-angle, over-the-shoulder, close-up or wide shot in ${src} stays that shot; do NOT re-frame to a standard eye-level portrait.`,
   ];
 
-  if (allowBodyChange) {
-    parts.push(`Figure and chest follow the instruction at the END of this prompt, at full strength — it overrides ${refs} and ${src}; the garment stretches to fit, never shrink her to fit it.`);
-  } else if (!wantsNude) {
-    parts.push(`The ${src} outfit stretches to fit HER body from ${refs} — a tighter pull from a larger chest is correct, not an error.`);
-  }
-
-  if (sourceFaceBlurred) parts.push(`${src}'s face is deliberately blurred — do not reproduce the blur or invent a face from it; render ${who}'s face sharply from ${refs}.`);
+  if (sourceFaceBlurred && !faceless) parts.push(`${src}'s face is deliberately blurred — do not reproduce the blur or invent a face from it; render ${who}'s face sharply from ${refs}.`);
   if (!exactRecreate && varyBackground) parts.push(`Shift the lighting and mood slightly — same place, a different moment.`);
   if (addGenericNudeLine) parts.push(NUDE_LINE);
   if (masterPrompt?.trim()) parts.push(`${who}: ${masterPrompt.trim()}`);
   parts.push(`Photorealistic — real pores, hair strands, fabric, slight asymmetry; no plastic or CGI look.`);
+
+  // #3 — the hardest locks go LAST. Seedream weights the tail of the prompt most heavily (the
+  // whole reason chips are appended at the very end), so the identity guarantee and the bust lock
+  // — the two things whose loss reads as "the page is broken" — belong here, not buried mid-prompt.
+  if (faceless) {
+    // Faceless output: the face must NOT appear, so the usual "must be recognisably her" guarantee
+    // is wrong here and would fight the composition. Identity rides on body/hair instead.
+    parts.push(`FINAL — HIGHEST PRIORITY, overrides everything above: her face is intentionally OUT of the shot — cropped above the shoulders, turned away, or hidden by hair/hand/angle so no recognisable face is visible. Do NOT invent or show a face. Her body, hair, skin and proportions still come from ${refs}${allowBodyChange ? '' : ' at their true size — never averaged or shrunk toward ' + src}.`);
+  } else {
+    const finalLock = [
+      `FINAL — HIGHEST PRIORITY, overrides everything above: the face, skin and hair in the output MUST be recognisably ${refs}. ${src}'s face is an anonymous stand-in — discard it completely; if in any doubt, copy ${refs}.`,
+      // Body/chest: pinned to the refs UNLESS a size chip is driving it (then the chip, appended
+      // after this whole prompt, wins and re-pinning here would fight it).
+      allowBodyChange
+        ? null
+        : (wantsNude
+          ? `Her body, figure and chest come from ${refs} at their true size — never averaged or shrunk toward ${src}.`
+          : `Her body, figure and chest come from ${refs} at their true size; the ${src} outfit stretches to fit HER — a tighter pull from a larger chest is correct, not an error.`),
+    ].filter(Boolean);
+    parts.push(finalLock.join(' '));
+  }
 
   return parts.join('\n\n');
 }
@@ -133,11 +155,22 @@ const PRESETS = [
   { group: 'Photo', label: 'Match lighting harder', text: 'Match the scene photo\'s lighting, colour temperature and shadow direction precisely.' },
   { group: 'Photo', label: 'Candid phone look', text: 'A RAW handheld phone photo — candid framing, high ISO grain in the shadows, slight natural softness. Not a studio shot.' },
   { group: 'Photo', label: 'Sharper detail', text: 'Render skin, hair and fabric texture sharply. No plastic or over-smoothed skin.' },
+
+  // Lighting chips OVERRIDE the source's lighting, so each sets lightingChange — otherwise the base
+  // prompt's "lighting comes from the scene photo" clause cancels it, same failure as the Mood/Hair
+  // chips. Ported from Eddy's moody/natural set to match her darker aesthetic.
+  { group: 'Lighting', lightingChange: true, label: 'Moody low-key', text: 'Low-key moody lighting — deep shadows, a single soft source, most of the frame falling into darkness. Cinematic, intimate, high contrast.' },
+  { group: 'Lighting', lightingChange: true, label: 'Dramatic side light', text: 'Hard directional light from one side — one half of her lit, the other in shadow, a sharp shadow line down the face and body.' },
+  { group: 'Lighting', lightingChange: true, label: 'Candlelit warm', text: 'Warm low candlelight — flickering orange glow, soft falloff, deep warm shadows. An intimate after-dark feel.' },
+  { group: 'Lighting', lightingChange: true, label: 'Cool night', text: 'Cool blue night lighting — moonlight or a screen\'s glow, low and directional, cold shadows. Nocturnal and quiet.' },
+  { group: 'Lighting', lightingChange: true, label: 'Red neon', text: 'Saturated red/magenta neon light raking across her skin, hard coloured shadows, a late-night bar or bedroom glow.' },
+  { group: 'Lighting', lightingChange: true, label: 'Soft window daylight', text: 'Soft diffused daylight from a nearby window — gentle wraparound light, soft shadows, natural and flattering.' },
+  { group: 'Lighting', lightingChange: true, label: 'Golden hour', text: 'Warm golden-hour sun low in frame — long soft shadows, a warm rim of light on her edges, hazy glow.' },
 ];
 
 // NSFW chips come from the shared module so every page offers the same set.
 const ALL_PRESETS = [...PRESETS, ...NSFW_PRESETS];
-const PRESET_GROUPS = ['Body', 'Hair', 'Scene', 'Skin', 'Mood', 'Photo'];
+const PRESET_GROUPS = ['Body', 'Hair', 'Scene', 'Skin', 'Mood', 'Photo', 'Lighting'];
 const NSFW_GROUPS = ['Sexual', 'Expression'];
 
 function fileToDataUrl(file) {
@@ -163,9 +196,20 @@ async function urlToImagePayload(url) {
   return parseDataUrl(dataUrl);
 }
 
-const _cache = { extra: '', aspectRatio: 'auto', resolution: '1K', exactRecreate: false, varyBackground: false, nsfw: false, blurSource: true };
+const _cache = { extra: '', aspectRatio: 'auto', resolution: '1K', exactRecreate: false, varyBackground: false, nsfw: false, blurSource: true, faceless: false };
 // Images are too big for _cache/localStorage — IndexedDB so they survive a reload.
 const store = createPageStore('kyros-photo-match-seedream-state');
+
+/**
+ * WaveSpeed's published per-image rate for nano-banana-2, by resolution. Kept beside Seedream's
+ * own pricing (seedreamCost) rather than folded into it: nano2 charges a FLAT rate per image and
+ * does not bill per extra reference, so sharing one cost function would misstate both.
+ */
+const NANO2_COST = { '1K': 0.07, '2K': 0.105 };
+
+// Nano Banana 2 runs long -- a measured Eddy run spent 182.8s in inference alone -- and the
+// client aborting first throws away an image that has already been generated and billed.
+const NANO2_CLIENT_TIMEOUT_MS = 11 * 60_000;
 
 export default function PhotoMatchSeedreamPage() {
   const { notify, characters: chars = [] } = useApp();
@@ -181,8 +225,15 @@ export default function PhotoMatchSeedreamPage() {
   const [blurSource, setBlurSource] = useState(_cache.blurSource ?? true);
   const blurSourceRef = useRef(blurSource);
   useEffect(() => { blurSourceRef.current = blurSource; }, [blurSource]);
+  const [faceless, setFaceless] = useState(_cache.faceless ?? false);
+  const [blurringAll, setBlurringAll] = useState(false);
+  const [manualBlurId, setManualBlurId] = useState(null);  // source id being hand-blurred, or null
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [resolution, setResolution] = useState(_cache.resolution);
+  // 'seedream' | 'nano2'. Both go through the same /api/seedream/edit route and the same
+  // WaveSpeed key -- `model` is the only thing that differs -- so a result gets the same
+  // imageStore write, gallery row and tagging either way.
+  const [engine, setEngine] = useState(_cache.engine || 'seedream');
 
   const [galleryImages, setGalleryImages] = useState([]);
   const [galleryLoading, setGalleryLoading] = useState(false);
@@ -220,8 +271,10 @@ export default function PhotoMatchSeedreamPage() {
   useEffect(() => { if (restored) store.set('extra', extra); }, [extra, restored]);
 
   useEffect(() => { _cache.extra = extra; }, [extra]);
+  useEffect(() => { _cache.engine = engine; }, [engine]);
   useEffect(() => { _cache.nsfw = nsfw; }, [nsfw]);
   useEffect(() => { _cache.blurSource = blurSource; }, [blurSource]);
+  useEffect(() => { _cache.faceless = faceless; }, [faceless]);
   // Turning NSFW on removes any already-typed outfit-keeping chip. Left in, it would contradict
   // the removal line and the model would do neither — the exact failure this toggle had before.
   useEffect(() => {
@@ -263,7 +316,11 @@ export default function PhotoMatchSeedreamPage() {
   const charTruncated = charImageCount > MAX_CHAR_IMAGES;
 
   const imagesPerJob = 1 + charImagesUsed;
-  const costPerJob = seedreamCost(resolution, imagesPerJob);
+  // Priced per ENGINE. Showing Seedream's rate while Nano Banana 2 runs would misstate the bill
+  // on the one control where spend is agreed.
+  const costPerJob = engine === 'nano2'
+    ? (NANO2_COST[resolution] ?? NANO2_COST['1K'])
+    : seedreamCost(resolution, imagesPerJob);
   const totalCost = costPerJob * Math.max(1, sources.length);
 
   // ── sources ────────────────────────────────────────────────────────────────
@@ -275,16 +332,50 @@ export default function PhotoMatchSeedreamPage() {
     let missed = 0;
     const added = await Promise.all(valid.map(async (f) => {
       let dataUrl = await fileToDataUrl(f);
+      let blurred = false;
       if (blurSourceRef.current) {
         const out = await autoBlurFace(dataUrl);
         dataUrl = out.dataUrl;
+        blurred = out.blurred;
         if (!out.blurred) missed += 1;
       }
-      return { id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, dataUrl };
+      return { id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, dataUrl, blurred };
     }));
-    if (missed) notify(`${missed} photo(s): no face found to blur — identity may drift on those`, 'error');
+    if (missed) notify(`${missed} photo(s): no face found to blur — use "Blur all" or click a photo to blur by hand`, 'error');
     setSources((prev) => [...prev, ...added]);
   }, [sources.length, notify]);
+
+  // Re-run face detection over every source that isn't already blurred, in AGGRESSIVE mode (a
+  // looser threshold that catches the profile/tilted faces pico misses on its first, conservative
+  // pass at paste time). Only un-blurred sources are touched, so pressing it twice is safe and it
+  // never re-blurs a face that's already gone. Whatever it still can't find is reported so you
+  // know to hand-blur those.
+  const blurAllFaces = useCallback(async () => {
+    const targets = sources.filter((s) => !s.blurred);
+    if (!targets.length) { notify('Every source is already blurred', 'info'); return; }
+    setBlurringAll(true);
+    let blurred = 0; let missed = 0;
+    const results = await Promise.all(targets.map(async (s) => {
+      const out = await autoBlurFace(s.dataUrl, { aggressive: true });
+      if (out.blurred) { blurred += 1; return { id: s.id, dataUrl: out.dataUrl, blurred: true }; }
+      missed += 1; return null;
+    }));
+    const byId = new Map(results.filter(Boolean).map((r) => [r.id, r]));
+    setSources((prev) => prev.map((s) => (byId.has(s.id) ? { ...s, ...byId.get(s.id) } : s)));
+    setBlurringAll(false);
+    if (blurred && !missed) notify(`Blurred ${blurred} face${blurred === 1 ? '' : 's'} ✨`, 'success');
+    else if (blurred) notify(`Blurred ${blurred}; ${missed} still had no detectable face — click those to blur by hand`, 'error');
+    else notify('No faces detected — click a photo to blur by hand', 'error');
+  }, [sources, notify]);
+
+  // Apply a hand-drawn blur box from the modal and mark that source blurred.
+  const applyManualBlur = useCallback((id, newDataUrl) => {
+    setSources((prev) => prev.map((s) => (s.id === id ? { ...s, dataUrl: newDataUrl, blurred: true } : s)));
+    setManualBlurId(null);
+    notify('Face blurred by hand ✨', 'success');
+  }, [notify]);
+
+  const unblurredCount = sources.filter((s) => !s.blurred).length;
 
   useEffect(() => {
     const onPaste = async (e) => {
@@ -345,16 +436,19 @@ export default function PhotoMatchSeedreamPage() {
         prompt,
         aspectRatio: ratio,
         resolution,
-      });
+        // Omitted entirely on the Seedream path so that request stays byte-identical to what it
+        // was before this switch existed.
+        ...(engine === 'nano2' ? { model: 'nano2' } : {}),
+      }, engine === 'nano2' ? { timeoutMs: NANO2_CLIENT_TIMEOUT_MS } : undefined);
 
       const first = (data.images || [])[0];
-      if (!first) throw new Error('Seedream returned no image');
+      if (!first) throw new Error(`${engine === 'nano2' ? 'Nano Banana 2' : 'Seedream'} returned no image`);
 
       resolvePending(feedId, {
         galleryId: first.galleryId,
         imageId: first.imageId,
-        prompt: 'Photo Match (Seedream)',
-        imageModel: 'Seedream 5.0 Pro Edit',
+        prompt: engine === 'nano2' ? 'Photo Match (Nano Banana 2)' : 'Photo Match (Seedream)',
+        imageModel: engine === 'nano2' ? 'Nano Banana 2 (WaveSpeed)' : 'Seedream 5.0 Pro Edit',
         aspectRatio: ratio,
         resolutionTier: resolution,
         mimeType: first.mimeType,
@@ -397,6 +491,9 @@ export default function PhotoMatchSeedreamPage() {
     // A Body preset intentionally overrides her real figure, so the "chest size comes from the
     // references" rules must stand down or they cancel it out.
     const allowBodyChange = ALL_PRESETS.some((preset) => preset.bodyChange && extra.includes(preset.text));
+    // A Lighting preset overrides the source's lighting, so the "lighting comes from the scene
+    // photo" clause must drop or the two cancel — same pattern as expression/hair/body.
+    const allowLightingChange = ALL_PRESETS.some((preset) => preset.lightingChange && extra.includes(preset.text));
 
     const { wantsNude, addGenericNudeLine } = nudeState({ nsfw, instruction: extra });
     const prompt = buildMatchInstruction({
@@ -404,6 +501,7 @@ export default function PhotoMatchSeedreamPage() {
       wantsNude,
       addGenericNudeLine,
       sourceFaceBlurred: blurSource,
+      faceless,
       refCount: charRefs.length,
       masterPrompt: charDetail?.masterPrompt,
       exactRecreate,
@@ -411,6 +509,7 @@ export default function PhotoMatchSeedreamPage() {
       allowExpressionChange,
       allowHairChange,
       allowBodyChange,
+      allowLightingChange,
     });
     let finalPrompt = extra.trim() ? `${prompt}\n\n${extra.trim()}` : prompt;
     if (finalPrompt.length > SEEDREAM_PROMPT_BUDGET) {
@@ -486,8 +585,19 @@ export default function PhotoMatchSeedreamPage() {
             {sources.length ? (
               <div className="grid [grid-template-columns:repeat(auto-fill,minmax(90px,1fr))] gap-2">
                 {sources.map((s) => (
-                  <div key={s.id} className="relative">
-                    <img src={s.dataUrl} alt="" className="w-full aspect-[3/4] object-cover rounded-lg border border-zinc-800/60 bg-zinc-950" />
+                  <div key={s.id} className="relative group">
+                    {/* Click the photo to blur a region by hand — the fallback for a face the
+                        detector missed. The amber ring flags exactly those un-blurred photos. */}
+                    <button type="button" onClick={() => setManualBlurId(s.id)} title="Click to blur a region by hand"
+                      className={cn('block w-full rounded-lg border overflow-hidden cursor-pointer',
+                        blurSource && !s.blurred ? 'border-amber-500/70 ring-1 ring-amber-500/40' : 'border-zinc-800/60')}>
+                      <img src={s.dataUrl} alt="" className="w-full aspect-[3/4] object-cover bg-zinc-950" />
+                    </button>
+                    {blurSource && (
+                      s.blurred
+                        ? <span className="absolute bottom-1 left-1 rounded bg-emerald-600/90 px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-white pointer-events-none">Blurred</span>
+                        : <span className="absolute bottom-1 left-1 rounded bg-amber-600/90 px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-white pointer-events-none">Face — tap</span>
+                    )}
                     <button onClick={() => setSources((prev) => prev.filter((x) => x.id !== s.id))}
                       className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-zinc-800 border border-zinc-600 text-zinc-400 text-xs flex items-center justify-center hover:text-white cursor-pointer">×</button>
                   </div>
@@ -510,6 +620,12 @@ export default function PhotoMatchSeedreamPage() {
             }}>
               {showGallery ? 'Hide Gallery' : 'Gallery'}
             </Btn>
+            {sources.length > 0 && blurSource && (
+              <Btn variant="secondary" className="!rounded-lg !py-1 !px-2.5 !text-[0.6875rem]" onClick={blurAllFaces} disabled={blurringAll || unblurredCount === 0}>
+                {blurringAll ? <Spinner size={12} /> : null}
+                {unblurredCount > 0 ? `Blur all faces (${unblurredCount})` : 'All blurred ✓'}
+              </Btn>
+            )}
             {sources.length > 0 && <Btn variant="ghost" className="!rounded-lg !py-1 !px-2.5 !text-[0.6875rem]" onClick={() => setSources([])}>Clear</Btn>}
           </div>
 
@@ -606,7 +722,14 @@ export default function PhotoMatchSeedreamPage() {
             <Toggle checked={exactRecreate} onChange={setExactRecreate} label="Exact recreate" />
             <Toggle checked={varyBackground && !exactRecreate} onChange={setVaryBackground} label="Vary background" />
             <Toggle checked={blurSource} onChange={setBlurSource} label="Blur source face" />
+            <Toggle checked={faceless} onChange={setFaceless} label="Faceless result" />
           </div>
+          {faceless && (
+            <p className="text-[0.625rem] leading-relaxed text-fuchsia-400/80">
+              The output is composed with her face OUT of the shot — cropped, turned away or hidden.
+              Her body, hair and skin still come from the character; only the face is withheld.
+            </p>
+          )}
           {blurSource && (
             <p className="text-[0.625rem] leading-relaxed text-emerald-400/80">
               Faces are blurred as photos are added, so what you see is what gets sent and Seedream
@@ -673,6 +796,17 @@ export default function PhotoMatchSeedreamPage() {
             <Select label="Aspect Ratio" options={ASPECT_OPTIONS} value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} />
             <Select label="Resolution" options={RES_OPTIONS} value={resolution} onChange={(e) => setResolution(e.target.value)} />
           </div>
+          {/* ENGINE. Both models sit behind the same WaveSpeed key and the same route, so this
+              changes one field in the request and the price quoted above it -- nothing else. */}
+          <div className="mb-2 flex gap-2 rounded-xl border border-white/[0.07] bg-white/[0.02] p-1">
+            {[['seedream', 'Seedream 5.0 Pro'], ['nano2', 'Nano Banana 2']].map(([id, label]) => (
+              <button key={id} type="button" onClick={() => setEngine(id)} aria-pressed={engine === id}
+                className={cn('flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer',
+                  engine === id ? 'bg-rose-500/20 text-rose-300' : 'text-zinc-500 hover:text-zinc-300')}>
+                {label}
+              </button>
+            ))}
+          </div>
           <p className="text-[0.625rem] text-zinc-600">
             {imagesPerJob} image{imagesPerJob > 1 ? 's' : ''} per match → <span className="text-zinc-400 font-mono">${costPerJob.toFixed(3)}</span> each
             {sources.length > 1 && <> · {sources.length} photos → <span className="text-zinc-400 font-mono">${totalCost.toFixed(3)}</span> total</>}
@@ -730,6 +864,14 @@ export default function PhotoMatchSeedreamPage() {
           </Card>
         )}
       </div>
+
+      {manualBlurId && sources.some((s) => s.id === manualBlurId) && (
+        <ManualBlurModal
+          src={sources.find((s) => s.id === manualBlurId).dataUrl}
+          onApply={(newDataUrl) => applyManualBlur(manualBlurId, newDataUrl)}
+          onClose={() => setManualBlurId(null)}
+        />
+      )}
     </div>
   );
 }
