@@ -231,7 +231,10 @@ export function createEddyCollection(dbName) {
         // videoPrompt travels with the item the same way prompt does — without it here, importing
         // a pose sheet (or re-importing an exported one) would silently drop the video prompt even
         // though the importer built it correctly, because this allowlist never carried it through.
-        added.push({ id, srcIndex: idx, name: it.name || 'image', prompt: it.prompt || '', videoPrompt: it.videoPrompt || '', url: it.url || '',
+        // poseView travels the same way, and for the same reason the note above describes: this is an
+          // ALLOWLIST, so a field absent from it is dropped without a word. Max Outfit reads it to match
+          // a back shot to a back outfit, and without this line every row would arrive unclassified.
+          added.push({ id, srcIndex: idx, name: it.name || 'image', prompt: it.prompt || '', videoPrompt: it.videoPrompt || '', poseView: it.poseView || '', url: it.url || '',
           ...(it.backPrompt ? { backPrompt: it.backPrompt } : {}),
           ...(it.original ? { blurred: true } : {}),
           folderId: folderId || null, createdAt: t0 + added.length });

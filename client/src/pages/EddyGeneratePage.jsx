@@ -103,6 +103,78 @@ async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, ch
   return (await libraryStore.ensureFolder(nsfw ? 'Eddy NSFW' : 'Eddy'))?.id || null;
 }
 
+/**
+ * SMART OUTFIT MATCHING — a back shot gets a back outfit, a close-up gets a close-up outfit.
+ *
+ * This is the rule the friend's pipeline runs on: cloth_swap_paired.py keeps three separate outfit
+ * pools and picks from the one matching the pose's angle, because a front product photo swapped
+ * onto a shot taken from behind produces a garment that cannot exist. Kyros had all the information
+ * to do the same and was ignoring it.
+ *
+ * WHERE THE ANSWER COMES FROM, in order of trust:
+ *   1. `poseView` stamped on the Library row when it was generated. Exact — it is the view the pose
+ *      itself declared, not a guess.
+ *   2. The assembled prompt saved with the row. Every back-facing generation carries the BACK VIEW
+ *      line verbatim, so its presence is a fact about that image rather than an inference.
+ * Anything else is treated as front, which is what an unclassified pose has always behaved as.
+ */
+function libraryRowView(row) {
+  if (row?.poseView === 'back' || row?.poseView === 'closeup' || row?.poseView === 'front') return row.poseView;
+  const prompt = String(row?.prompt || '');
+  if (prompt.includes('BACK VIEW — HER FACING DIRECTION IS FIXED')) return 'back';
+  // No equivalent marker exists for close-ups: buildPrompt never emitted one. Rows generated from
+  // here on carry poseView and will classify exactly; older close-ups read as front, which is the
+  // same thing they did before this feature existed.
+  return 'front';
+}
+
+/**
+ * An outfit's angle, from the folder it lives in.
+ *
+ * Folder placement is the only reliable signal — 07_outfits.md says so outright ("front/ vs back/
+ * subfolder placement is the ONLY reliable signal for angle") — and the import writes it into the
+ * folder NAME ("1. Lingerie - back", "7. CloseUps - Underboob"). Read from the name so the rule
+ * survives folders being renamed or re-nested by hand.
+ */
+function outfitView(folderName) {
+  const n = String(folderName || '').toLowerCase();
+  if (n.includes('closeup') || n.includes('close-up') || n.includes('underboob')) return 'closeup';
+  if (n.includes('back')) return 'back';
+  return 'front';
+}
+
+/**
+ * Deal outfits to photos, matching angle where possible.
+ *
+ * Each pool rotates independently, so within a view no outfit repeats until every one of that view
+ * has been used — the no-dupe rule, applied per pool rather than across the whole selection.
+ *
+ * A photo whose view has no outfit selected falls back to the whole selection rather than being
+ * skipped: silently generating nothing for a third of the batch would be far worse than one
+ * mismatched garment, and the caller reports how many fell back.
+ */
+function matchOutfits(bases, outfits, viewOfBase, viewOfOutfit) {
+  const pools = { front: [], back: [], closeup: [] };
+  for (const o of outfits) pools[viewOfOutfit(o)].push(o);
+  const cursors = { front: 0, back: 0, closeup: 0, all: 0 };
+  let fellBack = 0;
+  const rows = bases.map((b) => {
+    const view = viewOfBase(b);
+    const pool = pools[view];
+    if (pool.length) {
+      const o = pool[cursors[view] % pool.length];
+      cursors[view] += 1;
+      return { baseId: b, outfitId: o, matched: true };
+    }
+    if (!outfits.length) return { baseId: b, outfitId: null, matched: false };
+    fellBack += 1;
+    const o = outfits[cursors.all % outfits.length];
+    cursors.all += 1;
+    return { baseId: b, outfitId: o, matched: false };
+  });
+  return { rows, fellBack };
+}
+
 function oneRowPerFolder(items, role) {
   const byFolder = new Map();
   for (const it of items) {
@@ -2791,7 +2863,7 @@ function _getRunSnap() {
 }
 
 const _cache = {
-  baseImage: '', faceImage: '', characterName: '', pickedOutfits: [], pickedPoses: [], pickedBases: [], outfitRotation: true, instruction: '',
+  baseImage: '', faceImage: '', characterName: '', pickedOutfits: [], pickedPoses: [], pickedBases: [], outfitRotation: true, smartMatch: true, instruction: '',
   // staticCamera defaults ON: the user asked for the camera lock to be the standing default, so a
   // fresh page (or one whose stored value predates this feature) starts with movement/zoom locked out.
   nsfw: false, aspectRatio: 'auto', resolution: '1K', staticCamera: true,
@@ -2884,6 +2956,8 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
    * every combination on purpose, with the count and the price on the button either way.
    */
   const [outfitRotation, setOutfitRotation] = useState(_cache.outfitRotation !== false);
+  // Angle-aware dealing, on by default (owner, 2026-08-09: "if selected always on okey").
+  const [smartMatch, setSmartMatch] = useState(_cache.smartMatch !== false);
   // Both pickers start open — the work is choosing, so hiding it behind a click was friction.
   const [openPickers, setOpenPickers] = useState({ outfit: true, pose: true });
   const [instruction, setInstruction] = useState(_cache.instruction);
@@ -3258,6 +3332,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       setPickedPoses((v) => (v.length ? v : saved.pickedPoses || []));
       setPickedBases((v) => (v.length ? v : saved.pickedBases || []));
       setOutfitRotation((v) => (v === true && typeof saved.outfitRotation === 'boolean' ? saved.outfitRotation : v));
+      setSmartMatch((v) => (v === true && typeof saved.smartMatch === 'boolean' ? saved.smartMatch : v));
       setInstruction((v) => (v ? v : saved.instruction || ''));
       setNsfw((v) => v || !!saved.nsfw);
       // Default is ON, so unlike nsfw the saved value must be able to turn it OFF. Only applied while
@@ -3359,7 +3434,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   }, [activeModel, models, notify]);
 
   useEffect(() => {
-    const snap = { baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, outfitRotation, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine };
+    const snap = { baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, outfitRotation, smartMatch, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine };
     Object.assign(_cache, snap);
     stateStore.set('state', snap);
   }, [baseImage, faceImage, characterName, pickedOutfits, pickedPoses, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine]);
@@ -3629,15 +3704,28 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     const os = (!maxNano && pickedOutfits.length) ? pickedOutfits : [null];
     const ps = (!maxOutfit && pickedPoses.length) ? pickedPoses : [null];
     if (maxOutfit) {
-      // One row per SOURCE image. Rotation deals outfits round-robin so each is used about equally
-      // and none repeats until all have been used once — the no-dupe rule from the pipeline this
-      // mirrors. Cross-product multiplies instead, which is the expensive branch and is opt-in.
+      // One row per SOURCE image. Cross-product multiplies instead — the expensive branch, opt-in.
       const bases = pickedBases.length ? pickedBases : [];
       if (!outfitRotation) return bases.flatMap((b) => os.map((o) => ({ outfitId: o, poseId: null, baseId: b })));
+      const chosen = pickedOutfits.length ? pickedOutfits : [];
+      if (smartMatch && chosen.length) {
+        // Angle-aware: a back shot gets a back outfit, a close-up gets a close-up one.
+        const byId = new Map(libItems.map((i) => [i.id, i]));
+        const folderName = (id) => libItemFolders.find((f) => f.id === id)?.name || '';
+        const outfitFolderName = (id) => outfitFolders.find((f) => f.id === outfits.find((o) => o.id === id)?.folderId)?.name || '';
+        const { rows } = matchOutfits(
+          bases, chosen,
+          (b) => libraryRowView(byId.get(b)),
+          (o) => outfitView(outfitFolderName(o)),
+        );
+        void folderName;
+        return rows.map((r) => ({ outfitId: r.outfitId, poseId: null, baseId: r.baseId, matched: r.matched }));
+      }
+      // Plain rotation: round-robin across the whole selection, no angle awareness.
       return bases.map((b, i) => ({ outfitId: os[i % os.length], poseId: null, baseId: b }));
     }
     return os.flatMap((o) => ps.map((p) => ({ outfitId: o, poseId: p })));
-  }, [pickedOutfits, pickedPoses, pickedBases, outfitRotation, maxNano, maxOutfit]);
+  }, [pickedOutfits, pickedPoses, pickedBases, outfitRotation, smartMatch, libItems, libItemFolders, outfits, outfitFolders, maxNano, maxOutfit]);
 
   const sourceImages = [baseImage, faceImage].filter(Boolean);
   const perRunImages = sourceImages.length + (pickedPoses.length ? 1 : 0);
@@ -4219,7 +4307,10 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       // gets saved like any other — the one it replaces is left alone rather than deleted.
       if (first.galleryId) {
         try {
-          await libraryStore.addItems([{ url: galleryApi.imageUrl(first.galleryId), prompt, name: `eddy-${Date.now()}` }], libFolderId);
+          // poseView is stamped so Max Outfit can match a back shot to a back outfit EXACTLY rather
+          // than inferring it from the prompt text. Rows written before this carry no field and fall
+          // back to that inference — see libraryRowView.
+          await libraryStore.addItems([{ url: galleryApi.imageUrl(first.galleryId), prompt, poseView, name: `eddy-${Date.now()}` }], libFolderId);
         } catch {
           // The picture is safe in the main gallery either way — never fail a run over this.
         }
@@ -5426,6 +5517,20 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             and not a hidden default. 81 photos x 5 outfits is 405 generations and about $18;
             rotation gives 81 and about $3.65, and is what the pipeline this mirrors actually does
             (least-used wins, no outfit repeats until every one has been used). */}
+        {/* ANGLE-AWARE DEALING. cloth_swap_paired.py keeps three outfit pools and picks from
+            the one matching the pose angle, because a front product photo swapped onto a shot taken
+            from behind produces a garment that cannot exist. Kyros had the information and was
+            ignoring it. */}
+        {maxOutfit && outfitRotation && (
+          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-white/[0.07] bg-white/[0.02] p-2.5">
+            <input type="checkbox" checked={smartMatch} onChange={(e) => setSmartMatch(e.target.checked)}
+              className="mt-0.5 cursor-pointer accent-rose-500" />
+            <span className="text-xs leading-relaxed text-zinc-400">
+              <span className="font-semibold text-zinc-200">Match the angle</span>
+              {' — a back shot gets a back outfit, a close-up gets a close-up one. A photo whose angle has no outfit picked falls back to the whole selection rather than being skipped.'}
+            </span>
+          </label>
+        )}
         {maxOutfit && (
           <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-white/[0.07] bg-white/[0.02] p-2.5">
             <input type="checkbox" checked={outfitRotation} onChange={(e) => setOutfitRotation(e.target.checked)}
