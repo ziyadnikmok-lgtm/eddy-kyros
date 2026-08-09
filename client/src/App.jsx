@@ -45,7 +45,6 @@ const CarouselPage = lazy(() => import('./pages/CarouselPage'));
 const StorytellerPage = lazy(() => import('./pages/StorytellerPage'));
 const AutoGeneratorPage = lazy(() => import('./pages/AutoGeneratorPage'));
 const CharactersPage = lazy(() => import('./pages/CharactersPage'));
-const GalleryPage = lazy(() => import('./pages/GalleryPage'));
 const LibraryPage = lazy(() => import('./pages/LibraryPage'));
 const PasteInboxPage = lazy(() => import('./pages/PasteInboxPage'));
 const SceneRecreatePage = lazy(() => import('./pages/SceneRecreatePage'));
@@ -138,7 +137,6 @@ const NAV_ICONS = {
   storyteller: IconBookOpen,
   library: IconGrid2,
   pasteInbox: IconClipboard,
-  gallery: IconImage,
   imageEditor: IconRulerPen,
   videoEditor: IconVideo,
   characters: IconUsers,
@@ -194,7 +192,6 @@ const NAV_COLORS = {
   storyteller:    ['#bef264', '#65a30d'],
   library:        ['#67e8f9', '#0284c7'],
   pasteInbox:     ['#c084fc', '#7c3aed'],
-  gallery:        ['#fcd34d', '#d97706'],
   imageEditor:    ['#f9a8d4', '#db2777'],
   videoEditor:    ['#c4b5fd', '#7c3aed'],
   characters:     ['#c4b5fd', '#7c3aed'],
@@ -325,7 +322,6 @@ const FEED_HIDDEN_PAGES = new Set([
   'videoLibrary',
   'eddyCharacter',
   'library',
-  'gallery',
   'videoGallery',
   'imageEditor',
   'videoEditor',
@@ -454,7 +450,6 @@ const PAGE_DESCRIPTIONS = {
   pasteInbox: 'Save pasted images for quick reuse in Photo Match or Scene Recreate',
   imageEditor: 'Crop, adjust and touch up any image in your gallery',
   videoEditor: 'Trim, add stickers and text, and adjust any video from your gallery',
-  gallery: 'Browse and manage all generated images',
   videoGallery: 'Browse and manage all generated videos',
   characters: 'Manage character identities and references',
   keys: 'Configure API keys and connections',
@@ -517,7 +512,6 @@ const PAGES = {
   videoLibrary: VideoLibraryPage,
   eddyCharacter: EddyCharacterPage,
   auto: AutoGeneratorPage,
-  gallery: GalleryPage,
   imageEditor: ImageEditorPage,
   videoEditor: VideoEditorPage,
   characters: CharactersPage,

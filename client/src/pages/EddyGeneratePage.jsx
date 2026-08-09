@@ -120,18 +120,12 @@ const MAX_OUTFIT_FOLDER = 'Max Outfit';
  * to file under, and inventing one would be worse than a generic folder.
  */
 /**
- * Which engine made it, as a folder name.
- *
- * "Seedream" and "Nano" are separate piles on purpose: the two models produce visibly different
- * results from the same references, and once mixed nothing tells you which made which.
- */
-/**
  * The tags a generation is filed under, server side.
  *
  * HER NAME IS IN HERE ON PURPOSE. "Recover missing" reads the character back off these tags to work
- * out which folder a stranded picture belongs in — and the name was never being sent, so recovery
+ * out which folder a stranded picture belongs in, and the name was never being sent -- so recovery
  * picked the first tag that was not an engine name and filed images into folders called
- * "nano-banana-2", "edit" or nothing at all (audit, 2026-08-09).
+ * "nano-banana-2", "edit", or nothing at all (audit, 2026-08-09).
  *
  * The server keeps at most 4 extra tags, so this stays short deliberately.
  */
@@ -140,11 +134,7 @@ function eddyTags(isEdit, characterName) {
   return [...(isEdit ? ['eddy', 'edit'] : ['eddy']), ...(who ? [who] : [])];
 }
 
-function engineFolderSuffix(engine) {
-  return engine === 'nano2' ? 'Nano' : 'Seedream';
-}
-
-async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName, engine }) {
+async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName }) {
   const who = String(characterName || '').trim();
   // Every branch falls back to the generic bucket rather than to null.
   //
@@ -176,16 +166,25 @@ async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, ch
   // already work and the owner said so; flipping them to "Grace" > "Max Nano" would have been
   // tidier and would have split every future image away from the ones already filed — which is the
   // exact complaint this whole change exists to fix.
+  /**
+   * ONE FOLDER PER CHARACTER, and nothing below it for the engine.
+   *
+   * "Grace" > "Seedream" / "Grace" > "Nano" was tried and removed at the owner's call
+   * (2026-08-09): splitting her work by which model made it is a distinction that matters when you
+   * are comparing engines and gets in the way every other day. Her name is the whole answer.
+   *
+   * Max Nano and Max Outfit keep their own root with her inside it — that shape is already on disk
+   * and re-pointing it would strand every image filed there.
+   */
   if (who) {
     if (maxNano || maxOutfit) {
       const tab = await libraryStore.ensureFolder(maxOutfit ? MAX_OUTFIT_FOLDER : MAX_NANO_FOLDER);
       if (!tab?.id) return generic();
       return (await libraryStore.ensureFolder(who, tab.id))?.id || tab.id;
     }
-    const root = await libraryStore.ensureFolder(who);
-    if (!root?.id) return generic();
-    return (await libraryStore.ensureFolder(engineFolderSuffix(engine), root.id))?.id || root.id;
+    return (await libraryStore.ensureFolder(who))?.id || await generic();
   }
+
   // No character picked. Max Nano / Max Outfit still keep their own pile rather than falling into
   // the shared Eddy bucket — with no name to file under, the tab is the only thing left to sort by.
   const ownRoot = maxOutfit ? MAX_OUTFIT_FOLDER : (maxNano ? MAX_NANO_FOLDER : '');
@@ -4129,7 +4128,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     let libFolderId = runCtx ? runCtx.libFolderId : null;
     if (!runCtx) {
       try {
-        libFolderId = await resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName, engine });
+        libFolderId = await resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName });
       } catch (err) {
         // Still never fails the generation — but it is no longer SILENT. Swallowing this is what
         // let 89 pictures file to no folder without a word on screen; "in the wrong place" is
@@ -4599,7 +4598,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // "Gwen". Resolved once per run so a 25-image batch doesn't hunt for it 25 times.
     let libFolderId = null;
     try {
-      libFolderId = await resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName, engine });
+      libFolderId = await resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName });
     } catch (err) {
       // Resolved ONCE per run, so a failure here strands the WHOLE batch in no folder — which is
       // exactly how a 25-image run can vanish from every folder at once. Never silent.
@@ -5766,7 +5765,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
               <span className="font-semibold text-rose-300">
                 {maxNano ? `Max Nano › ${characterName}`
                   : maxOutfit ? `Max Outfit › ${characterName}`
-                  : `${characterName} › ${engine === 'nano2' ? 'Nano' : 'Seedream'}`}
+                  : characterName}
               </span>
               <button type="button" onClick={() => setCharacterName('')}
                 title="File this batch in the generic folder instead"

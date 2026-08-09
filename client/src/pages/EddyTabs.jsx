@@ -56,15 +56,17 @@ function RecoverFromGallery({ onDone }) {
          * character flat, while a live run nests the engine under her, so a recovered picture landed
          * beside her folder instead of inside it and still read as missing.
          */
-        const engine = tags.includes('nano-banana-2') ? 'Nano' : 'Seedream';
-        let folderId = null;
-        if (character) {
-          const root = await store.ensureFolder(character);
-          folderId = root?.id ? ((await store.ensureFolder(engine, root.id))?.id || root.id) : null;
-        }
+        /**
+         * Filed the SAME WAY a live run files it, or recovery just moves the problem.
+         *
+         * It used to pass folderId=null when no character could be read -- and null is not
+         * "unsorted", it is invisible: the item shows under "All" and in no folder at all, which is
+         * how 89 pictures went missing on 2026-08-09.
+         */
+        const folderId = character ? (await store.ensureFolder(character))?.id : null;
         // The floor. Never null: "in the wrong folder" is recoverable by dragging, "nowhere" is not.
-        if (!folderId) folderId = (await store.ensureFolder('Eddy'))?.id || null;
-        await store.addItems([{ url: galleryApi.imageUrl(g.id), prompt: g.prompt || '', name: `${character || 'eddy'}-${g.id}` }], folderId);
+        const dest = folderId || (await store.ensureFolder('Eddy'))?.id || null;
+        await store.addItems([{ url: galleryApi.imageUrl(g.id), prompt: g.prompt || '', name: `${character || 'eddy'}-${g.id}` }], dest);
       }
       notify(`Recovered ${missing.length} image${missing.length === 1 ? '' : 's'}`, 'success');
       onDone?.();
