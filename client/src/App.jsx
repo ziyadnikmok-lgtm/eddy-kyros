@@ -74,6 +74,12 @@ const EddyPosePage = lazy(() => import('./pages/EddyTabs').then((m) => ({ defaul
 const EddyEnvironmentPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.EddyEnvironmentPage })));
 const EddyBaseLibraryPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.EddyBaseLibraryPage })));
 const EddyBasePage = lazy(() => import('./pages/EddyBasePage'));
+// Same component as Eddy, in its Max Nano mode — see the `mode` prop on EddyGeneratePage.
+const EddyMaxNanoPage = lazy(async () => {
+  const m = await import('./pages/EddyGeneratePage');
+  const Page = m.default;
+  return { default: () => <Page mode="maxNano" /> };
+});
 const VideoLibraryPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.VideoLibraryPage })));
 const EddyCharacterPage = lazy(() => import('./pages/EddyCharacterPage'));
 const ReformatPage = lazy(() => import('./pages/ReformatPage'));
@@ -114,6 +120,7 @@ const NAV_ICONS = {
   eddyOutfit: IconLayers,
   eddyPose: IconSwap,
   eddyEnvironment: IconGrid2,
+  eddyMaxNano: IconBadgeSparkle,
   eddyBase: IconGrid2,
   eddyBaseLibrary: IconGrid2,
   videoLibrary: IconGrid2,
@@ -169,6 +176,7 @@ const NAV_COLORS = {
   eddyOutfit: ['#fdba74', '#ea580c'],
   eddyPose: ['#fda4af', '#e11d48'],
   eddyEnvironment: ['#a7f3d0', '#059669'],
+  eddyMaxNano: ['#93c5fd', '#2563eb'],
   eddyBase: ['#a7f3d0', '#059669'],
   eddyBaseLibrary: ['#6ee7b7', '#047857'],
   videoLibrary: ['#c4b5fd', '#7c3aed'],
@@ -211,6 +219,7 @@ const NAV_SECTIONS = [
       { id: 'eddyLibrary', label: 'Library' },
       { id: 'eddyOutfit', label: 'Outfit' },
       { id: 'eddyPose', label: 'Pose' },
+      { id: 'eddyMaxNano', label: 'Max Nano' },
       { id: 'eddyBase', label: 'Base' },
       { id: 'eddyBaseLibrary', label: 'Base Library' },
       { id: 'eddyCharacter', label: 'Character' },
@@ -295,11 +304,13 @@ const FEED_HIDDEN_PAGES = new Set([
   // Regenerate, Generate video). Showing the shared feed too put every result on screen twice.
   // Both ids route to EddyGeneratePage, so both must be listed or the panel returns via /eddy.
   'eddyGenerate',
+  'eddyMaxNano',
   'eddy',
   'eddyLibrary',
   'eddyOutfit',
   'eddyPose',
   'eddyEnvironment',
+  'eddyMaxNano',
   'eddyBase',
   'eddyBaseLibrary',
   'videoLibrary',
@@ -413,6 +424,7 @@ const PAGE_DESCRIPTIONS = {
   eddyLibrary: 'All your Eddy images',
   eddyOutfit: 'Outfits, organised in folders',
   eddyPose: 'Your saved pose prompts',
+  eddyMaxNano: 'Her, in every pose you pick — Nano Banana 2 at 2K, no outfit swap',
   eddyBase: 'Make a new base photo of a saved character, from her own references',
   eddyBaseLibrary: 'Your generated base photos, filed by character',
   eddyCharacter: 'Characters from a base image — no prompt needed',
@@ -488,6 +500,7 @@ const PAGES = {
   eddyOutfit: EddyOutfitPage,
   eddyPose: EddyPosePage,
   eddyEnvironment: EddyEnvironmentPage,
+  eddyMaxNano: EddyMaxNanoPage,
   eddyBase: EddyBasePage,
   eddyBaseLibrary: EddyBaseLibraryPage,
   videoLibrary: VideoLibraryPage,

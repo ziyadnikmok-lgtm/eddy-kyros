@@ -51,6 +51,9 @@ const NANO2_COST = { '1K': 0.07, '2K': 0.105 };
 // Eight is about what fits without the Generate button leaving the screen.
 const COMPACT_PICKED = 8;
 
+// Where Max Nano files what it makes. Its own folder, so a Max run never mixes into the Eddy pile.
+const MAX_NANO_FOLDER = 'Max Nano';
+
 /**
  * One representative photo per character (folder): the one tagged `role`, else her earliest.
  *
@@ -2665,7 +2668,18 @@ const _cache = {
   engine: 'nano2',
 };
 
-export default function EddyGeneratePage() {
+/**
+ * `mode` — 'eddy' (default) or 'maxNano'.
+ *
+ * Max Nano is the same page with three things settled for you: no outfit (she keeps what the base
+ * photo has on), Nano Banana 2 always, 2K always, and results filed into a Library folder of its
+ * own. It is a MODE rather than a copied file on purpose — this page carries every dup-guard,
+ * retry, failure-reason and persistence rule built over the last days, and a second copy would
+ * need each of them re-applied by hand and would drift the first time one was not (owner asked for
+ * "a duplicate of Eddy", 2026-08-09; the behaviour is duplicated, the code is not).
+ */
+export default function EddyGeneratePage({ mode = 'eddy' }) {
+  const maxNano = mode === 'maxNano';
   const { notify } = useApp();
   const outfitStore = useMemo(() => createEddyCollection('eddy-outfit'), []);
   const poseStore = useMemo(() => createEddyCollection('eddy-pose'), []);
@@ -2742,7 +2756,7 @@ export default function EddyGeneratePage() {
    * in the output. Switching away leaves the choice alone — Seedream's own default is 1K and
    * forcing it back would fight anyone who deliberately picked 2K there.
    */
-  useEffect(() => { if (engine === 'nano2') setResolution('2K'); }, [engine]);
+
   // Bumped by "Reload images". Appended to every tile's URL so the browser re-requests pictures it
   // has cached or given up on — a stalled fetch otherwise leaves a tile on "Loading…" with no way
   // to retry short of reloading the whole app and losing the results column.
@@ -2784,6 +2798,23 @@ export default function EddyGeneratePage() {
   useEffect(() => { staticCameraRef.current = staticCamera; }, [staticCamera]);
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [resolution, setResolution] = useState(_cache.resolution);
+
+  // Nano Banana 2 is used at 2K here; picking it selects that rather than leaving whatever
+  // Seedream was last set to, which is a mismatch you only notice in the output.
+  useEffect(() => { if (engine === 'nano2') setResolution('2K'); }, [engine]);
+
+  /**
+   * Max Nano pins the engine and the resolution.
+   *
+   * Enforced here rather than only in the UI: the settings are shared and persisted across every
+   * workspace, so a value left over from an Eddy run would otherwise follow you into Max and
+   * generate on the wrong engine with nothing on screen disagreeing.
+   */
+  useEffect(() => {
+    if (!maxNano) return;
+    setEngine('nano2');
+    setResolution('2K');
+  }, [maxNano, engine, resolution]);
   // Read from the module-level store, so a batch started before you navigated away is still
   // reported when you come back. The setters keep their old names and signatures.
   const runProgress = useSyncExternalStore(_subscribeRun, _getRunSnap, _getRunSnap);
@@ -3362,10 +3393,12 @@ export default function EddyGeneratePage() {
 
   // No outfit or no pose still counts as one run — the cross product just collapses to 1.
   const combos = useMemo(() => {
-    const os = pickedOutfits.length ? pickedOutfits : [null];
+    // Max Nano never sends an outfit — a stale selection from an Eddy session would otherwise
+    // multiply the run and dress her in something this page does not even show.
+    const os = (!maxNano && pickedOutfits.length) ? pickedOutfits : [null];
     const ps = pickedPoses.length ? pickedPoses : [null];
     return os.flatMap((o) => ps.map((p) => ({ outfitId: o, poseId: p })));
-  }, [pickedOutfits, pickedPoses]);
+  }, [pickedOutfits, pickedPoses, maxNano]);
 
   const sourceImages = [baseImage, faceImage].filter(Boolean);
   const perRunImages = sourceImages.length + (pickedPoses.length ? 1 : 0);
@@ -3618,7 +3651,7 @@ export default function EddyGeneratePage() {
     let libFolderId = runCtx ? runCtx.libFolderId : null;
     if (!runCtx) {
       try {
-        libFolderId = (await libraryStore.ensureFolder(nsfw ? 'Eddy NSFW' : 'Eddy'))?.id || null;
+        libFolderId = (await libraryStore.ensureFolder(maxNano ? MAX_NANO_FOLDER : (nsfw ? 'Eddy NSFW' : 'Eddy')))?.id || null;
       } catch {
         // Filing is a convenience; a failure here must not cost you the generation.
       }
@@ -3988,7 +4021,7 @@ export default function EddyGeneratePage() {
     // "Gwen". Resolved once per run so a 25-image batch doesn't hunt for it 25 times.
     let libFolderId = null;
     try {
-      libFolderId = (await libraryStore.ensureFolder(nsfw ? 'Eddy NSFW' : 'Eddy'))?.id || null;
+      libFolderId = (await libraryStore.ensureFolder(maxNano ? MAX_NANO_FOLDER : (nsfw ? 'Eddy NSFW' : 'Eddy')))?.id || null;
     } catch {
       // Filing is a convenience; a failure here must not cost you the generation.
     }
@@ -4676,7 +4709,7 @@ export default function EddyGeneratePage() {
       <div data-picker-slots className="grid gap-3">
         {[
           { key: 'pose', label: 'Pose', picked: pickedPoses, items: poses, thumbs: poseThumbs, folders: poseFolders, store: poseStore, favIds: favSets.pose, empty: 'Nothing in Eddy · Pose yet.' },
-          { key: 'outfit', label: 'Outfit', picked: pickedOutfits, items: outfits, thumbs: outfitThumbs, folders: outfitFolders, store: outfitStore, favIds: favSets.outfit, empty: 'Nothing in Eddy · Outfit yet.' },
+          ...(maxNano ? [] : [{ key: 'outfit', label: 'Outfit', picked: pickedOutfits, items: outfits, thumbs: outfitThumbs, folders: outfitFolders, store: outfitStore, favIds: favSets.outfit, empty: 'Nothing in Eddy · Outfit yet.' }]),
         ].map((slot) => {
           // What the grid is actually showing right now, computed ONCE and handed to both the
           // grid and the select-all button. The two must never disagree: a button that selects
@@ -5058,6 +5091,9 @@ export default function EddyGeneratePage() {
             exist — no bypass flag is passed from here. Every other control on this page (pose
             photo toggle, Her build, NSFW, faceless, framing) is engine-agnostic and applies to
             both, because they all shape the PROMPT, not the request. */}
+        {/* No engine choice in Max Nano — it is the whole point of the tab. A switch that cannot
+            change anything is worse than no switch. */}
+        {!maxNano && (
         <div className="flex gap-2 rounded-xl border border-white/[0.07] bg-white/[0.02] p-1">
           {[['seedream', 'Seedream'], ['nano2', 'Nano Banana 2']].map(([id, label]) => (
             <button key={id} type="button" onClick={() => setEngine(id)} aria-pressed={engine === id}
@@ -5067,6 +5103,7 @@ export default function EddyGeneratePage() {
             </button>
           ))}
         </div>
+        )}
         <Btn className="w-full" disabled={!baseImage || overCap} onClick={() => run()}>
           {/* NO DOLLAR FIGURE ON GEMINI, deliberately. seedreamCost prices Muapi's published
               Seedream rates; this repo has no ground truth for Gemini/Vertex image cost, and the
