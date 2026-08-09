@@ -161,29 +161,17 @@ async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, ch
    * Every step falls back to the level above and finally to generic(), so a failure anywhere still
    * lands the picture somewhere reachable rather than nowhere.
    */
-  //
-  // MAX NANO AND MAX OUTFIT KEEP THEIR EXISTING SHAPE: "Max Nano" > "Grace", tab first. Those two
-  // already work and the owner said so; flipping them to "Grace" > "Max Nano" would have been
-  // tidier and would have split every future image away from the ones already filed — which is the
-  // exact complaint this whole change exists to fix.
   /**
-   * ONE FOLDER PER CHARACTER, and nothing below it for the engine.
+   * ONE FOLDER PER CHARACTER. Nothing below it, and no tab above it.
    *
-   * "Grace" > "Seedream" / "Grace" > "Nano" was tried and removed at the owner's call
-   * (2026-08-09): splitting her work by which model made it is a distinction that matters when you
-   * are comparing engines and gets in the way every other day. Her name is the whole answer.
-   *
-   * Max Nano and Max Outfit keep their own root with her inside it — that shape is already on disk
-   * and re-pointing it would strand every image filed there.
+   * "Max Nano > Grace" and "Grace > Seedream" were both tried and both removed at the owner's call
+   * (2026-08-09). Splitting her work by the tab that made it, or the model that made it, is a
+   * distinction that matters while you are comparing them and gets in the way every other day. Her
+   * name is the whole answer, and it is the same answer on every tab — Eddy, Max Nano, Max Outfit
+   * and Photo Match all put her pictures in one place.
    */
-  if (who) {
-    if (maxNano || maxOutfit) {
-      const tab = await libraryStore.ensureFolder(maxOutfit ? MAX_OUTFIT_FOLDER : MAX_NANO_FOLDER);
-      if (!tab?.id) return generic();
-      return (await libraryStore.ensureFolder(who, tab.id))?.id || tab.id;
-    }
-    return (await libraryStore.ensureFolder(who))?.id || await generic();
-  }
+  if (who) return (await libraryStore.ensureFolder(who))?.id || await generic();
+
 
   // No character picked. Max Nano / Max Outfit still keep their own pile rather than falling into
   // the shared Eddy bucket — with no name to file under, the tab is the only thing left to sort by.
@@ -5763,9 +5751,8 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
                   file tab-first. A line that says "Grace" while the picture goes to
                   "Grace › Seedream" is the same invisible-state problem this banner exists to end. */}
               <span className="font-semibold text-rose-300">
-                {maxNano ? `Max Nano › ${characterName}`
-                  : maxOutfit ? `Max Outfit › ${characterName}`
-                  : characterName}
+                {/* Her name, on every tab. There is nothing above or below it any more. */}
+                {characterName}
               </span>
               <button type="button" onClick={() => setCharacterName('')}
                 title="File this batch in the generic folder instead"
