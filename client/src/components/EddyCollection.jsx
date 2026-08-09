@@ -5,7 +5,7 @@ import { useApp } from '../context/AppContext';
 import { createEddyCollection } from '../lib/eddyCollectionStore';
 import { autoBlurFace } from '../lib/autoBlurFace';
 import BlurByHand from './BlurByHand';
-import { eddyVision, gallery as galleryApi, video as videoApi } from '../services/api';
+import { eddyVision, gallery as galleryApi, video as videoApi, seedream as seedreamApi } from '../services/api';
 import { cn } from '../lib/utils';
 import { downloadBlob, stripMetadata, stripEnabled } from '../lib/stripMetadata';
 import { isPosePromptBroken, hasPoseView, readPoseView, mergePoseView, poseSentence } from '../lib/poseText';
@@ -115,6 +115,10 @@ export default function EddyCollection({
   // folders, prompts, select/move/delete, export — is identical, so a clip collection behaves
   // exactly like the pose and outfit ones people already know.
   mediaKind = 'image',
+  // Shows the White plate controls. Pose only: it is the only collection whose images are a
+  // SCENE that competes with the base photo. An outfit product shot has no room to remove and a
+  // Library result is finished work.
+  enablePlate = false,
 }) {
   const { notify } = useApp();
   const store = useMemo(() => createEddyCollection(dbName), [dbName]);
@@ -605,6 +609,171 @@ export default function EddyCollection({
     setLabelingViews(false);
     await refresh();
   }, [unlabeledViewTargets, store, labelOneView, refresh, notify]);
+
+  /**
+   * WHITE PLATE — regenerate a pose reference with its room removed, and paste it back in place.
+   *
+   * WHY: the pose reference carries a whole scene, and that scene leaks. The prompt already argues
+   * against it ("THE SETTING COMES FROM IMAGE 1", "the room in image N is IRRELEVANT") and it still
+   * leaks, because the picture is louder than the sentence. A plate removes the argument: there is
+   * no room in the reference, so there is no room to copy. It kills the lighting leak too, which no
+   * prompt line addresses at all.
+   *
+   * WHY SEEDREAM AND NOT NANO BANANA 2: this is the same instruction shape as the outfit swap that
+   * has always run on Seedream — "change exactly one thing, keep everything else identical" — and
+   * it is $0.045 against nano2's $0.07. Cheaper AND the model with the track record on this task.
+   *
+   * WHAT IT KEEPS: the surface she is touching. Cutting to pure white everywhere leaves a woman
+   * sitting on nothing, and the model then invents a support nobody chose. The prompt asks for the
+   * room to go and the contact surface plus its shadow to stay.
+   */
+  const PLATE_PROMPT = [
+    'Keep the woman in this image EXACTLY as she is: identical face, identical body, identical pose,',
+    'identical limb positions, identical clothing, identical camera angle, identical framing and',
+    'identical crop. Do not move her, re-pose her, re-dress her, resize her or re-frame the shot.',
+    '',
+    'Change ONLY the background. Replace the entire room, location, scenery, furniture, walls, floor,',
+    'windows, decor and props with a plain PURE WHITE background — a clean empty studio backdrop with',
+    'no texture, no gradient, no horizon line and no visible corners.',
+    '',
+    'ONE EXCEPTION: whatever she is physically resting on, sitting on, lying on or leaning against',
+    'must STAY, because her pose depends on it. Keep that surface, but render it as a plain neutral',
+    'light-grey form with no pattern, no material, no colour and no branding. Keep the soft contact',
+    'shadow where her body meets it, so she is grounded and not floating.',
+    '',
+    'Real photograph, raw camera quality, natural skin with pores and texture. No smoothing, no',
+    'beauty filter, no AI gloss, no added text, no watermark.',
+  ].join(' ').replace(/\s+/g, ' ').trim();
+
+  // Seedream 5.0 Pro edit, 1K, one reference image. Named here rather than imported so the number
+  // shown on the button and the number actually billed cannot drift apart.
+  const PLATE_COST_PER_IMAGE = 0.045;
+
+  const [plating, setPlating] = useState(false);
+  const [plateProgress, setPlateProgress] = useState(null);
+  const plateStopRef = useRef(false);
+
+  // Selected cards that have a picture to plate. Scoped to `selected`, not `visible`: this spends
+  // money and overwrites curated reference images, so it never runs on anything you did not tick.
+  const plateTargets = useMemo(() => {
+    if (!enablePlate) return [];
+    return items.filter((i) => selected.includes(i.id) && thumbs[i.id]);
+  }, [enablePlate, items, selected, thumbs]);
+
+  /**
+   * Mirror poses are excluded, and it is not a detail.
+   *
+   * In a mirror selfie the mirror is not decor — it IS the shot. It decides where the camera is,
+   * where she looks, and what the framing means. Plate it away and the pose becomes unreadable.
+   * 22 of the owner's 58 poses are mirror selfies, so a blind sweep would destroy a third of the
+   * collection for $1 and look like it worked.
+   */
+  const plateMirrorSkips = useMemo(
+    () => plateTargets.filter((i) => /\bmirror\b/i.test(String(i.prompt || '') + ' ' + String(i.name || ''))),
+    [plateTargets],
+  );
+  const plateRunnable = useMemo(
+    () => plateTargets.filter((i) => !plateMirrorSkips.includes(i)),
+    [plateTargets, plateMirrorSkips],
+  );
+  const platedCount = useMemo(
+    () => items.filter((i) => i.plated).length,
+    [items],
+  );
+
+  const stopPlating = useCallback(() => { plateStopRef.current = true; }, []);
+
+  const plateSelected = useCallback(async () => {
+    const targets = plateRunnable;
+    if (!targets.length) return;
+
+    const cost = (targets.length * PLATE_COST_PER_IMAGE).toFixed(2);
+    const lines = [
+      `White-plate ${targets.length} pose${targets.length === 1 ? '' : 's'} on Seedream 5.0 Pro?`,
+      `This costs about $${cost} and REPLACES each picture in place.`,
+      plateMirrorSkips.length
+        ? `${plateMirrorSkips.length} mirror pose${plateMirrorSkips.length === 1 ? ' is' : 's are'} skipped — the mirror is the shot, not the background.`
+        : '',
+      'Every original is kept. "Revert plates" puts them back.',
+    ].filter(Boolean);
+    if (!window.confirm(lines.join('\n\n'))) return;
+
+    plateStopRef.current = false;
+    setPlating(true);
+    let done = 0;
+    let failed = 0;
+    let stopped = false;
+    try {
+      for (let n = 0; n < targets.length; n += 1) {
+        if (plateStopRef.current) { stopped = true; break; }
+        const it = targets[n];
+        setPlateProgress({ done: n, total: targets.length });
+        const m = /^data:([^;]+);base64,(.+)$/.exec(thumbs[it.id] || '');
+        if (!m) { failed += 1; continue; }
+        try {
+          // Sequential for the same reason describeAllMissing is: a parallel sweep over a batch this
+          // size trips the rate limiter and half come back empty.
+          // eslint-disable-next-line no-await-in-loop -- sequential on purpose, see above
+          const data = await seedreamApi.edit({
+            images: [{ base64: m[2], mimeType: m[1] }],
+            prompt: PLATE_PROMPT,
+            aspectRatio: 'auto',
+            resolution: '1K',
+            tags: ['eddy', 'pose', 'plate'],
+          });
+          const first = (data.images || [])[0];
+          if (!first?.base64Data) { failed += 1; continue; }
+          const plated = `data:${first.mimeType || 'image/png'};base64,${first.base64Data}`;
+          // eslint-disable-next-line no-await-in-loop -- part of the same sequential pass
+          await store.setImageKeepingPreplate(it.id, plated);
+          // eslint-disable-next-line no-await-in-loop -- part of the same sequential pass
+          await store.updateItem(it.id, { plated: true });
+          done += 1;
+        } catch {
+          // Counted, not thrown: one refusal must not abandon the rest of the batch, and the
+          // untouched original is still on the card.
+          failed += 1;
+        }
+      }
+    } finally {
+      setPlateProgress(null);
+      setPlating(false);
+      await refresh();
+    }
+
+    const left = targets.length - done - failed;
+    if (stopped) {
+      notify(`Stopped — plated ${done}, ${failed} failed, ${left} not started. Click again to pick up the rest.`, 'success');
+    } else if (failed) {
+      notify(`Plated ${done} of ${targets.length} — ${failed} failed. Their originals are untouched; click again to retry.`, 'error');
+    } else {
+      notify(`Plated ${done} pose${done === 1 ? '' : 's'} — about $${(done * PLATE_COST_PER_IMAGE).toFixed(2)}. "Revert plates" undoes it.`, 'success');
+    }
+  }, [plateRunnable, plateMirrorSkips, thumbs, store, refresh, notify, PLATE_PROMPT]);
+
+  const revertPlates = useCallback(async () => {
+    // Scoped to selection when there is one, so a single bad plate can be put back without
+    // undoing a whole good batch.
+    const scope = selected.length ? items.filter((i) => selected.includes(i.id)) : items;
+    const targets = scope.filter((i) => i.plated);
+    if (!targets.length) { notify('Nothing plated to revert', 'error'); return; }
+    if (!window.confirm(`Put back the original picture on ${targets.length} pose${targets.length === 1 ? '' : 's'}? The plated version is discarded.`)) return;
+    let back = 0;
+    for (const it of targets) {
+      // eslint-disable-next-line no-await-in-loop -- IndexedDB writes, kept in order
+      const ok = await store.restorePreplate(it.id);
+      // The flag is cleared either way: if no original was stashed there is nothing to revert TO,
+      // and leaving the card labelled "plated" would offer an undo that can never work.
+      // eslint-disable-next-line no-await-in-loop -- same pass
+      await store.updateItem(it.id, { plated: false });
+      if (ok) back += 1;
+    }
+    await refresh();
+    notify(back === targets.length
+      ? `Reverted ${back} pose${back === 1 ? '' : 's'}`
+      : `Reverted ${back} of ${targets.length} — ${targets.length - back} had no saved original`,
+      back ? 'success' : 'error');
+  }, [selected, items, store, refresh, notify]);
 
   const stopDescribeAll = useCallback(() => {
     describeAllStopRef.current = true;
@@ -1608,6 +1777,26 @@ export default function EddyCollection({
                   Re-blur all
                 </Btn>
               </>
+            )}
+            {/* White plate — only on Pose, and only with something ticked. It spends money and
+                replaces the picture, so it is never a one-click sweep over the whole view the way
+                Describe missing is. The count and the price are both on the button. */}
+            {enablePlate && (plating ? (
+              <Btn variant="ghost" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={stopPlating}>
+                Stop plating{plateProgress ? ` (${plateProgress.done}/${plateProgress.total})` : ''}
+              </Btn>
+            ) : plateRunnable.length > 0 && (
+              <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm !border-sky-500/40 !text-sky-200"
+                onClick={plateSelected}
+                title="Regenerate on Seedream with the room removed and paste it back in place. Originals are kept.">
+                White plate {plateRunnable.length} · ${(plateRunnable.length * PLATE_COST_PER_IMAGE).toFixed(2)}
+              </Btn>
+            ))}
+            {enablePlate && !plating && platedCount > 0 && (
+              <Btn variant="ghost" className="!rounded-lg !py-2 !px-3 !text-sm" onClick={revertPlates}
+                title="Put the original pictures back">
+                Revert {selected.length ? 'selected' : `all ${platedCount}`} plate{platedCount === 1 && !selected.length ? '' : 's'}
+              </Btn>
             )}
             {describeKind && (describingAll || missingDescribeTargets.length > 0) && (
               describingAll ? (

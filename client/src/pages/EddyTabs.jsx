@@ -109,6 +109,7 @@ export function EddyPosePage() {
         promptLabel="pose"
       autoBlur
         describeKind="pose"
+        enablePlate
         withPrompt
         withVideoPrompt
             refreshKey={refreshKey}

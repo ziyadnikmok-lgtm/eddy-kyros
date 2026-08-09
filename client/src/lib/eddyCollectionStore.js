@@ -252,6 +252,41 @@ export function createEddyCollection(dbName) {
       await store.set(`img:${id}`, '');
       await store.set(`img:${id}:alt`, '');   // the spare copy goes too, or its bytes linger
       await store.set(`img:${id}:back`, '');  // and the back-view copy, on outfits that have one
+      await store.set(`img:${id}:preplate`, ''); // and the pre-white-plate original
+    },
+
+    /**
+     * Replace the picture and keep the one being replaced under `img:<id>:preplate`.
+     *
+     * A SEPARATE slot from `:alt`, deliberately. On the Pose tab autoBlur already owns `:alt` — it
+     * holds the UNBLURRED original. Writing a plate through setImageKeepingAlt would overwrite that
+     * with the blurred copy, so undoing the blur would silently stop working and the unblurred
+     * picture would be gone with nothing on screen saying so.
+     *
+     * Plating replaces curated reference images with paid, generated ones. This slot is what makes
+     * that reversible.
+     */
+    setImageKeepingPreplate: async function(id, dataUrl) {
+      const current = await store.get(`img:${id}`, '');
+      // Stashed only the FIRST time. Plating twice must not overwrite the true original with an
+      // already-plated copy — that turns Revert into a no-op that still reports success.
+      const stashed = await store.get(`img:${id}:preplate`, '');
+      if (current && !stashed) await write(`img:${id}:preplate`, current);
+      await write(`img:${id}`, dataUrl);
+      return true;
+    },
+
+    /** Put the pre-plate original back and drop the stash. False if there was nothing stashed. */
+    restorePreplate: async function(id) {
+      const original = await store.get(`img:${id}:preplate`, '');
+      if (!original) return false;
+      await write(`img:${id}`, original);
+      await write(`img:${id}:preplate`, '');
+      return true;
+    },
+
+    hasPreplate: async function(id) {
+      return Boolean(await store.get(`img:${id}:preplate`, ''));
     },
 
     /**
