@@ -244,6 +244,10 @@ export default function PhotoMatchSeedreamPage() {
    * round-trip, no fetch per reference, no server call that can 404 mid-batch.
    */
   const charStore = useMemo(() => createEddyCollection('eddy-character'), []);
+  // Eddy's Library is where EVERYTHING generated goes. The owner uses Eddy and this page and
+  // nothing else, so a Photo Match result that only reached the server gallery was a result they
+  // had to go somewhere else to find (owner, 2026-08-09).
+  const libraryStore = useMemo(() => createEddyCollection('eddy-library'), []);
   const [chars, setChars] = useState([]);        // folders in eddy-character
   const [charItems, setCharItems] = useState([]);
   const [charThumbs, setCharThumbs] = useState({});
@@ -496,6 +500,9 @@ export default function PhotoMatchSeedreamPage() {
         // Omitted entirely on the Seedream path so that request stays byte-identical to what it
         // was before this switch existed.
         ...(engine === 'nano2' ? { model: 'nano2' } : {}),
+        // Her name travels with the generation so "Recover missing" can file a stranded Photo
+        // Match picture into the right folder, exactly as it does for Eddy's.
+        tags: charName.trim() ? ['eddy', charName.trim()] : ['eddy'],
       }, engine === 'nano2' ? { timeoutMs: NANO2_CLIENT_TIMEOUT_MS } : undefined));
 
       const first = (data.images || [])[0];
@@ -513,7 +520,38 @@ export default function PhotoMatchSeedreamPage() {
       });
       setJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, status: 'done', result: first } : j)));
       setSessionSpend((s) => s + costPerJob);
+
+      /**
+       * INTO EDDY'S LIBRARY, under her name -- the same place, and the same shape, a generation from
+       * the Eddy tab lands in.
+       *
+       * Stored as a URL rather than bytes, exactly as Eddy does it: the server already holds the
+       * file, and copying megabytes into IndexedDB per image is what that choice exists to avoid.
+       *
+       * NOT swallowed. Eddy had this same call inside its own catch, which is why a filing miss was
+       * invisible AND silent for a day. A miss here reaches the handler below, which keeps the image
+       * and says so.
+       */
+      if (first.galleryId) {
+        const who = charName.trim();
+        const dest = (await libraryStore.ensureFolder(who || 'Photo Match'))?.id || null;
+        const filed = await libraryStore.addItems([{
+          url: galleryApi.imageUrl(first.galleryId),
+          prompt: `Photo Match - ${who || 'no character'}`,
+          name: `photomatch-${Date.now()}`,
+        }], dest);
+        // addItems reports a storage failure by RETURNING an empty array rather than throwing.
+        if (!Array.isArray(filed) || filed.length === 0) {
+          throw new Error('Browser storage is full - the picture is in the gallery but not in Eddy Library');
+        }
+      }
     } catch (err) {
+      // A FILING miss is not a failed match: the picture exists, is billed, and is on the feed.
+      // Marking the job failed would tell the owner to re-run something that already succeeded.
+      if (String(err?.message || '').includes('not in Eddy Library')) {
+        notify(err.message, 'error');
+        return;
+      }
       rejectPending(feedId);
       setJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, status: 'failed', error: err.message || 'Match failed' } : j)));
     }
