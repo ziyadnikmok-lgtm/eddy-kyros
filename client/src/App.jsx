@@ -261,9 +261,6 @@ const NAV_SECTIONS = [
   {
     label: 'Content',
     items: [
-      // The main gallery, back on both engines. It is called Gallery here because Eddy has its
-      // own Library above — two rows reading "Library" said nothing about which was which.
-      { id: 'library', label: 'Gallery' },
       { id: 'pasteInbox', label: 'Paste Inbox' },
       { id: 'imageEditor', label: 'Image Editor' },
       { id: 'videoEditor', label: 'Video Editor' },
