@@ -5234,6 +5234,19 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
                     {allVisiblePicked ? 'Clear' : `Select all ${visible.length}`}
                   </Btn>
                 )}
+                {/* CLEAR ALL — drops every pick in this slot, whatever filter they were made under.
+                    The button above only ever clears what is ON SCREEN, and only once all of it is
+                    picked: with 3 of 60 chosen it reads "Select all 60" and there was no way back
+                    short of unpicking each one by hand (owner, 2026-08-09). Shown whenever there is
+                    something to clear, including while the picker is hidden — that is exactly when
+                    a stale pick from an earlier session is easiest to miss. */}
+                {slot.picked.length > 0 && (
+                  <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs"
+                    title={`Unpick all ${slot.picked.length} — including any picked under another folder or filter`}
+                    onClick={() => keepScroll(() => setPicked([]))}>
+                    Clear all
+                  </Btn>
+                )}
                 <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs"
                   onClick={() => { if (!openPickers[slot.key]) loadAll(); setOpenPickers((o) => ({ ...o, [slot.key]: !o[slot.key] })); }}>
                   {openPickers[slot.key] ? 'Hide' : 'Choose'}
