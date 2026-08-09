@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { seedream as seedreamApi, gallery as galleryApi, characters as charApi } from '../services/api';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { seedream as seedreamApi, gallery as galleryApi } from '../services/api';
+import { createEddyCollection } from '../lib/eddyCollectionStore';
 import { useApp } from '../context/AppContext';
-import CharacterPicker from '../components/CharacterPicker';
 import { Card, Btn, Select, Textarea, Toggle, Badge, Spinner } from '../components/UI';
 import CompareSlider from '../components/CompareSlider';
 import { SEEDREAM_ASPECT_RATIOS, SEEDREAM_RESOLUTIONS, SEEDREAM_MAX_IMAGES, seedreamCost } from '../config/photoModes';
@@ -187,14 +187,6 @@ function parseDataUrl(dataUrl) {
   return m ? { mimeType: m[1], base64: m[2] } : null;
 }
 
-/** Fetch an in-app image URL and hand it back in the {base64, mimeType} shape the route wants. */
-async function urlToImagePayload(url) {
-  const resp = await fetch(url, { credentials: 'include' });
-  if (!resp.ok) throw new Error('Failed to load character image');
-  const blob = await resp.blob();
-  const dataUrl = await fileToDataUrl(new File([blob], 'char', { type: blob.type || 'image/png' }));
-  return parseDataUrl(dataUrl);
-}
 
 const _cache = { extra: '', aspectRatio: 'auto', resolution: '1K', exactRecreate: false, varyBackground: false, nsfw: false, blurSource: true, faceless: false };
 // Images are too big for _cache/localStorage — IndexedDB so they survive a reload.
@@ -212,11 +204,39 @@ const NANO2_COST = { '1K': 0.07, '2K': 0.105 };
 const NANO2_CLIENT_TIMEOUT_MS = 11 * 60_000;
 
 export default function PhotoMatchSeedreamPage() {
-  const { notify, characters: chars = [] } = useApp();
+  const { notify } = useApp();
+
+  /**
+   * THE CHARACTERS ARE EDDY'S, not the server's.
+   *
+   * This page listed server-side characters while every character the owner actually builds and
+   * uses lives in Eddy's Character tab, where a FOLDER IS A CHARACTER and its images are her
+   * reference photos. So the picker showed names from a different system and the identity you
+   * chose was not the identity you had been working with (owner, 2026-08-09).
+   *
+   * Reading the collection directly also means her photos are already bytes: no primaryImageUrl
+   * round-trip, no fetch per reference, no server call that can 404 mid-batch.
+   */
+  const charStore = useMemo(() => createEddyCollection('eddy-character'), []);
+  const [chars, setChars] = useState([]);        // folders in eddy-character
+  const [charItems, setCharItems] = useState([]);
+  const [charThumbs, setCharThumbs] = useState({});
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [f, i] = await Promise.all([charStore.listFolders(), charStore.listItems()]);
+        const map = {};
+        await Promise.all(i.map(async (it) => { map[it.id] = it.url || await charStore.getImage(it.id); }));
+        if (!alive) return;
+        setChars(f); setCharItems(i); setCharThumbs(map);
+      } catch { /* an unreadable collection shows the empty state, not a broken page */ }
+    })();
+    return () => { alive = false; };
+  }, [charStore]);
 
   const [sources, setSources] = useState([]);        // batch targets [{id, dataUrl}]
   const [characterId, setCharacterId] = useState(null);
-  const [charDetails, setCharDetails] = useState({});
 
   const [extra, setExtra] = useState(_cache.extra);
   const [exactRecreate, setExactRecreate] = useState(_cache.exactRecreate);
@@ -288,17 +308,28 @@ export default function PhotoMatchSeedreamPage() {
   useEffect(() => { _cache.varyBackground = varyBackground; }, [varyBackground]);
   useEffect(() => { try { sessionStorage.setItem(SPEND_KEY, String(sessionSpend)); } catch { /* ignore */ } }, [sessionSpend]);
 
-  // Pull the full character (with its references) once selected.
-  useEffect(() => {
-    if (!characterId || charDetails[characterId]) return;
-    let cancelled = false;
-    charApi.get(characterId)
-      .then((d) => { if (!cancelled) setCharDetails((prev) => ({ ...prev, [characterId]: d })); })
-      .catch(() => { /* picker still works without detail; refs just won't be added */ });
-    return () => { cancelled = true; };
-  }, [characterId, charDetails]);
-
-  const charDetail = characterId ? charDetails[characterId] : null;
+  /**
+   * No server fetch any more. `characterId` is now an Eddy FOLDER id, and asking the characters API
+   * for it would 404 on every selection — a failing request per click, for a detail record that
+   * cannot exist. Her photos come straight out of the collection below.
+   *
+   * charDetail stays null as a result, so `masterPrompt` is simply absent: it is a field of the
+   * server's character records and an Eddy character never had one.
+   */
+  const charDetail = null;
+  /**
+   * Her photos, with the one marked BASE in the Character tab FIRST.
+   *
+   * Order is not cosmetic: the model treats the leading image as the primary subject, and the
+   * Character tab already lets you mark which photo is the base face. Sorting purely by date
+   * would hand it whichever photo happened to be uploaded first. Same rule as the Base tab.
+   */
+  const eddyRefs = useMemo(() => {
+    if (!characterId) return [];
+    const mine = charItems.filter((i) => i.folderId === characterId);
+    const rank = (i) => (i.role === 'base' ? 0 : i.role === 'body' ? 1 : 2);
+    return [...mine].sort((a, b) => rank(a) - rank(b) || (a.createdAt || 0) - (b.createdAt || 0));
+  }, [charItems, characterId]);
   const charName = chars.find((c) => c.id === characterId)?.name || '';
   // NOT filtered by isActive: references are created with isActive:false by default
   // (server/services/referenceManager.js), so filtering on it silently discarded every one of
@@ -309,9 +340,9 @@ export default function PhotoMatchSeedreamPage() {
   // Characters here store their photos as PRIMARY images, not references — every character in
   // this install has 0 references. Reading only `references` meant one lone identity image went
   // up against the source photo, and Seedream took the source's face about as often as not.
-  const primaryCount = Math.max(1, charDetail?.primaryImageCount || 1);
+  const primaryCount = eddyRefs.length;
   // Character contributes every primary image + each reference.
-  const charImageCount = characterId ? primaryCount + activeRefs.length : 0;
+  const charImageCount = characterId ? eddyRefs.length : 0;
   const charImagesUsed = Math.min(charImageCount, MAX_CHAR_IMAGES);
   const charTruncated = charImageCount > MAX_CHAR_IMAGES;
 
@@ -468,16 +499,13 @@ export default function PhotoMatchSeedreamPage() {
 
     // Without identity images Seedream can only fall back on the source photo's face — the exact
     // failure this page exists to prevent. Fail loudly instead of quietly producing the stand-in.
-    const urls = [
-      ...Array.from({ length: primaryCount }, (_, i) => charApi.primaryImageUrl(characterId, i)),
-      ...activeRefs.map((r) => charApi.refImageUrl(characterId, r.id)),
-    ];
+    // Straight from the collection: these are already data URLs, so there is no fetch to fail
+    // and no server round-trip per reference.
     const charRefs = [];
-    for (const url of urls.slice(0, MAX_CHAR_IMAGES)) {
-      try {
-        const img = await urlToImagePayload(url);
-        if (img) charRefs.push(img);
-      } catch { /* one missing reference shouldn't kill the batch */ }
+    for (const r of eddyRefs.slice(0, MAX_CHAR_IMAGES)) {
+      const dataUrl = charThumbs[r.id] || await charStore.getImage(r.id);
+      const img = dataUrl ? parseDataUrl(dataUrl) : null;
+      if (img) charRefs.push(img);
     }
     if (!charRefs.length) { notify('No character identity images could be loaded — add a primary image to this character', 'error'); return; }
 
@@ -664,17 +692,34 @@ export default function PhotoMatchSeedreamPage() {
           </div>
 
           {chars.length === 0 ? (
-            <p className="text-xs text-zinc-600">No characters yet — create one on the Characters page.</p>
+            <p className="text-xs text-zinc-600">No characters yet — add one in Eddy's Character tab first.</p>
           ) : (
             <>
-              <CharacterPicker
-                chars={chars}
-                selectedIds={characterId ? [characterId] : []}
-                onToggle={(id) => setCharacterId((prev) => (prev === id ? null : id))}
-                charDetails={charDetails}
-                label="Whose face goes into the photo"
-                maxHeight="max-h-44"
-              />
+              {/* Her own face BEFORE you pick her, same tiles as the Base tab. A name-only list
+                    meant choosing between people by reading labels, when the whole point is that you
+                    recognise her on sight. The tile is her BASE photo when one is marked, else her
+                    earliest — the same image that leads the reference payload. */}
+                <p className="text-xs text-zinc-500">Her saved reference photos are sent as the identity to hold.</p>
+                <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+                  {chars.map((c) => {
+                    const mine = charItems.filter((i) => i.folderId === c.id);
+                    const lead = mine.find((i) => i.role === 'base') || [...mine].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
+                    return (
+                      <button key={c.id} type="button"
+                        onClick={() => setCharacterId((prev) => (prev === c.id ? null : c.id))}
+                        className={cn('overflow-hidden rounded-xl border-2 text-left transition cursor-pointer',
+                          characterId === c.id ? 'border-rose-500' : 'border-white/[0.07] hover:border-zinc-600')}>
+                        {lead && charThumbs[lead.id]
+                          ? <img src={charThumbs[lead.id]} alt="" loading="lazy" className="aspect-[3/4] w-full object-cover bg-zinc-950" />
+                          : <span className="flex aspect-[3/4] w-full items-center justify-center bg-white/[0.03] text-xs text-zinc-600">No photo</span>}
+                        <span className={cn('block px-2 py-1.5 text-xs font-semibold',
+                          characterId === c.id ? 'bg-rose-500/15 text-rose-300' : 'bg-white/[0.02] text-zinc-400')}>
+                          {c.name} <span className="text-zinc-600">{mine.length}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               {characterId && (
                 <p className="text-[0.625rem] text-zinc-600 leading-relaxed">
                   Sends all {charImagesUsed} of {charName || 'this character'}'s photo{charImagesUsed === 1 ? '' : 's'} first, then the source photo — Seedream keeps whoever is in image 1, and identity comes only from those.
