@@ -93,6 +93,10 @@ function durationFromPrompt(prompt) {
   return any ? `${any[1]}s` : '';
 }
 
+// How many tiles are mounted at once. A page plus a "show more" keeps a large collection
+// usable without ever mounting all of it.
+const COLLECTION_PAGE = 120;
+
 export default function EddyCollection({
   dbName,
   title,
@@ -245,6 +249,17 @@ export default function EddyCollection({
   // Ticks belong to the folder they were made in. Keeping them across a switch left the bulk
   // bar acting on items no longer on screen — Delete could remove things you could not see.
   useEffect(() => { setSelected([]); }, [activeFolder, favOnly]);
+
+  /**
+   * Tiles mounted at once. The grid rendered every visible item, which is fine at 50 and heavy at
+   * 850 — and a single run can now add hundreds, since the results panel no longer caps anything
+   * (owner, 2026-08-08). Nothing is hidden: "Show N more" reveals the rest and the header states
+   * the true total either way.
+   */
+  const [shown, setShown] = useState(COLLECTION_PAGE);
+  // Back to the first page whenever the view changes, so switching folders does not land you
+  // deep in a previous folder's scroll.
+  useEffect(() => { setShown(COLLECTION_PAGE); }, [activeFolder, favOnly, oldestFirst]);
 
   const visible = useMemo(() => {
     // Favorite wins over the folder: it is a cross-folder view of every starred item. Otherwise the
@@ -1740,7 +1755,7 @@ export default function EddyCollection({
         </p>
       ) : (
         <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
-          {visible.map((it) => (
+          {visible.slice(0, shown).map((it) => (
             <Card key={it.id}
               className={cn('p-2 space-y-2 transition',
                 dropOn === it.id
@@ -1975,6 +1990,21 @@ export default function EddyCollection({
             </Card>
           ))}
         </div>
+      )}
+
+      {/* Nothing is hidden — only unmounted. The count names the true total, so a big folder never
+          looks truncated. Sits AFTER the empty/grid ternary rather than inside it. */}
+      {visible.length > shown && (
+        <button
+          type="button"
+          onClick={() => setShown((n) => n + COLLECTION_PAGE)}
+          className="mt-3 w-full rounded-xl border border-zinc-700/60 bg-white/[0.02] py-2.5 text-sm font-semibold text-zinc-300 transition hover:border-zinc-500 cursor-pointer"
+        >
+          Show {Math.min(COLLECTION_PAGE, visible.length - shown)} more
+          <span className="ml-2 font-normal text-zinc-500">
+            {shown.toLocaleString()} of {visible.length.toLocaleString()} shown
+          </span>
+        </button>
       )}
 
       {handBlur && (
