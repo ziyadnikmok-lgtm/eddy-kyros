@@ -105,12 +105,22 @@ const MAX_OUTFIT_FOLDER = 'Max Outfit';
  */
 async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName }) {
   const who = String(characterName || '').trim();
-  if (who) return (await libraryStore.ensureFolder(who))?.id || null;
+  // Every branch falls back to the generic bucket rather than to null.
+  //
+  // NOTHING MAY BE FILED NOWHERE. A null folderId is not "unsorted", it is INVISIBLE: the Library
+  // lists items by folder, so a row with no folder shows up under "All" and in no folder at all.
+  // 89 pictures ended up in that state and read as never having reached the Library — the images
+  // were safe the whole time, just unreachable (owner, 2026-08-09).
+  //
+  // The generic folder is the floor, and it is created here rather than left to chance, so the
+  // worst case is "in the wrong folder" — recoverable by dragging — instead of "gone".
+  const generic = async () => (await libraryStore.ensureFolder(nsfw ? 'Eddy NSFW' : 'Eddy'))?.id || null;
+  if (who) return (await libraryStore.ensureFolder(who))?.id || await generic();
   // No character picked. Max Nano / Max Outfit still keep their own pile rather than falling into
   // the shared Eddy bucket — with no name to file under, the tab is the only thing left to sort by.
   const ownRoot = maxOutfit ? MAX_OUTFIT_FOLDER : (maxNano ? MAX_NANO_FOLDER : '');
-  if (ownRoot) return (await libraryStore.ensureFolder(ownRoot))?.id || null;
-  return (await libraryStore.ensureFolder(nsfw ? 'Eddy NSFW' : 'Eddy'))?.id || null;
+  if (ownRoot) return (await libraryStore.ensureFolder(ownRoot))?.id || await generic();
+  return generic();
 }
 
 /**
@@ -4050,8 +4060,11 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     if (!runCtx) {
       try {
         libFolderId = await resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName, engine });
-      } catch {
-        // Filing is a convenience; a failure here must not cost you the generation.
+      } catch (err) {
+        // Still never fails the generation — but it is no longer SILENT. Swallowing this is what
+        // let 89 pictures file to no folder without a word on screen; "in the wrong place" is
+        // recoverable, "nowhere, and nobody said so" is not.
+        notify(`Saved, but could not put it in a folder — look under All in the Library. (${err?.message || 'unknown error'})`, 'error');
       }
     }
 
@@ -4390,7 +4403,11 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     }
 
     return { image: first, videoPrompt: poseVideoPrompt, uid: resultUid };
-  }, [sourceImages, aspectRatio, baseImage, resolution, perRunImages, nsfw, characterName, maxOutfit, libraryStore, wantsNude, wantsBody, undressChip, instruction, faceImage, outfits, poses, poseStore, outfitStore, libraryStore, submitVideoJob, notify, sendPoseImage, sendOutfitImage, faceless, lighting, build, engine, wantsExpression]);
+    // maxNano belongs here as much as maxOutfit: both decide which Library folder a result lands
+    // in (see resolveLibraryFolder), and leaving it out means a stale closure can file a Max Nano
+    // run as though it were an Eddy one. It only escaped notice because sourceImages is rebuilt
+    // every render, which happens to rebuild this callback too — an accident, not a guarantee.
+  }, [sourceImages, aspectRatio, baseImage, resolution, perRunImages, nsfw, characterName, maxNano, maxOutfit, libraryStore, wantsNude, wantsBody, undressChip, instruction, faceImage, outfits, poses, poseStore, outfitStore, submitVideoJob, notify, sendPoseImage, sendOutfitImage, faceless, lighting, build, engine, wantsExpression]);
 
   // Keep the ref pointed at the latest generateCombo every render, so the mount-time rehydrate
   // effect's rebuilt regenerate closures reach the current one at click time (see the ref's comment).
@@ -4481,8 +4498,10 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     let libFolderId = null;
     try {
       libFolderId = await resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName, engine });
-    } catch {
-      // Filing is a convenience; a failure here must not cost you the generation.
+    } catch (err) {
+      // Resolved ONCE per run, so a failure here strands the WHOLE batch in no folder — which is
+      // exactly how a 25-image run can vanish from every folder at once. Never silent.
+      notify(`Saved, but this batch could not be put in a folder — look under All in the Library. (${err?.message || 'unknown error'})`, 'error');
     }
 
     // Every per-run value the shared generateCombo needs, resolved ONCE here so a 25-image batch is
