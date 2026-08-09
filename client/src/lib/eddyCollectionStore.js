@@ -105,6 +105,33 @@ export function createEddyCollection(dbName) {
       return folder;
     },
 
+    /**
+     * Re-parent an existing folder — how a collection that was flat before subfolders existed
+     * becomes a tree without re-importing anything.
+     *
+     * Refuses to make a folder its own ancestor. Dropping a parent into its own child would leave
+     * both unreachable from the root and give the traversals a cycle to walk; the pass-limited
+     * loops elsewhere survive that, but the folders would simply vanish from every view while
+     * still sitting in the store. Rejecting the move is the only outcome that keeps them visible.
+     */
+    _setFolderParent: async function(id, parentId) {
+      const pid = parentId || null;
+      if (id === pid) return false;
+      const folders = await impl.listFolders();
+      if (pid) {
+        const byId = new Map(folders.map((f) => [f.id, f]));
+        let cur = byId.get(pid);
+        const seen = new Set();
+        while (cur && !seen.has(cur.id)) {
+          if (cur.id === id) return false;        // pid sits beneath id — that is the cycle
+          seen.add(cur.id);
+          cur = cur.parentId ? byId.get(cur.parentId) : null;
+        }
+      }
+      await write('folders', folders.map((f) => (f.id === id ? { ...f, parentId: pid } : f)));
+      return true;
+    },
+
     _renameFolder: async function(id, name) {
       const folders = await impl.listFolders();
       await write('folders', folders.map((f) => (f.id === id ? { ...f, name: String(name).trim().slice(0, 40) } : f)));
@@ -303,6 +330,7 @@ export function createEddyCollection(dbName) {
     ensureFolder: (...a) => serialize(() => impl._ensureFolder.apply(impl, a)),
     renameFolder: (...a) => serialize(() => impl._renameFolder.apply(impl, a)),
     deleteFolder: (...a) => serialize(() => impl._deleteFolder.apply(impl, a)),
+    setFolderParent: (...a) => serialize(() => impl._setFolderParent.apply(impl, a)),
     addItems: (...a) => serialize(() => impl._addItems.apply(impl, a)),
     removeItem: (...a) => serialize(() => impl._removeItem.apply(impl, a)),
     updateItem: (...a) => serialize(() => impl._updateItem.apply(impl, a)),

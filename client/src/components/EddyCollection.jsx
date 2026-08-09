@@ -906,6 +906,56 @@ export default function EddyCollection({
     return () => window.removeEventListener('paste', onPaste);
   }, [addFiles]);
 
+  /**
+   * Drag one folder chip onto another to nest it.
+   *
+   * Subfolders only helped NEW folders until now: a collection built before they existed was flat
+   * and had no way to become a tree short of re-importing everything (owner, 2026-08-08 — 500+
+   * outfit folders already in place). Dragging is the whole feature — no dialog, no move-to menu.
+   *
+   * The breadcrumb doubles as the un-nest target: drop a chip on a crumb to move it there, or on
+   * "All" to send it back to the root.
+   */
+  /**
+   * Items whose picture failed to load.
+   *
+   * A Library row stores a gallery URL, not the bytes — `url: /api/gallery/<id>/image`. That is
+   * right for images this machine generated, and useless for a row that arrived in someone else's
+   * export: the id points at THEIR gallery, so it 404s here and the tile renders black with no
+   * explanation (owner, 2026-08-08 — a folder of 94 of them). The bytes cannot be recovered from
+   * this side, so the honest thing is to name them and let them be cleared.
+   */
+  const [brokenIds, setBrokenIds] = useState(() => new Set());
+  const markBroken = useCallback((id) => {
+    setBrokenIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }, []);
+  // Cleared on refresh so a fixed or re-added image is not stuck looking broken.
+  useEffect(() => { setBrokenIds(new Set()); }, [items]);
+
+  const removeBroken = async () => {
+    const doomed = visible.filter((i) => brokenIds.has(i.id));
+    if (!doomed.length) return;
+    if (!window.confirm(`Remove ${doomed.length} card${doomed.length === 1 ? '' : 's'} whose image cannot be loaded? The cards go, nothing else is deleted.`)) return;
+    for (const it of doomed) {
+      // eslint-disable-next-line no-await-in-loop -- serialized store
+      try { await store.removeItem(it.id); } catch { /* keep going */ }
+    }
+    await refresh();
+    notify(`Removed ${doomed.length} unloadable card${doomed.length === 1 ? '' : 's'}`, 'success');
+  };
+
+  const [dragFolder, setDragFolder] = useState(null);
+  const [dropFolder, setDropFolder] = useState(null);
+
+  const moveFolder = async (id, parentId) => {
+    setDragFolder(null);
+    setDropFolder(null);
+    if (!id || id === parentId) return;
+    const ok = await store.setFolderParent(id, parentId);
+    if (!ok) { notify('A folder cannot go inside itself', 'error'); return; }
+    await refresh();
+  };
+
   const createFolder = async () => {
     if (!newFolder.trim()) return;
     // Created INSIDE wherever you are standing — that is what makes a subfolder a subfolder.
@@ -1345,13 +1395,23 @@ export default function EddyCollection({
       </div>
 
       {/* Folders */}
+      {folders.length > 1 && (
+        <p className="text-[0.625rem] text-zinc-600">
+          Drag a folder onto another to nest it · drop on “All” to bring it back out
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-1.5">
         <button
           onClick={() => { setActiveFolder(null); setFavOnly(false); }}
+          onDragOver={(e) => { if (dragFolder) { e.preventDefault(); setDropFolder('__root'); } }}
+          onDragLeave={() => setDropFolder((d) => (d === '__root' ? null : d))}
+          onDrop={(e) => { e.preventDefault(); moveFolder(dragFolder, null); }}
           className={cn('rounded-full border px-3 py-1.5 text-xs font-medium transition cursor-pointer',
-            activeFolder === null && !favOnly ? 'border-rose-500 bg-rose-500/15 text-white' : 'border-zinc-700/60 bg-white/[0.02] text-zinc-400 hover:text-white')}
+            dropFolder === '__root' ? 'border-rose-500 bg-rose-500/30 text-white'
+              : activeFolder === null && !favOnly ? 'border-rose-500 bg-rose-500/15 text-white' : 'border-zinc-700/60 bg-white/[0.02] text-zinc-400 hover:text-white')}
         >
-          All ({items.length})
+          {/* Doubles as the ROOT drop target — without a way back out, nesting would be one-way. */}
+          {dragFolder ? 'Drop here to un-nest' : `All (${items.length})`}
         </button>
         {/* Favorite FILTER — distinct from folders by its star. It is a flag view across ALL folders,
             so it sits beside All rather than in the folder list. Always offered so it is discoverable
@@ -1383,9 +1443,17 @@ export default function EddyCollection({
           return (
             <span key={f.id} className="group relative inline-flex">
               <button
+                draggable
+                onDragStart={() => setDragFolder(f.id)}
+                onDragEnd={() => { setDragFolder(null); setDropFolder(null); }}
+                onDragOver={(e) => { if (dragFolder && dragFolder !== f.id) { e.preventDefault(); setDropFolder(f.id); } }}
+                onDragLeave={() => setDropFolder((d) => (d === f.id ? null : d))}
+                onDrop={(e) => { e.preventDefault(); moveFolder(dragFolder, f.id); }}
+                title="Drag onto another folder to nest it inside"
                 onClick={() => { setActiveFolder(f.id); setFavOnly(false); }}
                 className={cn('rounded-full border px-3 py-1.5 text-xs font-medium transition cursor-pointer',
-                  activeFolder === f.id && !favOnly ? 'border-rose-500 bg-rose-500/15 text-white' : 'border-zinc-700/60 bg-white/[0.02] text-zinc-400 hover:text-white')}
+                  dropFolder === f.id ? 'border-rose-500 bg-rose-500/30 text-white'
+                    : activeFolder === f.id && !favOnly ? 'border-rose-500 bg-rose-500/15 text-white' : 'border-zinc-700/60 bg-white/[0.02] text-zinc-400 hover:text-white')}
               >
                 {f.name} ({count}){kids > 0 && <span className="ml-1 text-zinc-500">›{kids}</span>}
               </button>
@@ -1545,6 +1613,11 @@ export default function EddyCollection({
                 {selected.length ? `Export ${selected.length}` : 'Export all'}
               </Btn>
             )}
+            {brokenIds.size > 0 && (
+              <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm !border-amber-500/40 !text-amber-200" onClick={removeBroken}>
+                Remove {visible.filter((i) => brokenIds.has(i.id)).length} unloadable
+              </Btn>
+            )}
             {visible.length > 0 && (
               <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={saveToFolder}>
                 {selected.length
@@ -1683,6 +1756,11 @@ export default function EddyCollection({
                     {durationFromPrompt(it.prompt)}
                   </span>
                 )}
+                {brokenIds.has(it.id) && (
+                  <span className="pointer-events-none absolute inset-x-2 top-8 z-10 rounded-md bg-amber-500/90 px-2 py-1 text-center text-[0.625rem] font-bold text-black">
+                    Image not on this machine
+                  </span>
+                )}
                 {dropOn === it.id && (thumbs[it.id] || it.url) && (
                   <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-black/60 text-xs font-semibold text-rose-200">
                     Drop to replace{it.prompt?.trim() ? ' · prompt kept' : ''}
@@ -1701,6 +1779,8 @@ export default function EddyCollection({
                   <img
                     src={thumbs[it.id] || it.url}
                     alt={it.name}
+                    // A 404 on a gallery URL is otherwise indistinguishable from a very slow load.
+                    onError={() => markBroken(it.id)}
                     // contain, not cover, on prompt cards: a pose is judged by the whole body,
                     // and h-28 + cover cropped every image down to a thin band of its middle.
                     style={withPrompt ? { maxHeight: imgH } : undefined}
