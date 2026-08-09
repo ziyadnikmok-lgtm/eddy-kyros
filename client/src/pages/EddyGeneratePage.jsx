@@ -110,8 +110,19 @@ async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, ch
     const sub = await libraryStore.ensureFolder(who, root?.id || null);
     return sub?.id || root?.id || null;
   }
-  // Named per character AND per engine — "Grace Seedream", "Grace Nano".
-  if (who) return (await libraryStore.ensureFolder(`${who} ${engineFolderSuffix(engine)}`))?.id || null;
+  // Per character AND per engine, but NESTED rather than two flat siblings: "Grace" with
+  // "Seedream" and "Nano" INSIDE it.
+  //
+  // Flat names ("Grace Seedream") split her work across folders that sort apart from the "Grace"
+  // folder she already has, so opening Grace showed none of it and it read as the images having
+  // gone missing (owner, 2026-08-09). Nesting keeps the engines separate — which is the whole point
+  // of the split — while opening Grace shows everything of hers, because a folder's view includes
+  // its whole subtree (see subtreeIds in EddyCollection).
+  if (who) {
+    const root = await libraryStore.ensureFolder(who);
+    const sub = await libraryStore.ensureFolder(engineFolderSuffix(engine), root?.id || null);
+    return sub?.id || root?.id || null;
+  }
   return (await libraryStore.ensureFolder(nsfw ? 'Eddy NSFW' : 'Eddy'))?.id || null;
 }
 
@@ -5630,7 +5641,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
               <span className="font-semibold text-rose-300">
                 {maxNano ? `Max Nano / ${characterName}`
                   : maxOutfit ? `Max Outfit / ${characterName}`
-                  : `${characterName} ${engine === 'nano2' ? 'Nano' : 'Seedream'}`}
+                  : `${characterName} / ${engine === 'nano2' ? 'Nano' : 'Seedream'}`}
               </span>
               <button type="button" onClick={() => setCharacterName('')}
                 title="File this batch in the generic folder instead"
