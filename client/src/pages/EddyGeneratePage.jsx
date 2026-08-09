@@ -4945,6 +4945,15 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       </div>
 
       {/* The two source photos */}
+      {/**
+       * HIDDEN IN MAX OUTFIT.
+       *
+       * Neither slot does anything there. Each combo brings its own finished Library picture as
+       * image 1 -- her body, her pose and her room are already in it -- so the main photo is
+       * ignored, and the face close-up is redundant because that picture already IS her face. Two
+       * large controls that change nothing sat above the one that matters (owner, 2026-08-09).
+       */}
+      {!maxOutfit && (
       <Card className="p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-semibold uppercase tracking-wider text-zinc-300">Photos</h3>
@@ -5001,6 +5010,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           />
         </div>
       </Card>
+      )}
 
       {/* Pose + outfit slots — stacked vertically (pose on top, outfit below), each full width
           of the control column. Single-column grid instead of sm:grid-cols-2 so they sit one
