@@ -63,9 +63,22 @@ export function createEddyCollection(dbName) {
       return Array.isArray(f) ? f : [];
     },
 
-    _createFolder: async function(name) {
+    /**
+     * `parentId` makes folders a tree. It is OPTIONAL and defaults to null, so every folder saved
+     * before this existed reads as a root folder and nothing needs migrating.
+     *
+     * Only the parent link is stored — no path, no child list. A denormalised path would have to be
+     * rewritten on every rename and would rot the moment one write failed; children are derived by
+     * filtering on parentId, which cannot disagree with itself.
+     */
+    _createFolder: async function(name, parentId = null) {
       const folders = await impl.listFolders();
-      const folder = { id: `f-${newId()}`, name: String(name || 'Untitled').trim().slice(0, 40), createdAt: Date.now() };
+      const folder = {
+        id: `f-${newId()}`,
+        name: String(name || 'Untitled').trim().slice(0, 40),
+        parentId: parentId || null,
+        createdAt: Date.now(),
+      };
       await write('folders', [...folders, folder]);
       return folder;
     },
@@ -75,12 +88,19 @@ export function createEddyCollection(dbName) {
      * the caller lets two concurrent batches both miss and both create, which is exactly how
      * the duplicate "Grace" folders appeared.
      */
-    _ensureFolder: async function(name) {
+    /**
+     * Match is by name WITHIN a parent, not globally: two different parents are each allowed a
+     * "Bikini" child, and merging them because the names collide would silently pool unrelated
+     * items. A folder saved before parentId existed has none, which reads as null — so the
+     * top-level lookup still finds it.
+     */
+    _ensureFolder: async function(name, parentId = null) {
       const clean = String(name || 'Untitled').trim().slice(0, 40);
+      const pid = parentId || null;
       const folders = await impl.listFolders();
-      const hit = folders.find((f) => f.name === clean);
+      const hit = folders.find((f) => f.name === clean && (f.parentId || null) === pid);
       if (hit) return hit;
-      const folder = { id: `f-${newId()}`, name: clean, createdAt: Date.now() };
+      const folder = { id: `f-${newId()}`, name: clean, parentId: pid, createdAt: Date.now() };
       await write('folders', [...folders, folder]);
       return folder;
     },
@@ -91,10 +111,29 @@ export function createEddyCollection(dbName) {
     },
 
     // Deleting a folder keeps its images — they fall back to "All", never silently vanish.
+    /**
+     * Deletes the folder AND every folder beneath it — but never an image.
+     *
+     * Removing only the named folder left its children pointing at an id that no longer exists:
+     * not root, not under anything real, so they and their contents disappeared from the UI while
+     * still sitting in the store. Unreachable data is worse than deleted data, because nothing
+     * tells you it is there.
+     *
+     * Items in any removed folder are unfiled (folderId null), matching what deleting a flat
+     * folder has always done: the pictures survive, the grouping does not.
+     */
     _deleteFolder: async function(id) {
       const [folders, index] = await Promise.all([impl.listFolders(), impl.listItems()]);
-      await write('folders', folders.filter((f) => f.id !== id));
-      await write('index', index.map((i) => (i.folderId === id ? { ...i, folderId: null } : i)));
+      const doomed = new Set([id]);
+      // Repeat until nothing new is caught — a tree of any depth settles in a few passes, and
+      // this cannot loop forever even if a bad parentId cycle ever got written.
+      for (let pass = 0; pass < 50; pass += 1) {
+        const before = doomed.size;
+        for (const f of folders) if (f.parentId && doomed.has(f.parentId)) doomed.add(f.id);
+        if (doomed.size === before) break;
+      }
+      await write('folders', folders.filter((f) => !doomed.has(f.id)));
+      await write('index', index.map((i) => (doomed.has(i.folderId) ? { ...i, folderId: null } : i)));
     },
 
     async listItems() {

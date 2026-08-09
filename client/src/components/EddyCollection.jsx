@@ -126,6 +126,43 @@ export default function EddyCollection({
   // from one source that a big-index rewrite can never clobber. Loaded in refresh() below.
   const [favIds, setFavIds] = useState(() => new Set());
   const [activeFolder, setActiveFolder] = useState(null); // null = All
+
+  /**
+   * Folders are a tree now. Everything below derives from `parentId` alone — no stored path, no
+   * child lists — so nothing can drift out of step with the folder records themselves.
+   */
+  const childrenOf = useCallback(
+    (pid) => folders.filter((f) => (f.parentId || null) === (pid || null)),
+    [folders],
+  );
+
+  // A folder's own id plus every id beneath it. Used for counts and for "show everything in here",
+  // which is what you want when a parent's items all live in its children.
+  const subtreeIds = useCallback((id) => {
+    if (!id) return null;
+    const out = new Set([id]);
+    for (let pass = 0; pass < 50; pass += 1) {
+      const before = out.size;
+      for (const f of folders) if (f.parentId && out.has(f.parentId)) out.add(f.id);
+      if (out.size === before) break;
+    }
+    return out;
+  }, [folders]);
+
+  // Root → … → active, for the breadcrumb. Guarded against a cycle so a bad parentId can never
+  // hang the render.
+  const folderPath = useMemo(() => {
+    const path = [];
+    const byId = new Map(folders.map((f) => [f.id, f]));
+    let cur = activeFolder ? byId.get(activeFolder) : null;
+    const seen = new Set();
+    while (cur && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      path.unshift(cur);
+      cur = cur.parentId ? byId.get(cur.parentId) : null;
+    }
+    return path;
+  }, [folders, activeFolder]);
   // The "★ Favorite" FILTER — a flag view that cuts ACROSS folders, not a folder itself. A favorite
   // keeps its category (Feet/Tease/…) AND shows here, so this is a separate toggle from activeFolder
   // rather than a folder value: when it is on, the visible list is every favorited item regardless of
@@ -200,9 +237,13 @@ export default function EddyCollection({
     // original folder behaviour is untouched (null = All).
     const base = favOnly
       ? items.filter((i) => favIds.has(i.id))
-      : (activeFolder ? items.filter((i) => i.folderId === activeFolder) : items);
+      : (activeFolder
+        // Descendants included: a parent whose items all sit in its children would otherwise look
+        // empty, which is the first thing you check after making subfolders.
+        ? (() => { const ids = subtreeIds(activeFolder); return items.filter((i) => ids.has(i.folderId)); })()
+        : items);
     return oldestFirst ? [...base].sort((a, b) => a.createdAt - b.createdAt) : base;
-  }, [items, activeFolder, favOnly, favIds, oldestFirst]);
+  }, [items, activeFolder, favOnly, favIds, oldestFirst, subtreeIds]);
 
   // field: which index column the result is written to. Outfits write their normal front
   // description to 'prompt' (the default) and their back-view crop's description to
@@ -765,6 +806,67 @@ export default function EddyCollection({
     }
   }, [store, refresh, notify, describeKind, describe]);
 
+  /**
+   * Drop a FOLDER and get the same folder structure back.
+   *
+   * `dataTransfer.files` flattens a directory drop into a bare file list, losing the very thing
+   * you dragged it for. webkitGetAsEntry() exposes the real tree, so a dropped folder becomes a
+   * folder here, its subfolders become subfolders, and each image lands in the one it came from
+   * (owner, 2026-08-08).
+   *
+   * Created relative to wherever you are standing, so dropping into an open folder nests under it
+   * rather than at the root. ensureFolder matches by name WITHIN a parent, so re-dropping the same
+   * tree refills the folders you already have instead of making a second set.
+   *
+   * Entries are read depth-first and awaited one directory at a time: a wide tree read in parallel
+   * opens hundreds of file handles at once, and the store's writes are serialized anyway.
+   */
+  const addDroppedTree = useCallback(async (entries, parentId) => {
+    const readDir = (reader) => new Promise((res, rej) => reader.readEntries(res, rej));
+    const asFile = (entry) => new Promise((res, rej) => entry.file(res, rej));
+
+    let files = 0;
+    let madeFolders = 0;
+
+    const walk = async (entry, pid) => {
+      if (entry.isFile) {
+        const f = await asFile(entry);
+        if (!f.type.startsWith(mediaKind === 'video' ? 'video/' : 'image/')) return;
+        const dataUrl = await fileToDataUrl(f);
+        await store.addItems([{ dataUrl, name: f.name.replace(/\.[^.]+$/, '') }], pid);
+        files += 1;
+        return;
+      }
+      if (!entry.isDirectory) return;
+      const folder = await store.ensureFolder(entry.name, pid);
+      madeFolders += 1;
+      const reader = entry.createReader();
+      // readEntries returns at most ~100 per call, so it has to be drained in a loop — a single
+      // call silently truncates a big folder and you would never know images were missing.
+      for (;;) {
+        // eslint-disable-next-line no-await-in-loop
+        const batch = await readDir(reader);
+        if (!batch.length) break;
+        for (const child of batch) {
+          // eslint-disable-next-line no-await-in-loop
+          await walk(child, folder.id);
+        }
+      }
+    };
+
+    for (const e of entries) {
+      // eslint-disable-next-line no-await-in-loop
+      await walk(e, parentId);
+    }
+    await refresh();
+    notify(
+      files
+        ? `Added ${files} image${files === 1 ? '' : 's'} across ${madeFolders} folder${madeFolders === 1 ? '' : 's'}`
+        : 'Nothing usable in that folder',
+      files ? 'success' : 'error',
+    );
+  }, [store, mediaKind, refresh, notify]);
+
   // Drag anywhere on the page, not only over the drop card. A file dropped outside a handler
   // makes the window navigate to it, which looks like the app crashing.
   useEffect(() => {
@@ -773,6 +875,13 @@ export default function EddyCollection({
     const drop = (e) => {
       e.preventDefault();
       setDragging(false);
+      // Directories first: a folder drop also populates dataTransfer.files with its contents
+      // flattened, so checking files first would take the flat path and throw the structure away.
+      const items = Array.from(e.dataTransfer?.items || []);
+      const entries = items
+        .map((it) => (it.webkitGetAsEntry ? it.webkitGetAsEntry() : null))
+        .filter(Boolean);
+      if (entries.some((en) => en.isDirectory)) { addDroppedTree(entries, activeFolder); return; }
       if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
     };
     window.addEventListener('dragover', over);
@@ -783,7 +892,7 @@ export default function EddyCollection({
       window.removeEventListener('dragleave', leave);
       window.removeEventListener('drop', drop);
     };
-  }, [addFiles, mediaKind]);
+  }, [addFiles, mediaKind, addDroppedTree, activeFolder]);
 
   // Paste anywhere on the page drops into the folder you're looking at.
   useEffect(() => {
@@ -799,7 +908,8 @@ export default function EddyCollection({
 
   const createFolder = async () => {
     if (!newFolder.trim()) return;
-    await store.createFolder(newFolder);
+    // Created INSIDE wherever you are standing — that is what makes a subfolder a subfolder.
+    await store.createFolder(newFolder, activeFolder);
     setNewFolder('');
     setShowNewFolder(false);
     await refresh();
@@ -1255,8 +1365,21 @@ export default function EddyCollection({
         >
           <StarIcon filled={favOnly} /> Favorite ({items.filter((i) => favIds.has(i.id)).length})
         </button>
-        {folders.map((f) => {
-          const count = items.filter((i) => i.folderId === f.id).length;
+        {/* BREADCRUMB — only while you are inside something. Each crumb jumps back to that
+            level, so getting out of a deep tree is one click rather than a hunt. */}
+        {folderPath.map((f) => (
+          <button key={`crumb-${f.id}`} onClick={() => setActiveFolder(f.id)}
+            className="rounded-full border border-zinc-700/60 bg-white/[0.02] px-3 py-1.5 text-xs text-zinc-400 hover:text-white cursor-pointer">
+            {f.name} ›
+          </button>
+        ))}
+        {/* Only the CURRENT level is listed, not every folder in the collection — a flat list of
+            every subfolder is exactly what subfolders exist to get rid of. Counts include the
+            subtree, so a parent whose items all live in its children does not read as empty. */}
+        {childrenOf(activeFolder).map((f) => {
+          const ids = subtreeIds(f.id);
+          const count = items.filter((i) => ids.has(i.folderId)).length;
+          const kids = childrenOf(f.id).length;
           return (
             <span key={f.id} className="group relative inline-flex">
               <button
@@ -1264,7 +1387,7 @@ export default function EddyCollection({
                 className={cn('rounded-full border px-3 py-1.5 text-xs font-medium transition cursor-pointer',
                   activeFolder === f.id && !favOnly ? 'border-rose-500 bg-rose-500/15 text-white' : 'border-zinc-700/60 bg-white/[0.02] text-zinc-400 hover:text-white')}
               >
-                {f.name} ({count})
+                {f.name} ({count}){kids > 0 && <span className="ml-1 text-zinc-500">›{kids}</span>}
               </button>
               <button
                 onClick={() => deleteFolder(f.id)}
@@ -1278,13 +1401,13 @@ export default function EddyCollection({
           <span className="inline-flex items-center gap-1.5">
             <Input value={newFolder} onChange={(e) => setNewFolder(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') createFolder(); }}
-              placeholder={`${folderLabel} name`} className="!h-8 !py-1 !text-xs w-40" autoFocus />
+              placeholder={activeFolder ? `Subfolder in ${folderPath[folderPath.length - 1]?.name || ''}` : `${folderLabel} name`} className="!h-8 !py-1 !text-xs w-40" autoFocus />
             <Btn className="!rounded-lg !py-1 !px-3 !text-xs" onClick={createFolder}>Add</Btn>
             <Btn variant="ghost" className="!rounded-lg !py-1 !px-2 !text-xs" onClick={() => setShowNewFolder(false)}>×</Btn>
           </span>
         ) : (
           <Btn variant="secondary" className="!rounded-full !py-1.5 !px-3 !text-xs" onClick={() => setShowNewFolder(true)}>
-            + New {folderLabel.toLowerCase()}
+            + New {activeFolder ? 'subfolder' : folderLabel.toLowerCase()}
           </Btn>
         )}
       </div>
