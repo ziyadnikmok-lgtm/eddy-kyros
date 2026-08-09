@@ -89,40 +89,27 @@ const MAX_OUTFIT_FOLDER = 'Max Outfit';
  * file under, and inventing one would be worse than the generic folder.
  */
 /**
- * Which engine made it, as a folder-name suffix.
+ * Which Library folder a result is filed into.
  *
- * "Grace Seedream" and "Grace Nano" are different piles on purpose: the two models produce visibly
- * different results from the same references, and once they are mixed in one folder there is no way
- * to tell afterwards which engine made which picture (owner, 2026-08-09).
+ * ONE FOLDER PER CHARACTER, AND NOTHING BELOW IT. Generating for Arya puts the pictures in "Arya" —
+ * that is the whole rule (owner, 2026-08-09).
+ *
+ * This deliberately replaced two earlier schemes, both of which split a character's work up:
+ * flat "Arya Seedream" siblings (which sorted away from the "Arya" folder she already had, so
+ * opening Arya showed none of the batch), and then "Arya / Seedream" subfolders. Separating by
+ * engine or by tab is not worth a character's pictures living in more than one place — if which
+ * model made a picture ever needs to be known, that belongs on the item, not in the folder tree.
+ *
+ * With no character chosen the generic buckets still apply, NSFW split included: there is no name
+ * to file under, and inventing one would be worse than a generic folder.
  */
-function engineFolderSuffix(engine) {
-  return engine === 'nano2' ? 'Nano' : 'Seedream';
-}
-
-async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName, engine }) {
+async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName }) {
   const who = String(characterName || '').trim();
-  // Max Nano and Max Outfit each keep their own pile — stage-1 poses and stage-2 swaps are
-  // different work and mixing them makes a batch impossible to find afterwards.
+  if (who) return (await libraryStore.ensureFolder(who))?.id || null;
+  // No character picked. Max Nano / Max Outfit still keep their own pile rather than falling into
+  // the shared Eddy bucket — with no name to file under, the tab is the only thing left to sort by.
   const ownRoot = maxOutfit ? MAX_OUTFIT_FOLDER : (maxNano ? MAX_NANO_FOLDER : '');
-  if (ownRoot) {
-    const root = await libraryStore.ensureFolder(ownRoot);
-    if (!who) return root?.id || null;
-    const sub = await libraryStore.ensureFolder(who, root?.id || null);
-    return sub?.id || root?.id || null;
-  }
-  // Per character AND per engine, but NESTED rather than two flat siblings: "Grace" with
-  // "Seedream" and "Nano" INSIDE it.
-  //
-  // Flat names ("Grace Seedream") split her work across folders that sort apart from the "Grace"
-  // folder she already has, so opening Grace showed none of it and it read as the images having
-  // gone missing (owner, 2026-08-09). Nesting keeps the engines separate — which is the whole point
-  // of the split — while opening Grace shows everything of hers, because a folder's view includes
-  // its whole subtree (see subtreeIds in EddyCollection).
-  if (who) {
-    const root = await libraryStore.ensureFolder(who);
-    const sub = await libraryStore.ensureFolder(engineFolderSuffix(engine), root?.id || null);
-    return sub?.id || root?.id || null;
-  }
+  if (ownRoot) return (await libraryStore.ensureFolder(ownRoot))?.id || null;
   return (await libraryStore.ensureFolder(nsfw ? 'Eddy NSFW' : 'Eddy'))?.id || null;
 }
 
@@ -5638,11 +5625,8 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           Saving into Library ›{' '}
           {characterName ? (
             <>
-              <span className="font-semibold text-rose-300">
-                {maxNano ? `Max Nano / ${characterName}`
-                  : maxOutfit ? `Max Outfit / ${characterName}`
-                  : `${characterName} / ${engine === 'nano2' ? 'Nano' : 'Seedream'}`}
-              </span>
+              {/* Just her name — the folder this lands in, exactly as it reads in the Library. */}
+              <span className="font-semibold text-rose-300">{characterName}</span>
               <button type="button" onClick={() => setCharacterName('')}
                 title="File this batch in the generic folder instead"
                 className="ml-1.5 text-zinc-600 hover:text-zinc-300 cursor-pointer">×</button>

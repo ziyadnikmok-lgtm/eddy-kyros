@@ -1511,6 +1511,58 @@ export default function EddyCollection({
 
   const toggleSelect = (id) => setSelected((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
 
+  /**
+   * DRAG TO SELECT — hold the mouse down on a picture and glide across the others.
+   *
+   * Ticking a 40-image batch one checkbox at a time is the slow part of every clean-up, and the
+   * checkbox is a 20px target on a 320px tile (owner, 2026-08-09).
+   *
+   * A PLAIN CLICK IS UNTOUCHED and still opens the large view. The drag only begins once a SECOND
+   * tile is entered with the button still down, so nothing about single-clicking changes — that is
+   * why mousedown alone does not select. `paintedRef` then suppresses the click that the browser
+   * fires at the end of a drag, which would otherwise open the large view on whatever tile you
+   * finished on.
+   *
+   * The direction is set by the tile you START on: begin on an unselected picture and the drag
+   * selects, begin on a selected one and it clears — so a mis-drag is undone by dragging back over
+   * it rather than by starting again.
+   *
+   * Each drag only ADDS to what is already ticked, never replaces it, so several sweeps in
+   * different parts of the grid build one selection — which is the whole point of the request.
+   */
+  const paintRef = useRef(null);      // { mode: 'select' | 'deselect', startId } while the button is down
+  const paintedRef = useRef(false);   // did this gesture actually paint? -> swallow the trailing click
+
+  useEffect(() => {
+    // Listens on the WINDOW, not the tile: releasing outside the grid (or outside the app) must end
+    // the gesture too, or the next hover would carry on painting with no button held.
+    const end = () => { paintRef.current = null; };
+    window.addEventListener('mouseup', end);
+    window.addEventListener('dragend', end);
+    return () => { window.removeEventListener('mouseup', end); window.removeEventListener('dragend', end); };
+  }, []);
+
+  const paintStart = (id) => {
+    // Left button only — a right-click opens the context menu and must not arm a selection.
+    paintRef.current = { mode: selected.includes(id) ? 'deselect' : 'select', startId: id };
+    paintedRef.current = false;
+  };
+
+  const paintOver = (id) => {
+    const p = paintRef.current;
+    if (!p) return;
+    // First tile entered since mousedown: this is a drag, so commit the tile it started on too.
+    const ids = p.startId && p.startId !== id ? [p.startId, id] : [id];
+    if (p.startId === id) return;     // re-entering the origin adds nothing
+    paintedRef.current = true;
+    p.startId = null;                 // the origin is committed once, not on every re-entry
+    setSelected((prev) => {
+      const set = new Set(prev);
+      for (const x of ids) { if (p.mode === 'select') set.add(x); else set.delete(x); }
+      return [...set];
+    });
+  };
+
   // Star / un-star an item. The favorite is a FLAG stored on the item via the existing store — no
   // folder move, so the item keeps its category. The write PERSISTS the flag (survives reload), so the
   // "★ Favorite" (favOnly) filter then lists this item. Errors surface (a silent false here would leave
@@ -2016,9 +2068,20 @@ export default function EddyCollection({
                     // contain, not cover, on prompt cards: a pose is judged by the whole body,
                     // and h-28 + cover cropped every image down to a thin band of its middle.
                     style={withPrompt ? { maxHeight: imgH } : undefined}
-                    onClick={() => setLightboxId(it.id)}
-                    title="Click to view large"
-                    className={cn('w-full rounded-lg bg-zinc-950 cursor-zoom-in',
+                    // Drag across pictures to tick them; a plain click still opens the large view.
+                    // See paintStart/paintOver. draggable=false so the browser's own image drag
+                    // does not start and cancel the gesture halfway across the grid.
+                    draggable={false}
+                    onMouseDown={(e) => { if (e.button === 0) paintStart(it.id); }}
+                    onMouseEnter={() => paintOver(it.id)}
+                    onClick={() => {
+                      // Swallow the click that ends a drag — otherwise the large view opens on
+                      // whichever tile the sweep finished on.
+                      if (paintedRef.current) { paintedRef.current = false; return; }
+                      setLightboxId(it.id);
+                    }}
+                    title="Click to view large · drag across to select"
+                    className={cn('w-full select-none rounded-lg bg-zinc-950 cursor-zoom-in',
                       withPrompt ? 'object-contain' : 'aspect-[3/4] object-cover')}
                   />
                   )
