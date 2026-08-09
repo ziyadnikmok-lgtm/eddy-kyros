@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { seedream as seedreamApi, nanoBypass as nanoBypassApi, gallery as galleryApi, video as videoApi, library as libraryApi } from '../services/api';
+import { seedream as seedreamApi, gallery as galleryApi, video as videoApi, library as libraryApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Select, Textarea, Spinner } from '../components/UI';
 import {
@@ -34,7 +34,18 @@ const PARALLEL_REQUESTS = 6;
 // retries a 429. At 6 in flight a Gemini batch burned its quota in the first few seconds and the
 // rest failed (owner, 2026-08-06). runPool queues the remainder either way, so a lower cap costs
 // wall-clock, not images.
-const GEMINI_PARALLEL_REQUESTS = 2;
+// Nano Banana 2 runs ~3 minutes per image, so a wide fan-out mostly buys queue depth. Kept low
+// while the real concurrency ceiling is unknown; raise it once a big run has been watched.
+const NANO2_PARALLEL_REQUESTS = 3;
+
+// Above the server's own 10-minute poll, so a slow job ends with the server's specific message
+// (which names the prediction id) rather than a bare client abort.
+const NANO2_CLIENT_TIMEOUT_MS = 11 * 60_000;
+
+// WaveSpeed's published per-image rate for nano-banana-2, read off their model page for this
+// endpoint: 1k $0.07, 2k $0.105 (2K is the standard rate x1.5). Both search flags are sent false
+// by the service, so neither surcharge applies.
+const NANO2_COST = { '1K': 0.07, '2K': 0.105 };
 
 // Above this many picked items the summary list becomes a thumbnail grid instead of text rows.
 // Eight is about what fits without the Generate button leaving the screen.
@@ -110,7 +121,7 @@ function pathTo(folders, id) {
   while (cur && !seen.has(cur.id)) { seen.add(cur.id); path.unshift(cur); cur = cur.parentId ? byId.get(cur.parentId) : null; }
   return path;
 }
-const parallelFor = (engine) => (engine === 'gemini' ? GEMINI_PARALLEL_REQUESTS : PARALLEL_REQUESTS);
+const parallelFor = (engine) => (engine === 'nano2' ? NANO2_PARALLEL_REQUESTS : PARALLEL_REQUESTS);
 
 /**
  * Retry a generation call that came back rate-limited, backing off between attempts.
@@ -2650,7 +2661,8 @@ const _cache = {
   build: 'auto',
   // Which image engine runs the generation. Seedream is the default because it is what this
   // page has always used and what its cost quote is priced for.
-  engine: 'seedream',
+  // Nano Banana 2 is the default engine (owner, 2026-08-09).
+  engine: 'nano2',
 };
 
 export default function EddyGeneratePage() {
@@ -2719,8 +2731,18 @@ export default function EddyGeneratePage() {
   const [sendOutfitImage, setSendOutfitImage] = useState(_cache.sendOutfitImage ?? false);
   // Her standing build — describes the character, never changes her. See BUILD_OPTIONS.
   const [build, setBuild] = useState(_cache.build ?? 'auto');
-  // 'seedream' | 'gemini' — see the ENGINE switch in the UI and the branch in generateCombo.
-  const [engine, setEngine] = useState(_cache.engine ?? 'seedream');
+  // 'seedream' | 'nano2' — see the ENGINE switch in the UI and the branch in generateCombo.
+  const [engine, setEngine] = useState(_cache.engine ?? 'nano2');
+
+  /**
+   * Picking Nano Banana 2 selects 2K.
+   *
+   * Its 1K tier exists but the owner wants 2K whenever this engine runs (2026-08-09), and having
+   * the resolution silently stay wherever Seedream left it is the kind of mismatch you only notice
+   * in the output. Switching away leaves the choice alone — Seedream's own default is 1K and
+   * forcing it back would fight anyone who deliberately picked 2K there.
+   */
+  useEffect(() => { if (engine === 'nano2') setResolution('2K'); }, [engine]);
   // Bumped by "Reload images". Appended to every tile's URL so the browser re-requests pictures it
   // has cached or given up on — a stalled fetch otherwise leaves a tile on "Loading…" with no way
   // to retry short of reloading the whole app and losing the results column.
@@ -3006,7 +3028,7 @@ export default function EddyGeneratePage() {
       setSendPoseImage((v) => (v === true && typeof saved.sendPoseImage === 'boolean' ? saved.sendPoseImage : v));
       setSendOutfitImage((v) => (v === false && typeof saved.sendOutfitImage === 'boolean' ? saved.sendOutfitImage : v));
       setBuild((v) => (v === 'auto' ? saved.build || 'auto' : v));
-      setEngine((v) => (v === 'seedream' ? saved.engine || 'seedream' : v));
+      setEngine((v) => (v === 'nano2' ? saved.engine || 'nano2' : v));
     })();
     return () => { alive = false; };
   }, []);
@@ -3348,7 +3370,12 @@ export default function EddyGeneratePage() {
   const sourceImages = [baseImage, faceImage].filter(Boolean);
   const perRunImages = sourceImages.length + (pickedPoses.length ? 1 : 0);
   const overCap = perRunImages > SEEDREAM_MAX_IMAGES;
-  const totalCost = combos.length * seedreamCost(resolution, Math.max(1, perRunImages));
+  // Priced per ENGINE. Showing Seedream's rate while Nano Banana 2 runs would misstate the bill on
+  // the one control where spend is agreed.
+  const perImagePrice = engine === 'nano2'
+    ? (NANO2_COST[resolution] ?? NANO2_COST['1K'])
+    : seedreamCost(resolution, Math.max(1, perRunImages));
+  const totalCost = combos.length * perImagePrice;
 
   // Shows the real assembled prompt for the first combo, so what lands at Seedream is never a
   // mystery. Built with the same buildPrompt the run loop uses -- a separate "preview" version
@@ -3701,39 +3728,34 @@ export default function EddyGeneratePage() {
     }
 
     const feedId = `eddy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const engineLabel = engine === 'gemini' ? 'Gemini 3.1 Flash (Nano Bypass)' : 'Seedream 5.0 Pro Edit';
+    const engineLabel = engine === 'nano2' ? 'Nano Banana 2 (WaveSpeed)' : 'Seedream 5.0 Pro Edit';
     pushPending({ id: feedId, prompt, imageModel: engineLabel, aspectRatio: ratio, resolutionTier: resolution });
 
     // Only the API call is in the try. Wrapping the success path too meant a throw AFTER the
     // image came back marked a generation you already paid for as failed.
     let data;
     try {
-      if (engine === 'gemini') {
-        // GEMINI (Nano Bypass) path. Same payload — parseDataUrl already yields the
-        // { base64, mimeType } shape this route wants, which is why no conversion happens here.
-        // The route picks Vertex over a raw Gemini key by itself (apiKeyManager.shouldUseVertexBackend),
-        // so "bypass" needs no flag from the client.
-        //
-        // Its reply is a SINGLE image ({ base64Data, mimeType, galleryId }) where Seedream returns
-        // { images: [...] }. Normalised to Seedream's shape right here so everything downstream —
-        // the tile, the gallery save, Regenerate, Animate — keeps reading `data.images[0]` and none
-        // of it has to know which engine ran.
-        // request() already unwraps the envelope to json.data, so this IS
-        // { base64Data, mimeType, galleryId, model }.
-        const d = await withRateLimitRetry(() => nanoBypassApi.edit({
+      if (engine === 'nano2') {
+        /**
+         * Nano Banana 2 on WaveSpeed — the Vertex / Nano-Bypass path this replaces is gone.
+         *
+         * It goes through the shared /api/seedream/edit route with model:'nano2', exactly as the
+         * Base tab does, so a result gets the same imageStore write, gallery row and tagging as any
+         * other generation rather than a side channel of its own. That route also fails loudly with
+         * no WaveSpeed key instead of quietly billing Seedream for a model you did not ask for.
+         *
+         * timeoutMs is raised above the server's own 10-minute poll: a measured run spent 182.8s in
+         * inference alone, and the client aborting first would throw away an image that had already
+         * been generated and billed.
+         */
+        data = await withRateLimitRetry(() => seedreamApi.edit({
           images: payload,
           prompt,
-          model: 'flash',
+          model: 'nano2',
           aspectRatio: ratio,
-          imageSize: resolution,
-          // buildPrompt already states which image is the subject, which is the pose diagram and
-          // which is the face — so the route must send it verbatim. Its default 'wrapped' mode
-          // prepends "keep the original pose and composition" and calls every image a source photo
-          // to preserve, which contradicts this prompt line for line.
-          promptMode: 'raw',
-        }));
-        const got = d && (d.galleryId || d.base64Data);
-        data = { provider: 'gemini', images: got ? [{ galleryId: d.galleryId, mimeType: d.mimeType, base64Data: d.base64Data }] : [] };
+          resolution,
+          tags: isEdit ? ['eddy', 'edit'] : ['eddy'],
+        }, { timeoutMs: NANO2_CLIENT_TIMEOUT_MS }));
       } else {
         // Same model, same per-image price on both paths — an edit is tagged so it is distinguishable
         // in the gallery without changing what it costs.
@@ -3754,7 +3776,7 @@ export default function EddyGeneratePage() {
 
     const first = (data.images || [])[0];
     if (!first) {
-      const who = engine === 'gemini' ? 'Gemini' : 'Seedream';
+      const who = engine === 'nano2' ? 'Nano Banana 2' : 'Seedream';
       failPending(feedId, `${who} returned no image`);
       throw new Error(`${who} returned no image`);
     }
@@ -5037,7 +5059,7 @@ export default function EddyGeneratePage() {
             photo toggle, Her build, NSFW, faceless, framing) is engine-agnostic and applies to
             both, because they all shape the PROMPT, not the request. */}
         <div className="flex gap-2 rounded-xl border border-white/[0.07] bg-white/[0.02] p-1">
-          {[['seedream', 'Seedream'], ['gemini', 'Gemini nano']].map(([id, label]) => (
+          {[['seedream', 'Seedream'], ['nano2', 'Nano Banana 2']].map(([id, label]) => (
             <button key={id} type="button" onClick={() => setEngine(id)} aria-pressed={engine === id}
               className={cn('flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer',
                 engine === id ? 'bg-rose-500/20 text-rose-300' : 'text-zinc-500 hover:text-zinc-300')}>
@@ -5050,7 +5072,7 @@ export default function EddyGeneratePage() {
               Seedream rates; this repo has no ground truth for Gemini/Vertex image cost, and the
               amber money rule means a number shown here is read as authoritative. An absent price
               is honest; a guessed one is not. */}
-          Generate {combos.length} image{combos.length === 1 ? '' : 's'}{engine === 'gemini' ? '' : ` · $${totalCost.toFixed(3)}`}
+          Generate {combos.length} image{combos.length === 1 ? '' : 's'} · ${totalCost.toFixed(3)}
         </Btn>
         {inFlight > 0 && (
           <div className="space-y-1.5">
@@ -5082,7 +5104,7 @@ export default function EddyGeneratePage() {
             <div className="flex gap-2">
               <Btn className="flex-1 !py-1.5 !text-xs" disabled={!baseImage}
                 onClick={() => run(failedCombos.map((f) => f.combo))}>
-                Retry {failedCombos.length} failed{engine === 'gemini' ? '' : ` · $${(failedCombos.length * seedreamCost(resolution, Math.max(1, perRunImages))).toFixed(3)}`}
+                Retry {failedCombos.length} failed · ${(failedCombos.length * perImagePrice).toFixed(3)}
               </Btn>
               <Btn variant="secondary" className="!py-1.5 !px-3 !text-xs" onClick={() => setFailedCombos([])}>
                 Dismiss

@@ -20,7 +20,10 @@
  */
 export const WORKSPACES = [
   { id: 'eddy', label: 'Eddy', swatch: '#f0247d', engines: ['seedream'] },
-  { id: 'ziyad', label: 'Ziyad', swatch: '#9b3df0', engines: ['seedream', 'gemini'] },
+  // Gemini removed 2026-08-09: its image path ran on Vertex, and image work moved to WaveSpeed's
+  // Nano Banana 2, which lives inside the Seedream sections as an engine choice rather than as a
+  // sidebar of its own.
+  { id: 'ziyad', label: 'Ziyad', swatch: '#9b3df0', engines: ['seedream'] },
   { id: 'max', label: 'Max', swatch: '#2563eb', engines: ['seedream'] },
 ];
 

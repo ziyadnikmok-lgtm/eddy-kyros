@@ -273,9 +273,10 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    // Only listed on Gemini, by request. API Keys lives here, so if a key ever needs adding
-    // while on Seedream, switch engines or go to /keys directly.
-    engine: 'gemini',
+    // UNGATED since 2026-08-09. This was tagged engine:'gemini' back when Gemini was a sidebar
+    // you could switch to. Gemini is gone, so leaving the tag would have made API Keys — the only
+    // place the WaveSpeed key is entered — unreachable from every workspace. A section holding the
+    // credentials for the engine you are using must never be behind that engine's own toggle.
     label: 'Account',
     items: [
       { id: 'keys', label: 'API Keys' },
