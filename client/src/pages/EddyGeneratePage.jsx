@@ -585,6 +585,28 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
     }
   }
   if (poseText) lines.push(`POSE: ${poseText}`);
+  /**
+   * THE POSE TEXT DESCRIBES A ROOM, and the model builds it.
+   *
+   * The vision pass that writes these descriptions does not restrict itself to the body — it writes
+   * what it sees, furniture and all: "She is seated in a PINK VELVET ARMCHAIR with her torso leaning
+   * back slightly and her arms resting out on the armrests…". So the prompt says the setting comes
+   * from image 1 and then, in the very next breath, names a pink velvet armchair. The model resolves
+   * that by building the armchair — reported as backgrounds coming from the pose instead of the base
+   * (owner, 2026-08-09), and the surviving half of that report after the pose IMAGE's room was
+   * already banned: this half leaks through the WORDS, so banning the picture did nothing.
+   *
+   * Not fixed by stripping the nouns out of the description. "Seated in an armchair" with the
+   * armchair deleted is a woman sitting on nothing, and the pose stops being physically readable.
+   * The furniture has to stay in the sentence and be re-pointed at image 1's own surfaces instead.
+   *
+   * Stated immediately after the POSE line so the two are read together, and again in the SETTING
+   * block below — the same restate-where-it-competes pattern the body lock needed.
+   */
+  if (poseText) {
+    lines.push(`The POSE description above may name furniture, props, surfaces or a location — a chair, a bed, a wall, a floor, a room. Those words describe ONLY how her body is arranged and supported. They are NOT part of the scene and must NOT be built: do not add that furniture, those props or that location to the image.`);
+    lines.push(`Put the same body position into image 1's own setting instead${exceptCorrection}. If the pose rests on something that is not in image 1, she takes the same position on whatever image 1 actually has — its own seat, surface, floor or ground — at the same angle and the same height. The shape of her body is copied; the room around it is never copied.`);
+  }
   // The pose photo's own facial expression. Stated next to the pose it came from, and kept to the
   // one sentence the vision pass wrote — this is a look to copy, not a second identity rule, so it
   // deliberately sits BEFORE the face-lock and FINAL CHECK lines that pin who she is.
@@ -683,12 +705,12 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
   // is the last word on lighting and does not fight the "lighting comes from image 1" phrasing.
   if (keepsLighting) {
     lines.push(hasTweak
-      ? 'THE SETTING COMES FROM IMAGE 1: the room, background, surfaces, props and lighting all come from image 1, except where the CORRECTION at the end changes them. No other reference image contributes any part of the scene.'
-      : 'THE SETTING COMES FROM IMAGE 1 AND NOTHING ELSE: the room, background, surfaces, props and lighting all come from image 1. No other reference image contributes any part of the scene.');
+      ? 'THE SETTING COMES FROM IMAGE 1: the room, background, surfaces, props and lighting all come from image 1, except where the CORRECTION at the end changes them. Nothing else contributes any part of the scene: not another reference image, and not any room, furniture, prop or location named in the POSE description.'
+      : 'THE SETTING COMES FROM IMAGE 1 AND NOTHING ELSE: the room, background, surfaces, props and lighting all come from image 1. Nothing else contributes any part of the scene: not another reference image, and not any room, furniture, prop or location named in the POSE description.');
   } else {
     lines.push(hasTweak
-      ? 'THE SETTING COMES FROM IMAGE 1: the room, background, surfaces and props come from image 1, except where the CORRECTION at the end changes them. No other reference image contributes any part of the scene.'
-      : 'THE SETTING COMES FROM IMAGE 1: the room, background, surfaces and props come from image 1. No other reference image contributes any part of the scene.');
+      ? 'THE SETTING COMES FROM IMAGE 1: the room, background, surfaces and props come from image 1, except where the CORRECTION at the end changes them. Nothing else contributes any part of the scene: not another reference image, and not any room, furniture, prop or location named in the POSE description.'
+      : 'THE SETTING COMES FROM IMAGE 1: the room, background, surfaces and props come from image 1. Nothing else contributes any part of the scene: not another reference image, and not any room, furniture, prop or location named in the POSE description.');
     lines.push(`LIGHTING — relight the scene: ${lightingText} This lighting REPLACES the lighting in image 1; keep it natural and realistic on her skin. Everything else about the scene stays as image 1.`);
   }
   lines.push(hasTweak
