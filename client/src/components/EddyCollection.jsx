@@ -358,6 +358,20 @@ export default function EddyCollection({
    */
   const [lightboxId, setLightboxId] = useState('');
 
+  /**
+   * Freeze the page behind the large view.
+   *
+   * Without it the grid keeps scrolling under the overlay, so a wheel or trackpad gesture moves
+   * the page instead of doing nothing — which, together with the missing portal, is what made the
+   * large view feel like something you had to scroll to (owner, 2026-08-09).
+   */
+  useEffect(() => {
+    if (!lightboxId) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [lightboxId]);
+
   const [describingBacks, setDescribingBacks] = useState(false);
 
   /**
@@ -2036,7 +2050,16 @@ export default function EddyCollection({
         if (!it) return null;
         const src = thumbs[it.id] || it.url || '';
         const i = visible.findIndex((x) => x.id === lightboxId);
-        return (
+        /**
+         * PORTALLED to <body>, like the Generate page's large view.
+         *
+         * `position: fixed` anchors to the nearest ancestor carrying a transform, filter or
+         * backdrop-filter — NOT the viewport. This page sits inside such an ancestor, so the
+         * overlay was positioned against the scrolled grid instead: it opened somewhere down the
+         * page and had to be scrolled to (owner, 2026-08-09). A portal takes it out of that
+         * subtree entirely, which is why the Generate page never had this.
+         */
+        return createPortal(
           <div
             className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
             // Backdrop-only: the check keeps a click that STARTED on the image from closing when
@@ -2074,7 +2097,8 @@ export default function EddyCollection({
             <span className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs text-zinc-300">
               {i + 1} / {visible.length}{it.name ? ` · ${it.name}` : ''} — Esc to close, ← → or swipe
             </span>
-          </div>
+          </div>,
+          document.body,
         );
       })()}
     </div>
