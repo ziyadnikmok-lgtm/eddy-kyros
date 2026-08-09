@@ -136,6 +136,20 @@ export default function EddyCollection({
     [folders],
   );
 
+  /**
+   * The chip row for the current level: children, or SIBLINGS when there are none.
+   *
+   * A leaf folder otherwise rendered a row with nothing but "All", which reads as "everything
+   * disappeared" rather than "no subfolders here" (owner, 2026-08-08). Siblings also let you move
+   * across a level without going back to All each time.
+   */
+  const levelFolders = useCallback((activeId) => {
+    const kids = folders.filter((f) => (f.parentId || null) === (activeId || null));
+    if (kids.length || !activeId) return kids;
+    const me = folders.find((f) => f.id === activeId);
+    return folders.filter((f) => (f.parentId || null) === (me?.parentId || null));
+  }, [folders]);
+
   // A folder's own id plus every id beneath it. Used for counts and for "show everything in here",
   // which is what you want when a parent's items all live in its children.
   const subtreeIds = useCallback((id) => {
@@ -1427,7 +1441,7 @@ export default function EddyCollection({
         </button>
         {/* BREADCRUMB — only while you are inside something. Each crumb jumps back to that
             level, so getting out of a deep tree is one click rather than a hunt. */}
-        {folderPath.map((f) => (
+        {folderPath.slice(0, -1).map((f) => (
           <button key={`crumb-${f.id}`} onClick={() => setActiveFolder(f.id)}
             className="rounded-full border border-zinc-700/60 bg-white/[0.02] px-3 py-1.5 text-xs text-zinc-400 hover:text-white cursor-pointer">
             {f.name} ›
@@ -1436,7 +1450,7 @@ export default function EddyCollection({
         {/* Only the CURRENT level is listed, not every folder in the collection — a flat list of
             every subfolder is exactly what subfolders exist to get rid of. Counts include the
             subtree, so a parent whose items all live in its children does not read as empty. */}
-        {childrenOf(activeFolder).map((f) => {
+        {levelFolders(activeFolder).map((f) => {
           const ids = subtreeIds(f.id);
           const count = items.filter((i) => ids.has(i.folderId)).length;
           const kids = childrenOf(f.id).length;

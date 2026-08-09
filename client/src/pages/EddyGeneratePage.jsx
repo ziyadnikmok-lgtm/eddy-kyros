@@ -86,6 +86,21 @@ function subtreeOf(folders, id) {
   return out;
 }
 
+/**
+ * The chip row for a level: the active folder's children, or — when it has none — its SIBLINGS.
+ *
+ * Showing only children meant a leaf folder rendered a row containing nothing but "All", which
+ * reads as "everything disappeared" rather than "this folder has no subfolders" (owner,
+ * 2026-08-08). Falling back to siblings keeps the row useful and lets you move sideways between
+ * folders at the same level instead of going back to All every time.
+ */
+function levelFor(folders, activeId) {
+  const kids = folders.filter((f) => (f.parentId || null) === (activeId || null));
+  if (kids.length || !activeId) return kids;
+  const me = folders.find((f) => f.id === activeId);
+  return folders.filter((f) => (f.parentId || null) === (me?.parentId || null));
+}
+
 /** Root → … → active, for the breadcrumb. */
 function pathTo(folders, id) {
   const byId = new Map(folders.map((f) => [f.id, f]));
@@ -2681,6 +2696,18 @@ export default function EddyGeneratePage() {
   // Which result is showing in the large view, by uid. Held here rather than in the tile because
   // stepping to the next image needs the ORDERING, which only the grid knows.
   const [lightboxUid, setLightboxUid] = useState(null);
+  // Folder drag-to-nest inside the pickers — the same gesture the collection tabs use, so a folder
+  // can be organised from wherever you happen to notice it needs organising.
+  const [dragFolderId, setDragFolderId] = useState(null);
+  const [dropFolderId, setDropFolderId] = useState(null);
+  const moveFolderInSlot = useCallback(async (store, id, parentId, reload) => {
+    setDragFolderId(null);
+    setDropFolderId(null);
+    if (!id || id === parentId) return;
+    const ok = await store.setFolderParent(id, parentId);
+    if (!ok) { notify('A folder cannot go inside itself', 'error'); return; }
+    await reload();
+  }, [notify]);
   // [{ name, baseImage, faceImage, build }] — see modelsStore.
   const [models, setModels] = useState([]);
   const [activeModel, setActiveModel] = useState('');
@@ -4661,14 +4688,14 @@ export default function EddyGeneratePage() {
                 </button>
                 {/* BREADCRUMB, then the CURRENT level only. Listing every folder flat is what turned
                       this into a wall of chips once subfolders existed; each crumb walks back up. */}
-                  {pathTo(slot.folders, folderFilter[slot.key]).map((f) => (
+                  {pathTo(slot.folders, folderFilter[slot.key]).slice(0, -1).map((f) => (
                     <button key={`crumb-${f.id}`} type="button"
                       onClick={() => { setFolderFilter((prev) => ({ ...prev, [slot.key]: f.id })); setFavFilter((prev) => ({ ...prev, [slot.key]: false })); }}
                       className="rounded-full border border-white/[0.07] bg-white/[0.02] px-2.5 py-1 text-[0.625rem] font-semibold text-zinc-500 hover:border-zinc-600 cursor-pointer">
                       {f.name} ›
                     </button>
                   ))}
-                  {[{ id: null, name: 'All' }, ...childrenOfIn(slot.folders, folderFilter[slot.key])].map((f) => {
+                  {[{ id: null, name: 'All' }, ...levelFor(slot.folders, folderFilter[slot.key])].map((f) => {
                     // A folder is active only while Favorite is OFF — the two are one exclusive view.
                     const active = folderFilter[slot.key] === f.id && !favFilter[slot.key];
                     // Counts span the SUBTREE, so a parent never reads 0 while its children hold the
@@ -4681,10 +4708,18 @@ export default function EddyGeneratePage() {
                     const kids = f.id ? childrenOfIn(slot.folders, f.id).length : 0;
                     return (
                       <button key={f.id || 'all'} type="button"
+                        draggable={!!f.id}
+                        onDragStart={() => f.id && setDragFolderId(f.id)}
+                        onDragEnd={() => { setDragFolderId(null); setDropFolderId(null); }}
+                        onDragOver={(e) => { if (dragFolderId && dragFolderId !== f.id) { e.preventDefault(); setDropFolderId(f.id || '__root'); } }}
+                        onDragLeave={() => setDropFolderId(null)}
+                        onDrop={(e) => { e.preventDefault(); moveFolderInSlot(slot.store, dragFolderId, f.id || null, loadAll); }}
+                        title={f.id ? 'Drag onto another folder to nest it' : 'Drop a folder here to un-nest it'}
                         onClick={() => { setFolderFilter((prev) => ({ ...prev, [slot.key]: f.id })); setFavFilter((prev) => ({ ...prev, [slot.key]: false })); }}
                         className={cn('rounded-full border px-2.5 py-1 text-[0.625rem] font-semibold transition cursor-pointer',
-                          active ? 'border-rose-500/60 bg-rose-500/15 text-rose-300'
-                                 : 'border-white/[0.07] bg-white/[0.02] text-zinc-400 hover:border-zinc-600')}>
+                          dropFolderId === (f.id || '__root') ? 'border-rose-500 bg-rose-500/30 text-white'
+                            : active ? 'border-rose-500/60 bg-rose-500/15 text-rose-300'
+                                     : 'border-white/[0.07] bg-white/[0.02] text-zinc-400 hover:border-zinc-600')}>
                         {f.name} <span className="text-zinc-600">{n}</span>
                         {kids > 0 && <span className="ml-0.5 text-zinc-600">›{kids}</span>}
                       </button>
