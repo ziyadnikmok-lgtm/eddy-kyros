@@ -54,7 +54,18 @@ async function uploadFile(filePath) {
   const footer = `\r\n--${boundary}--\r\n`;
   const body = Buffer.concat([Buffer.from(header), fileBuffer, Buffer.from(footer)]);
 
-  const resp = await fetch(`${BASE_URL}/media/upload/binary`, {
+  /**
+   * _fetchWithRetry, not bare fetch, and wrapped.
+   *
+   * A network-level failure — DNS, TLS, connection reset, laptop asleep — makes fetch itself throw
+   * `TypeError: fetch failed`, which is NOT an HTTP response and so slipped straight past the
+   * `!resp.ok` check below. It surfaced as a bare 500 TYPE_ERROR naming no service and no step, on
+   * a Base run that never touches Seedream (owner's partner, 2026-08-09). Retrying first, then
+   * saying which call died, turns a mystery into something actionable.
+   */
+  let resp;
+  try {
+    resp = await _fetchWithRetry(`${BASE_URL}/media/upload/binary`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${key}`,
@@ -62,7 +73,12 @@ async function uploadFile(filePath) {
     },
     body,
     signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
-  });
+    });
+  } catch (fetchErr) {
+    const cause = fetchErr?.cause?.code || fetchErr?.cause?.message || fetchErr?.message || 'unknown';
+    log.error('wavespeed_upload_fetch_failed', { cause: String(cause).slice(0, 300) });
+    throw new AppError(`WaveSpeed upload connection failed: ${String(cause).slice(0, 200)}`, 502, 'WAVESPEED_UPLOAD_ERROR');
+  }
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
@@ -122,11 +138,19 @@ async function createVideoTask(modelId, params) {
 
 async function getTaskStatus(taskId) {
   const key = getApiKey();
-  const resp = await fetch(`${BASE_URL}/predictions/${taskId}/result`, {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${key}` },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
+  // Same reasoning as uploadFile: this runs in a poll loop, so one network blip used to kill a
+  // job WaveSpeed had already accepted and was still working on.
+  let resp;
+  try {
+    resp = await _fetchWithRetry(`${BASE_URL}/predictions/${taskId}/result`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (fetchErr) {
+    const cause = fetchErr?.cause?.code || fetchErr?.cause?.message || fetchErr?.message || 'unknown';
+    throw new AppError(`WaveSpeed status check connection failed: ${String(cause).slice(0, 200)}`, 502, 'WAVESPEED_STATUS_ERROR');
+  }
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');

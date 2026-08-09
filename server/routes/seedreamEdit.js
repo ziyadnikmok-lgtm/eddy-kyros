@@ -54,7 +54,11 @@ router.post('/edit', async (req, res, next) => {
     const ar = aspectRatio || '1:1';
     const res_ = resolution || '1K';
 
+    // Names the MODEL, not just the route. Base runs Nano Banana 2 through this same endpoint, so
+    // a failure here was being read as a Seedream problem on a page that never touches Seedream
+    // (owner, 2026-08-09: "it using nano banana 2 not seedream wtf").
     log.info('seedream_edit_req', {
+      model: useNano2 ? 'nano-banana-2' : 'seedream',
       userId: req.session?.userId,
       imageCount: images.length,
       prompt: prompt.slice(0, 100),
