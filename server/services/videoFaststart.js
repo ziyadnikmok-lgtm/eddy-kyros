@@ -75,13 +75,18 @@ function _isFaststart(filePath) {
 // itself faststart. On ANY failure the tmp is deleted and the original is left byte-for-byte
 // untouched — a non-faststart video still plays/downloads, so degrading gracefully beats risking
 // data loss.
-async function ensureFaststart(filePath) {
+async function ensureFaststart(filePath, { mute = false } = {}) {
   if (!filePath || !fs.existsSync(filePath)) return false;
-  // Two independent reasons to rewrite: not streamable, or it still has the model's generated
-  // soundtrack on it. Both are fixed by the SAME lossless container pass, so they share one remux.
+  // Two independent reasons to rewrite: not streamable, or (only when ASKED) it still carries the
+  // model's generated soundtrack. Both are fixed by the SAME lossless pass, so they share one remux.
+  //
+  // `mute` defaults to FALSE and is opt-in per video. It used to be unconditional, which stripped
+  // the audio from EVERY clip — right for the pose videos where the model invents music nobody
+  // asked for, wrong for a scripted scene whose sound is the point. Removing audio is destructive
+  // and cannot be undone from the file, so it now only happens when the caller says so.
   const needsFaststart = !_isFaststart(filePath);
-  const needsMute = _hasAudio(filePath);
-  if (!needsFaststart && !needsMute) return false; // already streamable and silent — no work
+  const needsMute = mute && _hasAudio(filePath);
+  if (!needsFaststart && !needsMute) return false; // nothing to do
 
   // Sibling tmp so the final rename is a same-volume (atomic) move, not a cross-device copy.
   const dir = path.dirname(filePath);
@@ -89,12 +94,12 @@ async function ensureFaststart(filePath) {
 
   try {
     // -c copy: container-only remux, no decode/encode => lossless + fast. +faststart: relocate moov.
-    // -an: DROP the audio track entirely (the model's generated soundtrack). Video is still a pure
-    // stream copy, so the picture is byte-for-byte identical — only the sound track is gone.
+    // -an (ONLY when muting was requested): drops the audio track. Video is still a pure stream
+    // copy either way, so the picture is byte-for-byte identical — only the sound track can change.
     // windowsHide + no shell: Windows, and no user-controlled string ever reaches a shell.
     await execFileAsync(
       ffmpegPath,
-      ['-y', '-i', filePath, '-c', 'copy', '-an', '-movflags', '+faststart', tmpPath],
+      ['-y', '-i', filePath, '-c', 'copy', ...(needsMute ? ['-an'] : []), '-movflags', '+faststart', tmpPath],
       { windowsHide: true, timeout: FASTSTART_TIMEOUT_MS },
     );
 
@@ -105,7 +110,7 @@ async function ensureFaststart(filePath) {
     if (!_isFaststart(tmpPath)) {
       throw new Error('remux output is still not faststart');
     }
-    if (_hasAudio(tmpPath)) {
+    if (needsMute && _hasAudio(tmpPath)) {
       throw new Error('remux output still has an audio track');
     }
 

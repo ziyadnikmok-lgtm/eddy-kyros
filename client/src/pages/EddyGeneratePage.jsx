@@ -3437,7 +3437,11 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     const snap = { baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, outfitRotation, smartMatch, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine };
     Object.assign(_cache, snap);
     stateStore.set('state', snap);
-  }, [baseImage, faceImage, characterName, pickedOutfits, pickedPoses, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine]);
+  // pickedBases / outfitRotation / smartMatch are IN the snapshot above, so they have to be in
+  // these deps too. Without them this effect never re-ran when only a Max Outfit control changed,
+  // and the whole selection was gone on the next app start — the snapshot is only written from
+  // here.
+  }, [baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, outfitRotation, smartMatch, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine]);
 
   /**
    * Submits ONE video job and returns as soon as Muapi accepts it (a taskId) — the render finishes

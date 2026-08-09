@@ -22,6 +22,12 @@ const generateLimiter = rateLimit({
   max: 60,
   standardHeaders: true,
   legacyHeaders: false,
+  // Streaming a locally-saved video file is NOT a generation request. It shares the /api/video mount
+  // with the real generation endpoints, so without this skip, opening the video editor — which loads
+  // the clip, grabs ~12 thumbnail frames from a second <video>, and makes range requests during
+  // playback — blows past the 60/min cap and playback stalls with "Too many generation requests".
+  // Only GET file-streaming/download routes are exempted; POST generation stays limited.
+  skip: (req) => req.method === 'GET' && /\/file\//.test(req.originalUrl || ''),
   message: { success: false, error: { code: 'RATE_LIMIT', message: 'Too many generation requests — try again shortly' } },
 });
 

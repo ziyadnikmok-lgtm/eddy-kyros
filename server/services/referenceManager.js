@@ -89,6 +89,42 @@ class ReferenceManager {
     }
   }
 
+  /**
+   * Duplicate a character into a fully independent copy — its own id and folder, carrying the SAME
+   * primary images, references and master prompt. The point is to fork a model: keep the original,
+   * tweak the copy. The copy is named "<name>_copy" (then "_copy_2", "_copy_3"…) so it never clashes
+   * with an existing character, since the sanitized name IS the folder name.
+   */
+  duplicateCharacter(characterId) {
+    const { data, charDir } = this._findCharacterById(characterId);
+
+    const base = this._sanitizeName(`${data.name}_copy`);
+    let newName = base;
+    let n = 2;
+    while (fs.existsSync(path.join(getCharactersDir(), newName))) {
+      newName = this._sanitizeName(`${base}_${n}`);
+      n += 1;
+    }
+    const newDir = path.join(getCharactersDir(), newName);
+
+    // Copy the whole folder: every image path in character.json is a filename relative to the
+    // folder, so the primary images and the references/ dir come along byte-for-byte for free.
+    fs.cpSync(charDir, newDir, { recursive: true });
+
+    try {
+      const jsonPath = path.join(newDir, CHARACTER_JSON);
+      const copy = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+      copy.id = crypto.randomUUID();   // a fresh identity; the original keeps its own id + folder
+      copy.name = newName;
+      copy.createdAt = new Date().toISOString();
+      this._writeCharacterJson(newDir, copy);
+      return this._toSafeCharacter(copy);
+    } catch (err) {
+      try { fs.rmSync(newDir, { recursive: true, force: true }); } catch {}
+      throw err;
+    }
+  }
+
   updateMasterPrompt(characterId, masterPrompt) {
     if (!masterPrompt || typeof masterPrompt !== 'string' || masterPrompt.trim().length === 0) {
       throw new AppError('"masterPrompt" is required', 400, 'VALIDATION_ERROR');

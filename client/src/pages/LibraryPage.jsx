@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { library as libraryApi, gallery as galleryApi, video as videoApi } from '../services/api';
 import { stashSourceHandoff } from '../lib/sourceHandoff';
+import { downloadBlob } from '../lib/stripMetadata';
 import { useApp } from '../context/AppContext';
 import { Btn, Badge, Spinner, Empty, ConfirmDialog, Toggle, Modal } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
@@ -1638,6 +1639,7 @@ export default function LibraryPage() {
                 expanded={expandedVideoId === item.id}
                 onToggle={() => setExpandedVideoId((prev) => prev === item.id ? null : item.id)}
                 onDelete={() => setDeleteTarget(item)}
+                onEdit={() => navigateTo('videoEditor', { filename: item.metadata?.filename })}
                 onDragStart={(event) => handleDragStart(event, item)}
                 onMouseEnter={() => handleItemMouseEnter(item)}
                 onMouseDown={() => handleItemMouseDown(item)}
@@ -1875,9 +1877,34 @@ function ImageLibraryCard({ item, bulkMode, selected, onSelect, onOpen, onFavori
   );
 }
 
-function VideoLibraryCard({ item, bulkMode, selected, onSelect, expanded, onToggle, onDelete, onDragStart, onMouseEnter, onMouseDown, notify }) {
+function VideoLibraryCard({ item, bulkMode, selected, onSelect, expanded, onToggle, onDelete, onEdit, onDragStart, onMouseEnter, onMouseDown, notify }) {
   const hasFile = !!item.previewUrl;
+  // Edit needs the LOCAL mp4 basename (the server resolves it inside the video dir). A remote-only
+  // clip has no local file to edit, so the button only shows when we actually have that filename.
+  const canEdit = hasFile && !!item.metadata?.filename;
   const statusColor = item.status === 'completed' ? 'green' : item.status === 'failed' ? 'red' : 'blue';
+
+  // A bare <a download> does NOT trigger a save in Electron — it just navigates. Download the bytes
+  // via fetch and hand them to downloadBlob (same robust path Video Gallery uses), through the
+  // metadata-stripping /clean route when we have the local filename.
+  const handleDownload = async () => {
+    if (!hasFile) return;
+    try {
+      const filename = item.metadata?.filename;
+      const url = filename ? videoApi.cleanFileUrl(filename) : item.downloadUrl;
+      const resp = await fetch(url, { credentials: 'include' });
+      if (!resp.ok) throw new Error(`Download failed (${resp.status})`);
+      const stripped = resp.headers.get('X-Metadata-Stripped') === 'yes';
+      const base = filename || `video-${item.originalId}.mp4`;
+      const ext = (base.match(/\.[a-z0-9]+$/i) || ['.mp4'])[0];
+      const stem = base.slice(0, base.length - ext.length) || 'video';
+      const blob = await resp.blob();
+      await downloadBlob(blob, `${stem}${filename && stripped ? '_metadatacleaned' : filename ? '_NOT-cleaned' : ''}${ext}`);
+      if (filename && !stripped) notify('Metadata could NOT be removed from this clip — saved as _NOT-cleaned. Do not publish as-is.', 'error');
+    } catch (err) {
+      notify(err?.message || 'Video download failed', 'error');
+    }
+  };
 
   return (
     <div
@@ -1931,7 +1958,8 @@ function VideoLibraryCard({ item, bulkMode, selected, onSelect, expanded, onTogg
         {item.metadata?.error ? <p className="text-[0.625rem] text-red-400">{item.metadata.error}</p> : null}
         {!bulkMode ? (
           <div className="flex gap-2 flex-wrap">
-            {hasFile ? <a href={item.downloadUrl} download className="inline-flex items-center justify-center rounded-lg border border-zinc-700/60 bg-zinc-800/80 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-zinc-700/80 hover:border-zinc-600">Download</a> : null}
+            {hasFile ? <button type="button" onClick={handleDownload} className="inline-flex items-center justify-center rounded-lg border border-zinc-700/60 bg-zinc-800/80 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-zinc-700/80 hover:border-zinc-600 cursor-pointer">Download</button> : null}
+            {canEdit ? <Btn className="!px-3 !py-1.5 !text-xs" onClick={onEdit}>Edit</Btn> : null}
             {hasFile ? <Btn variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={onToggle}>{expanded ? 'Collapse' : 'Expand'}</Btn> : null}
             <Btn variant="danger" className="!px-3 !py-1.5 !text-xs" onClick={onDelete}>Delete</Btn>
           </div>

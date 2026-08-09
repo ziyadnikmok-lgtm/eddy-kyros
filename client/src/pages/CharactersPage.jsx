@@ -301,6 +301,11 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
     notify('Character deleted', 'success');
     onDelete();
   });
+  const duplicateChar = () => run(async () => {
+    const copy = await charApi.duplicate(char.id);
+    notify(`Duplicated as "${copy.name}"`, 'success');
+    onUpdate();   // reloads the grid so the copy shows, keeps the original selected
+  });
   const copyPrompt = () => {
     navigator.clipboard.writeText(char.masterPrompt);
     notify('Master prompt copied', 'success');
@@ -332,6 +337,7 @@ function CharacterDetail({ char, onUpdate, onDelete, onAddRef }) {
         </div>
         <div className="flex gap-2">
           <Btn variant="secondary" className="!text-xs !py-1.5" onClick={onAddRef}>+ Reference</Btn>
+          <Btn variant="secondary" className="!text-xs !py-1.5" onClick={duplicateChar} disabled={loading}>Duplicate</Btn>
           <Btn variant="danger" className="!text-xs !py-1.5" onClick={() => setConfirmDelete({ type: 'character' })} disabled={loading}>Delete</Btn>
         </div>
       </div>

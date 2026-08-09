@@ -19,7 +19,7 @@ function formatDate(iso) {
 }
 
 export default function VideoGalleryPage() {
-  const { notify } = useApp();
+  const { notify, navigateTo } = useApp();
 
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -223,6 +223,7 @@ export default function VideoGalleryPage() {
               expanded={expandedId === v.id}
               onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)}
               onDelete={() => setDeleteTarget(v.id)}
+              onEdit={() => navigateTo('videoEditor', { filename: v.filename })}
               bulkMode={bulkMode}
               selected={selectedIds.has(v.id)}
               onSelect={() => toggleSelection(v.id)}
@@ -243,7 +244,7 @@ export default function VideoGalleryPage() {
   );
 }
 
-function VideoCard({ video, expanded, onToggle, onDelete, bulkMode, selected, onSelect }) {
+function VideoCard({ video, expanded, onToggle, onDelete, onEdit, bulkMode, selected, onSelect }) {
   const { notify } = useApp();
   const v = video;
   const hasFile = !!v.filename;
@@ -331,6 +332,13 @@ function VideoCard({ video, expanded, onToggle, onDelete, bulkMode, selected, on
                 className="flex-1 rounded-md bg-zinc-800/90 px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 transition text-center cursor-pointer"
               >
                 Download
+              </button>
+              <button
+                type="button"
+                onClick={onEdit}
+                className="rounded-md bg-rose-600/90 px-2 py-1.5 text-xs text-white hover:bg-rose-500 transition cursor-pointer"
+              >
+                Edit
               </button>
               <button
                 onClick={onToggle}
