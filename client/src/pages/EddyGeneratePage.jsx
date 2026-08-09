@@ -147,21 +147,6 @@ async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, ch
   // worst case is "in the wrong folder" — recoverable by dragging — instead of "gone".
   const generic = async () => (await libraryStore.ensureFolder(nsfw ? 'Eddy NSFW' : 'Eddy'))?.id || null;
   /**
-   * Her own folder, with the ENGINE nested inside it: "Grace" > "Seedream", "Grace" > "Nano".
-   *
-   * Nested rather than two flat siblings, because flat names sort away from the "Grace" folder she
-   * already has, so opening Grace shows none of that work and it reads as the images having gone
-   * missing. Nesting keeps the engines apart -- the point of the split, since the two models give
-   * visibly different results from the same references -- while opening Grace still shows all of it,
-   * because a folder's view includes its whole subtree (subtreeIds in EddyCollection).
-   *
-   * Max Nano and Max Outfit take her folder too, under their own name: different work, and mixing
-   * them into one pile makes a batch impossible to find afterwards.
-   *
-   * Every step falls back to the level above and finally to generic(), so a failure anywhere still
-   * lands the picture somewhere reachable rather than nowhere.
-   */
-  /**
    * ONE FOLDER PER CHARACTER. Nothing below it, and no tab above it.
    *
    * "Max Nano > Grace" and "Grace > Seedream" were both tried and both removed at the owner's call
