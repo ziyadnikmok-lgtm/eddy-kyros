@@ -4188,6 +4188,20 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
         if (!src) throw new Error('That Library image could not be read');
         comboMain = parseDataUrl(src.startsWith('data:') ? src : await urlToDataUrl(src));
         if (!comboMain) throw new Error('That Library image could not be decoded');
+        /**
+         * THE SOURCE PHOTO'S VIEW BECOMES THE POSE VIEW.
+         *
+         * Everywhere else poseView comes from the pose diagram, and Max Outfit has no pose -- so
+         * it stayed 'front' for every image, including shots taken from behind. Two things then
+         * silently did not happen: the outfit's BACK-VIEW description (backPrompt, written by the
+         * Outfit tab precisely for this) was never used, and the BACK VIEW body-scope line never
+         * fired -- so bust and cleavage wording was still being applied to a picture showing her
+         * back.
+         *
+         * Smart matching already worked this out to pick a back OUTFIT. The same answer just was
+         * not reaching the prompt.
+         */
+        poseView = libraryRowView(row);
       }
       const mainImg = comboMain || charPayload[0] || null;      // sourceImages = [baseImage, faceImage]
       const faceImg = charPayload[1] || null;
