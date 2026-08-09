@@ -2571,7 +2571,34 @@ function liteResult(r) {
 }
 // Newest results are prepended, so the queue is capped from the OLD end. A working tray this large
 // is already unusual; the cap only exists so a user who never clears can't grow the store forever.
-const RESULTS_CAP = 120;
+/**
+ * How many results the panel KEEPS. Nothing is dropped any more.
+ *
+ * It was 120, and the drop was silent: a 32,520-image run generated and BILLED every one, then
+ * quietly threw all but the newest 120 out of the panel (owner, 2026-08-08: "make it never have a
+ * cap"). Persisted rows carry no image bytes — a handful of light fields each — so even an absurd
+ * run is single-digit megabytes in the store. The real cost of keeping them is DOM nodes, and that
+ * is handled by rendering a page at a time (RESULTS_PAGE) rather than by deleting your work.
+ */
+const RESULTS_CAP = Infinity;
+
+// How many tiles are mounted at once. 32,000 <img> elements would kill the tab; a page plus a
+// "show more" keeps every result reachable without ever mounting them all.
+const RESULTS_PAGE = 120;
+
+/**
+ * Above this many images in one click, the run has to be confirmed.
+ *
+ * combos is outfits x poses, so the number grows by MULTIPLICATION while the UI only ever shows
+ * two innocent-looking "Select all" buttons. Picking every outfit and every pose in a real
+ * collection is 542 x 60 = 32,520 images — roughly $1,700 at 1K, $3,100 at 2K, and about 18 hours
+ * of wall clock. Nothing stopped that: overCap only limits REFERENCE images per request, not the
+ * size of the batch (owner asked directly, 2026-08-08 — the honest answer was no).
+ *
+ * Set well above normal use (a full pose sweep is 60) so the fast path the owner asked for stays
+ * unchanged, and only a genuinely unusual batch is interrupted.
+ */
+const CONFIRM_ABOVE = 150;
 
 /**
  * Batch progress, held OUTSIDE the component.
@@ -2746,6 +2773,11 @@ export default function EddyGeneratePage() {
   // pair rather than asking you to find it again by eye (owner, 2026-08-06).
   const [failedCombos, setFailedCombos] = useState([]);
   const [results, setResults] = useState([]);
+
+  // Tiles currently mounted. Grows by RESULTS_PAGE on demand — nothing is discarded, it just is
+  // not all in the DOM at once. Reset when the panel is emptied so a cleared tray starts fresh.
+  const [shown, setShown] = useState(RESULTS_PAGE);
+  useEffect(() => { if (results.length === 0) setShown(RESULTS_PAGE); }, [results.length]);
   // A result's favorite state is NOT stored on the result object and needs no dedicated set of its own:
   // a result is favorited iff its SOURCE pose is favorited, and pose favorites already live in
   // `favSets.pose` (poseStore.listFavorites(), loaded by loadAll on mount and re-read after every
@@ -3191,12 +3223,8 @@ export default function EddyGeneratePage() {
     // Blocked until the rehydrate read has run, so mount's initial [] can't erase the stored queue.
     if (!hydratedRef.current) return undefined;
     const t = setTimeout(() => {
-      // Cap from the OLD end (newest are prepended). Count and log what falls off so a silently
-      // shrinking tray is never a mystery.
-      const kept = results.slice(0, RESULTS_CAP);
-      const pruned = results.length - kept.length;
-      if (pruned > 0) console.warn(`[eddy-results] queue over ${RESULTS_CAP}; pruned ${pruned} oldest from persistence`);
-      resultsStore.set('queue', kept.map(liteResult));
+      // Everything is persisted — see RESULTS_CAP. Rows carry no image bytes, so this stays small.
+      resultsStore.set('queue', results.map(liteResult));
     }, 400);
     return () => clearTimeout(t);
   }, [results]);
@@ -3786,7 +3814,7 @@ export default function EddyGeneratePage() {
               aspectRatio: ratio,
               resolutionTier: resolution,
             });
-            await resultsStore.set('queue', [row, ...stored].slice(0, RESULTS_CAP));
+            await resultsStore.set('queue', [row, ...stored]);
           } catch {
             // Best-effort recovery only — the image is already safe in the gallery and Eddy's
             // Library, so a failed write here must never turn a paid generation into an error.
@@ -3831,6 +3859,22 @@ export default function EddyGeneratePage() {
     const batch = Array.isArray(only) && only.length ? only : combos;
     if (!baseImage) { notify('Add the main photo first', 'error'); return; }
     if (overCap) { notify(`That's ${perRunImages} images per run — Seedream takes ${SEEDREAM_MAX_IMAGES}`, 'error'); return; }
+
+    // A big batch is confirmed with its real cost in the message, because the number is reached by
+    // multiplying two selections and is easy to arrive at without meaning to. The panel cap is
+    // stated too: images past it are still generated and BILLED, they just stop being listed here.
+    if (batch.length > CONFIRM_ABOVE) {
+      const each = seedreamCost(resolution, Math.max(1, perRunImages));
+      const lines = [
+        `${batch.length.toLocaleString()} images — about $${(batch.length * each).toFixed(2)}.`,
+        `${pickedOutfits.length || 1} outfit${(pickedOutfits.length || 1) === 1 ? '' : 's'} x ${pickedPoses.length || 1} pose${(pickedPoses.length || 1) === 1 ? '' : 's'}.`,
+        batch.length > RESULTS_PAGE
+          ? `All of them stay in the panel — ${RESULTS_PAGE} show at a time, with a button for the rest.`
+          : '',
+        'Start this run?',
+      ].filter(Boolean);
+      if (!window.confirm(lines.join('\n\n'))) return;
+    }
 
     // DELIBERATELY NOT WARNED ABOUT HERE — an unreadable pose prompt used to fire an error toast
     // from this spot on every single generate.
@@ -3953,7 +3997,7 @@ export default function EddyGeneratePage() {
     // here is exactly what run() itself reads: the guards, the ctx inputs, and generateCombo. sourceImages
     // is an unmemoized array literal today, so it rebuilds run() every render — listed anyway so
     // memoizing it later can't silently turn charPayload into a stale (previous-face) closure.
-  }, [baseImage, overCap, perRunImages, aspectRatio, combos, sourceImages, resolution, nsfw, libraryStore, notify, generateCombo, engine]);
+  }, [baseImage, overCap, perRunImages, aspectRatio, combos, sourceImages, resolution, nsfw, libraryStore, notify, generateCombo, engine, pickedOutfits, pickedPoses]);
 
   /* -------------------------------------------------------------------------------------------
    * The inline results flow. Everything below acts on RESULTS, never on the page's live controls:
@@ -5151,7 +5195,7 @@ export default function EddyGeneratePage() {
                 and no state, so a stable positional key is exactly right here and avoids
                 remounting the whole run of them each time one is removed. */}
             {Array.from({ length: pendingCount }, (_, i) => <PendingTile key={`pending-${i}`} />)}
-            {results.map((r) => {
+            {results.slice(0, shown).map((r) => {
               // Resolved once above via resultSourcePoseIds (combo.poseId, or a videoPrompt text-match
               // fallback for older/rehydrated results with no combo) — a plain Map read, not a store call.
               const srcPoseId = resultSourcePoseIds.get(r.uid);
@@ -5198,6 +5242,22 @@ export default function EddyGeneratePage() {
               );
             })}
           </div>
+
+            {/* Nothing is hidden — only unmounted. The button says exactly how many are waiting, so
+                a long run never looks truncated. */}
+            {results.length > shown && (
+              <button
+                type="button"
+                onClick={() => setShown((n) => n + RESULTS_PAGE)}
+                className={cn('mt-3 w-full rounded-xl border py-2.5 text-sm font-semibold', GATE_HAIRLINE, GATE_PANEL, GATE_FOCUS,
+                  'cursor-pointer text-zinc-300 hover:border-zinc-500')}
+              >
+                Show {Math.min(RESULTS_PAGE, results.length - shown)} more
+                <span className={cn('ml-2 font-normal', GATE_MUTED)}>
+                  {shown.toLocaleString()} of {results.length.toLocaleString()} shown
+                </span>
+              </button>
+            )}
 
           {/* The action bar. Only exists while something is selected: with nothing picked it would
               be a dead strip of controls permanently eating the height the images need. Sticky so
