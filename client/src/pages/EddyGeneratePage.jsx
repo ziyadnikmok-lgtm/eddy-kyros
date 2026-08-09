@@ -3711,21 +3711,19 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       if (smartMatch && chosen.length) {
         // Angle-aware: a back shot gets a back outfit, a close-up gets a close-up one.
         const byId = new Map(libItems.map((i) => [i.id, i]));
-        const folderName = (id) => libItemFolders.find((f) => f.id === id)?.name || '';
         const outfitFolderName = (id) => outfitFolders.find((f) => f.id === outfits.find((o) => o.id === id)?.folderId)?.name || '';
         const { rows } = matchOutfits(
           bases, chosen,
           (b) => libraryRowView(byId.get(b)),
           (o) => outfitView(outfitFolderName(o)),
         );
-        void folderName;
         return rows.map((r) => ({ outfitId: r.outfitId, poseId: null, baseId: r.baseId, matched: r.matched }));
       }
       // Plain rotation: round-robin across the whole selection, no angle awareness.
       return bases.map((b, i) => ({ outfitId: os[i % os.length], poseId: null, baseId: b }));
     }
     return os.flatMap((o) => ps.map((p) => ({ outfitId: o, poseId: p })));
-  }, [pickedOutfits, pickedPoses, pickedBases, outfitRotation, smartMatch, libItems, libItemFolders, outfits, outfitFolders, maxNano, maxOutfit]);
+  }, [pickedOutfits, pickedPoses, pickedBases, outfitRotation, smartMatch, libItems, outfits, outfitFolders, maxNano, maxOutfit]);
 
   const sourceImages = [baseImage, faceImage].filter(Boolean);
   const perRunImages = sourceImages.length + (pickedPoses.length ? 1 : 0);
@@ -5079,6 +5077,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             hint="Her body, and the room this shot happens in"
             value={baseImage}
             onChange={setBaseImage}
+            onPickFolder={(n) => n && setCharacterName(n)}
             dbName="eddy-slot-base"
             libraryStore={libraryStore}
             pickerDb="eddy-base"
@@ -5096,7 +5095,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             pickerLabel="Character"
             pickerFolders
             pickerRole="base"
-            onPickFolder={setCharacterName}
+            onPickFolder={(n) => n && setCharacterName(n)}
             pickerStrip
           />
         </div>
@@ -5547,6 +5546,29 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             </span>
           </label>
         )}
+        {/* WHERE THIS BATCH LANDS, stated before you spend anything.
+            The character name is invisible state -- it comes from whichever folder the photo you
+            picked lives in -- and when it was empty every result quietly filed under the generic
+            "Eddy" folder with nothing on screen disagreeing. That is exactly how a Grace batch
+            ended up in "Eddy" (owner, 2026-08-09). */}
+        <p className="text-center text-xs text-zinc-500">
+          Saving into Library ›{' '}
+          {characterName ? (
+            <>
+              <span className="font-semibold text-rose-300">
+                {maxNano ? `Max Nano / ${characterName}` : maxOutfit ? `Max Outfit / ${characterName}` : characterName}
+              </span>
+              <button type="button" onClick={() => setCharacterName('')}
+                title="File this batch in the generic folder instead"
+                className="ml-1.5 text-zinc-600 hover:text-zinc-300 cursor-pointer">×</button>
+            </>
+          ) : (
+            <span className="text-amber-300/90">
+              {maxNano ? 'Max Nano' : maxOutfit ? 'Max Outfit' : (nsfw ? 'Eddy NSFW' : 'Eddy')}
+              {' — no character picked, so these will not be filed under her name'}
+            </span>
+          )}
+        </p>
         <Btn className="w-full" disabled={(maxOutfit ? !pickedBases.length : !baseImage) || overCap} onClick={() => run()}>
           {/* NO DOLLAR FIGURE ON GEMINI, deliberately. seedreamCost prices Muapi's published
               Seedream rates; this repo has no ground truth for Gemini/Vertex image cost, and the
