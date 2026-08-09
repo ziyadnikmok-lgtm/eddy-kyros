@@ -41,6 +41,31 @@ const GEMINI_PARALLEL_REQUESTS = 2;
 const COMPACT_PICKED = 8;
 
 /**
+ * One representative photo per character (folder): the one tagged `role`, else her earliest.
+ *
+ * A plain `role === 'base'` filter DROPPED any character with nothing tagged — she was in the
+ * Character tab and simply absent from Eddy's face picker, with nothing saying why (owner,
+ * 2026-08-08). Tagging is optional and most imports arrive untagged, so absence of a tag has to
+ * mean "pick one for me", never "hide her".
+ *
+ * Earliest rather than newest for the fallback: the Character tab treats the first image as her
+ * base face, so this agrees with what that tab already shows.
+ */
+function oneRowPerFolder(items, role) {
+  const byFolder = new Map();
+  for (const it of items) {
+    const key = it.folderId || `__loose:${it.id}`;
+    const cur = byFolder.get(key);
+    if (!cur) { byFolder.set(key, it); continue; }
+    const curTagged = cur.role === role;
+    const itTagged = it.role === role;
+    if (itTagged && !curTagged) { byFolder.set(key, it); continue; }
+    if (itTagged === curTagged && (it.createdAt || 0) < (cur.createdAt || 0)) byFolder.set(key, it);
+  }
+  return [...byFolder.values()];
+}
+
+/**
  * Folder-tree helpers for the pickers.
  *
  * Once collections gained subfolders, this picker listed EVERY folder in one flat row — parents
@@ -788,7 +813,7 @@ const UNDRESS_TEXTS = [
  * scrolling hundreds of finished results to find either (owner, 2026-08-07). pickerFolders adds
  * the folder chips, which is what makes "pick HER face" a two-click job.
  */
-function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerDb, pickerLabel, pickerFolders, pickerRole }) {
+function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerDb, pickerLabel, pickerFolders, pickerRole, pickerStrip }) {
   const { notify } = useApp();
   const store = useMemo(() => createEddyCollection(dbName), [dbName]);
   // The collection the Library button browses. Falls back to the page's general library so a slot
@@ -799,6 +824,33 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
   const [saved, setSaved] = useState([]);          // [{ id, dataUrl }]
   const [over, setOver] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
+
+  /**
+   * A row of one-click choices under the slot, for slots that opt in (pickerStrip).
+   *
+   * Removed from the Main photo on request — Base Library is browsed, not skimmed — but the FACE
+   * slot wants it back: with pickerRole="base" it is exactly one photo per character, so the row
+   * IS the character list and picking her is a single click instead of opening the picker
+   * (owner, 2026-08-08).
+   */
+  const [pickRecent, setPickRecent] = useState([]);
+  useEffect(() => {
+    if (!pickerStrip || !pickerDb) { setPickRecent([]); return undefined; }
+    let alive = true;
+    (async () => {
+      try {
+        const all = await pickStore.listItems();
+        const items = pickerRole ? oneRowPerFolder(all, pickerRole) : all;
+        const rows = await Promise.all(
+          [...items].sort((a2, b2) => (b2.createdAt || 0) - (a2.createdAt || 0)).slice(0, 12)
+            .map(async (it) => ({ id: it.id, src: it.url || await pickStore.getImage(it.id) })),
+        );
+        if (alive) setPickRecent(rows.filter((r) => r.src));
+      } catch { if (alive) setPickRecent([]); }
+    })();
+    return () => { alive = false; };
+    // showLibrary is a dep so adding a character in the picker refreshes the row on close.
+  }, [pickStore, pickerDb, pickerRole, pickerStrip, showLibrary]);
 
   const [library, setLibrary] = useState([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
@@ -898,7 +950,7 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
       const all = await pickStore.listItems();
       // Same narrowing as the strip, so opening the picker cannot show a different set to the row
       // that sits under the slot.
-      const items = pickerRole ? all.filter((i) => i.role === pickerRole) : all;
+      const items = pickerRole ? oneRowPerFolder(all, pickerRole) : all;
       const local = await Promise.all(items.map(async (it) => ({
         id: `eddy:${it.id}`, folderId: it.folderId || null, src: it.url || await pickStore.getImage(it.id),
       })));
@@ -1066,6 +1118,24 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
           </div>
         </div>,
         document.body,
+      )}
+
+      {pickRecent.length > 0 && (
+        <>
+          <p className="mt-2 text-[0.625rem] uppercase tracking-wider text-zinc-600">
+            {pickerLabel || 'Library'} — click to use
+          </p>
+          <div className="mt-1 flex gap-1.5 overflow-x-auto pb-1">
+            {pickRecent.map((r) => (
+              <button key={r.id} type="button" onClick={() => pickFromLibrary(r.src)}
+                title={`Use this ${(pickerLabel || 'library').toLowerCase()} image`}
+                className={cn('h-14 w-14 shrink-0 overflow-hidden rounded-md border-2 bg-zinc-950 cursor-pointer',
+                  value === r.src ? 'border-rose-500' : 'border-transparent hover:border-rose-500')}>
+                <img src={r.src} alt="" loading="lazy" className="h-full w-full object-cover" />
+              </button>
+            ))}
+          </div>
+        </>
       )}
 
       {/* Always offered once the slot is FILLED too, not just when empty. Swapping the base photo
@@ -4463,6 +4533,7 @@ export default function EddyGeneratePage() {
             pickerLabel="Character"
             pickerFolders
             pickerRole="base"
+            pickerStrip
           />
         </div>
       </Card>
