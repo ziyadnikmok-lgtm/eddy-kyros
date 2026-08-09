@@ -607,6 +607,17 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
     // the garment, overriding her bust. The garment is a template for the CLOTHING only; the BODY
     // inside it is always image 1's.
     lines.push(`That garment is worn by HER and takes HER shape — it is NOT copied at the product photo's proportions. The mannequin's or flat-lay's chest, waist and hips mean nothing here. The clothing stretches and fills out over the body from image 1: her FULL bust fills the top, the fabric strains over her chest, the neckline sits where her cleavage pushes it. Never flatten, shrink or reshape her breasts to match the garment's shape in image ${outfitIndex}.`);
+    /**
+     * The line the friend's pipeline leans on hardest, in its own words.
+     *
+     * cloth_swap_paired.py's PROMPT_FRONT/PROMPT_BACK say the same thing three times, twice in
+     * quotes -- "Only use the outfit from @image2 DON'T use the person, body, skin or sizes" --
+     * and its note explains why: 'Seedream needs this reinforced or it will re-render the body.'
+     * That pipeline has run this exact swap over thousands of images, so the repetition is
+     * evidence, not superstition. Stated last among the outfit lines, where it is read closest
+     * to the generation.
+     */
+    lines.push(`ONLY the outfit comes from image ${outfitIndex}. Nothing else about that photo is used: not the person in it, not her body, not her skin, not her size or proportions. Everything else in the result is unchanged -- same face, same skin quality, same body, same pose, same background, same lighting, same composition and the same aspect ratio.`);
   }
   if ((outfitText || outfitIndex) && !wantsNude) {
     lines.push(`Ignore whatever she is wearing in her reference photos — her clothing comes only from the outfit${outfitIndex ? ` in image ${outfitIndex} and the description` : ' described'} above${exceptCorrection}.`);
@@ -2792,9 +2803,11 @@ const _cache = {
   // does not silently change the output of every existing workflow; the toggle is one click away
   // for testing text-only poses (owner, 2026-08-06, "I will test with send image or no").
   sendPoseImage: true,
-  // sendOutfitImage defaults OFF — see the toggle for why. Sending the product photo was tried
-  // before and reverted; this makes it a choice rather than a decision made for you.
-  sendOutfitImage: false,
+  // sendOutfitImage defaults ON, on every engine (owner, 2026-08-09). It was tried and reverted
+  // once because the product photo's background and the mannequin's shape arrived with the garment
+  // — both of which the prompt now bans by name. The picture carries the cut, colour, fabric and
+  // straps that words cannot, so defaulting OFF meant most runs dressed her from a description.
+  sendOutfitImage: true,
   // 'auto' emits nothing, i.e. exactly the behaviour that shipped before HER BUILD existed.
   build: 'auto',
   // Which image engine runs the generation. Seedream is the default because it is what this
@@ -2906,7 +2919,10 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   // The picture stays visible in the picker either way — this governs the payload, nothing else.
   const [sendPoseImage, setSendPoseImage] = useState(_cache.sendPoseImage ?? true);
   // Whether the outfit's PRODUCT photo goes to the model alongside its description.
-  const [sendOutfitImage, setSendOutfitImage] = useState(_cache.sendOutfitImage ?? false);
+  // ON by default, on every engine. The picture is the garment reference — cut, colour, fabric,
+  // straps — and the words alone lose all of it. It was defaulting OFF, so every run that did not
+  // remember to flip it was dressing her from a description (owner, 2026-08-09).
+  const [sendOutfitImage, setSendOutfitImage] = useState(_cache.sendOutfitImage ?? true);
   // Her standing build — describes the character, never changes her. See BUILD_OPTIONS.
   const [build, setBuild] = useState(_cache.build ?? 'auto');
   // 'seedream' | 'nano2' — see the ENGINE switch in the UI and the branch in generateCombo.
@@ -3267,7 +3283,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
        * flight, and a store predating a key leaves that default alone.
        */
       setSendPoseImage((v) => (v === true && typeof saved.sendPoseImage === 'boolean' ? saved.sendPoseImage : v));
-      setSendOutfitImage((v) => (v === false && typeof saved.sendOutfitImage === 'boolean' ? saved.sendOutfitImage : v));
+      setSendOutfitImage((v) => (v === true && typeof saved.sendOutfitImage === 'boolean' ? saved.sendOutfitImage : v));
       setBuild((v) => (v === 'auto' ? saved.build || 'auto' : v));
       setEngine((v) => (v === 'nano2' ? saved.engine || 'nano2' : v));
     })();
