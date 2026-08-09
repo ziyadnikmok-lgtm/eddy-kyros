@@ -46,6 +46,11 @@ const NANO2_CLIENT_TIMEOUT_MS = 11 * 60_000;
 // endpoint: 1k $0.07, 2k $0.105 (2K is the standard rate x1.5). Both search flags are sent false
 // by the service, so neither surcharge applies.
 const NANO2_COST = { '1K': 0.07, '2K': 0.105 };
+// How many times one image is attempted on Nano Banana 2 before it falls back to Seedream 5.0
+// Pro. Four, because the failure this exists for is the content guard, which samples: a refusal
+// is not a verdict on the prompt, it is one roll. Terminal errors (no key, bad request) skip the
+// retries entirely -- see TERMINAL_CODES -- so this never multiplies a misconfiguration.
+const NANO2_ATTEMPTS = 4;
 
 // Above this many picked items the summary list becomes a thumbnail grid instead of text rows.
 // Eight is about what fits without the Generate button leaving the screen.
@@ -148,6 +153,42 @@ async function withRateLimitRetry(fn, { attempts = 4, baseDelayMs = 4000 } = {})
       if (!limited || i >= attempts - 1) throw err;
       // Linear, not exponential: quota windows here refill on a clock rather than easing off under
       // load, so a long tail of doubling waits buys nothing over an even spacing.
+      await new Promise((r) => setTimeout(r, baseDelayMs * (i + 1)));
+    }
+  }
+}
+
+/**
+ * Failures that will fail identically forever, so neither a retry nor an engine swap can help.
+ *
+ * This list is what keeps "try 4 times, then fall back" from turning a missing API key into five
+ * pointless calls per image — on an 81-image batch that is 405 requests to reach the same place.
+ * Every one of these is a configuration or request problem, not a generation problem. Note the key
+ * codes especially: the Seedream fallback bills the SAME WaveSpeed key, so falling back with a bad
+ * or absent key cannot possibly succeed.
+ */
+const TERMINAL_CODES = new Set([
+  'VALIDATION_ERROR', 'WAVESPEED_KEY_REQUIRED', 'NO_WAVESPEED_KEY', 'INVALID_API_KEY', 'INVALID_MODEL',
+]);
+const isTerminalError = (err) => TERMINAL_CODES.has(err?.code) || err?.status === 401;
+
+/**
+ * Retry anything that is not terminal — rate limits, connection drops, timeouts, empty results, and
+ * the content guard.
+ *
+ * The guard is the reason this exists alongside withRateLimitRetry. A refusal comes back as
+ * WAVESPEED_FAILED, which the rate-limit-only retry treated as final, so a single guard hit deleted
+ * that image from the batch. Nano Banana 2 samples, so the same prompt often passes on a later
+ * attempt (owner, 2026-08-09). onRetry reports each attempt so the tile can say what is happening
+ * rather than sitting silent for four rounds of backoff.
+ */
+async function withEngineRetry(fn, { attempts = 4, baseDelayMs = 4000, onRetry } = {}) {
+  for (let i = 0; ; i += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (isTerminalError(err) || i >= attempts - 1) throw err;
+      if (onRetry) onRetry(i + 2, attempts, err);
       await new Promise((r) => setTimeout(r, baseDelayMs * (i + 1)));
     }
   }
@@ -452,7 +493,7 @@ const buildTextFor = (v, view) => {
   return view === 'back' ? (o.backText || '') : (o.text || '');
 };
 
-function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex, faceIndex, nsfw, wantsNude, wantsBody, undressChip, tweak, poseFaceless, lightingText, poseView = 'front', buildText = '', expressionText = '' }) {
+function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex, faceIndex, nsfw, wantsNude, wantsBody, undressChip, tweak, poseFaceless, lightingText, poseView = 'front', buildText = '', expressionText = '', lockOutfitToBase = false }) {
   // Back-facing poses take a different final body clause — see BACK_VIEW_BODY_SCOPE.
   const isBackView = poseView === 'back';
   const lines = [];
@@ -585,9 +626,31 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
     lines.push(`Body SIZE is NOT part of the pose. Her chest size, waist, hips and overall build come ONLY from image 1 — take her exact proportions from there and hold them. The pose diagram's proportions are irrelevant and must never be copied, matched or averaged toward, even though her position, limbs and camera angle come from image ${poseIndex}.`);
   }
 
-  // Nothing pins her clothing when no outfit is chosen — deliberately. The model is left free
-  // to follow the pose and the references, which sometimes undresses her. That was reported as
-  // a bug once and then asked for on purpose: pick an outfit to be sure, or leave it open.
+  /**
+   * WITH NO OUTFIT CHOSEN, nothing pins her clothing — deliberately, on the Eddy page. The model is
+   * left free to follow the pose and the references, which sometimes undresses her. That was
+   * reported as a bug once and then asked for on purpose: pick an outfit to be sure, or leave it
+   * open.
+   *
+   * Max Nano has no outfit picker AT ALL, so "pick an outfit to be sure" is not available there and
+   * that freedom is never what the user chose — it is just an unclaimed slot. Left unclaimed, the
+   * pose diagram is the only other picture in the payload carrying clothes, and it won: poses shot
+   * in a grey gym set and red lingerie came back dressed that way instead of in image 1's black lace
+   * (owner, 2026-08-09). lockOutfitToBase closes the slot by naming image 1 as the source.
+   *
+   * Suppressed under wantsNude for the same reason the OUTFIT lines are: asking to keep her clothes
+   * and to take them off at once is the contradiction the model resolves by doing neither properly.
+   */
+  if (lockOutfitToBase && !wantsNude && !outfitText && !outfitIndex) {
+    lines.push(`Her CLOTHING comes from image 1 and is kept exactly as it is there: the same garments, the same cut and neckline, the same colour, the same material and the same amount of coverage${exceptCorrection}. She is NOT re-dressed and NOT undressed.`);
+    if (poseIndex) {
+      lines.push(`Whatever the stand-in in image ${poseIndex} is wearing is IRRELEVANT and must not appear — not her garments, not her colours, not her fabrics, not how much skin she shows. Clothing is not part of the pose.`);
+      // Restated here, beside the pose diagram, rather than relying on the SETTING line further
+      // down. That line has always existed and the room still drifted; the fix pattern that worked
+      // for the identical body-size leak is to put the ban next to the thing it is competing with.
+      lines.push(`The room in image ${poseIndex} is IRRELEVANT too — its background, furniture, surfaces, props and location contribute NOTHING. She stays in image 1's location. Only her body position and the camera come from image ${poseIndex}.`);
+    }
+  }
 
   if (instruction.trim()) lines.push(instruction.trim());
 
@@ -2804,17 +2867,24 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   useEffect(() => { if (engine === 'nano2') setResolution('2K'); }, [engine]);
 
   /**
-   * Max Nano pins the engine and the resolution.
-   *
-   * Enforced here rather than only in the UI: the settings are shared and persisted across every
-   * workspace, so a value left over from an Eddy run would otherwise follow you into Max and
-   * generate on the wrong engine with nothing on screen disagreeing.
+   * Max Nano pins the ENGINE. Enforced here rather than only in the UI: the settings are shared and
+   * persisted across every workspace, so an engine left over from an Eddy run would otherwise follow
+   * you into Max and generate on the wrong one with nothing on screen disagreeing.
    */
   useEffect(() => {
-    if (!maxNano) return;
-    setEngine('nano2');
-    setResolution('2K');
-  }, [maxNano, engine, resolution]);
+    if (maxNano) setEngine('nano2');
+  }, [maxNano, engine]);
+
+  /**
+   * 2K is Max Nano's DEFAULT, not a lock — it is set on arrival and then left alone.
+   *
+   * Keying this to `resolution` as well would re-fire the moment you picked 1K and put it straight
+   * back, which is exactly how it behaved: the button appeared dead and the price stayed at the 2K
+   * rate because the setting never actually changed (owner, 2026-08-09).
+   */
+  useEffect(() => {
+    if (maxNano) setResolution('2K');
+  }, [maxNano]);
   // Read from the module-level store, so a batch started before you navigated away is still
   // reported when you come back. The setters keep their old names and signatures.
   const runProgress = useSyncExternalStore(_subscribeRun, _getRunSnap, _getRunSnap);
@@ -2890,6 +2960,9 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   const [videoConfirm, setVideoConfirm] = useState(null);
   // Once per batch, not once per combo: 25 identical toasts would bury the message.
   const warnedProvider = useRef(false);
+  // Said once per batch, not once per image: on a run where the guard rejects everything, one
+  // toast per fallback would bury the screen in identical warnings.
+  const warnedFallback = useRef(false);
   // feedId -> the `uid` of the result it belongs to. Populated when a video job is submitted,
   // drained as each one resolves — lets the shared generation feed's own poll
   // (GenerationFeedPanel is mounted app-wide and already checks every pending video job every few
@@ -3451,8 +3524,11 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       undressChip,
       poseFaceless: !!poseIndex && (faceless || POSE_FACELESS_RE.test(String(ps?.prompt || ''))),
       lightingText: lightingTextFor(lighting),
+      // The preview is only worth having if it is the SAME prompt. Omitting this here would show
+      // an Eddy-shaped prompt on a page that sends a Max Nano one.
+      lockOutfitToBase: maxNano,
     });
-  }, [combos, outfits, poses, instruction, baseImage, faceImage, outfitThumbs, poseThumbs, nsfw, wantsNude, wantsBody, undressChip, faceless, lighting, sendPoseImage, sendOutfitImage, build, wantsExpression]);
+  }, [combos, outfits, poses, instruction, baseImage, faceImage, outfitThumbs, poseThumbs, nsfw, wantsNude, wantsBody, undressChip, faceless, lighting, sendPoseImage, sendOutfitImage, build, wantsExpression, maxNano]);
 
   const addChip = (text) => setInstruction((prev) => (prev.includes(text) ? prev : `${prev} ${text}`.trim()));
 
@@ -3757,7 +3833,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
 
       // poseFaceless only bites when the pose IMAGE is actually sent (poseIndex) — a text-only pose
       // has no framing to match.
-      prompt = buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex, faceIndex, nsfw, wantsNude, wantsBody, undressChip, tweak, poseFaceless: poseFaceless && !!poseIndex, lightingText: lightingTextFor(lighting), poseView, buildText: wantsBody ? '' : buildTextFor(build, poseView), expressionText: (wantsExpression || poseFaceless) ? '' : poseExpression });
+      prompt = buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex, faceIndex, nsfw, wantsNude, wantsBody, undressChip, tweak, poseFaceless: poseFaceless && !!poseIndex, lightingText: lightingTextFor(lighting), poseView, buildText: wantsBody ? '' : buildTextFor(build, poseView), expressionText: (wantsExpression || poseFaceless) ? '' : poseExpression, lockOutfitToBase: maxNano });
     }
 
     const feedId = `eddy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -3767,6 +3843,9 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // Only the API call is in the try. Wrapping the success path too meant a throw AFTER the
     // image came back marked a generation you already paid for as failed.
     let data;
+    // Set when nano2 gave up and Seedream produced the image instead, so everything downstream
+    // labels it with the engine that ACTUALLY made it rather than the one that was selected.
+    let usedFallback = false;
     try {
       if (engine === 'nano2') {
         /**
@@ -3781,14 +3860,52 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
          * inference alone, and the client aborting first would throw away an image that had already
          * been generated and billed.
          */
-        data = await withRateLimitRetry(() => seedreamApi.edit({
-          images: payload,
-          prompt,
-          model: 'nano2',
-          aspectRatio: ratio,
-          resolution,
-          tags: isEdit ? ['eddy', 'edit'] : ['eddy'],
-        }, { timeoutMs: NANO2_CLIENT_TIMEOUT_MS }));
+        const callNano2 = async () => {
+          const res = await seedreamApi.edit({
+            images: payload,
+            prompt,
+            model: 'nano2',
+            aspectRatio: ratio,
+            resolution,
+            tags: isEdit ? ['eddy', 'edit'] : ['eddy'],
+          }, { timeoutMs: NANO2_CLIENT_TIMEOUT_MS });
+          // Asserted INSIDE the retried call on purpose. An empty result is a failed generation, and
+          // leaving the check downstream made it the one failure mode that never got a second
+          // attempt — it threw after the retry wrapper had already returned.
+          if (!(res.images || []).length) {
+            const empty = new Error('Nano Banana 2 returned no image');
+            empty.code = 'WAVESPEED_EMPTY';
+            throw empty;
+          }
+          return res;
+        };
+        try {
+          data = await withEngineRetry(callNano2, { attempts: NANO2_ATTEMPTS });
+        } catch (err) {
+          // A terminal error (no key, malformed request) fails the same way on every engine, so
+          // there is nothing to fall back TO — rethrow rather than spend a Seedream call proving it.
+          if (isTerminalError(err)) throw err;
+          /**
+           * Four refusals in a row is the engine, not the request — so try the other one.
+           *
+           * Seedream 5.0 Pro is a different model behind the same WaveSpeed key on the same
+           * /api/seedream/edit route, and it already reads this exact prompt shape (it is what the
+           * branch below sends). Its content guard draws the line in a different place, which is the
+           * point: the images nano refuses are often ones it passes (owner, 2026-08-09).
+           *
+           * Tagged 'fallback' so they stay identifiable in the gallery — a picture that came from a
+           * different model than the one named on the button should never be silent about it.
+           */
+          data = await withRateLimitRetry(() => seedreamApi.edit({
+            images: payload, prompt, aspectRatio: ratio, resolution,
+            tags: [...(isEdit ? ['eddy', 'edit'] : ['eddy']), 'fallback'],
+          }));
+          usedFallback = true;
+          if (!warnedFallback.current) {
+            warnedFallback.current = true;
+            notify(`Nano Banana 2 failed ${NANO2_ATTEMPTS}x on an image — finished it on Seedream 5.0 Pro. Those are tagged "fallback".`, 'error');
+          }
+        }
       } else {
         // Same model, same per-image price on both paths — an edit is tagged so it is distinguishable
         // in the gallery without changing what it costs.
@@ -3809,7 +3926,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
 
     const first = (data.images || [])[0];
     if (!first) {
-      const who = engine === 'nano2' ? 'Nano Banana 2' : 'Seedream';
+      const who = engine === 'nano2' && !usedFallback ? 'Nano Banana 2' : 'Seedream';
       failPending(feedId, `${who} returned no image`);
       throw new Error(`${who} returned no image`);
     }
