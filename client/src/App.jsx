@@ -216,10 +216,12 @@ const NAV_SECTIONS = [
     label: 'Eddy',
     items: [
       { id: 'eddy', label: 'Eddy' },
+      // Directly under Eddy: it is the same page in another mode, so it belongs beside the page it
+      // mirrors rather than down among the collections (owner, 2026-08-09).
+      { id: 'eddyMaxNano', label: 'Max Nano' },
       { id: 'eddyLibrary', label: 'Library' },
       { id: 'eddyOutfit', label: 'Outfit' },
       { id: 'eddyPose', label: 'Pose' },
-      { id: 'eddyMaxNano', label: 'Max Nano' },
       { id: 'eddyBase', label: 'Base' },
       { id: 'eddyBaseLibrary', label: 'Base Library' },
       { id: 'eddyCharacter', label: 'Character' },
