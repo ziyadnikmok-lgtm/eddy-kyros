@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "mobile:sync": "npm run build && npx cap sync ios",
     "mobile:open:ios": "npx cap open ios",
-    "mobile:run:ios": "npx cap run ios"
+    "mobile:run:ios": "npx cap run ios",
+    "lint": "eslint src"
   },
   "dependencies": {
     "@capacitor/core": "^7.4.3",

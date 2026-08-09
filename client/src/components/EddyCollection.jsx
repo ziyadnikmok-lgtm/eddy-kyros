@@ -518,8 +518,10 @@ export default function EddyCollection({
       }
     }
     notify(`Un-starred ${cleared} duplicate favourite${cleared === 1 ? '' : 's'}`, 'success');
-    await load();
-  }, [dupeFavGroups, dupeFavCount, store, notify]);
+    // `refresh`, not `load` — there is no `load` in this scope, so this threw every time and the
+    // grid never re-read: the stars just cleared stayed on screen until you navigated away.
+    await refresh();
+  }, [dupeFavGroups, dupeFavCount, store, notify, refresh]);
 
   const redescribeBroken = useCallback(async () => {
     if (!brokenPromptTargets.length) return;

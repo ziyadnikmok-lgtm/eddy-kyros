@@ -25,18 +25,34 @@ import { runPool } from '../lib/runPool';
 import { cn } from '../lib/utils';
 import { downloadBlob, stripEnabled } from '../lib/stripMetadata';
 
-// How many generations are in flight at once. Each one re-encodes every source image server
-// side, so this trades raw speed for not crashing the backend.
-const PARALLEL_REQUESTS = 6;
+/**
+ * How many generations are in flight at once.
+ *
+ * Raised 6 -> 12 (owner, 2026-08-09) for large runs where wall-clock matters more than caution.
+ *
+ * THE CEILING THAT ACTUALLY BINDS is the server's own generateLimiter: 60 requests per 60 seconds
+ * on /api/seedream, shared with Photo Match, Base and every Regenerate. A lane does not issue
+ * requests continuously — it issues one and waits out the whole generation — so the request RATE is
+ * lanes / duration, not lanes. At ~45s per Seedream image, 12 lanes is ~16 requests/minute, and
+ * Photo Match's 4 add ~5. About 21 of the 60 available, so a run can still be regenerating and
+ * generating a base while both batches are going without tripping it.
+ *
+ * Going higher is where it stops being free: at 30 concurrent workers the friend's pipeline reports
+ * 429s (its 09_gotchas.md), and runPool exists because this codebase has been burned by unthrottled
+ * fan-out before. 12 keeps a 3x margin under the limiter.
+ */
+const PARALLEL_REQUESTS = 12;
 
 // Vertex allows far fewer concurrent image calls than our own backend does, and going over does not
 // slow down — it 429s (RESOURCE_EXHAUSTED) and the image is LOST, because nothing in this stack
 // retries a 429. At 6 in flight a Gemini batch burned its quota in the first few seconds and the
 // rest failed (owner, 2026-08-06). runPool queues the remainder either way, so a lower cap costs
 // wall-clock, not images.
-// Nano Banana 2 runs ~3 minutes per image, so a wide fan-out mostly buys queue depth. Kept low
-// while the real concurrency ceiling is unknown; raise it once a big run has been watched.
-const NANO2_PARALLEL_REQUESTS = 3;
+// Nano Banana 2 runs ~3 minutes per image, so a wide fan-out mostly buys queue depth rather than
+// throughput. Raised 3 -> 6 (owner, 2026-08-09): at 180s each, 6 lanes is only ~2 requests/minute,
+// which is nothing against the limiter, and it halves the wall-clock on a long nano run. Kept well
+// under the Seedream lane count on purpose — these requests hold a connection for three minutes.
+const NANO2_PARALLEL_REQUESTS = 6;
 
 // Above the server's own 10-minute poll, so a slow job ends with the server's specific message
 // (which names the prediction id) rather than a bare client abort.
@@ -103,7 +119,32 @@ const MAX_OUTFIT_FOLDER = 'Max Outfit';
  * With no character chosen the generic buckets still apply, NSFW split included: there is no name
  * to file under, and inventing one would be worse than a generic folder.
  */
-async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName }) {
+/**
+ * Which engine made it, as a folder name.
+ *
+ * "Seedream" and "Nano" are separate piles on purpose: the two models produce visibly different
+ * results from the same references, and once mixed nothing tells you which made which.
+ */
+/**
+ * The tags a generation is filed under, server side.
+ *
+ * HER NAME IS IN HERE ON PURPOSE. "Recover missing" reads the character back off these tags to work
+ * out which folder a stranded picture belongs in — and the name was never being sent, so recovery
+ * picked the first tag that was not an engine name and filed images into folders called
+ * "nano-banana-2", "edit" or nothing at all (audit, 2026-08-09).
+ *
+ * The server keeps at most 4 extra tags, so this stays short deliberately.
+ */
+function eddyTags(isEdit, characterName) {
+  const who = String(characterName || '').trim();
+  return [...(isEdit ? ['eddy', 'edit'] : ['eddy']), ...(who ? [who] : [])];
+}
+
+function engineFolderSuffix(engine) {
+  return engine === 'nano2' ? 'Nano' : 'Seedream';
+}
+
+async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName, engine }) {
   const who = String(characterName || '').trim();
   // Every branch falls back to the generic bucket rather than to null.
   //
@@ -115,7 +156,36 @@ async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, ch
   // The generic folder is the floor, and it is created here rather than left to chance, so the
   // worst case is "in the wrong folder" — recoverable by dragging — instead of "gone".
   const generic = async () => (await libraryStore.ensureFolder(nsfw ? 'Eddy NSFW' : 'Eddy'))?.id || null;
-  if (who) return (await libraryStore.ensureFolder(who))?.id || await generic();
+  /**
+   * Her own folder, with the ENGINE nested inside it: "Grace" > "Seedream", "Grace" > "Nano".
+   *
+   * Nested rather than two flat siblings, because flat names sort away from the "Grace" folder she
+   * already has, so opening Grace shows none of that work and it reads as the images having gone
+   * missing. Nesting keeps the engines apart -- the point of the split, since the two models give
+   * visibly different results from the same references -- while opening Grace still shows all of it,
+   * because a folder's view includes its whole subtree (subtreeIds in EddyCollection).
+   *
+   * Max Nano and Max Outfit take her folder too, under their own name: different work, and mixing
+   * them into one pile makes a batch impossible to find afterwards.
+   *
+   * Every step falls back to the level above and finally to generic(), so a failure anywhere still
+   * lands the picture somewhere reachable rather than nowhere.
+   */
+  //
+  // MAX NANO AND MAX OUTFIT KEEP THEIR EXISTING SHAPE: "Max Nano" > "Grace", tab first. Those two
+  // already work and the owner said so; flipping them to "Grace" > "Max Nano" would have been
+  // tidier and would have split every future image away from the ones already filed — which is the
+  // exact complaint this whole change exists to fix.
+  if (who) {
+    if (maxNano || maxOutfit) {
+      const tab = await libraryStore.ensureFolder(maxOutfit ? MAX_OUTFIT_FOLDER : MAX_NANO_FOLDER);
+      if (!tab?.id) return generic();
+      return (await libraryStore.ensureFolder(who, tab.id))?.id || tab.id;
+    }
+    const root = await libraryStore.ensureFolder(who);
+    if (!root?.id) return generic();
+    return (await libraryStore.ensureFolder(engineFolderSuffix(engine), root.id))?.id || root.id;
+  }
   // No character picked. Max Nano / Max Outfit still keep their own pile rather than falling into
   // the shared Eddy bucket — with no name to file under, the tab is the only thing left to sort by.
   const ownRoot = maxOutfit ? MAX_OUTFIT_FOLDER : (maxNano ? MAX_NANO_FOLDER : '');
@@ -4074,6 +4144,20 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // existing tile whose videoPrompt is already set and never reaches the fresh-tile branch, so ''
     // is correct there.
     let poseVideoPrompt = '';
+    /**
+     * DECLARED OUT HERE, not inside the branch that computes it, because the Library write at
+     * the end of this function reads it.
+     *
+     * It was block-scoped to that branch, 217 lines above the use, so EVERY generation threw
+     * ReferenceError at the addItems call. The throw was caught and surfaced as 'Saved to the
+     * gallery but not to Eddy' — while the result tile rendered normally, because that happens
+     * earlier. So the image looked fine and simply never reached the Library (audit,
+     * 2026-08-09). Nothing else was wrong with the filing path.
+     *
+     * An edit keeps 'front': it re-renders an existing picture rather than applying a pose, so
+     * there is no pose view to inherit.
+     */
+    let poseView = 'front';
 
     if (isEdit) {
       // Image 1 = the CURRENT result, and it is the ONLY image sent. It already carries her exact
@@ -4127,7 +4211,6 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
 
       let poseText = '';
       let poseFaceless = false;
-      let poseView = 'front';
       let poseExpression = '';
       if (combo.poseId) {
         const poseItem = poses.find((p) => p.id === combo.poseId);
@@ -4219,7 +4302,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             model: 'nano2',
             aspectRatio: ratio,
             resolution,
-            tags: isEdit ? ['eddy', 'edit'] : ['eddy'],
+            tags: eddyTags(isEdit, characterName),
           }, { timeoutMs: NANO2_CLIENT_TIMEOUT_MS });
           // Asserted INSIDE the retried call on purpose. An empty result is a failed generation, and
           // leaving the check downstream made it the one failure mode that never got a second
@@ -4250,7 +4333,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
            */
           data = await withRateLimitRetry(() => seedreamApi.edit({
             images: payload, prompt, aspectRatio: ratio, resolution,
-            tags: [...(isEdit ? ['eddy', 'edit'] : ['eddy']), 'fallback'],
+            tags: [...eddyTags(isEdit, characterName), 'fallback'],
           }));
           usedFallback = true;
           if (!warnedFallback.current) {
@@ -4261,7 +4344,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       } else {
         // Same model, same per-image price on both paths — an edit is tagged so it is distinguishable
         // in the gallery without changing what it costs.
-        data = await withRateLimitRetry(() => seedreamApi.edit({ images: payload, prompt, aspectRatio: ratio, resolution, tags: isEdit ? ['eddy', 'edit'] : ['eddy'] }));
+        data = await withRateLimitRetry(() => seedreamApi.edit({ images: payload, prompt, aspectRatio: ratio, resolution, tags: eddyTags(isEdit, characterName) }));
       }
     } catch (err) {
       // Marked failed on the feed here (the feed card belongs to this call), then rethrown so
@@ -4387,13 +4470,32 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       // A regenerate lands here too: that image is generated and billed like any other, so it
       // gets saved like any other — the one it replaces is left alone rather than deleted.
       if (first.galleryId) {
-        try {
-          // poseView is stamped so Max Outfit can match a back shot to a back outfit EXACTLY rather
-          // than inferring it from the prompt text. Rows written before this carry no field and fall
-          // back to that inference — see libraryRowView.
-          await libraryStore.addItems([{ url: galleryApi.imageUrl(first.galleryId), prompt, poseView, name: `eddy-${Date.now()}` }], libFolderId);
-        } catch {
-          // The picture is safe in the main gallery either way — never fail a run over this.
+        /**
+         * NOT wrapped in its own catch any more.
+         *
+         * It used to be, with the note "the picture is safe in the main gallery either way". That is
+         * true, and it is exactly the problem: the swallow meant the outer handler's "Saved to the
+         * gallery but not to Eddy" toast -- written for precisely this failure -- could never fire.
+         * A picture that failed to file was invisible AND silent, which is the reported symptom:
+         * "it generates and doesn't send to Library" (audit, 2026-08-09).
+         *
+         * Letting it reach the outer catch keeps the image -- that handler swallows and returns it --
+         * and makes the miss audible.
+         *
+         * poseView is stamped so Max Outfit can match a back shot to a back outfit exactly rather
+         * than inferring it from the prompt text.
+         */
+        const filed = await libraryStore.addItems(
+          [{ url: galleryApi.imageUrl(first.galleryId), prompt, poseView, name: `eddy-${Date.now()}` }],
+          libFolderId,
+        );
+        // addItems reports per-item failures instead of throwing: a quota failure SKIPS the row and
+        // returns normally, with the count on `added.failed`. No caller has ever read it, so a
+        // skipped row looked exactly like a success.
+        if (!Array.isArray(filed) || filed.length === 0) {
+          throw new Error(filed?.failed
+            ? 'Browser storage is full - the picture is in the gallery but not in Eddy Library'
+            : 'Eddy Library did not accept the row');
         }
       }
     } catch (err) {
@@ -5657,8 +5759,15 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           Saving into Library ›{' '}
           {characterName ? (
             <>
-              {/* Just her name — the folder this lands in, exactly as it reads in the Library. */}
-              <span className="font-semibold text-rose-300">{characterName}</span>
+              {/* The FULL path this lands in, exactly as it reads in the Library. Her name alone
+                  was not the answer: plain Eddy nests the engine under her, and the two Max tabs
+                  file tab-first. A line that says "Grace" while the picture goes to
+                  "Grace › Seedream" is the same invisible-state problem this banner exists to end. */}
+              <span className="font-semibold text-rose-300">
+                {maxNano ? `Max Nano › ${characterName}`
+                  : maxOutfit ? `Max Outfit › ${characterName}`
+                  : `${characterName} › ${engine === 'nano2' ? 'Nano' : 'Seedream'}`}
+              </span>
               <button type="button" onClick={() => setCharacterName('')}
                 title="File this batch in the generic folder instead"
                 className="ml-1.5 text-zinc-600 hover:text-zinc-300 cursor-pointer">×</button>

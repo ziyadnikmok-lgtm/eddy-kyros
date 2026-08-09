@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, Btn, Spinner } from '../components/UI';
 import { useApp } from '../context/AppContext';
 import { gallery as galleryApi } from '../services/api';
@@ -22,8 +22,13 @@ import EddySheetImport from '../components/EddySheetImport';
 function RecoverFromGallery({ onDone }) {
   const { notify } = useApp();
   const [busy, setBusy] = useState(false);
+  // Guards the automatic sweep below: StrictMode mounts twice in dev, and two sweeps racing each
+  // other would both read the same "have" set and file every missing picture twice.
+  const sweptRef = useRef(false);
 
-  const run = async () => {
+  // `quiet` = the automatic sweep on mount. It says nothing when there was nothing to do, because a
+  // toast on every single visit to the Library is noise; a recovery that DID something still speaks.
+  const run = async ({ quiet = false } = {}) => {
     setBusy(true);
     try {
       const store = createEddyCollection('eddy-library');
@@ -34,21 +39,59 @@ function RecoverFromGallery({ onDone }) {
       // Existing entries point at /gallery/<id>/image, so the id in the URL is the dedupe key.
       const have = new Set((await store.listItems()).map((i) => (i.url || '').split('/gallery/')[1]?.split('/')[0]).filter(Boolean));
       const missing = mine.filter((g) => !have.has(g.id));
-      if (!missing.length) { notify('Nothing missing — Library is up to date', 'success'); return; }
+      if (!missing.length) { if (!quiet) notify('Nothing missing — Library is up to date', 'success'); return; }
 
+      // Tags the server always writes; anything left is the caller's own marker, not a character.
+      const ENGINE_TAGS = new Set(['seedream-5-pro-edit', 'nano-banana-2', 'wavespeed', 'muapi']);
+      const ROUTE_TAGS = new Set(['eddy', 'edit', 'base', 'pose', 'plate', 'fallback']);
       for (const g of missing) {
-        const character = (g.tags || []).find((t) => t !== 'eddy' && t !== 'seedream-5-pro-edit' && t !== 'wavespeed' && t !== 'muapi');
-        const folderId = character ? (await store.ensureFolder(character))?.id : null;
+        const tags = g.tags || [];
+        const character = tags.find((t) => !ENGINE_TAGS.has(t) && !ROUTE_TAGS.has(t));
+        /**
+         * Filed the SAME WAY a live run files it, or recovery just moves the problem.
+         *
+         * Two things were wrong here. It passed folderId=null when no character could be read --
+         * and a null folderId is not "unsorted", it is invisible: the item shows under "All" and in
+         * no folder at all, which is how 89 pictures went missing on 2026-08-09. And it filed the
+         * character flat, while a live run nests the engine under her, so a recovered picture landed
+         * beside her folder instead of inside it and still read as missing.
+         */
+        const engine = tags.includes('nano-banana-2') ? 'Nano' : 'Seedream';
+        let folderId = null;
+        if (character) {
+          const root = await store.ensureFolder(character);
+          folderId = root?.id ? ((await store.ensureFolder(engine, root.id))?.id || root.id) : null;
+        }
+        // The floor. Never null: "in the wrong folder" is recoverable by dragging, "nowhere" is not.
+        if (!folderId) folderId = (await store.ensureFolder('Eddy'))?.id || null;
         await store.addItems([{ url: galleryApi.imageUrl(g.id), prompt: g.prompt || '', name: `${character || 'eddy'}-${g.id}` }], folderId);
       }
       notify(`Recovered ${missing.length} image${missing.length === 1 ? '' : 's'}`, 'success');
       onDone?.();
     } catch (err) {
-      notify(err.message || 'Could not read the gallery', 'error');
+      if (!quiet) notify(err.message || 'Could not read the gallery', 'error');
     } finally {
       setBusy(false);
     }
   };
+
+  /**
+   * RUNS ON ITS OWN, every time the Library opens.
+   *
+   * Filing happens in the BROWSER: the server saves and bills a generation whether or not the tab
+   * survives, so a reload, a crash or a closed window mid-batch leaves the picture safe on disk and
+   * missing from Eddy. Until now the only cure was remembering to press a button — which is why
+   * pictures kept "not going to the Library" (audit, 2026-08-09).
+   *
+   * Safe to run unattended: it dedupes on the gallery id already in each row's URL, so a picture
+   * that IS filed is never filed twice, and it only ever adds.
+   */
+  useEffect(() => {
+    if (sweptRef.current) return;
+    sweptRef.current = true;
+    run({ quiet: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per mount, by design
+  }, []);
 
   return (
     <Card className="p-4">
@@ -56,7 +99,7 @@ function RecoverFromGallery({ onDone }) {
         <p className="text-xs text-zinc-500">
           Reloaded while something was generating? The picture is still saved — pull it in here.
         </p>
-        <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={run} disabled={busy}>
+        <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={() => run()} disabled={busy}>
           {busy ? <><Spinner size={14} /><span className="ml-2">Checking…</span></> : 'Recover missing'}
         </Btn>
       </div>

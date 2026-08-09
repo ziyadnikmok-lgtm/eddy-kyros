@@ -20,8 +20,11 @@ const RES_OPTIONS = SEEDREAM_RESOLUTIONS.map((r) => ({ value: r, label: r }));
 // Each job sends exactly one source photo, so the character gets the rest of Seedream's budget.
 const MAX_CHAR_IMAGES = SEEDREAM_MAX_IMAGES - 1;
 const MAX_SOURCES = 12;
-// Keep concurrency low — each job holds an HTTP request while Muapi renders.
-const MAX_CONCURRENT_JOBS = 2;
+// Each job holds an HTTP request open for the whole render. Raised 2 -> 4 (owner, 2026-08-09):
+// at ~45s a job that is ~5 requests/minute, and it runs alongside Eddy's 12 lanes against a shared
+// 60/minute server limit. Deliberately a third of Eddy's — this page is the one you use WHILE a big
+// batch is running, so it should take the smaller share of the budget.
+const MAX_CONCURRENT_JOBS = 4;
 const SPEND_KEY = 'kyros.photoMatchSeedream.sessionSpend';
 
 // Seedream enforces an undocumented prompt-length cap ("The text length cannot exceed the
@@ -190,6 +193,29 @@ function parseDataUrl(dataUrl) {
 
 const _cache = { extra: '', aspectRatio: 'auto', resolution: '1K', exactRecreate: false, varyBackground: false, nsfw: false, blurSource: true, faceless: false };
 // Images are too big for _cache/localStorage — IndexedDB so they survive a reload.
+/**
+ * Retry a generation that came back rate-limited.
+ *
+ * This page had NO retry at all: a 429 lost the image outright. That was survivable at 2 concurrent
+ * jobs; at 4, running alongside Eddy at 12 against a shared 60-per-minute server limit, it is not.
+ * Raising the lane count without this would have traded wall-clock for images (owner, 2026-08-09).
+ *
+ * ONLY 429 / RATE_LIMITED is retried. Everything else fails the same way on attempt four as on
+ * attempt one, and retrying a bad prompt or a missing key just spends three more calls to reach the
+ * same place. Linear backoff, not exponential: this quota refills on a clock.
+ */
+async function withRateLimitRetry(fn, { attempts = 4, baseDelayMs = 4000 } = {}) {
+  for (let i = 0; ; i += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      const limited = err?.status === 429 || err?.code === 'RATE_LIMITED';
+      if (!limited || i >= attempts - 1) throw err;
+      await new Promise((r) => setTimeout(r, baseDelayMs * (i + 1)));
+    }
+  }
+}
+
 const store = createPageStore('kyros-photo-match-seedream-state');
 
 /**
@@ -462,7 +488,7 @@ export default function PhotoMatchSeedreamPage() {
       const sourceImg = parseDataUrl(source.dataUrl);
       if (!sourceImg) throw new Error('Could not read the source photo');
 
-      const data = await seedreamApi.edit({
+      const data = await withRateLimitRetry(() => seedreamApi.edit({
         images: [...charRefs, sourceImg],
         prompt,
         aspectRatio: ratio,
@@ -470,7 +496,7 @@ export default function PhotoMatchSeedreamPage() {
         // Omitted entirely on the Seedream path so that request stays byte-identical to what it
         // was before this switch existed.
         ...(engine === 'nano2' ? { model: 'nano2' } : {}),
-      }, engine === 'nano2' ? { timeoutMs: NANO2_CLIENT_TIMEOUT_MS } : undefined);
+      }, engine === 'nano2' ? { timeoutMs: NANO2_CLIENT_TIMEOUT_MS } : undefined));
 
       const first = (data.images || [])[0];
       if (!first) throw new Error(`${engine === 'nano2' ? 'Nano Banana 2' : 'Seedream'} returned no image`);
