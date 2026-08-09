@@ -75,6 +75,7 @@ const EddyEnvironmentPage = lazy(() => import('./pages/EddyTabs').then((m) => ({
 const EddyBaseLibraryPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.EddyBaseLibraryPage })));
 const EddyBasePage = lazy(() => import('./pages/EddyBasePage'));
 // Same component as Eddy, in its Max Nano mode — see the `mode` prop on EddyGeneratePage.
+const EddyMaxOutfitPage = lazy(() => import('./pages/EddyGeneratePage').then((m) => ({ default: () => <m.default mode="maxOutfit" /> })));
 const EddyMaxNanoPage = lazy(async () => {
   const m = await import('./pages/EddyGeneratePage');
   const Page = m.default;
@@ -121,6 +122,7 @@ const NAV_ICONS = {
   eddyPose: IconSwap,
   eddyEnvironment: IconGrid2,
   eddyMaxNano: IconBadgeSparkle,
+  eddyMaxOutfit: IconBadgeSparkle,
   eddyBase: IconGrid2,
   eddyBaseLibrary: IconGrid2,
   videoLibrary: IconGrid2,
@@ -177,6 +179,7 @@ const NAV_COLORS = {
   eddyPose: ['#fda4af', '#e11d48'],
   eddyEnvironment: ['#a7f3d0', '#059669'],
   eddyMaxNano: ['#93c5fd', '#2563eb'],
+  eddyMaxOutfit: ['#c4b5fd', '#7c3aed'],
   eddyBase: ['#a7f3d0', '#059669'],
   eddyBaseLibrary: ['#6ee7b7', '#047857'],
   videoLibrary: ['#c4b5fd', '#7c3aed'],
@@ -219,6 +222,8 @@ const NAV_SECTIONS = [
       // Directly under Eddy: it is the same page in another mode, so it belongs beside the page it
       // mirrors rather than down among the collections (owner, 2026-08-09).
       { id: 'eddyMaxNano', label: 'Max Nano' },
+      // Stage 2 sits beside stage 1: Max Nano makes the poses, Max Outfit dresses them.
+      { id: 'eddyMaxOutfit', label: 'Max Outfit' },
       { id: 'eddyLibrary', label: 'Library' },
       { id: 'eddyOutfit', label: 'Outfit' },
       { id: 'eddyPose', label: 'Pose' },
@@ -307,12 +312,14 @@ const FEED_HIDDEN_PAGES = new Set([
   // Both ids route to EddyGeneratePage, so both must be listed or the panel returns via /eddy.
   'eddyGenerate',
   'eddyMaxNano',
+  'eddyMaxOutfit',
   'eddy',
   'eddyLibrary',
   'eddyOutfit',
   'eddyPose',
   'eddyEnvironment',
   'eddyMaxNano',
+  'eddyMaxOutfit',
   'eddyBase',
   'eddyBaseLibrary',
   'videoLibrary',
@@ -427,6 +434,7 @@ const PAGE_DESCRIPTIONS = {
   eddyOutfit: 'Outfits, organised in folders',
   eddyPose: 'Your saved pose prompts',
   eddyMaxNano: 'Her, in every pose you pick — Nano Banana 2 at 2K, no outfit swap',
+  eddyMaxOutfit: 'Pick a Library folder, pick outfits — Seedream 5.0 Pro swaps the clothes and keeps everything else',
   eddyBase: 'Make a new base photo of a saved character, from her own references',
   eddyBaseLibrary: 'Your generated base photos, filed by character',
   eddyCharacter: 'Characters from a base image — no prompt needed',
@@ -503,6 +511,7 @@ const PAGES = {
   eddyPose: EddyPosePage,
   eddyEnvironment: EddyEnvironmentPage,
   eddyMaxNano: EddyMaxNanoPage,
+  eddyMaxOutfit: EddyMaxOutfitPage,
   eddyBase: EddyBasePage,
   eddyBaseLibrary: EddyBaseLibraryPage,
   videoLibrary: VideoLibraryPage,
