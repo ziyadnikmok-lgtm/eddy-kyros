@@ -2643,6 +2643,9 @@ const _cache = {
   // does not silently change the output of every existing workflow; the toggle is one click away
   // for testing text-only poses (owner, 2026-08-06, "I will test with send image or no").
   sendPoseImage: true,
+  // sendOutfitImage defaults OFF — see the toggle for why. Sending the product photo was tried
+  // before and reverted; this makes it a choice rather than a decision made for you.
+  sendOutfitImage: false,
   // 'auto' emits nothing, i.e. exactly the behaviour that shipped before HER BUILD existed.
   build: 'auto',
   // Which image engine runs the generation. Seedream is the default because it is what this
@@ -2712,6 +2715,8 @@ export default function EddyGeneratePage() {
   // Whether the pose PHOTO goes to the provider, or only the one-sentence pose description.
   // The picture stays visible in the picker either way — this governs the payload, nothing else.
   const [sendPoseImage, setSendPoseImage] = useState(_cache.sendPoseImage ?? true);
+  // Whether the outfit's PRODUCT photo goes to the model alongside its description.
+  const [sendOutfitImage, setSendOutfitImage] = useState(_cache.sendOutfitImage ?? false);
   // Her standing build — describes the character, never changes her. See BUILD_OPTIONS.
   const [build, setBuild] = useState(_cache.build ?? 'auto');
   // 'seedream' | 'gemini' — see the ENGINE switch in the UI and the branch in generateCombo.
@@ -3052,10 +3057,10 @@ export default function EddyGeneratePage() {
   }, [activeModel, models, notify]);
 
   useEffect(() => {
-    const snap = { baseImage, faceImage, pickedOutfits, pickedPoses, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, build, engine };
+    const snap = { baseImage, faceImage, pickedOutfits, pickedPoses, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine };
     Object.assign(_cache, snap);
     stateStore.set('state', snap);
-  }, [baseImage, faceImage, pickedOutfits, pickedPoses, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, build, engine]);
+  }, [baseImage, faceImage, pickedOutfits, pickedPoses, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine]);
 
   /**
    * Submits ONE video job and returns as soon as Muapi accepts it (a taskId) — the render finishes
@@ -3347,7 +3352,7 @@ export default function EddyGeneratePage() {
     let n = baseImage ? 1 : 0;
     const poseIndex = sendPoseImage && ps && poseThumbs[ps.id] ? (n += 1) : 0;
     const faceIndex = faceImage ? (n += 1) : 0;
-    const outfitIndex = o && outfitThumbs[o.id] && !wantsNude ? (n += 1) : 0;
+    const outfitIndex = sendOutfitImage && o && outfitThumbs[o.id] && !wantsNude ? (n += 1) : 0;
     const previewPoseView = readPoseView(ps?.prompt);
     const previewBackText = previewPoseView === 'back' ? o?.backPrompt?.trim() : '';
     return buildPrompt({
@@ -3369,7 +3374,7 @@ export default function EddyGeneratePage() {
       poseFaceless: !!poseIndex && (faceless || POSE_FACELESS_RE.test(String(ps?.prompt || ''))),
       lightingText: lightingTextFor(lighting),
     });
-  }, [combos, outfits, poses, instruction, baseImage, faceImage, outfitThumbs, poseThumbs, nsfw, wantsNude, wantsBody, undressChip, faceless, lighting, sendPoseImage, build, wantsExpression]);
+  }, [combos, outfits, poses, instruction, baseImage, faceImage, outfitThumbs, poseThumbs, nsfw, wantsNude, wantsBody, undressChip, faceless, lighting, sendPoseImage, sendOutfitImage, build, wantsExpression]);
 
   const addChip = (text) => setInstruction((prev) => (prev.includes(text) ? prev : `${prev} ${text}`.trim()));
 
@@ -3652,11 +3657,25 @@ export default function EddyGeneratePage() {
         outfitText = backText || outfitItem?.prompt?.trim() || '';
       }
       if (faceImg) { payload.push(faceImg); faceIndex = payload.length; }
-      // OUTFIT IMAGE IS NOT SENT — tried, and reverted. The product photo shows the garment flat or
-      // on a mannequin, and that flat chest came back on HER: the bust rendered to the garment's
-      // shape instead of her own, which is the one thing this page must never get wrong. The outfit
-      // TEXT already describes the garment well enough. `outfitIndex` stays 0 so buildPrompt keeps
-      // its words-only outfit path.
+      /**
+       * The outfit's PRODUCT photo, only when asked for (OUTFIT PHOTO toggle).
+       *
+       * It used to be sent, and was removed: the photo shows the garment flat or on a mannequin,
+       * and that flat chest came back on HER — the bust rendered to the garment's shape instead of
+       * her own. buildPrompt now answers that directly whenever outfitIndex is set ("That garment
+       * is worn by HER and takes HER shape … never flatten, shrink or reshape her breasts to match
+       * the garment"), and pairs it with the take-only-the-clothing rule that keeps the product
+       * shot's background and mannequin out. So this is a real choice now rather than a decision
+       * made for you: OFF keeps the words-only path that has been the default, ON buys garment
+       * accuracy at the cost of leaning on those guards (owner, 2026-08-09).
+       *
+       * Never sent when NSFW/undress is on — there is no garment to reproduce, and the picture
+       * would only pull clothing back toward a body meant to be bare.
+       */
+      if (sendOutfitImage && combo.outfitId && !wantsNude) {
+        const oImg = parseDataUrl(await outfitStore.getImage(combo.outfitId));
+        if (oImg) { payload.push(oImg); outfitIndex = payload.length; }
+      }
 
       // poseFaceless only bites when the pose IMAGE is actually sent (poseIndex) — a text-only pose
       // has no framing to match.
@@ -3839,7 +3858,7 @@ export default function EddyGeneratePage() {
     }
 
     return { image: first, videoPrompt: poseVideoPrompt, uid: resultUid };
-  }, [sourceImages, aspectRatio, baseImage, resolution, perRunImages, nsfw, wantsNude, wantsBody, undressChip, instruction, faceImage, outfits, poses, poseStore, libraryStore, submitVideoJob, notify, sendPoseImage, faceless, lighting, build, engine, wantsExpression]);
+  }, [sourceImages, aspectRatio, baseImage, resolution, perRunImages, nsfw, wantsNude, wantsBody, undressChip, instruction, faceImage, outfits, poses, poseStore, outfitStore, libraryStore, submitVideoJob, notify, sendPoseImage, sendOutfitImage, faceless, lighting, build, engine, wantsExpression]);
 
   // Keep the ref pointed at the latest generateCombo every render, so the mount-time rehydrate
   // effect's rebuilt regenerate closures reach the current one at click time (see the ref's comment).
@@ -4848,6 +4867,48 @@ export default function EddyGeneratePage() {
             </span>
             <span className="block text-[0.625rem] text-zinc-500">
               {faceless ? 'Keep her face cropped out if the pose is' : 'Copy the pose, show her face'}
+            </span>
+          </span>
+        </button>
+        {/* OUTFIT PHOTO toggle. OFF is the long-standing default: the product shot is a garment on a
+            mannequin, and sending it once made the bust render to the GARMENT's shape instead of
+            hers. buildPrompt now states the counter-rule whenever the image is present, so this is
+            offered as a real choice — ON when the garment has detail the words cannot carry
+            (a print, an unusual cut), OFF when her figure matters more. Suppressed automatically
+            with NSFW, where there is no garment to reproduce. */}
+        <button
+          onClick={() => setSendOutfitImage((v) => !v)}
+          aria-pressed={sendOutfitImage}
+          disabled={wantsNude}
+          title={wantsNude
+            ? 'Not used while she is undressed — there is no garment to send'
+            : (sendOutfitImage
+              ? 'The outfit product photo is sent with its description'
+              : 'Only the outfit description is sent')}
+          className={cn(
+            'group flex items-center gap-3 rounded-xl border px-3 py-2 transition',
+            wantsNude ? 'cursor-not-allowed opacity-40 border-white/[0.07] bg-white/[0.02]'
+              : sendOutfitImage
+                ? 'cursor-pointer border-rose-500/60 bg-rose-500/10 shadow-[0_0_22px_-6px] shadow-rose-500/70'
+                : 'cursor-pointer border-white/[0.07] bg-white/[0.02] hover:border-zinc-600',
+          )}
+        >
+          <span className={cn('relative h-6 w-11 shrink-0 rounded-full transition-colors',
+            sendOutfitImage && !wantsNude ? 'bg-rose-500' : 'bg-zinc-700')}>
+            <span className={cn(
+              'absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all',
+              sendOutfitImage && !wantsNude ? 'left-[22px]' : 'left-0.5',
+            )} />
+          </span>
+          <span className="text-left leading-tight">
+            <span className={cn('block text-sm font-bold tracking-wide',
+              sendOutfitImage && !wantsNude ? 'text-rose-300' : 'text-zinc-400')}>
+              OUTFIT PHOTO {sendOutfitImage && !wantsNude ? 'SENT' : 'NOT SENT'}
+            </span>
+            <span className="block text-[0.625rem] text-zinc-500">
+              {sendOutfitImage && !wantsNude
+                ? 'Photo + description — better garment accuracy'
+                : 'Description only — safer for her figure'}
             </span>
           </span>
         </button>
