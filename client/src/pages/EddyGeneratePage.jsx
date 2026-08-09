@@ -88,7 +88,18 @@ const MAX_OUTFIT_FOLDER = 'Max Outfit';
  * With no character chosen the old behaviour stands, NSFW split included -- there is no name to
  * file under, and inventing one would be worse than the generic folder.
  */
-async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName }) {
+/**
+ * Which engine made it, as a folder-name suffix.
+ *
+ * "Grace Seedream" and "Grace Nano" are different piles on purpose: the two models produce visibly
+ * different results from the same references, and once they are mixed in one folder there is no way
+ * to tell afterwards which engine made which picture (owner, 2026-08-09).
+ */
+function engineFolderSuffix(engine) {
+  return engine === 'nano2' ? 'Nano' : 'Seedream';
+}
+
+async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName, engine }) {
   const who = String(characterName || '').trim();
   // Max Nano and Max Outfit each keep their own pile — stage-1 poses and stage-2 swaps are
   // different work and mixing them makes a batch impossible to find afterwards.
@@ -99,7 +110,8 @@ async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, ch
     const sub = await libraryStore.ensureFolder(who, root?.id || null);
     return sub?.id || root?.id || null;
   }
-  if (who) return (await libraryStore.ensureFolder(who))?.id || null;
+  // Named per character AND per engine — "Grace Seedream", "Grace Nano".
+  if (who) return (await libraryStore.ensureFolder(`${who} ${engineFolderSuffix(engine)}`))?.id || null;
   return (await libraryStore.ensureFolder(nsfw ? 'Eddy NSFW' : 'Eddy'))?.id || null;
 }
 
@@ -2916,6 +2928,9 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   const outfitStore = useMemo(() => createEddyCollection('eddy-outfit'), []);
   const poseStore = useMemo(() => createEddyCollection('eddy-pose'), []);
   const libraryStore = useMemo(() => createEddyCollection('eddy-library'), []);
+  // Read only by the character lookup above: a folder in each IS a character.
+  const charStore = useMemo(() => createEddyCollection('eddy-character'), []);
+  const baseStore = useMemo(() => createEddyCollection('eddy-base'), []);
 
   const [outfits, setOutfits] = useState([]);
   const [outfitThumbs, setOutfitThumbs] = useState({});
@@ -3075,6 +3090,17 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   }, [maxOutfit, engine]);
 
   /**
+   * The Eddy tab arrives on SEEDREAM; Max Nano arrives on Nano Banana 2.
+   *
+   * `engine` is one shared, persisted value, so whichever tab you used last decided what the next
+   * one opened with — land on Eddy after a Max Nano run and it was silently set to nano2, at nano2's
+   * price. Set on ARRIVAL only, so switching engine on Eddy still sticks for that session.
+   */
+  useEffect(() => {
+    if (!maxNano && !maxOutfit) setEngine('seedream');
+  }, [maxNano, maxOutfit]);
+
+  /**
    * 2K is Max Nano's DEFAULT, not a lock — it is set on arrival and then left alone.
    *
    * Keying this to `resolution` as well would re-fire the moment you picked 1K and put it straight
@@ -3189,6 +3215,48 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   // each one. A ref lets a rehydrated tile's Regenerate call through to the current generateCombo at
   // CLICK time (always long after mount, when the ref is set) with neither a stale closure nor an
   // ordering bug. This is the "or a ref" stabilisation the fix calls for.
+  /**
+   * WHO IS IN THE PHOTO, worked out from the photo itself.
+   *
+   * The name was only ever captured at pick time, so it was empty for every session that started
+   * with a photo already in the slot — a reload, an app restart, or a photo dropped in rather than
+   * picked. That is why Eddy kept filing into the generic folder while Max Nano and Base looked
+   * fine: those two have their own named roots and never needed the name at all.
+   *
+   * So instead of trusting a click that may never have happened, the picture is looked up. Both
+   * collections keep a folder per character, and the slot holds the exact bytes that were stored,
+   * so an identity match is exact — no guessing.
+   *
+   * The FACE wins over the base photo: a close-up is only ever of one person, while a base photo can
+   * be reused. Runs only while the name is empty, so it never overrides a deliberate choice.
+   */
+  useEffect(() => {
+    if (characterName) return undefined;
+    if (!baseImage && !faceImage) return undefined;
+    let alive = true;
+    (async () => {
+      for (const [store, img] of [[charStore, faceImage], [baseStore, baseImage]]) {
+        if (!img) continue;
+        try {
+          const [folders, items] = await Promise.all([store.listFolders(), store.listItems()]);
+          if (!folders.length) continue;
+          for (const it of items) {
+            if (!it.folderId) continue;
+            // eslint-disable-next-line no-await-in-loop -- stops at the first hit; these collections
+            // are a character's reference photos, not the thousands-of-rows Library.
+            const src = await store.getImage(it.id);
+            if (src && src === img) {
+              const name = folders.find((f) => f.id === it.folderId)?.name || '';
+              if (alive && name) setCharacterName(name);
+              return;
+            }
+          }
+        } catch { /* an unreadable collection just means no name — the banner says so */ }
+      }
+    })();
+    return () => { alive = false; };
+  }, [characterName, baseImage, faceImage, charStore, baseStore]);
+
   // Read inside generateCombo. A ref rather than a dep, so a Library write mid-batch cannot
   // rebuild the callback underneath a running run.
   const libItemsRef = useRef([]);
@@ -3983,7 +4051,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     let libFolderId = runCtx ? runCtx.libFolderId : null;
     if (!runCtx) {
       try {
-        libFolderId = await resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName });
+        libFolderId = await resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName, engine });
       } catch {
         // Filing is a convenience; a failure here must not cost you the generation.
       }
@@ -4414,7 +4482,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // "Gwen". Resolved once per run so a 25-image batch doesn't hunt for it 25 times.
     let libFolderId = null;
     try {
-      libFolderId = await resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName });
+      libFolderId = await resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName, engine });
     } catch {
       // Filing is a convenience; a failure here must not cost you the generation.
     }
@@ -5560,7 +5628,9 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           {characterName ? (
             <>
               <span className="font-semibold text-rose-300">
-                {maxNano ? `Max Nano / ${characterName}` : maxOutfit ? `Max Outfit / ${characterName}` : characterName}
+                {maxNano ? `Max Nano / ${characterName}`
+                  : maxOutfit ? `Max Outfit / ${characterName}`
+                  : `${characterName} ${engine === 'nano2' ? 'Nano' : 'Seedream'}`}
               </span>
               <button type="button" onClick={() => setCharacterName('')}
                 title="File this batch in the generic folder instead"
