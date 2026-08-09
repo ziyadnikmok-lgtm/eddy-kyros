@@ -2029,8 +2029,12 @@ export default function EddyCollection({
           and on Escape; arrows step through the CURRENT filter. */}
       {lightboxId && (() => {
         const it = visible.find((x) => x.id === lightboxId);
-        const src = it && (thumbs[it.id] || it.url);
-        if (!src) return null;
+        // NOT `if (!src) return null`. That made a click on an item whose picture cannot load do
+        // absolutely nothing — no overlay, no message — which is indistinguishable from the click
+        // not registering at all (owner, 2026-08-09: "i click picture nothing open"). The overlay
+        // opens either way and says what is wrong, so the click always has a visible result.
+        if (!it) return null;
+        const src = thumbs[it.id] || it.url || '';
         const i = visible.findIndex((x) => x.id === lightboxId);
         return (
           <div
@@ -2039,10 +2043,21 @@ export default function EddyCollection({
             // the pointer drifts off it, which makes a large view feel broken.
             onClick={(e) => { if (e.target === e.currentTarget) setLightboxId(''); }}
           >
-            <img src={src} alt={it.name} draggable={false}
-              onPointerDown={onPointerDown} onPointerUp={onPointerUp}
-              onClick={(e) => e.stopPropagation()}
-              className="max-h-full max-w-full select-none rounded-xl object-contain" />
+            {src ? (
+              <img src={src} alt={it.name} draggable={false}
+                onPointerDown={onPointerDown} onPointerUp={onPointerUp}
+                onClick={(e) => e.stopPropagation()}
+                className="max-h-full max-w-full select-none rounded-xl object-contain" />
+            ) : (
+              <div onClick={(e) => e.stopPropagation()}
+                className="max-w-sm rounded-xl border border-amber-500/40 bg-amber-500/[0.08] p-6 text-center">
+                <p className="text-sm font-semibold text-amber-200">Image not on this machine</p>
+                <p className="mt-2 text-xs text-zinc-400">
+                  This card stores a link to a picture in another gallery, so there is nothing here to show.
+                  Arrows and swipe still work — use “Remove unloadable” in the toolbar to clear cards like this.
+                </p>
+              </div>
+            )}
 
             <button type="button" onClick={() => setLightboxId('')} aria-label="Close"
               className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 text-lg text-white hover:bg-white/20 cursor-pointer">×</button>

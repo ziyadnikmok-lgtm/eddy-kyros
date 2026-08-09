@@ -2989,6 +2989,24 @@ export default function EddyGeneratePage() {
       setResolution((v) => (v !== '1K' ? v : saved.resolution || '1K'));
       setFaceless((v) => v || !!saved.faceless);
       setLighting((v) => (v !== 'auto' ? v : saved.lighting || 'auto'));
+
+      /**
+       * These four were WRITTEN to the snapshot and never read back.
+       *
+       * Within one session they survived anyway — `_cache` is module-level and switching workspace
+       * tabs does not remount the page — so the miss only showed as "it is still on over here"
+       * (owner, 2026-08-09, on the Max tab). Across a real reload it was worse and quieter: Her
+       * build silently reverted to "From photo", which changes the prompt on every generation with
+       * nothing on screen saying so.
+       *
+       * Same guarded shape as staticCamera above: apply the saved value only while the state is
+       * still at its default, so a slow read cannot clobber something toggled while it was in
+       * flight, and a store predating a key leaves that default alone.
+       */
+      setSendPoseImage((v) => (v === true && typeof saved.sendPoseImage === 'boolean' ? saved.sendPoseImage : v));
+      setSendOutfitImage((v) => (v === false && typeof saved.sendOutfitImage === 'boolean' ? saved.sendOutfitImage : v));
+      setBuild((v) => (v === 'auto' ? saved.build || 'auto' : v));
+      setEngine((v) => (v === 'seedream' ? saved.engine || 'seedream' : v));
     })();
     return () => { alive = false; };
   }, []);
