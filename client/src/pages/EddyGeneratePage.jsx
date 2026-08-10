@@ -134,6 +134,70 @@ function eddyTags(isEdit, characterName) {
   return [...(isEdit ? ['eddy', 'edit'] : ['eddy']), ...(who ? [who] : [])];
 }
 
+/**
+ * The next unused batch number for a character: "Grace" -> "Grace 3".
+ *
+ * Every Generate click makes its own folder, because these runs are mass -- 50 images at a time --
+ * and dropping them into one ever-growing "Grace" makes today's batch indistinguishable from last
+ * week's (owner, 2026-08-10).
+ *
+ * ALWAYS HIGHEST + 1, never the first gap. Deleting "Grace 2" must not cause a later run to reuse
+ * that name: two unrelated batches under one folder look like one batch, and nothing on screen
+ * would say otherwise. A retired number stays retired.
+ *
+ * Matches "Grace 2" but not "Grace cosplay 2" -- the base name must be the whole prefix, or
+ * generating for "Grace" would count another character's folders as her own.
+ */
+function nextBatchName(folders, base) {
+  const b = String(base || '').trim();
+  if (!b) return '';
+  // Split on the last space rather than building a regex out of her name. A character name can
+  // legitimately contain regex metacharacters, and an escape written wrong turns "matches nothing"
+  // into "matches everything" — which would read another character's folders as hers and renumber
+  // from their count.
+  let top = 0;
+  const lower = b.toLowerCase();
+  for (const f of folders) {
+    const name = String(f?.name || '').trim();
+    const cut = name.lastIndexOf(' ');
+    if (cut <= 0) continue;                                    // "Grace" alone is not a batch folder
+    if (name.slice(0, cut).toLowerCase() !== lower) continue;  // "Grace cosplay 2" is not Grace's
+    const n = name.slice(cut + 1);
+    if (!/^[0-9]+$/.test(n)) continue;
+    top = Math.max(top, Number(n));
+  }
+  return `${b} ${top + 1}`;
+}
+
+/**
+ * One batch folder per character per RUN, created once no matter how many lanes ask for it.
+ *
+ * Twelve lanes generate concurrently. If each resolved its own folder, two Grace images landing at
+ * the same moment would both read "no Grace 3 yet" and create "Grace 3" and "Grace 4" -- one click,
+ * two folders, half the batch in each. So the PROMISE is cached, not the id: the second caller
+ * awaits the first one's creation instead of racing it.
+ */
+function makeBatchFolders(libraryStore, fallbackId) {
+  const pending = new Map();
+  return (name) => {
+    const who = String(name || '').trim();
+    if (!who) return Promise.resolve(fallbackId);
+    if (!pending.has(who)) {
+      pending.set(who, (async () => {
+        try {
+          const folders = await libraryStore.listFolders();
+          const next = nextBatchName(folders, who);
+          return (await libraryStore.ensureFolder(next))?.id || fallbackId;
+        } catch {
+          // A folder we could not make must not lose the picture -- fall back to the run's folder.
+          return fallbackId;
+        }
+      })());
+    }
+    return pending.get(who);
+  };
+}
+
 async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName }) {
   const who = String(characterName || '').trim();
   // Every branch falls back to the generic bucket rather than to null.
@@ -3398,6 +3462,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   const staticCameraRef = useRef(staticCamera);
   useEffect(() => { staticCameraRef.current = staticCamera; }, [staticCamera]);
   useEffect(() => { libItemsRef.current = libItems; }, [libItems]);
+  useEffect(() => { libFoldersRef.current = libItemFolders; }, [libItemFolders]);
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [resolution, setResolution] = useState(_cache.resolution);
 
@@ -3628,6 +3693,9 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   // rebuild the callback underneath a running run.
   const basePhotosRef = useRef({ thumbs: {}, pairs: new Map() });
   const libItemsRef = useRef([]);
+  // The Library's FOLDERS, for naming a Max Outfit source's character inside generateCombo. A ref
+  // for the same reason as libItems: loading them mid-batch must not rebuild the callback.
+  const libFoldersRef = useRef([]);
   const generateComboRef = useRef(null);
   // Points at the latest run(), for the resume-the-unfinished-queue effect. See its assignment
   // below run()'s definition for why it cannot be a plain dependency.
@@ -4703,6 +4771,30 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     const videoRatio = runCtx ? runCtx.videoRatio : toVideoAspectRatio(ratio);
     const perImageCost = runCtx ? runCtx.perImageCost : seedreamCost(resolution, Math.max(1, perRunImages));
     let libFolderId = runCtx ? runCtx.libFolderId : null;
+    /**
+     * WHOSE picture is this one?
+     *
+     * A single run can span several women -- base photos ticked across folders on Eddy/Max Nano,
+     * or source rows from different Library folders on Max Outfit. The run-level characterName is
+     * one value and cannot describe that, so the name is read off the COMBO and each gets its own
+     * numbered batch folder.
+     *
+     * Falls back to the run's folder when the combo carries no name, which is the single-character
+     * case and every case that existed before this.
+     */
+    if (runCtx?.batchFolderFor) {
+      let who = '';
+      if (combo?.basePhotoId) who = basePhotosRef.current.pairs.get(combo.basePhotoId)?.name || '';
+      else if (combo?.baseId) {
+        const row = libItemsRef.current.find((i) => i.id === combo.baseId);
+        const fid = row?.folderId;
+        if (fid) who = (libFoldersRef.current.find((f) => f.id === fid)?.name || '').trim();
+        // A source sitting in a tab bucket is not a person -- same rule as the name-detect effect.
+        if (who === MAX_OUTFIT_FOLDER || who === MAX_NANO_FOLDER || who === 'Eddy' || who === 'Eddy NSFW') who = '';
+      }
+      if (!who) who = String(characterName || '').trim();
+      if (who) libFolderId = await runCtx.batchFolderFor(who);
+    }
     if (!runCtx) {
       try {
         libFolderId = await resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName });
@@ -5223,7 +5315,17 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // regenerate closure), so the batch — and a FRESH tile's later regenerate — reproduce exactly
     // THESE settings: the money path is unchanged. A rehydrated tile's regenerate passes no runCtx
     // and reads the live controls instead (see generateCombo's header).
-    const runCtx = { charPayload, ratio, videoRatio, perImageCost, libFolderId };
+    /**
+     * ONE BATCH FOLDER PER CHARACTER, PER CLICK.
+     *
+     * Made here rather than inside generateCombo so all 12 lanes share it: a run spanning ten
+     * characters makes exactly ten folders -- "Grace 1", "Lily 1", ... -- and every image of hers
+     * lands in hers. Handed through runCtx like every other per-run value.
+     *
+     * libFolderId stays as the floor for a combo with no name attached.
+     */
+    const batchFolderFor = makeBatchFolders(libraryStore, libFolderId);
+    const runCtx = { charPayload, ratio, videoRatio, perImageCost, libFolderId, batchFolderFor };
 
     // Identifies THIS run's jobs. Read once so every jid in the batch shares it.
     const runStamp = Date.now();
