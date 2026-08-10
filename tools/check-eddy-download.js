@@ -69,5 +69,25 @@ check('BEFORE: only 1 of 4 rows was saveable', oldKeeps.length === 1);
 check('AFTER: 3 of 4 are — the prompt-only card is correctly still skipped', newKeeps.length === 3);
 check('and the one it skips is the one with no picture', !newKeeps.find((r) => r.id === 'd'));
 
+// --- 5. metadata is stripped on BOTH paths (owner asked, 2026-08-10) --------------------------
+// The tile download goes through downloadBlob; the bulk save calls the IPC directly and would
+// bypass it entirely if it did not strip for itself.
+check('the tile path hands its blob to downloadBlob, which strips first',
+  col.includes('await downloadBlob(blob, `${base}.${ext}`)'));
+check('downloadBlob strips before writing, not after', /if \(stripEnabled\(\)\) \{[\s\S]{0,120}await stripMetadata\(blob\)/.test(strip));
+check('the bulk path strips for itself rather than inheriting it',
+  col.includes('const res = await stripMetadata(new Blob([bytesOf(f.b64)]'));
+check('a strip failure still saves the file rather than losing it',
+  new RegExp(String.raw`\} catch \{\s*\n\s*return bytesOf\(f\.b64\);`).test(col));
+check('stripping is ON unless explicitly turned off', /getItem\('kyros\.stripMetadata'\) !== 'off'/.test(strip));
+check('a cleaned file says so in its name', /_metadatacleaned/.test(strip));
+
+// --- 6. two download paths, not four -------------------------------------------------------------
+check('the duplicate top-toolbar save is gone', !col.includes(String.raw`{visible.length > 0 && (`) || col.includes('{false && ('));
+check('the selection bar names the count it will save', col.includes('Download {selected.length}'));
+check('and still uses downloadSelected, which owns "Remove after download"',
+  col.includes('onClick={downloadSelected}>') && /purgeOnDownload && done\.length/.test(col));
+check('the reason both were kept is recorded', /swapping them would have quietly dropped that feature/.test(col));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

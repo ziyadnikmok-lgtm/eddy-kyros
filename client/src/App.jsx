@@ -240,9 +240,6 @@ const NAV_SECTIONS = [
       { id: 'seedreamEdit', label: 'Seedream 5 Pro' },
       { id: 'outfitSwapSeedream', label: 'Outfit Swap' },
       { id: 'photoMatchSeedream', label: 'Photo Match' },
-      // Beside Photo Match on purpose: browsing Pinterest is the step BEFORE a match, and
-      // the tab's only job is to hand it sources.
-      { id: 'pinterestFeed', label: 'Pinterest' },
       { id: 'sceneRecreateSeedream', label: 'Scene Recreate' },
       { id: 'poseRemixSeedream', label: 'Pose Remix' },
     ],
@@ -259,6 +256,9 @@ const NAV_SECTIONS = [
   {
     label: 'Media Grab',
     items: [
+      // Pinterest belongs here, not under Seedream: this section is where source material is
+      // FETCHED from, and generating with it is a separate step further down (owner, 2026-08-10).
+      { id: 'pinterestFeed', label: 'Pinterest' },
       { id: 'instagramFrames', label: 'Frame Grabber' },
       { id: 'frameLibrary', label: 'Frame Library' },
       { id: 'instagramReel', label: 'Instagram' },

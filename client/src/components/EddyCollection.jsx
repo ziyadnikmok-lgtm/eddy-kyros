@@ -2004,11 +2004,14 @@ export default function EddyCollection({
                 Remove {visible.filter((i) => brokenIds.has(i.id)).length} unloadable
               </Btn>
             )}
-            {visible.length > 0 && (
+            {/* The top-toolbar "Save N to Downloads" was REMOVED. It did the same job as Download
+                in the selection bar, so a selection offered two buttons for one action and you had
+                to scroll back to the top to reach one of them (owner, 2026-08-10).
+                Two ways to download, and only two: the arrow on a card, and Download in the
+                selection bar — which follows the selection rather than living at the top. */}
+            {false && (
               <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={saveToFolder}>
-                {selected.length
-                  ? `Save ${selected.length} to Downloads`
-                  : `Save ${visible.length}${activeFolder || favOnly ? ' in this folder' : ''} to Downloads`}
+                {selected.length ? `Save ${selected.length} to Downloads` : 'Save to Downloads'}
               </Btn>
             )}
             <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={openLibrary}>
@@ -2084,7 +2087,17 @@ export default function EddyCollection({
             <option value="none">No {folderLabel.toLowerCase()}</option>
             {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
-          <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs" onClick={downloadSelected}>Download</Btn>
+          {/* Says the COUNT. "Download" beside "2 selected" left it ambiguous whether it meant
+              the selection or everything, which is the question you want answered before clicking
+              a thing that writes files. */}
+          {/* downloadSelected, NOT saveToFolder. It is the one that honours "Remove after
+              download" -- swapping them would have quietly dropped that feature. Says the COUNT
+              because "Download" beside "2 selected" left it ambiguous whether it meant the
+              selection or everything, which is the question worth answering before clicking a
+              thing that writes files. */}
+          <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs" onClick={downloadSelected}>
+            Download {selected.length}
+          </Btn>
           {/* WHITE PLATE LIVES HERE, with the selection it acts on.
               It was only in the toolbar at the very top of the page, which is where you are not: you
               tick cards while scrolled down among them, so the button sat off-screen the entire time
