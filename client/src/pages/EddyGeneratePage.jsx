@@ -4439,8 +4439,16 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
         : (c.poseId ? readPoseView(poseById.get(c.poseId)?.prompt) : 'front');
       counts[v] = (counts[v] || 0) + 1;
     }
-    // Nothing to say when it is all one kind -- the total already said it.
-    return Object.values(counts).filter(Boolean).length > 1 ? counts : null;
+    /**
+     * Shown even when it is ALL ONE KIND.
+     *
+     * This used to hide itself unless two kinds were present, on the grounds that the total
+     * already said it. That reasoning had it backwards: "2 FRONT" on a selection you know contains
+     * a close-up is the ONLY thing on screen that reveals the close-up was misclassified -- and
+     * unstamped older rows all read as front, so that is a real state, not a hypothetical. Hiding
+     * the chips hid the bug and looked like agreement.
+     */
+    return counts;
   }, [combos, poses, libItems]);
 
   const sourceImages = [baseImage, faceImage].filter(Boolean);
@@ -6431,8 +6439,12 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             photo toggle, Her build, NSFW, faceless, framing) is engine-agnostic and applies to
             both, because they all shape the PROMPT, not the request. */}
         {/* No engine choice in Max Nano — it is the whole point of the tab. A switch that cannot
-            change anything is worse than no switch. */}
-        {!maxNano && (
+            change anything is worse than no switch.
+            Max Outfit is the same case and was missed: line ~3421 pins it to Seedream on mount, so
+            the switch rendered, accepted a click, showed Nano Banana 2 as selected, and generated
+            on Seedream regardless (owner, 2026-08-10). A control that lies about what will run is
+            worse than one that is absent. */}
+        {!maxNano && !maxOutfit && (
         <div className="flex gap-2 rounded-xl border border-white/[0.07] bg-white/[0.02] p-1">
           {[['seedream', 'Seedream'], ['nano2', 'Nano Banana 2']].map(([id, label]) => (
             <button key={id} type="button" onClick={() => setEngine(id)} aria-pressed={engine === id}
@@ -6535,7 +6547,12 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
         {basePhotoSummary && (
           <div className="rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 py-2 text-xs leading-relaxed text-zinc-400">
             <span className="font-semibold text-zinc-200">{basePhotoSummary.total} base photo{basePhotoSummary.total === 1 ? '' : 's'}</span>
-            <span className="text-zinc-600">{' — each one runs every pose and outfit below'}</span>
+            {/* Worded for Eddy/Max Nano, where photos multiply against poses. Max Outfit has no
+                poses and does not cross-multiply by default, so the sentence was simply untrue
+                there — and it is the line that explains the total. */}
+            <span className="text-zinc-600">
+              {maxOutfit ? ' ticked' : ' — each one runs every pose and outfit below'}
+            </span>
           </div>
         )}
         {missingOutfitKinds.length > 0 && (
