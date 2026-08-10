@@ -1183,7 +1183,20 @@ const UNDRESS_TEXTS = [
  * scrolling hundreds of finished results to find either (owner, 2026-08-07). pickerFolders adds
  * the folder chips, which is what makes "pick HER face" a two-click job.
  */
-function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerDb, pickerLabel, pickerFolders, pickerRole, pickerStrip, onPickFolder }) {
+/**
+ * multi / pickedIds / onMultiChange / multiRows — SEVERAL photos in one slot.
+ *
+ * The base photos started life as a separate picker further down the page, which meant the thing
+ * you were generating from was not shown in the slot labelled "Main photo" — you had to trust a
+ * line of text saying it had been paired (owner, 2026-08-10). Now "Select from Base" ticks as many
+ * as you like and they appear in the slot itself, with the faces they were paired with appearing
+ * in the face slot beside it. Seeing both is the whole point: a wrong pairing looks exactly like a
+ * right one until the pictures come back.
+ *
+ * multiRows renders the slot's contents and is display-only, so the FACE slot can show the paired
+ * faces without its own picker becoming multi-select.
+ */
+function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerDb, pickerLabel, pickerFolders, pickerRole, pickerStrip, onPickFolder, multi = false, pickedIds, onMultiChange, multiRows, multiEmptyHint }) {
   const { notify } = useApp();
   const store = useMemo(() => createEddyCollection(dbName), [dbName]);
   // The collection the Library button browses. Falls back to the page's general library so a slot
@@ -1331,6 +1344,33 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
   };
 
   // A Library entry is a URL to the server copy, so it has to be fetched before it can be sent.
+  /**
+   * Ticking, for a multi slot.
+   *
+   * The picker's row ids are prefixed (`eddy:<itemId>`) because the general library mixes server
+   * rows in; the caller only ever knows the raw item id, so strip it at this boundary rather than
+   * making every consumer remember the prefix.
+   */
+  const rawId = (id) => String(id).replace(/^eddy:/, '');
+  const isTicked = (id) => (pickedIds || []).includes(rawId(id));
+  const toggleOne = (id) => {
+    if (!onMultiChange) return;
+    const r = rawId(id);
+    const cur = pickedIds || [];
+    onMultiChange(cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r]);
+  };
+  /**
+   * Select-all applies to the FOLDER IN VIEW, not the whole collection, and not just the images
+   * scrolled into view -- "Select all" that silently means "the first 120" is the kind of quiet
+   * truncation that shows up later as missing output.
+   */
+  const toggleAllShown = (on) => {
+    if (!onMultiChange) return;
+    const inView = library.filter((l) => !pickFolder || l.folderId === pickFolder).map((l) => rawId(l.id));
+    const cur = pickedIds || [];
+    onMultiChange(on ? [...new Set([...cur, ...inView])] : cur.filter((x) => !inView.includes(x)));
+  };
+
   const pickFromLibrary = async (src, folderId = null) => {
     /**
      * Reports the folder the picture came from, not just the picture.
@@ -1398,7 +1438,40 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
         </span>
       </div>
 
-      {value ? (
+      {multiRows && multiRows.length > 0 ? (
+        /* The picked set, in the slot. Scrolls at a fixed height so ticking forty photos cannot
+           push the rest of the page off-screen. */
+        <div className="max-h-[26rem] overflow-y-auto rounded-lg bg-black/20 p-1.5">
+          <div className="grid grid-cols-3 gap-1.5">
+            {multiRows.map((r) => (
+              <div key={r.id} className="group relative">
+                <img
+                  src={r.src}
+                  alt=""
+                  loading="lazy"
+                  className={`aspect-[3/4] w-full rounded-md object-cover ${r.missing ? 'opacity-40 ring-1 ring-amber-500/60' : ''}`}
+                />
+                {r.name && (
+                  <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate rounded-b-md bg-black/70 px-1 py-0.5 text-[9px] text-zinc-300">
+                    {r.name}
+                  </span>
+                )}
+                {onMultiChange && (
+                  <button
+                    type="button"
+                    title="Remove"
+                    onClick={() => onMultiChange((pickedIds || []).filter((x) => x !== r.id))}
+                    className="absolute right-0.5 top-0.5 hidden h-5 w-5 items-center justify-center rounded-full bg-black/80 text-xs text-zinc-300 hover:text-red-400 group-hover:flex cursor-pointer"
+                  >
+                    x
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          {multiEmptyHint && <p className="mt-1.5 px-1 text-[10px] leading-relaxed text-amber-300/90">{multiEmptyHint}</p>}
+        </div>
+      ) : value ? (
         <img src={value} alt="" className="aspect-[3/4] w-full rounded-lg object-cover bg-zinc-950" />
       ) : (
         <div className="flex aspect-[3/4] flex-col items-center justify-center gap-3 rounded-lg bg-white/[0.02] px-3 text-center">
@@ -1441,16 +1514,40 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
               <p className="text-xs text-zinc-400">
                 {libraryLoading
                   ? 'Loading your gallery…'
-                  : `${library.length} image${library.length === 1 ? '' : 's'} · showing ${Math.min(libraryShown, library.length)} · click one to use it`}
+                  : multi
+                    ? `${(pickedIds || []).length} ticked of ${library.length} · click to tick, click again to untick`
+                    : `${library.length} image${library.length === 1 ? '' : 's'} · showing ${Math.min(libraryShown, library.length)} · click one to use it`}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowLibrary(false)}
-              className="rounded-lg border border-zinc-600 bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-100 transition hover:border-zinc-500 cursor-pointer"
-            >
-              Close
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              {multi && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => toggleAllShown(true)}
+                    className="rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-2 text-xs font-semibold text-zinc-100 transition hover:border-zinc-500 cursor-pointer"
+                  >
+                    Select all{pickFolder ? ' in folder' : ''}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleAllShown(false)}
+                    className="rounded-lg border border-zinc-700 bg-transparent px-3 py-2 text-xs font-semibold text-zinc-400 transition hover:border-zinc-500 cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowLibrary(false)}
+                className={cn('rounded-lg border px-4 py-2 text-sm font-semibold transition cursor-pointer',
+                  multi ? 'border-rose-500 bg-rose-500/20 text-rose-200 hover:bg-rose-500/30'
+                        : 'border-zinc-600 bg-zinc-800 text-zinc-100 hover:border-zinc-500')}
+              >
+                {multi ? `Done${(pickedIds || []).length ? ` (${(pickedIds || []).length})` : ''}` : 'Close'}
+              </button>
+            </div>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6" onClick={(e) => e.stopPropagation()}>
             {libraryLoading ? (
@@ -1484,10 +1581,19 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
                   {library.filter((l) => !pickFolder || l.folderId === pickFolder).slice(0, libraryShown).map((l) => (
                     <button
                       key={l.id}
-                      onClick={() => pickFromLibrary(l.src, l.folderId)}
-                      className="group aspect-[3/4] overflow-hidden rounded-xl border-2 border-zinc-700 bg-zinc-950 transition hover:border-rose-500 cursor-pointer"
+                      /* In multi mode a click TICKS and the picker stays open -- closing on each
+                         pick is what makes choosing twelve photos twelve trips. */
+                      onClick={() => (multi ? toggleOne(l.id) : pickFromLibrary(l.src, l.folderId))}
+                      className={cn('group relative aspect-[3/4] overflow-hidden rounded-xl border-2 bg-zinc-950 transition cursor-pointer',
+                        multi && isTicked(l.id) ? 'border-rose-500 ring-2 ring-rose-500/40' : 'border-zinc-700 hover:border-rose-500')}
                     >
                       <img src={l.src} alt="" className="h-full w-full object-cover transition group-hover:scale-[1.03]" loading="lazy" />
+                      {multi && (
+                        <span className={cn('absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-md border-2 text-xs font-bold',
+                          isTicked(l.id) ? 'border-rose-500 bg-rose-500 text-white' : 'border-white/40 bg-black/50 text-transparent')}>
+                          {String.fromCharCode(10003)}
+                        </span>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -1529,7 +1635,7 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
           is the common action on this page, and with Base Library empty the row below the picture
           was simply dead space (owner, 2026-08-07). Full width so it reads as part of the slot
           rather than a stray control. */}
-      {pickerDb && value && (
+      {pickerDb && (value || (multiRows && multiRows.length > 0)) && (
         <button type="button" onClick={openLibrary}
           className="mt-2 w-full rounded-lg border border-rose-500/40 bg-rose-500/[0.07] px-3 py-2 text-xs font-semibold text-rose-300 transition hover:border-rose-500 hover:bg-rose-500/15 cursor-pointer">
           Select from {pickerLabel || 'Library'}
@@ -4150,6 +4256,25 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     return { rows, people: [...byName.entries()].sort((a2, b2) => b2[1] - a2[1]), unmatched, total: pickedBasePhotos.length };
   }, [pickedBasePhotos, basePhotoPairs]);
 
+  /**
+   * What the two photo slots SHOW once base photos are ticked: the bases on the left, the faces
+   * they were paired with on the right, in the same order. Same data the run uses, so the slots
+   * are the check -- if the face beside a base is the wrong woman, you can see it before paying.
+   */
+  const baseSlotRows = useMemo(() => pickedBasePhotos.map((id) => {
+    const pair = basePhotoPairs.get(id);
+    return { id, src: baseThumbs[id] || '', name: pair?.name || '' };
+  }).filter((r) => r.src), [pickedBasePhotos, basePhotoPairs, baseThumbs]);
+
+  const faceSlotRows = useMemo(() => pickedBasePhotos.map((id) => {
+    const pair = basePhotoPairs.get(id);
+    const src = pair?.faceId ? charThumbs[pair.faceId] : '';
+    // No character folder of the same name -> the face slot's own picture is used instead. Shown
+    // as a dimmed amber tile rather than omitted, because a MISSING row would make the two
+    // columns fall out of step and every pairing below it would read as wrong.
+    return { id, src: src || baseThumbs[id] || '', name: pair?.name || 'no match', missing: !src };
+  }).filter((r) => r.src), [pickedBasePhotos, basePhotoPairs, charThumbs, baseThumbs]);
+
   const combos = useMemo(() => {
     // Max Nano never sends an outfit — a stale selection from an Eddy session would otherwise
     // multiply the run and dress her in something this page does not even show.
@@ -5755,6 +5880,10 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             pickerDb="eddy-base"
             pickerLabel="Base"
             pickerFolders
+            multi={!maxOutfit}
+            pickedIds={pickedBasePhotos}
+            onMultiChange={setPickedBasePhotos}
+            multiRows={baseSlotRows}
           />
           <ImageSlot
             title="2 · Face close-up"
@@ -5769,6 +5898,12 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             pickerRole="base"
             onPickFolder={(n) => n && setCharacterName(n)}
             pickerStrip
+            /* Display-only: no `multi`, so this slot's own picker stays single-select. It mirrors
+               whatever the base slot resolved to. */
+            multiRows={faceSlotRows}
+            multiEmptyHint={basePhotoSummary?.unmatched
+              ? `${basePhotoSummary.unmatched} base photo${basePhotoSummary.unmatched === 1 ? '' : 's'} had no character folder of the same name — ${basePhotoSummary.unmatched === 1 ? 'it uses' : 'they use'} whatever is picked in this slot. Name the Base Library folder the same as her Character folder to pair them.`
+              : null}
           />
         </div>
       </Card>
@@ -5784,9 +5919,6 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           // Max Outfit picks its SOURCES from the Library — a whole folder of finished Max Nano
           // results — instead of a pose. Same slot machinery, so it gets folder navigation, the
           // breadcrumb, subtree counts and Select-all for free.
-          // Base photos come FIRST: it is the subject, and the poses and outfits are applied to
-          // it. Not shown on Max Outfit, which sources its subjects from the Library instead.
-          ...(maxOutfit ? [] : [{ key: 'basephoto', label: 'Base photos', picked: pickedBasePhotos, items: baseItems, thumbs: baseThumbs, folders: baseFolders, store: baseStore, favIds: favSets.basephoto, empty: 'Nothing in Base Library yet — generate some on the Base tab.' }]),
           ...(maxOutfit
             ? [{ key: 'base', label: 'Photos to dress', picked: pickedBases, items: libItems, thumbs: libThumbs, folders: libItemFolders, store: libraryStore, favIds: favSets.base, empty: 'Nothing in Eddy · Library yet — generate some in Max Nano first.' }]
             : [{ key: 'pose', label: 'Pose', picked: pickedPoses, items: poses, thumbs: poseThumbs, folders: poseFolders, store: poseStore, favIds: favSets.pose, empty: 'Nothing in Eddy · Pose yet.' }]),
@@ -6303,50 +6435,12 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             </span>
           </div>
         )}
-        {/* WHO each ticked photo resolved to. The face is chosen automatically from her
-            character folder, and an automatic choice you cannot see is one you cannot check. */}
+        {/* The pairing itself is shown in the two photo slots above -- this is only the
+            arithmetic, which the slots cannot show. */}
         {basePhotoSummary && (
-          <div className="rounded-lg border border-white/[0.07] bg-white/[0.02] p-3">
-            <div className="text-xs leading-relaxed text-zinc-400">
-              <span className="font-semibold text-zinc-200">{basePhotoSummary.total} base photo{basePhotoSummary.total === 1 ? '' : 's'}</span>
-              <span className="text-zinc-600">{' — each one runs every pose and outfit below'}</span>
-            </div>
-            {/* BASE on the left, HER FACE on the right. The pairing is automatic, and an automatic
-                choice you cannot see is one you cannot check -- a wrong face looks exactly like a
-                right one until the pictures come back. */}
-            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-              {basePhotoSummary.rows.map((row) => (
-                <div
-                  key={row.id}
-                  className={`flex items-center gap-1.5 rounded-lg border p-1.5 ${row.faceId ? 'border-white/[0.07] bg-black/20' : 'border-amber-500/40 bg-amber-500/[0.06]'}`}
-                  title={row.faceId ? `${row.name} — face paired automatically` : 'No matching character folder'}
-                >
-                  <img
-                    src={baseThumbs[row.id] || ''}
-                    alt=""
-                    className="h-14 w-14 shrink-0 rounded-md object-cover"
-                  />
-                  <span className="shrink-0 text-zinc-600">→</span>
-                  {row.faceId && charThumbs[row.faceId] ? (
-                    <img
-                      src={charThumbs[row.faceId]}
-                      alt=""
-                      className="h-14 w-14 shrink-0 rounded-md object-cover ring-1 ring-rose-400/30"
-                    />
-                  ) : (
-                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border border-dashed border-amber-500/40 text-center text-[9px] leading-tight text-amber-300/80">
-                      face slot above
-                    </div>
-                  )}
-                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-zinc-300">{row.name || '—'}</span>
-                </div>
-              ))}
-            </div>
-            {basePhotoSummary.unmatched > 0 && (
-              <div className="mt-2 text-xs leading-relaxed text-amber-300/90">
-                {basePhotoSummary.unmatched} photo{basePhotoSummary.unmatched === 1 ? '' : 's'} in a folder with no matching character — {basePhotoSummary.unmatched === 1 ? 'it uses' : 'they use'} the face close-up above instead. Name the Base Library folder the same as her Character folder to pair them.
-              </div>
-            )}
+          <div className="rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 py-2 text-xs leading-relaxed text-zinc-400">
+            <span className="font-semibold text-zinc-200">{basePhotoSummary.total} base photo{basePhotoSummary.total === 1 ? '' : 's'}</span>
+            <span className="text-zinc-600">{' — each one runs every pose and outfit below'}</span>
           </div>
         )}
         {missingOutfitKinds.length > 0 && (

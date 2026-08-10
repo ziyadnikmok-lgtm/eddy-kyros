@@ -918,16 +918,34 @@ export default function LibraryPage() {
     openLightbox(imagePreviewUrls, index >= 0 ? index : 0);
   }, [imageItems, imagePreviewUrls, openLightbox]);
 
-  const handleImageDownload = useCallback((item) => {
-    const anchor = document.createElement('a');
-    anchor.href = spoofAvailable && spoofEnabled
+  /**
+   * Download ONE image.
+   *
+   * A bare `<a download>` does not save in Electron -- it navigates, so the click did nothing
+   * visible and no file arrived (owner, 2026-08-10). VideoLibraryCard.handleDownload in this same
+   * file already said so in a comment and already did it the other way; the image path had simply
+   * never been brought across.
+   *
+   * Fetch the bytes and hand them to downloadBlob, which is also what strips generator metadata
+   * and stamps a fresh capture time -- so a single download now gets the same treatment as a bulk
+   * one instead of quietly shipping EXIF that says which model made it.
+   */
+  const handleImageDownload = useCallback(async (item) => {
+    const spoof = spoofAvailable && spoofEnabled;
+    const url = spoof
       ? galleryApi.spoofedDownloadUrl(item.originalId)
-      : item.downloadUrl;
-    if (!(spoofAvailable && spoofEnabled)) {
-      anchor.download = item.metadata?.filename || `image-${item.originalId}.png`;
+      : (item.downloadUrl || `/api/gallery/${item.originalId}/image`);
+    try {
+      const resp = await fetch(url, { credentials: 'include' });
+      if (!resp.ok) throw new Error(`Download failed (${resp.status})`);
+      const blob = await resp.blob();
+      const named = filenameFromContentDisposition(resp.headers.get('content-disposition'));
+      const fallback = item.metadata?.filename || `image-${item.originalId}.png`;
+      await downloadBlob(blob, sanitizeDownloadName(named || fallback));
+    } catch (err) {
+      notify(err?.message || 'Download failed', 'error');
     }
-    anchor.click();
-  }, [spoofAvailable, spoofEnabled]);
+  }, [spoofAvailable, spoofEnabled, notify]);
 
   const handleContextAction = useCallback(async (action) => {
     const item = contextMenu?.item;

@@ -49,10 +49,8 @@ check('an unfiled base photo pairs with nothing', m.get('b5').faceId === null);
 
 // Wiring.
 check('the picker slot exists and comes first', gen.indexOf("key: 'basephoto'") < gen.indexOf("key: 'pose'"));
-check('it reads Base Library', /items: baseItems, thumbs: baseThumbs, folders: baseFolders, store: baseStore/.test(gen));
-check('Select-all writes to the right list', /slot\.key === 'basephoto' \? setPickedBasePhotos/.test(gen));
-check('it is hidden on Max Outfit', /\.\.\.\(maxOutfit \? \[\] : \[\{ key: 'basephoto'/.test(gen));
-check('favSets has a basephoto key', /basephoto: new Set\(\)/.test(gen));
+check('the Main photo slot reads Base Library', /pickerDb="eddy-base"/.test(gen));
+check('multi-select is off on Max Outfit', /multi=\{!maxOutfit\}/.test(gen));
 
 // The product and the payload.
 check('combos multiply by the ticked photos', /const bp = pickedBasePhotos\.length \? pickedBasePhotos : \[null\];/.test(gen));
@@ -77,10 +75,22 @@ check('the selection survives a restart', /pickedBases, pickedBasePhotos, outfit
 check('the summary carries the pairs, not only a tally', /rows: pickedBasePhotos\.map/.test(gen) || /const rows = pickedBasePhotos\.map/.test(gen));
 check('face thumbnails are loaded, or the right-hand tile is always blank', /const \[charThumbs, setCharThumbs\] = useState\(\{\}\);/.test(gen) && /setCharThumbs\(cT\)/.test(gen));
 check('they are read from the character store, not the base store', /cItems\.map\(async \(i\) => \{ cT\[i\.id\] = i\.url \|\| await charStore\.getImage\(i\.id\); \}\)/.test(gen));
-check('base renders on the left', /src=\{baseThumbs\[row\.id\] \|\| ''\}/.test(gen));
-check('her face renders on the right', /src=\{charThumbs\[row\.faceId\]\}/.test(gen));
-check('an unpaired photo shows a placeholder rather than a broken image', /face slot above/.test(gen));
-check('and is outlined in amber so it reads as different', /border-amber-500\/40 bg-amber-500\/\[0\.06\]/.test(gen));
+// The two slots ARE the display now: bases in Main photo, their faces in Face close-up.
+check('the Main photo slot shows the ticked bases', /multiRows=\{baseSlotRows\}/.test(gen));
+check('the Face slot shows the faces they paired with', /multiRows=\{faceSlotRows\}/.test(gen));
+check('the two lists are built in the SAME order, or the columns lie',
+  /const baseSlotRows = useMemo\(\(\) => pickedBasePhotos\.map/.test(gen)
+  && /const faceSlotRows = useMemo\(\(\) => pickedBasePhotos\.map/.test(gen));
+check('an unpaired row is kept, not dropped -- dropping it desynchronises the columns',
+  /src: src \|\| baseThumbs\[id\] \|\| '', name: pair\?\.name \|\| 'no match', missing: !src/.test(gen));
+check('the face slot itself stays single-select', /Display-only: no `multi`/.test(gen));
+check('ticking keeps the picker open', /multi \? toggleOne\(l\.id\) : pickFromLibrary/.test(gen));
+check('select-all covers the whole folder, not just what is scrolled into view',
+  /const inView = library\.filter\(\(l\) => !pickFolder \|\| l\.folderId === pickFolder\)\.map/.test(gen));
+check('the eddy: id prefix is stripped at the boundary', /const rawId = \(id\) => String\(id\)\.replace/.test(gen));
+check('and the face slot says what it fell back to', /had no character folder of the same name/.test(gen));
+check('an unmatched face tile is dimmed and outlined so it reads as different',
+  /r\.missing \? 'opacity-40 ring-1 ring-amber-500\/60' : ''/.test(gen));
 check('every ticked photo gets a row, in ticked order', (() => {
   const picked = ['b3', 'b1', 'b2'];
   const pairs = new Map([['b1', { name: 'Grace', faceId: 'f1' }], ['b2', { name: '', faceId: null }], ['b3', { name: 'Nova', faceId: 'f2' }]]);
@@ -110,8 +120,8 @@ check('no gate keys off maxNano, which would split the two tabs apart', (() => {
   const revRe = new RegExp(String.raw`(pickedBasePhotos|baseItems|basePhoto)[^;\n]{0,60}(&&\s*!?maxNano|\?\s*[^:]{0,20}maxNano)`);
   return !gateRe.test(gen) && !revRe.test(gen);
 })());
-check('the picker slot itself is gated on maxOutfit only',
-  /\.\.\.\(maxOutfit \? \[\] : \[\{ key: 'basephoto'/.test(gen));
+check('the separate Base photos picker is GONE -- it lived in the wrong place',
+  !/key: 'basephoto'/.test(gen));
 check('the load is gated on maxOutfit only', /if \(!maxOutfit\) \{[\s\S]{0,200}baseStore\.listItems\(\)/.test(gen));
 check('the Generate gate accepts base photos on both tabs',
   /maxOutfit \? !pickedBases\.length : \(!baseImage && !pickedBasePhotos\.length\)/.test(gen));
