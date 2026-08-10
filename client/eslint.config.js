@@ -59,6 +59,23 @@ export default [
     },
     rules: {
       'no-undef': 'error',
+      /**
+       * no-use-before-define is the rule that would have caught the page-crash on 2026-08-09.
+       *
+       * A useMemo placed above the `const` it names in its DEPENDENCY ARRAY is a TDZ
+       * ReferenceError at render — the whole page goes blank. no-undef cannot see it, because the
+       * name IS defined, just later; the build cannot see it, because it is valid syntax. Twice in
+       * one day: `poseView` read outside its block, and `viewBreakdown` reading `combos`.
+       *
+       * Functions are exempt (`functions: false`): hoisted declarations called from above are the
+       * normal shape of this codebase and flagging them would bury the two cases that matter.
+       */
+      // WARN, not error. It flags 16 pre-existing cases that are harmless -- a const arrow
+      // referenced by a handler that only runs after mount is fine, and failing on those would
+      // get the whole config deleted. The case that actually crashes -- a hook dependency array
+      // naming a const declared later, which is evaluated DURING render -- is caught precisely by
+      // check_tdz_deps.js, which fails hard and has no false positives.
+      'no-use-before-define': ['warn', { functions: false, classes: true, variables: true }],
       // WARN, not error: 115 of these already exist across files nobody touched today, and a
       // config that fails on day one gets deleted. no-undef is the one that shipped a bug.
       'no-unused-vars': ['warn', {
