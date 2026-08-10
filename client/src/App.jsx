@@ -1,6 +1,4 @@
 import { lazy, Suspense, useState, useEffect, useCallback } from 'react';
-const LoginPage = lazy(() => import('./pages/LoginPage'));
-const RegisterPage = lazy(() => import('./pages/RegisterPage'));
 const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
@@ -83,7 +81,6 @@ const EddyMaxNanoPage = lazy(async () => {
 });
 const VideoLibraryPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.VideoLibraryPage })));
 const EddyCharacterPage = lazy(() => import('./pages/EddyCharacterPage'));
-const ReformatPage = lazy(() => import('./pages/ReformatPage'));
 const NsfwGeneratePage = lazy(() => import('./pages/NsfwGeneratePage'));
 const ImageEditorPage = lazy(() => import('./pages/ImageEditorPage'));
 const BillingPage = lazy(() => import('./pages/BillingPage'));
