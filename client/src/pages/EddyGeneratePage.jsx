@@ -3248,7 +3248,7 @@ function _getRunSnap() {
 }
 
 const _cache = {
-  baseImage: '', faceImage: '', characterName: '', pickedOutfits: [], pickedPoses: [], pickedBases: [], pickedBasePhotos: [], outfitRotation: true, smartMatch: true, instruction: '',
+  baseImage: '', faceImage: '', characterName: '', pickedOutfits: [], pickedPoses: [], pickedBases: [], pickedBasePhotos: [], outfitRotation: true, instruction: '',
   // staticCamera defaults ON: the user asked for the camera lock to be the standing default, so a
   // fresh page (or one whose stored value predates this feature) starts with movement/zoom locked out.
   nsfw: false, aspectRatio: 'auto', resolution: '1K', staticCamera: true,
@@ -3368,7 +3368,21 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
    */
   const [outfitRotation, setOutfitRotation] = useState(_cache.outfitRotation !== false);
   // Angle-aware dealing, on by default (owner, 2026-08-09: "if selected always on okey").
-  const [smartMatch, setSmartMatch] = useState(_cache.smartMatch !== false);
+  /**
+   * ALWAYS ON. Kept as a name rather than inlined, because it reads through four call sites.
+   *
+   * This was a checkbox, and that was the whole confusion (owner, 2026-08-10): "in Eddy it is
+   * simple, we have the poses and outfits labelled and boom -- why do we complicate it here."
+   * Exactly right. Eddy has no such toggle. It reads the labels and pairs a close-up with a
+   * close-up, full stop.
+   *
+   * Turning it OFF on Max Outfit threw the labels away and dealt outfits by position, which is
+   * strictly worse and nothing anyone would choose on purpose. An option whose off-state is never
+   * the right answer is not a choice, it is a way to get it wrong.
+   *
+   * "One outfit per photo" stays a checkbox, because that IS a real decision: 4 images or 24.
+   */
+  const smartMatch = true;
   // Both pickers start open — the work is choosing, so hiding it behind a click was friction.
   const [openPickers, setOpenPickers] = useState({ outfit: true, pose: true });
   const [instruction, setInstruction] = useState(_cache.instruction);
@@ -3862,7 +3876,6 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       setPickedBases((v) => (v.length ? v : saved.pickedBases || []));
       setPickedBasePhotos((v) => (v.length ? v : saved.pickedBasePhotos || []));
       setOutfitRotation((v) => (v === true && typeof saved.outfitRotation === 'boolean' ? saved.outfitRotation : v));
-      setSmartMatch((v) => (v === true && typeof saved.smartMatch === 'boolean' ? saved.smartMatch : v));
       setInstruction((v) => (v ? v : saved.instruction || ''));
       setNsfw((v) => v || !!saved.nsfw);
       // Default is ON, so unlike nsfw the saved value must be able to turn it OFF. Only applied while
@@ -3971,14 +3984,14 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   }, [activeModel, models, notify]);
 
   useEffect(() => {
-    const snap = { baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, outfitRotation, smartMatch, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine };
+    const snap = { baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, outfitRotation, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine };
     Object.assign(_cache, snap);
     stateStore.set('state', snap);
   // pickedBases / outfitRotation / smartMatch are IN the snapshot above, so they have to be in
   // these deps too. Without them this effect never re-ran when only a Max Outfit control changed,
   // and the whole selection was gone on the next app start — the snapshot is only written from
   // here.
-  }, [baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, outfitRotation, smartMatch, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine]);
+  }, [baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, outfitRotation, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine]);
 
   /**
    * Submits ONE video job and returns as soon as Muapi accepts it (a taskId) — the render finishes
@@ -6608,23 +6621,15 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             the one matching the pose angle, because a front product photo swapped onto a shot taken
             from behind produces a garment that cannot exist. Kyros had the information and was
             ignoring it. */}
-        {maxOutfit && outfitRotation && (
-          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-white/[0.07] bg-white/[0.02] p-2.5">
-            <input type="checkbox" checked={smartMatch} onChange={(e) => setSmartMatch(e.target.checked)}
-              className="mt-0.5 cursor-pointer accent-rose-500" />
-            <span className="text-xs leading-relaxed text-zinc-400">
-              <span className="font-semibold text-zinc-200">Smart pairing</span>
-              {" — the friend's pipeline rules: photos are taken two at a time and each PAIR shares one outfit; a back shot gets a back outfit, a close-up gets a close-up one; and the least-used outfit always wins, so none repeats before the rest have had a turn."}
-            </span>
-          </label>
-        )}
+        {/* Smart pairing used to be a checkbox here. It is always on now -- see the smartMatch
+            declaration for why. Eddy has no equivalent toggle and never needed one. */}
         {maxOutfit && (
           <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-white/[0.07] bg-white/[0.02] p-2.5">
             <input type="checkbox" checked={outfitRotation} onChange={(e) => setOutfitRotation(e.target.checked)}
               className="mt-0.5 cursor-pointer accent-rose-500" />
             <span className="text-xs leading-relaxed text-zinc-400">
               <span className="font-semibold text-zinc-200">One outfit per photo</span>
-              {' — outfits are dealt round-robin, so each is used about equally. Uncheck to make EVERY '}
+              {' — each photo gets one outfit of its own kind: a close-up photo gets a close-up outfit, a back shot gets a back one, and the least-used wins so none repeats before the rest have had a turn. Uncheck to make EVERY '}
               <span className="text-zinc-300">photo x outfit</span> combination.
               {/* The ARITHMETIC, said in both directions and attached to the checkbox that changes
                   it. Ticking 4 photos and 6 outfits and being told "4 images" reads as a bug -- it

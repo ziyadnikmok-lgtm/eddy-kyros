@@ -68,7 +68,13 @@ check('the totals line shows the extra dimension', /\{pickedBasePhotos\.length\}
 check('the pairing is shown BEFORE spending', /face taken from/.test(gen));
 check('an unmatched photo is called out, not silent', /no matching character/.test(gen));
 check('and the fix is named', /Name the Base Library folder the same as her Character folder/.test(gen));
-check('the selection survives a restart', /pickedBases, pickedBasePhotos, outfitRotation, smartMatch, instruction,/.test(gen));
+// smartMatch left this list when it stopped being a setting -- it is a constant now, so there is
+// nothing to persist. pickedBasePhotos is what this assertion is actually for.
+check('the selection survives a restart', gen.includes('pickedBases, pickedBasePhotos, outfitRotation, instruction,'));
+check('and smartMatch is no longer persisted, because it is no longer a choice',
+  // The SNAPSHOT, not every mention: it still appears in dep arrays, which is correct -- a
+  // constant in a dep array is harmless and removing it would be churn.
+  !/const snap = \{[^}]*smartMatch/.test(gen) && gen.includes('const smartMatch = true;'));
 
 // --- the pairing has to be SEEN, not described (owner, 2026-08-10) --------------------------
 // "face taken from Grace x8" is true and still no help deciding whether it took the RIGHT eight.
