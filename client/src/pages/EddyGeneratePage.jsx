@@ -3931,6 +3931,38 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     return [...need.entries()].map(([view, count]) => ({ view, count, label: LABEL[view] || view }));
   }, [maxOutfit, smartMatch, pickedBases, pickedOutfits, libItems, outfits, outfitFolders]);
 
+  /**
+   * ON THE EDDY TAB: which of the combos you are about to make pair a mismatched kind.
+   *
+   * Eddy is a CROSS PRODUCT — every outfit you tick is applied to every pose you tick, on purpose.
+   * So a mismatch is not a dead end the way it is in Max Outfit; you may have picked one close-up
+   * outfit alongside five poses and only want the close-up one. Blocking would stop a run that is
+   * two-thirds legitimate.
+   *
+   * It is still worth saying out loud. A close-up garment on a full-body pose is a wasted image you
+   * would only notice by opening it, and at 12 lanes a bad cross product is 40 of them.
+   *
+   * Angle awareness on the PROMPT side already exists here and is untouched: a back pose has always
+   * used the outfit's back description (backPrompt) rather than its front one.
+   */
+  const eddyMismatches = useMemo(() => {
+    if (maxOutfit || maxNano || !pickedOutfits.length || !pickedPoses.length) return null;
+    const outfitFolderName = (id) => outfitFolders.find((f) => f.id === outfits.find((o) => o.id === id)?.folderId)?.name || '';
+    const poseById = new Map(poses.map((x) => [x.id, x]));
+    let bad = 0;
+    const kinds = new Set();
+    for (const o of pickedOutfits) {
+      const ov = outfitView(outfitFolderName(o));
+      for (const pid of pickedPoses) {
+        const pv = readPoseView(poseById.get(pid)?.prompt);
+        // front vs back is handled by backPrompt and is NOT a mismatch. Close-up is: a close-up
+        // garment reference has no lower half to give a full-body shot, and vice versa.
+        if ((ov === 'closeup') !== (pv === 'closeup')) { bad += 1; kinds.add(ov === 'closeup' ? 'closeup-outfit' : 'closeup-pose'); }
+      }
+    }
+    return bad ? { bad, total: pickedOutfits.length * pickedPoses.length, kinds: [...kinds] } : null;
+  }, [maxOutfit, maxNano, pickedOutfits, pickedPoses, outfits, outfitFolders, poses]);
+
   const combos = useMemo(() => {
     // Max Nano never sends an outfit — a stale selection from an Eddy session would otherwise
     // multiply the run and dress her in something this page does not even show.
@@ -5878,6 +5910,18 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
         </p>
         {/* Named, counted, and BLOCKING. A silent fallback here costs a whole batch of wrong
             swaps that you only notice by opening the images. */}
+        {/* WARNS, does not block. Eddy is a cross product on purpose, so a partly-mismatched
+            selection can still be exactly what you meant. Max Outfit blocks instead, because
+            there the matching is automatic and a missing pool is a dead end. */}
+        {eddyMismatches && (
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.07] p-3 text-xs leading-relaxed text-amber-200">
+            <span className="font-semibold">{eddyMismatches.bad} of {eddyMismatches.total} images would mix a close-up with a full-body shot.</span>
+            <span className="mt-1 block text-amber-300/80">
+              A close-up outfit has no lower half to give a full-body pose, and a full-body outfit
+              gets cropped away by a close-up. Run it if that is what you meant — nothing is blocked here.
+            </span>
+          </div>
+        )}
         {missingOutfitKinds.length > 0 && (
           <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.07] p-3 text-xs leading-relaxed text-amber-200">
             <span className="font-semibold">Pick an outfit for every kind of shot.</span>
