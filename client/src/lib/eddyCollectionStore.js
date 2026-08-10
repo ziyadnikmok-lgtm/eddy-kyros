@@ -351,6 +351,29 @@ export function createEddyCollection(dbName) {
       await write('index', index.map((i) => (i.id === id ? { ...i, ...patch } : i)));
     },
 
+    /**
+     * Patch MANY items in one index write.
+     *
+     * updateItem rewrites the whole index per call, so backfilling a field across 522 rows would
+     * be 522 read-modify-writes of a list that carries every prompt -- slow, and 522 chances for
+     * one to land out of order. This does it once.
+     *
+     * `patches` is a Map of id -> partial row. Ids not in the index are ignored rather than
+     * added: this patches what exists, it is not an upsert.
+     */
+    _updateItems: async function(patches) {
+      const index = await impl.listItems();
+      let changed = 0;
+      const next = index.map((i) => {
+        const patch = patches.get(i.id);
+        if (!patch) return i;
+        changed += 1;
+        return { ...i, ...patch };
+      });
+      if (changed) await write('index', next);
+      return changed;
+    },
+
     _moveItem: async function(id, folderId) {
       const index = await impl.listItems();
       await write('index', index.map((i) => (i.id === id ? { ...i, folderId: folderId || null } : i)));
@@ -372,6 +395,7 @@ export function createEddyCollection(dbName) {
     addItems: (...a) => serialize(() => impl._addItems.apply(impl, a)),
     removeItem: (...a) => serialize(() => impl._removeItem.apply(impl, a)),
     updateItem: (...a) => serialize(() => impl._updateItem.apply(impl, a)),
+    updateItems: (...a) => serialize(() => impl._updateItems.apply(impl, a)),
     moveItem: (...a) => serialize(() => impl._moveItem.apply(impl, a)),
     toggleFavorite: (...a) => serialize(() => impl._toggleFavorite.apply(impl, a)),
   };
