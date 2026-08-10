@@ -2907,6 +2907,67 @@ const stateStore = createPageStore('eddy-generate-state');
 const resultsStore = createPageStore('eddy-results-v1');
 
 /**
+ * THE UNFINISHED RUN — what was still owed when the app last closed.
+ *
+ * A batch lived entirely in memory: runPool walked an array, and closing the app mid-run threw away
+ * every combo that had not been dispatched yet. Forty images in, twenty to go, and the twenty were
+ * simply gone with nothing on screen to say so (owner, 2026-08-09).
+ *
+ * Each job carries its own status, and the status is the whole point, because the two failure modes
+ * cost very different things:
+ *
+ *   'queued' — never sent, never billed. Safe to run on reopen, and it IS run: this is the queue
+ *              that must not get cut off.
+ *   'sent'   — the request left the machine. The server finishes and BILLS it whether or not this
+ *              app is alive to receive the reply, so re-sending pays twice for one picture. These
+ *              are never re-dispatched automatically. They are shown, and the Library's own
+ *              recovery sweep (EddyTabs) pulls in whichever ones actually landed, because the
+ *              server saved them to the gallery regardless. A Retry is offered for any that truly
+ *              never arrived — a decision worth money, so it stays the user's.
+ *
+ * Scoped by `mode`. All three tabs (Eddy, Max Nano, Max Outfit) render this page and share these
+ * module-level stores, so without the mode a queue left by Eddy would resume the moment Max Nano
+ * was opened, spending money in the wrong tab on a batch nobody asked for there.
+ *
+ * Only ids and scalars are stored — combos are {outfitId, poseId, baseId}. The reference PHOTOS are
+ * deliberately not: they already persist with the page state, and a resumed run rebuilds its
+ * context from whatever is in the slots at resume time. Worth knowing rather than hiding: swap the
+ * character before resuming and the rest of the batch is generated as HER.
+ */
+const jobQueueStore = createPageStore('eddy-jobqueue-v1');
+const JOB_QUEUE_KEY = 'unfinished';
+
+/** Newest-wins read of the stored run, or null when there is nothing outstanding. */
+async function readJobQueue(mode) {
+  try {
+    const rec = await jobQueueStore.get(JOB_QUEUE_KEY, null);
+    if (!rec || !Array.isArray(rec.jobs) || !rec.jobs.length) return null;
+    if ((rec.mode || 'eddy') !== mode) return null;   // another tab's run — not ours to resume
+    return rec;
+  } catch { return null; }
+}
+
+/**
+ * Patch one job's status in place. Read-modify-write on every transition, which is the point: the
+ * record has to survive a kill at ANY instant, and a kill between "sent" and "done" must read as
+ * sent (possibly billed) rather than queued (safe to re-run).
+ */
+async function markJob(jid, status) {
+  try {
+    const rec = await jobQueueStore.get(JOB_QUEUE_KEY, null);
+    if (!rec || !Array.isArray(rec.jobs)) return;
+    const jobs = rec.jobs.map((j) => (j.jid === jid ? { ...j, status } : j));
+    // Nothing left to owe — clear rather than leave an empty husk that reads as an unfinished run.
+    if (jobs.every((j) => j.status === 'done' || j.status === 'failed')) await jobQueueStore.set(JOB_QUEUE_KEY, null);
+    else await jobQueueStore.set(JOB_QUEUE_KEY, { ...rec, jobs });
+  } catch { /* bookkeeping only — never fail a generation over it */ }
+}
+
+async function clearJobQueue() {
+  try { await jobQueueStore.set(JOB_QUEUE_KEY, null); } catch { /* nothing to do */ }
+}
+
+/**
  * Saved MODELS — a named set of {main photo, face close-up, build}.
  *
  * The page has never known a character's NAME: "Grace" was only ever whichever photos happened to
@@ -3403,6 +3464,9 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   // rebuild the callback underneath a running run.
   const libItemsRef = useRef([]);
   const generateComboRef = useRef(null);
+  // Points at the latest run(), for the resume-the-unfinished-queue effect. See its assignment
+  // below run()'s definition for why it cannot be a plain dependency.
+  const runRef = useRef(null);
   // A live mirror of `results`, kept in sync every render (below, next to generateComboRef.current).
   // The regenerate/edit branch of generateCombo needs the CURRENT image of the tile being regenerated
   // to send it back as image 1, but generateCombo is a useCallback that deliberately does NOT depend
@@ -4006,16 +4070,16 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
      * SKIP the pairs that cannot work rather than generating them.
      *
      * Eddy is a cross product, so "select all poses, select all outfits" paired every close-up
-     * outfit with every full-body pose and vice versa -- images that are wrong before they start, at
-     * full price. Filtering costs nothing: close-up outfits now generate only for close-up poses,
-     * and front/back outfits only for front/back poses.
+     * outfit with every full-body pose and the reverse -- images that are wrong before they start,
+     * at full price. Close-up outfits now generate only for close-up poses, and front/back outfits
+     * only for front/back poses.
      *
      * FRONT vs BACK is deliberately NOT filtered. A back pose already swaps in the outfit's
      * back-view description (backPrompt), so that pairing works, and filtering it would delete
      * legitimate combinations.
      *
      * If the filter would leave NOTHING, the unfiltered product is returned instead. A Generate
-     * button that silently says 0 images is worse than a warning you can read, and the banner above
+     * button silently reading 0 images is worse than a banner you can read, and the banner above
      * already names what is mismatched.
      */
     const outfitFolderName = (id) => outfitFolders.find((f) => f.id === outfits.find((o) => o.id === id)?.folderId)?.name || '';
@@ -4782,19 +4846,47 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // and reads the live controls instead (see generateCombo's header).
     const runCtx = { charPayload, ratio, videoRatio, perImageCost, libFolderId };
 
+    // Identifies THIS run's jobs. Read once so every jid in the batch shares it.
+    const runStamp = Date.now();
+
+    /**
+     * Write the whole batch down BEFORE a single request leaves, all 'queued'.
+     *
+     * Up front, not as each one starts: the combos that must survive a kill are exactly the ones
+     * that have not run yet, so a record written progressively would be missing precisely the part
+     * worth keeping. Each job gets a jid so its status can be patched without matching on combo
+     * identity, which is not unique — the same outfit×pose can legitimately appear twice in a run.
+     *
+     * A retry run ("only") overwrites the record rather than appending: it IS the outstanding work.
+     */
+    const jidOf = (i) => `j-${runStamp}-${i}`;
+    try {
+      await jobQueueStore.set(JOB_QUEUE_KEY, {
+        mode, startedAt: runStamp,
+        jobs: batch.map((combo, i) => ({ jid: jidOf(i), combo, status: 'queued' })),
+      });
+    } catch { /* the run still goes ahead unrecorded rather than not at all */ }
+
     // The batch wrapper: everything generateCombo deliberately leaves out. One bad combo must
     // not abandon the rest, so a throw is absorbed here — generateCombo has already marked its
     // own feed card failed with the real reason.
     let attempted = 0;
-    const runCombo = async (combo) => {
+    const runCombo = async (combo, idx) => {
       attempted += 1;
+      // Marked SENT before the request, never after: a kill lands between these two lines often
+      // enough to matter, and the safe reading of "we don't know" is "it may have been billed".
+      // Under-claiming here costs a duplicate image; over-claiming costs nothing but a Retry click.
+      const jid = jidOf(idx);
+      await markJob(jid, 'sent');
       try {
         const res = await generateCombo(combo, { runCtx });
         out.push(res);
+        await markJob(jid, 'done');
         // A retry that SUCCEEDS clears its own entry, so the "Retry N failed" count always equals
         // what is still outstanding rather than what has ever failed.
         setFailedCombos((prev) => prev.filter((f) => f.combo !== combo));
       } catch (err) {
+        await markJob(jid, 'failed');
         // The reason is already on the feed card; this keeps the COMBO so it can be re-run.
         // Deduped by combo identity — retrying a combo that fails again must not stack a second
         // entry and inflate the count.
@@ -4825,6 +4917,11 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       // navigation for the rest of the session.
       setInFlight((n) => n - 1);
     }
+    // The run is over one way or another, so nothing is owed. Cleared on CANCEL too: cancelling is
+    // a deliberate "don't send the rest", and resuming it on the next launch would be the opposite
+    // of what was asked — and would spend money doing it.
+    await clearJobQueue();
+
     if (cancelRef.current) {
       // Cancelled is NOT failed: the unsent combos were never attempted and never charged, so they
       // must not be reported as failures (nor land in the retry panel, which prices a re-run).
@@ -4837,7 +4934,62 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // here is exactly what run() itself reads: the guards, the ctx inputs, and generateCombo. sourceImages
     // is an unmemoized array literal today, so it rebuilds run() every render — listed anyway so
     // memoizing it later can't silently turn charPayload into a stale (previous-face) closure.
-  }, [baseImage, overCap, perRunImages, aspectRatio, combos, sourceImages, resolution, nsfw, characterName, maxOutfit, pickedBases, missingOutfitKinds, libraryStore, notify, generateCombo, engine, pickedOutfits, pickedPoses]);
+    // mode and maxNano are read when the queue record is written and when the folder is resolved.
+  }, [baseImage, overCap, perRunImages, aspectRatio, combos, sourceImages, resolution, nsfw, characterName, mode, maxNano, maxOutfit, pickedBases, missingOutfitKinds, libraryStore, notify, generateCombo, engine, pickedOutfits, pickedPoses]);
+
+  // Assigned AFTER run() exists — `run` is a const, so touching it any earlier is a temporal dead
+  // zone error that takes the whole page down. Same stabilisation generateComboRef uses: the resume
+  // effect reads run() through this instead of depending on it and re-firing the batch every render.
+  runRef.current = run;
+
+  /**
+   * PICK THE UNFINISHED RUN BACK UP, once, on open.
+   *
+   * Two different jobs, because 'queued' and 'sent' cost different things — see jobQueueStore.
+   *
+   *   queued -> RESUMED. Never sent, never billed, so finishing them is free of surprises and is
+   *             exactly what "it should stay in queue and not get cut off" asks for.
+   *   sent   -> REPORTED, never re-sent. The server bills those whether or not this app survived to
+   *             hear back, so re-dispatching buys the same picture twice. The Library's own
+   *             recovery sweep collects the ones that finished; the toast says how many were in
+   *             flight so a genuine loss is visible rather than assumed.
+   *
+   * GATED ON `loading` AND `baseImage`, and both matter for money rather than tidiness:
+   *   - `loading` false means loadAll has finished, so `poses` and `outfits` are populated.
+   *     Resuming before that generates every remaining image with NO pose or outfit text — wrong
+   *     pictures, produced and billed at full price.
+   *   - `baseImage` is what the page rehydrates asynchronously; without it run() bails on
+   *     "Add the main photo first" and the queue would be cleared having done nothing.
+   *
+   * runRef, not run, in the dependency list: run() is rebuilt on nearly every render, and depending
+   * on it directly would re-enter this effect constantly and fire the batch more than once.
+   */
+  const resumedRef = useRef(false);
+  useEffect(() => {
+    if (resumedRef.current || loading || !baseImage) return undefined;
+    let alive = true;
+    (async () => {
+      const rec = await readJobQueue(mode);
+      if (!alive || !rec) return;
+      resumedRef.current = true;               // one attempt per mount, whatever the outcome
+
+      const queued = rec.jobs.filter((j) => j.status === 'queued').map((j) => j.combo);
+      const sent = rec.jobs.filter((j) => j.status === 'sent');
+
+      if (sent.length) {
+        // Surfaced as a plain statement of fact, not an error: the pictures are very likely fine
+        // and already in the gallery — the sweep on the Library files them.
+        notify(`${sent.length} image${sent.length === 1 ? ' was' : 's were'} still generating when the app closed. They finish on the server — open the Library and they are pulled in.`, 'success');
+      }
+      if (!queued.length) { await clearJobQueue(); return; }
+
+      notify(`Picking up where the last run stopped — ${queued.length} still to generate.`, 'success');
+      // Straight into the normal path: same pool, same prices, same bookkeeping. run() rewrites the
+      // queue record from this shorter list, so a second interruption resumes what is left of it.
+      runRef.current?.(queued);
+    })();
+    return () => { alive = false; };
+  }, [loading, baseImage, mode, notify]);
 
   /* -------------------------------------------------------------------------------------------
    * The inline results flow. Everything below acts on RESULTS, never on the page's live controls:
