@@ -71,6 +71,29 @@ const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } el
     typeof m2[1] === 'string' && m2[1].length === 19);
 
   out.cleanup(); out2.cleanup();
+
+  // --- CLEAN MODE: the bulk zip with the camera identity switched off -------------------------
+  // spoof=false used to mean "send the originals untouched", so a bulk download with the cleaner
+  // off produced a zip full of images carrying the prompt and the model -- while a SINGLE download
+  // of the same image stripped them. The client cannot fix that: it receives one .zip, and
+  // stripMetadata reads images, not archives (owner, 2026-08-10).
+  const cleanOut = await svc.spoofImage(src, { clean: true });
+  const cleanBuf = fs.readFileSync(cleanOut.filePath);
+  const cleanStr = cleanBuf.toString('latin1');
+  check('clean mode drops the generator metadata', !/Seedream/i.test(cleanStr));
+  check('and writes NO camera identity', !/Apple/.test(cleanStr) && !/iPhone/.test(cleanStr));
+  check('the picture still survives', (await sharp(cleanBuf).metadata()).width === 400);
+  check('it is smaller than the spoofed one, because no EXIF block is added', cleanBuf.length < buf.length);
+  cleanOut.cleanup();
+
+  const gal = fs.readFileSync('D:/Kyros/app/server/routes/gallery.js', 'utf8');
+  check('the bulk zip cleans when spoofing is off', gal.includes('const shouldClean = !shouldSpoof && iosSpoofService.isAvailable();'));
+  check('it calls spoofBatch in clean mode', gal.includes("spoofBatch(files.map((f) => f.filePath), { clean: true })"));
+  check('the reason is recorded', /stripMetadata reads images, not archives/.test(gal));
+  const svcSrc = fs.readFileSync('D:/Kyros/app/server/services/iosSpoofService.js', 'utf8');
+  check('spoofBatch forwards its options', svcSrc.includes('await spoofImage(inputPath, opts)'));
+
+  // Removed LAST: the clean-mode check above reads the same source file.
   fs.rmSync(dir, { recursive: true, force: true });
 
   console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);

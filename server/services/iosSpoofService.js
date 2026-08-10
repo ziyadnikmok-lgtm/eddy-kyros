@@ -59,7 +59,7 @@ function isAvailable() {
  * @param {string} inputPath — path to source image file
  * @returns {{ filePath: string, filename: string, cleanup: () => void }}
  */
-async function spoofImage(inputPath) {
+async function spoofImage(inputPath, { clean = false } = {}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'iosspoof-'));
   const rand = Math.floor(Math.random() * 90000) + 10000;
   const outName = `IMG_${rand}.jpg`;
@@ -67,23 +67,31 @@ async function spoofImage(inputPath) {
 
   try {
     // Built per image, so each file gets its own capture time rather than a shared one.
+    /**
+     * clean = strip everything and write NOTHING back.
+     *
+     * Used by the bulk zip when the camera identity is switched off. The re-encode alone drops
+     * every tag the generator wrote, which is the part that must always happen; adding a phone's
+     * EXIF on top is the optional half.
+     */
     const when = captureStamp();
-    const exifBuf = buildExifBuffer({
+    const exifBuf = clean ? null : buildExifBuffer({
       ...IPHONE_EXIF,
       IFD0: { ...IPHONE_EXIF.IFD0, DateTime: when },
       IFD2: { ...IPHONE_EXIF.IFD2, DateTimeOriginal: when, DateTimeDigitized: when },
     });
 
-    await sharp(inputPath)
+    const pipeline = sharp(inputPath)
       .rotate() // auto-rotate based on existing EXIF before stripping
       .jpeg({
         quality: 97,
         progressive: true,
         chromaSubsampling: '4:4:4', // no chroma subsampling — preserves color detail
         mozjpeg: true,
-      })
-      .withExif(exifBuf)
-      .toFile(outPath);
+      });
+    // The re-encode above already dropped every original tag. Only the camera identity is
+    // conditional -- in clean mode nothing is written back, so the file carries no EXIF at all.
+    await (exifBuf ? pipeline.withExif(exifBuf) : pipeline).toFile(outPath);
 
     return {
       filePath: outPath,
@@ -111,13 +119,13 @@ function buildExifBuffer(exifData) {
  * Process multiple images. Returns array of spoofed file info.
  * Caller must call cleanup() on each item when done.
  */
-async function spoofBatch(filePaths) {
+async function spoofBatch(filePaths, opts = {}) {
   const results = [];
   const usedNames = new Set();
 
   for (const inputPath of filePaths) {
     try {
-      const result = await spoofImage(inputPath);
+      const result = await spoofImage(inputPath, opts);
       // Ensure unique filenames
       while (usedNames.has(result.filename)) {
         const rand = Math.floor(Math.random() * 90000) + 10000;

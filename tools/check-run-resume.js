@@ -84,5 +84,47 @@ check('the reason is recorded', /Never spend money because a tab was re-opened/.
 check('a finished job is marked done', /await markJob\(mode, jid, 'done'\)/.test(g));
 check('and the queue clears at the end of a run', /if \(!outOfCredits\) await clearJobQueue\(mode\);/.test(g));
 
+// --- CHANGING A PHOTO MID-RUN MUST NOT DUPLICATE IT (owner, 2026-08-10) -----------------------
+// Two faults together duplicated a paid run: pickedBasePhotos is in the resume effect's deps, so
+// picking a different base photo re-fired it; and resumedRef was set only AFTER the early return,
+// so a first pass that found no record never armed the guard. Mid-run there IS a record -- the run
+// writes its queue up front -- so the effect offered to "resume" jobs that were already in flight.
+// \s+ rather than a literal newline: this file is CRLF on disk, so matching "\n" alone fails on
+// correct code — a test measuring the checkout's line endings instead of the behaviour.
+check('the once-per-mount flag is armed BEFORE the first await',
+  /resumedRef\.current = true;\s+let alive = true;/.test(g));
+check('and no longer sits after the record check',
+  !/if \(!alive \|\| !rec\) return;\s+resumedRef\.current = true;/.test(g));
+check('a live run is never treated as something to recover',
+  g.includes('|| inFlight > 0) return undefined;'));
+check('inFlight is in the deps, so the guard sees the truth',
+  g.includes('pickedBasePhotos, inFlight, mode'));
+check('the symptom is recorded', g.includes('accepting ran them twice'));
+
+// replay: the exact sequence that duplicated
+{
+  let resumed = false, prompts = 0;
+  const effect = (inFlight, hasRecord) => {
+    if (resumed || inFlight > 0) return;
+    resumed = true;
+    if (hasRecord) prompts += 1;
+  };
+  effect(0, false);          // mount, nothing outstanding
+  effect(12, true);          // a run starts and writes its queue; user picks a new base photo
+  effect(12, true);          // ...and another
+  check('picking new photos mid-run prompts ZERO times', prompts === 0);
+  check('and the flag stayed armed from the first pass', resumed === true);
+}
+{
+  let resumed = false, prompts = 0;
+  const effect = (inFlight, hasRecord) => {
+    if (resumed || inFlight > 0) return;
+    resumed = true;
+    if (hasRecord) prompts += 1;
+  };
+  effect(0, true);           // a genuine interrupted run, nothing in flight
+  check('a real interrupted run still offers to resume, exactly once', prompts === 1);
+}
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

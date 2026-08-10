@@ -84,7 +84,12 @@ def his_only(path: str) -> list[str]:
         raise SystemExit(f'Could not read {path} from {REF}: {r.stderr.strip()}')
     theirs = r.stdout
     local = (REPO / path)
-    mine = local.read_text(encoding='utf-8', errors='replace') if local.exists() else ''
+    if not local.exists():
+        # DELETED ON PURPOSE. Every line of his copy is "missing from mine", so the guard would
+        # flag the entire file and refuse -- turning an intentional cleanup into a wall of noise.
+        # A deletion is exactly what --force is for, so it is reported as one line, not hundreds.
+        return ['(whole file deleted locally)']
+    mine = local.read_text(encoding='utf-8', errors='replace')
     # Compared WITHOUT a trailing comma. Adding a key after an existing one in JSON turns
     # `"lint": "eslint src"` into `"lint": "eslint src",` — the same line, reported as a deletion.
     # A guard that cries wolf gets forced past, so the noise matters as much as the misses.
@@ -150,9 +155,17 @@ def main() -> None:
     try:
         git('worktree', 'add', '--detach', str(wt), REF, '-q')
         for f in files:
+            src = REPO / f
             dest = wt / f
+            # A file that no longer exists here is a DELETION, not an error. The tool only knew how
+            # to copy, so pushing a cleanup crashed on the first removed path and pushed nothing --
+            # a deletion could not be shared at all (2026-08-10).
+            if not src.exists():
+                if dest.exists():
+                    dest.unlink()
+                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(REPO / f, dest)
+            shutil.copyfile(src, dest)
         if not args.no_dist and (REPO / 'client/dist').is_dir():
             shutil.rmtree(wt / 'client/dist', ignore_errors=True)
             shutil.copytree(REPO / 'client/dist', wt / 'client/dist')
