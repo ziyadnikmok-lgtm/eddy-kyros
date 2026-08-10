@@ -106,10 +106,8 @@ for (const m of modes) {
 // pickedBasePhotos side by side and is not a gate. Matching the bare name reported that as a
 // failure, which is the kind of false alarm that gets a check deleted.
 check('no gate keys off maxNano, which would split the two tabs apart', (() => {
-  const gateRe = /(!maxNano\s*&&|maxNano\s*&&|maxNano\s*\?)[^;
-]{0,60}(pickedBasePhotos|baseItems|basePhoto)/g;
-  const revRe = /(pickedBasePhotos|baseItems|basePhoto)[^;
-]{0,60}(&&\s*!?maxNano|\?\s*[^:]{0,20}maxNano)/g;
+  const gateRe = new RegExp(String.raw`(!maxNano\s*&&|maxNano\s*&&|maxNano\s*\?)[^;\n]{0,60}(pickedBasePhotos|baseItems|basePhoto)`);
+  const revRe = new RegExp(String.raw`(pickedBasePhotos|baseItems|basePhoto)[^;\n]{0,60}(&&\s*!?maxNano|\?\s*[^:]{0,20}maxNano)`);
   return !gateRe.test(gen) && !revRe.test(gen);
 })());
 check('the picker slot itself is gated on maxOutfit only',
