@@ -1374,8 +1374,121 @@ export default function EddyCollection({
     });
   };
 
+  const isElectron = Boolean(window.electronAPI?.isElectron);
+
+  /**
+   * The bytes for one card, however that card happens to store them.
+   *
+   * A row holds EITHER a data: URL (hand-added) or a gallery URL (generated), and the two need
+   * different handling -- getting this wrong is what made bulk save skip every generated image.
+   * When neither works, the picture on screen is read off its <img>, which cannot fail the way a
+   * request can.
+   *
+   * Returns { data, ext } or null. Never throws: the caller counts failures and names them.
+   */
+  const bytesForItem = async (it) => {
+    const src = thumbs[it.id] || it.url;
+    const toBytes = (b64) => {
+      const bin = atob(b64);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+      return out;
+    };
+    const clean = async (bytes, mime) => {
+      if (!stripEnabled()) return bytes;
+      try {
+        const r = await stripMetadata(new Blob([bytes], { type: mime }));
+        return new Uint8Array(await r.blob.arrayBuffer());
+      } catch { return bytes; }
+    };
+
+    const m = /^data:([^;]+);base64,(.+)$/.exec(src || '');
+    if (m) {
+      const ext = (m[1].split('/')[1] || 'png').replace('jpeg', 'jpg');
+      return { data: await clean(toBytes(m[2]), m[1]), ext };
+    }
+
+    if (src) {
+      try {
+        const abs = /^https?:/i.test(src) ? src : new URL(src, window.location.origin).toString();
+        const resp = await fetch(abs, { credentials: 'include' });
+        if (resp.ok) {
+          const blob = await resp.blob();
+          const ext = ((blob.type.split('/')[1]) || 'png').replace('jpeg', 'jpg');
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          return { data: await clean(bytes, blob.type), ext };
+        }
+      } catch { /* fall through to the on-screen copy */ }
+    }
+
+    // The picture is already rendered, so the pixels are here regardless of what the fetch did.
+    try {
+      const el = document.querySelector(`img[data-eddy-img="${it.id}"]`);
+      if (el && el.naturalWidth) {
+        const canvas = document.createElement('canvas');
+        canvas.width = el.naturalWidth;
+        canvas.height = el.naturalHeight;
+        canvas.getContext('2d').drawImage(el, 0, 0);
+        const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
+        if (blob) {
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          return { data: await clean(bytes, 'image/png'), ext: 'png' };
+        }
+      }
+    } catch { /* nothing left to try */ }
+    return null;
+  };
+
   const downloadSelected = async () => {
     const picked = visible.filter((i) => selected.includes(i.id));
+
+    /**
+     * ASK WHERE. Saving straight to Downloads is fine for one image off a tile, but a deliberate
+     * multi-select is usually headed somewhere specific -- a character's folder, a client folder,
+     * a drive (owner, 2026-08-10).
+     *
+     * Cancelling the dialog cancels the save; it does not fall back to Downloads. Picking a
+     * destination and getting a different one is worse than nothing happening.
+     */
+    if (isElectron && window.electronAPI?.chooseDownloadFolder && window.electronAPI?.saveFileToFolder) {
+      const directory = await window.electronAPI.chooseDownloadFolder({
+        title: `Choose where to save ${picked.length} image${picked.length === 1 ? '' : 's'}`,
+        folderName: activeFolder
+          ? String(folders.find((f) => f.id === activeFolder)?.name || 'eddy').replace(/[^\w -]+/g, '')
+          : 'eddy-images',
+      });
+      if (!directory) return;                       // cancelled -- do nothing at all
+      let ok = 0;
+      let lastErr = '';
+      const written = [];
+      for (const it of picked) {
+        try {
+          // eslint-disable-next-line no-await-in-loop -- sequential; the store and disk are both serial
+          const bytes = await bytesForItem(it);
+          if (!bytes) { lastErr = 'could not read the image'; continue; }
+          const nm = String(it.name || it.prompt || it.id).replace(/[^a-z0-9._-]+/gi, '_').replace(/^[_.-]+|[_.-]+$/g, '').slice(0, 60) || 'image';
+          // eslint-disable-next-line no-await-in-loop
+          await window.electronAPI.saveFileToFolder({ directory, fileName: `${nm}.${bytes.ext}`, data: bytes.data });
+          ok += 1;
+          written.push(it.id);
+        } catch (e) { lastErr = e?.message || 'unknown error'; }
+      }
+      if (purgeOnDownload && written.length) {
+        for (const id of written) {
+          // eslint-disable-next-line no-await-in-loop -- serialized store
+          try { await store.removeItem(id); } catch { /* a stuck row is not worth losing the rest */ }
+        }
+        setSelected((prev) => prev.filter((id) => !written.includes(id)));
+        await refresh();
+      }
+      const gone = purgeOnDownload && written.length ? ` · ${written.length} removed from this folder` : '';
+      if (!ok) notify(`Nothing could be saved${lastErr ? ` — ${lastErr}` : ''}`, 'error');
+      else if (ok < picked.length) notify(`Saved ${ok} of ${picked.length}${gone} — ${picked.length - ok} failed${lastErr ? `: ${lastErr}` : ''}`, 'info');
+      else notify(`Saved ${ok} image${ok === 1 ? '' : 's'}${gone}`, 'success');
+      return;
+    }
+
+    // Plain browser: no folder picker exists, so the per-file path stands.
     let saved = 0;
     const done = [];
     for (const it of picked) {
@@ -1404,7 +1517,6 @@ export default function EddyCollection({
   // as files, so this is the only way to get them onto disk. In Electron the user picks/names the
   // folder and each file is written into it; a plain browser has no folder API, so it falls back to
   // individual downloads (they all land in Downloads).
-  const isElectron = Boolean(window.electronAPI?.isElectron);
   const saveToFolder = async () => {
     // `visible`, NOT `items`: inside a folder, "Save all" must mean this folder. Using the
     // whole collection meant standing in a 12-image folder and getting all 500 back, with no

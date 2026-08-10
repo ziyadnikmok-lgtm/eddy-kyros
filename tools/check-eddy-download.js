@@ -45,7 +45,9 @@ check('the auto path checks the count', col.includes('if (!n) notify(`Nothing co
 check('a partial save says how many failed', /Saved \$\{n\} of \$\{files\.length\} to Downloads/.test(col));
 check('the picker path got the same treatment', (col.match(/if \(!n\) notify\(`Nothing could be saved/g) || []).length === 2);
 check('the last error is carried out of the loop instead of swallowed',
-  (col.match(/catch \(e\) \{ lastErr = e\?\.message \|\| 'unknown error'; \}/g) || []).length === 2);
+  // >= 2, not exactly 2: a hard-coded count goes red the moment another save path is added,
+  // which is a correct change failing a test that measures the wrong thing.
+  (col.match(/lastErr = e\?\.message \|\| 'unknown error'/g) || []).length >= 2);
 check('the empty catch that hid this is gone', !/catch \{ \/\* skip a bad one, keep the rest \*\/ \}/.test(col));
 
 // --- 4. the single-tile path still resolves the right source -------------------------------------------
