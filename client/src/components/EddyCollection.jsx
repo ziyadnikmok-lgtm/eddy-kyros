@@ -1276,6 +1276,9 @@ export default function EddyCollection({
       let href = src;
       let revoke = false;
       let ext = 'png';
+      // The Blob the fetch below returns, kept so the download can use the ORIGINAL bytes instead
+      // of fetching the object URL back — see the note where it is consumed.
+      let objectUrlSource = null;
 
       if (/^data:/.test(src)) {
         // data URLs can be handed straight to the anchor; the mime is already in the string.
@@ -1300,6 +1303,7 @@ export default function EddyCollection({
         const resp = await fetch(absolute, { credentials: 'include' });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const blob = await resp.blob();
+        objectUrlSource = blob;
         href = URL.createObjectURL(blob);
         revoke = true;
         ext = (blob.type.split('/')[1] || 'png');
@@ -1313,7 +1317,23 @@ export default function EddyCollection({
       // (owner, 2026-08-08). Decoding the base64 is both allowed and cheaper.
       let blob;
       if (revoke) {
-        blob = await (await fetch(href)).blob();
+        /**
+         * Use the Blob we ALREADY have. Do not fetch the object URL back.
+         *
+         * `fetch(blob:…)` is refused by the server's CSP -- connectSrc is ['self', 'https:'] and a
+         * blob: URL is neither -- so this line threw on every single URL-backed download and the
+         * on-screen-<img> fallback below quietly rescued it. Downloads therefore "worked" while
+         * never once taking this path, and what landed on disk was a canvas RE-ENCODE rather than
+         * the file the server holds.
+         *
+         * Measured in the running app (2026-08-10), one Library picture:
+         *   server bytes 10,080,809  ·  fetch(blob:) FAILED  ·  canvas fallback 8,960,023
+         * Pixel-identical for PNG, but it is a different file, it costs a full decode+encode per
+         * image, and for any JPEG source the re-encode is genuinely lossy.
+         *
+         * The round trip never had a purpose: `href` was created FROM this Blob three lines up.
+         */
+        blob = objectUrlSource;
         URL.revokeObjectURL(href);
       } else {
         const m2 = /^data:([^;]+);base64,(.+)$/.exec(src);
