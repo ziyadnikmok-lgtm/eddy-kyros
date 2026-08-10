@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { library as libraryApi, gallery as galleryApi, video as videoApi } from '../services/api';
 import { stashSourceHandoff } from '../lib/sourceHandoff';
 import { downloadBlob } from '../lib/stripMetadata';
+import { cascadeDeleteFromCollections } from '../lib/galleryCascade';
 import { useApp } from '../context/AppContext';
 import { Btn, Badge, Spinner, Empty, ConfirmDialog, Toggle, Modal } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
@@ -893,6 +894,10 @@ export default function LibraryPage() {
     try {
       if (deleteTarget.mediaType === 'image') await galleryApi.remove(deleteTarget.originalId);
       else await videoApi.removeHistory(deleteTarget.originalId);
+      // ...and out of Eddy's collections, which hold a URL to this image rather than its bytes.
+      // Without this the picture is gone but the tiles pointing at it stay, rendering as broken
+      // boxes you can still select and still generate from.
+      if (deleteTarget.mediaType === 'image') await cascadeDeleteFromCollections([deleteTarget.originalId]);
 
       setItems((prev) => prev.filter((item) => item.id !== deleteTarget.id));
       setTotals((prev) => ({
@@ -1313,6 +1318,7 @@ export default function LibraryPage() {
       for (const videoItem of videos) {
         await videoApi.removeHistory(videoItem.originalId);
       }
+      if (imageIds.length > 0) await cascadeDeleteFromCollections(imageIds);
       setItems((prev) => prev.filter((item) => !selectedIds.has(item.id)));
       setTotals((prev) => ({
         all: Math.max(0, prev.all - selected.length),
