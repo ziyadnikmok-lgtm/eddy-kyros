@@ -545,6 +545,23 @@ export default function EddyCollection({
    * Shared by the bulk sweep below and the per-card "Retry label" button so the two can never
    * drift.
    */
+  /**
+   * Set a pose's view by hand -- no model call, no wait, no doubt about what it decided.
+   *
+   * Writes ONLY pose_action.view via mergePoseView, so the description the card already carries is
+   * left byte-identical. A card whose prompt is not the JSON shape cannot hold a view at all, and
+   * says so rather than appearing to work.
+   */
+  const setPoseView = useCallback(async (it, view) => {
+    const next = mergePoseView(it.prompt, view);
+    if (next === it.prompt) {
+      notify('This card has no readable pose text yet — use "Re-describe with AI" first', 'error');
+      return;
+    }
+    await store.updateItem(it.id, { prompt: next });
+    await refresh();
+  }, [store, refresh, notify]);
+
   const labelOneView = useCallback(async (it, dataUrl) => {
     if (!dataUrl) return false;
     const mt = (dataUrl.match(/^data:([^;]+);base64,/) || [])[1] || 'image/jpeg';
@@ -2203,13 +2220,31 @@ export default function EddyCollection({
                   Re-describe with AI which rewrites everything. */}
               {withPrompt && describeKind === 'pose' && !isPosePromptBroken(it.prompt) && it.prompt?.trim() && (thumbs[it.id] || it.url) && (
                 <div className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2 py-1">
-                  <span className={cn('text-[0.6875rem] font-bold uppercase tracking-wide',
-                    hasPoseView(it.prompt) ? 'text-blue-300' : 'text-zinc-600')}>
-                    {hasPoseView(it.prompt) ? readPoseView(it.prompt) : 'unlabeled'}
+                  {/* SET IT BY HAND. The AI label was the only way to set this, and it is a paid
+                      call whose answer you cannot see before it lands. On a shot that is borderline
+                      between a crop and a whole scene it is close to a coin flip, and the cost of a
+                      wrong one is a full-body garment on a close-up. Three buttons cost nothing and
+                      are certain.
+                      setPoseView writes ONLY pose_action.view (mergePoseView) -- the description
+                      above is never touched, unlike Re-describe with AI which rewrites the lot. */}
+                  <span className="flex items-center gap-1">
+                    {['front', 'back', 'closeup'].map((v) => {
+                      const active = hasPoseView(it.prompt) && readPoseView(it.prompt) === v;
+                      return (
+                        <button key={v} type="button" onClick={() => setPoseView(it, v)}
+                          disabled={labelingOne[it.id]}
+                          title={`Mark this pose as ${v}`}
+                          className={cn('rounded px-1.5 py-0.5 text-[0.625rem] font-bold uppercase tracking-wide transition cursor-pointer disabled:opacity-40',
+                            active ? 'bg-blue-500/25 text-blue-200' : 'text-zinc-600 hover:text-zinc-300')}>
+                          {v === 'closeup' ? 'close-up' : v}
+                        </button>
+                      );
+                    })}
+                    {!hasPoseView(it.prompt) && <span className="ml-0.5 text-[0.625rem] text-amber-400/80">unlabeled</span>}
                   </span>
                   <button className="text-[0.6875rem] text-zinc-500 hover:text-blue-300 cursor-pointer disabled:opacity-40"
                     disabled={labelingOne[it.id]} onClick={() => retryLabelOne(it)}>
-                    {labelingOne[it.id] ? 'Labelling…' : 'Retry label'}
+                    {labelingOne[it.id] ? 'Labelling…' : 'Ask AI'}
                   </button>
                 </div>
               )}

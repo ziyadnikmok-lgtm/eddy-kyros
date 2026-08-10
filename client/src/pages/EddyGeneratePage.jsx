@@ -3670,6 +3670,12 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     const name = (window.prompt('Save these photos and build as a model:', activeModel || '') || '').trim();
     if (!name) return;
     if (maxOutfit && !pickedBases.length) { notify('Pick the photos to dress first', 'error'); return; }
+    // Second gate. The button being disabled is a UI state, not a guarantee — Retry failed and
+    // any other caller reach run() directly.
+    if (missingOutfitKinds.length) {
+      notify(`No ${missingOutfitKinds.map((k) => k.label).join(' or ')} outfit picked — those photos would get the wrong kind of garment`, 'error');
+      return;
+    }
     // Max Outfit has no single main photo: every combo carries its own Library picture.
     if (!maxOutfit && !baseImage) { notify('Add the main photo first', 'error'); return; }
     const entry = { name, baseImage, faceImage, build };
@@ -3962,6 +3968,65 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
 
 
   // No outfit or no pose still counts as one run — the cross product just collapses to 1.
+  /**
+   * WHICH KINDS OF OUTFIT THIS SELECTION IS MISSING.
+   *
+   * A close-up shot needs a close-up outfit; a back shot needs a back one. With none selected the
+   * matcher used to quietly borrow from the rest of the selection, so a close-up got a full-body
+   * garment and nothing said so — you only found out by looking at the finished images.
+   *
+   * This turns that into a hard stop: the kinds are named, the photo counts are shown, and Generate
+   * is disabled until you tick one. Better to be told now than to pay for 40 wrong swaps.
+   *
+   * Only in Max Outfit, only with smart pairing ON, and only once you have picked some outfits —
+   * before that there is nothing to warn about yet.
+   */
+  const missingOutfitKinds = useMemo(() => {
+    if (!maxOutfit || !smartMatch || !pickedBases.length || !pickedOutfits.length) return [];
+    const byId = new Map(libItems.map((i) => [i.id, i]));
+    const outfitFolderName = (id) => outfitFolders.find((f) => f.id === outfits.find((o) => o.id === id)?.folderId)?.name || '';
+    const covered = new Set(pickedOutfits.map((o) => outfitView(outfitFolderName(o))));
+    const need = new Map();
+    for (const b of pickedBases) {
+      const v = libraryRowView(byId.get(b));
+      if (!covered.has(v)) need.set(v, (need.get(v) || 0) + 1);
+    }
+    const LABEL = { closeup: 'close-up', back: 'back', front: 'front' };
+    return [...need.entries()].map(([view, count]) => ({ view, count, label: LABEL[view] || view }));
+  }, [maxOutfit, smartMatch, pickedBases, pickedOutfits, libItems, outfits, outfitFolders]);
+
+  /**
+   * ON THE EDDY TAB: which of the combos you are about to make pair a mismatched kind.
+   *
+   * Eddy is a CROSS PRODUCT — every outfit you tick is applied to every pose you tick, on purpose.
+   * So a mismatch is not a dead end the way it is in Max Outfit; you may have picked one close-up
+   * outfit alongside five poses and only want the close-up one. Blocking would stop a run that is
+   * two-thirds legitimate.
+   *
+   * It is still worth saying out loud. A close-up garment on a full-body pose is a wasted image you
+   * would only notice by opening it, and at 12 lanes a bad cross product is 40 of them.
+   *
+   * Angle awareness on the PROMPT side already exists here and is untouched: a back pose has always
+   * used the outfit's back description (backPrompt) rather than its front one.
+   */
+  const eddyMismatches = useMemo(() => {
+    if (maxOutfit || maxNano || !pickedOutfits.length || !pickedPoses.length) return null;
+    const outfitFolderName = (id) => outfitFolders.find((f) => f.id === outfits.find((o) => o.id === id)?.folderId)?.name || '';
+    const poseById = new Map(poses.map((x) => [x.id, x]));
+    let bad = 0;
+    const kinds = new Set();
+    for (const o of pickedOutfits) {
+      const ov = outfitView(outfitFolderName(o));
+      for (const pid of pickedPoses) {
+        const pv = readPoseView(poseById.get(pid)?.prompt);
+        // front vs back is handled by backPrompt and is NOT a mismatch. Close-up is: a close-up
+        // garment reference has no lower half to give a full-body shot, and vice versa.
+        if ((ov === 'closeup') !== (pv === 'closeup')) { bad += 1; kinds.add(ov === 'closeup' ? 'closeup-outfit' : 'closeup-pose'); }
+      }
+    }
+    return bad ? { bad, total: pickedOutfits.length * pickedPoses.length, kinds: [...kinds] } : null;
+  }, [maxOutfit, maxNano, pickedOutfits, pickedPoses, outfits, outfitFolders, poses]);
+
   const combos = useMemo(() => {
     // Max Nano never sends an outfit — a stale selection from an Eddy session would otherwise
     // multiply the run and dress her in something this page does not even show.
@@ -4832,7 +4897,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // is an unmemoized array literal today, so it rebuilds run() every render — listed anyway so
     // memoizing it later can't silently turn charPayload into a stale (previous-face) closure.
     // mode and maxNano are read when the queue record is written and when the folder is resolved.
-  }, [baseImage, overCap, perRunImages, aspectRatio, combos, sourceImages, resolution, nsfw, characterName, mode, maxNano, maxOutfit, pickedBases, libraryStore, notify, generateCombo, engine, pickedOutfits, pickedPoses]);
+  }, [baseImage, overCap, perRunImages, aspectRatio, combos, sourceImages, resolution, nsfw, characterName, mode, maxNano, maxOutfit, pickedBases, missingOutfitKinds, libraryStore, notify, generateCombo, engine, pickedOutfits, pickedPoses]);
 
   // Assigned AFTER run() exists — `run` is a const, so touching it any earlier is a temporal dead
   // zone error that takes the whole page down. Same stabilisation generateComboRef uses: the resume
@@ -5995,7 +6060,39 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             </span>
           )}
         </p>
-        <Btn className="w-full" disabled={(maxOutfit ? !pickedBases.length : !baseImage) || overCap} onClick={() => run()}>
+        {/* Named, counted, and BLOCKING. A silent fallback here costs a whole batch of wrong
+            swaps that you only notice by opening the images. */}
+        {/* WARNS, does not block. Eddy is a cross product on purpose, so a partly-mismatched
+            selection can still be exactly what you meant. Max Outfit blocks instead, because
+            there the matching is automatic and a missing pool is a dead end. */}
+        {eddyMismatches && (
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.07] p-3 text-xs leading-relaxed text-amber-200">
+            <span className="font-semibold">{eddyMismatches.bad} of {eddyMismatches.total} images would mix a close-up with a full-body shot.</span>
+            <span className="mt-1 block text-amber-300/80">
+              A close-up outfit has no lower half to give a full-body pose, and a full-body outfit
+              gets cropped away by a close-up. Run it if that is what you meant — nothing is blocked here.
+            </span>
+          </div>
+        )}
+        {missingOutfitKinds.length > 0 && (
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.07] p-3 text-xs leading-relaxed text-amber-200">
+            <span className="font-semibold">Pick an outfit for every kind of shot.</span>
+            {missingOutfitKinds.map((k) => (
+              <span key={k.view} className="mt-1 block">
+                {k.count} {k.label} photo{k.count === 1 ? '' : 's'} selected, but no <span className="font-semibold">{k.label}</span> outfit —
+                {k.view === 'closeup'
+                  ? ' tick something from a "7. CloseUps" folder.'
+                  : k.view === 'back'
+                    ? ' tick something from a "- back" folder.'
+                    : ' tick something from a "- front" folder.'}
+              </span>
+            ))}
+            <span className="mt-1.5 block text-amber-300/80">
+              Or untick those photos. Turning off Smart pairing also lets it run, but then a close-up can get a full-body garment.
+            </span>
+          </div>
+        )}
+        <Btn className="w-full" disabled={(maxOutfit ? !pickedBases.length : !baseImage) || overCap || missingOutfitKinds.length > 0} onClick={() => run()}>
           {/* NO DOLLAR FIGURE ON GEMINI, deliberately. seedreamCost prices Muapi's published
               Seedream rates; this repo has no ground truth for Gemini/Vertex image cost, and the
               amber money rule means a number shown here is read as authoritative. An absent price
