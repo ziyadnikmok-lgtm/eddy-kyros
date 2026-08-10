@@ -184,5 +184,38 @@ check('and if nothing survives, everything runs rather than nothing', (() => {
   return (kept.length ? kept : all).length === 2;
 })());
 
+// --- MAX OUTFIT FILES UNDER HER NAME (owner, 2026-08-10) ---------------------------------------
+// Filing is by characterName on every tab. But the name-detect effect reads the Main-photo and
+// Face slots, and Max Outfit uses NEITHER -- its sources are Library rows -- so the name stayed
+// empty and Natalie's swaps filed under the generic "Max Outfit" pile.
+check('Max Outfit derives the name from the source folder',
+  /if \(!maxOutfit \|\| characterName \|\| !pickedBases\.length\) return;/.test(gen));
+check('it only fills an EMPTY name, never overrides a picked one', /characterName \|\| !pickedBases\.length/.test(gen));
+check('a mixed selection is left alone rather than guessed',
+  /if \(names\.size !== 1\) return;/.test(gen));
+check('an unfiled source photo also stops it', /if \(!n\) return;/.test(gen));
+check('the tab buckets are not mistaken for people',
+  /only === MAX_OUTFIT_FOLDER \|\| only === MAX_NANO_FOLDER \|\| only === 'Eddy'/.test(gen));
+
+// replay the rule
+const deriveName = (picked, folderOf, buckets) => {
+  const names = new Set();
+  for (const id of picked) { const n = folderOf(id); if (!n) return ''; names.add(n); }
+  if (names.size !== 1) return '';
+  const only = [...names][0];
+  return buckets.includes(only) ? '' : only;
+};
+const BUCKETS = ['Max Outfit', 'Max Nano', 'Eddy', 'Eddy NSFW'];
+check('4 photos all from Natalie -> Natalie',
+  deriveName(['a', 'b', 'c', 'd'], () => 'Natalie', BUCKETS) === 'Natalie');
+check('Natalie + Grace in one run -> no name, the picker decides',
+  deriveName(['a', 'b'], (id) => (id === 'a' ? 'Natalie' : 'Grace'), BUCKETS) === '');
+check('one photo with no folder -> no name',
+  deriveName(['a', 'b'], (id) => (id === 'a' ? 'Natalie' : ''), BUCKETS) === '');
+check('sources sitting in the Max Nano bucket -> no name, not "Max Nano"',
+  deriveName(['a'], () => 'Max Nano', BUCKETS) === '');
+check('and the filing function sends a named run to her folder',
+  /if \(who\) return \(await libraryStore\.ensureFolder\(who\)\)\?\.id/.test(gen));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

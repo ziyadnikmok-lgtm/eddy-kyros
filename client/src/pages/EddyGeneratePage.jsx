@@ -3589,6 +3589,39 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     return () => { alive = false; };
   }, [characterName, baseImage, faceImage, charStore, baseStore]);
 
+  /**
+   * MAX OUTFIT: take her name from the Library folder the source photos came out of.
+   *
+   * Filing has always been by characterName, and every tab agrees on it -- her pictures go in her
+   * folder. But the effect above only reads the Main-photo and Face slots, and Max Outfit uses
+   * neither: its sources are Library rows. So the name stayed empty and a whole batch of Natalie's
+   * outfit swaps filed under the generic "Max Outfit" pile instead of Natalie (owner, 2026-08-10).
+   *
+   * The source photos came OUT of her folder -- they were generated in Max Nano and filed there --
+   * so the folder they live in is the answer, no new bookkeeping required.
+   *
+   * Only fills a name that is EMPTY, and only when the picked photos agree. A mixed selection
+   * spanning two women has no single right answer, and guessing one would file half the run under
+   * the wrong person -- silently, which is the failure worth avoiding.
+   */
+  useEffect(() => {
+    if (!maxOutfit || characterName || !pickedBases.length) return;
+    const byId = new Map(libItems.map((i) => [i.id, i]));
+    const names = new Set();
+    for (const id of pickedBases) {
+      const fid = byId.get(id)?.folderId;
+      const n = fid ? (libItemFolders.find((f) => f.id === fid)?.name || '').trim() : '';
+      if (!n) return;                        // one unfiled photo -> no confident answer
+      names.add(n);
+    }
+    if (names.size !== 1) return;            // two women in one run -> leave it to the picker
+    const only = [...names][0];
+    // The tab's own buckets are not people. Filing under them would be a no-op that looks like
+    // a decision.
+    if (only === MAX_OUTFIT_FOLDER || only === MAX_NANO_FOLDER || only === 'Eddy' || only === 'Eddy NSFW') return;
+    setCharacterName(only);
+  }, [maxOutfit, characterName, pickedBases, libItems, libItemFolders]);
+
   // Read inside generateCombo. A ref rather than a dep, so a Library write mid-batch cannot
   // rebuild the callback underneath a running run.
   // Read inside generateCombo. Refs rather than deps, so loading a collection mid-batch cannot
