@@ -1534,6 +1534,77 @@ export default function EddyCollection({
   // as files, so this is the only way to get them onto disk. In Electron the user picks/names the
   // folder and each file is written into it; a plain browser has no folder API, so it falls back to
   // individual downloads (they all land in Downloads).
+  /**
+   * Fold "Grace 1", "Grace 2", "Grace Outfit 1" back into "Grace".
+   *
+   * The Max tabs open a numbered folder per click, which is right while a batch is fresh and wrong
+   * a week later -- twelve folders holding one picture each (owner, 2026-08-10). This moves every
+   * image into the plain folder of the same name and removes the empties.
+   *
+   * MOVES, never deletes. deleteFolder alone would orphan the pictures to no folder at all, which
+   * looks identical to losing them: the Library lists by folder, so a row with a null folderId is
+   * visible under "All" and nowhere else. The move happens FIRST and is verified before any folder
+   * is removed.
+   */
+  const mergeNumberedFolders = async () => {
+    const all = await store.listFolders();
+    // "Grace 3" and "Grace Outfit 3" both fold into "Grace". Split on the last space; the number
+    // must be the whole tail, so "Grace cosplay" is not mistaken for a batch of "Grace".
+    const parentOf = (name) => {
+      const n = String(name || '').trim();
+      const cut = n.lastIndexOf(' ');
+      if (cut <= 0 || !/^[0-9]+$/.test(n.slice(cut + 1))) return null;
+      return n.slice(0, cut).replace(/\s+Outfit$/i, '').trim() || null;
+    };
+
+    const groups = new Map();          // target name -> [folder, ...]
+    for (const f of all) {
+      const parent = parentOf(f.name);
+      if (parent) {
+        if (!groups.has(parent)) groups.set(parent, []);
+        groups.get(parent).push(f);
+      }
+    }
+    if (!groups.size) { notify('No numbered folders to merge', 'error'); return; }
+
+    const total = [...groups.values()].reduce((n, fs) => n + fs.length, 0);
+    const names = [...groups.keys()].sort().join(', ');
+    if (!window.confirm(
+      `Merge ${total} numbered folder${total === 1 ? '' : 's'} into ${names}?
+
+`
+      + 'Every picture moves into the plain folder of the same name. Nothing is deleted.',
+    )) return;
+
+    let moved = 0;
+    let removed = 0;
+    for (const [parent, fs] of groups) {
+      // eslint-disable-next-line no-await-in-loop -- serialized store
+      const target = await store.ensureFolder(parent);
+      if (!target?.id) continue;
+      for (const f of fs) {
+        if (f.id === target.id) continue;
+        // eslint-disable-next-line no-await-in-loop
+        const rows = (await store.listItems()).filter((i) => i.folderId === f.id);
+        const patches = new Map(rows.map((i) => [i.id, { folderId: target.id }]));
+        // eslint-disable-next-line no-await-in-loop
+        if (patches.size) await store.updateItems(patches);
+        // Verified before the folder goes: if the move did not take, removing the folder would
+        // orphan exactly the rows it failed on.
+        // eslint-disable-next-line no-await-in-loop
+        const left = (await store.listItems()).filter((i) => i.folderId === f.id).length;
+        if (left) continue;
+        moved += rows.length;
+        // eslint-disable-next-line no-await-in-loop
+        await store.deleteFolder(f.id);
+        removed += 1;
+      }
+    }
+    await refresh();
+    setActiveFolder(null);
+    notify(`Moved ${moved} image${moved === 1 ? '' : 's'} and removed ${removed} folder${removed === 1 ? '' : 's'}`, 'success');
+  };
+
   const saveToFolder = async () => {
     // `visible`, NOT `items`: inside a folder, "Save all" must mean this folder. Using the
     // whole collection meant standing in a 12-image folder and getting all 500 back, with no
@@ -1922,6 +1993,31 @@ export default function EddyCollection({
 
   // Items added together get consecutive createdAt values (t0, t0+1, …), so a real gap marks
   // the boundary between one add and the next. Walk back from the newest until the gap opens.
+  /**
+   * Select everything generated in the last hour / day.
+   *
+   * "Select last added" catches ONE batch -- it stops at a 60s gap -- which is the wrong tool
+   * after an afternoon of runs. Age is what you actually remember: "the stuff from today"
+   * (owner, 2026-08-10).
+   *
+   * Counted from the CURRENT VIEW, so inside a folder it means that folder. Anything with no
+   * createdAt is excluded rather than swept in on a falsy comparison.
+   */
+  const selectSince = useCallback((ms) => {
+    const cutoff = Date.now() - ms;
+    const ids = visible.filter((i) => Number(i.createdAt) > cutoff).map((i) => i.id);
+    if (!ids.length) { notify('Nothing that recent in this view', 'error'); return; }
+    setSelected(ids);
+  }, [visible, notify]);
+
+  const recentCounts = useMemo(() => {
+    const now = Date.now();
+    return {
+      hour: visible.filter((i) => Number(i.createdAt) > now - 3_600_000).length,
+      day: visible.filter((i) => Number(i.createdAt) > now - 86_400_000).length,
+    };
+  }, [visible]);
+
   const newestBatch = useMemo(() => {
     if (!visible.length) return [];
     const sorted = [...visible].sort((a, b) => b.createdAt - a.createdAt);
@@ -2261,6 +2357,36 @@ export default function EddyCollection({
               className="text-zinc-400 hover:text-white cursor-pointer underline underline-offset-2"
             >
               Select last added ({newestBatch.length})
+            </button>
+          )}
+          {/* Only offered when it would select something OTHER than everything -- a button that
+              does the same as "Select all" is a button that teaches you to ignore it. */}
+          {recentCounts.hour > 0 && recentCounts.hour < visible.length && (
+            <button
+              onClick={() => selectSince(3_600_000)}
+              title="Select everything generated in the last hour"
+              className="text-zinc-400 hover:text-white cursor-pointer underline underline-offset-2"
+            >
+              Last hour ({recentCounts.hour})
+            </button>
+          )}
+          {recentCounts.day > 0 && recentCounts.day < visible.length && recentCounts.day !== recentCounts.hour && (
+            <button
+              onClick={() => selectSince(86_400_000)}
+              title="Select everything generated in the last 24 hours"
+              className="text-zinc-400 hover:text-white cursor-pointer underline underline-offset-2"
+            >
+              Last 24h ({recentCounts.day})
+            </button>
+          )}
+          {/* Tidy-up, offered only when there is something to tidy. */}
+          {folders.some((f) => /\s[0-9]+$/.test(String(f.name || '').trim())) && (
+            <button
+              onClick={mergeNumberedFolders}
+              title="Fold Grace 1, Grace 2… back into Grace. Moves the pictures, deletes nothing."
+              className="text-zinc-500 hover:text-white cursor-pointer underline underline-offset-2"
+            >
+              Merge numbered folders
             </button>
           )}
           {describeProgress && (
