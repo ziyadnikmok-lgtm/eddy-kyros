@@ -217,5 +217,28 @@ check('sources sitting in the Max Nano bucket -> no name, not "Max Nano"',
 check('and the filing function sends a named run to her folder',
   /if \(who\) return \(await libraryStore\.ensureFolder\(who\)\)\?\.id/.test(gen));
 
+// --- ENGINE + CHIPS ON MAX OUTFIT (owner, 2026-08-10, from screenshots) ------------------------
+check('the engine switch is hidden on Max Outfit, which is pinned to Seedream',
+  /\{!maxNano && !maxOutfit && \(/.test(gen));
+check('and the pin it would have fought is still there', /if \(maxOutfit\) setEngine\('seedream'\);/.test(gen));
+check('the base-photo line does not claim poses on a tab that has none',
+  /maxOutfit \? ' ticked' : ' — each one runs every pose and outfit below'/.test(gen));
+check('the front/back/close-up chips no longer hide a single-kind run',
+  new RegExp(String.raw`return counts;\s*\n\s*\}, \[combos, poses, libItems\]\);`).test(gen));
+check('the reason is recorded -- hiding them hid a misclassification',
+  new RegExp(String.raw`Hiding\s*\n\s*\* the chips hid the bug and looked like agreement`).test(gen));
+check('a zero-count kind is still filtered out of the row',
+  /\]\.filter\(\(\[k\]\) => viewBreakdown\[k\]\)\.map/.test(gen));
+
+// replay the counting on a Max Outfit selection
+check('2 front photos report "2 FRONT" rather than nothing', (() => {
+  const combos = [{ baseId: 'a' }, { baseId: 'b' }];
+  const view = () => 'front';
+  const counts = { front: 0, back: 0, closeup: 0 };
+  for (const c of combos) counts[view(c.baseId)] += 1;
+  const shown = Object.entries(counts).filter(([, n]) => n);
+  return shown.length === 1 && shown[0][0] === 'front' && shown[0][1] === 2;
+})());
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
