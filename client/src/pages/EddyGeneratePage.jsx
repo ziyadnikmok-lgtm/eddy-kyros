@@ -5537,9 +5537,32 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       : libFolderId;
     // The SAME allocator instance, so a combo naming her explicitly reuses the folder the run
     // already made rather than opening a second one for the same click.
-    // null on Eddy: generateCombo then leaves libFolderId alone and the plain per-character
-    // folder resolved above stands.
-    const batchFolderFor = numberBatches ? preAlloc : null;
+    /**
+     * PER COMBO ON EVERY TAB. Only the NUMBERING is a Max thing.
+     *
+     * Setting this to null on Eddy was wrong: generateCombo then never looked at whose picture it
+     * was, so a run spanning Grace and Mia filed everything into one folder and Grace images landed in Mia
+     * (owner, 2026-08-10). Eddy still needs to ask per image; it just wants her
+     * plain folder rather than a numbered one.
+     *
+     * The Eddy resolver is cached the same way as the numbered one, so twelve concurrent lanes
+     * asking for Grace await one ensureFolder instead of racing to create twelve.
+     */
+    const plainFolders = (() => {
+      const pending = new Map();
+      return (name) => {
+        const who = String(name || '').trim();
+        if (!who) return Promise.resolve(libFolderId);
+        if (!pending.has(who)) {
+          pending.set(who, (async () => {
+            try { return (await libraryStore.ensureFolder(who))?.id || libFolderId; }
+            catch { return libFolderId; }
+          })());
+        }
+        return pending.get(who);
+      };
+    })();
+    const batchFolderFor = numberBatches ? preAlloc : plainFolders;
     libFolderId = runFolderId;
     const runCtx = { charPayload, ratio, videoRatio, perImageCost, libFolderId, batchFolderFor };
 
@@ -7159,40 +7182,11 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           )}
         </div>
 
-        {/* FEATURE 1 — the "Static camera" toggle. Placed in the results/video column because it
-            governs every Generate-video dispatch on this page. Same pill-and-knob shape as the NSFW
-            toggle above (reused verbatim), in a neutral sky accent — NOT amber, which is money only.
-            Default ON; the sub-line states what it does so a locked-off camera is never a surprise. */}
-        <button
-          type="button"
-          onClick={() => setStaticCamera((v) => !v)}
-          aria-pressed={staticCamera}
-          className={cn(
-            'group mb-2.5 flex w-full items-center gap-3 rounded-xl border px-3 py-2 transition cursor-pointer',
-            staticCamera
-              ? 'border-sky-500/50 bg-sky-500/10'
-              : 'border-white/[0.07] bg-white/[0.02] hover:border-zinc-600',
-          )}
-        >
-          <span className={cn('relative h-6 w-11 shrink-0 rounded-full transition-colors',
-            staticCamera ? 'bg-sky-500' : 'bg-zinc-700')}>
-            <span className={cn(
-              'absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all',
-              staticCamera ? 'left-[22px]' : 'left-0.5',
-            )} />
-          </span>
-          <span className="text-left leading-tight">
-            <span className={cn('block text-sm font-bold tracking-wide',
-              staticCamera ? 'text-sky-300' : 'text-zinc-400')}>
-              Static camera — no movement/zoom {staticCamera ? 'ON' : 'OFF'}
-            </span>
-            <span className="block text-[0.625rem] text-zinc-500">
-              {staticCamera
-                ? 'Every video is dispatched with a locked-off camera — only the subject moves'
-                : 'Videos may pan, tilt, zoom or drift as the prompt describes'}
-            </span>
-          </span>
-        </button>
+        {/* The "Static camera" toggle was REMOVED from this page. It only ever shaped VIDEO prompts,
+            and this is the image page -- a video control sitting above an image grid reads as
+            something that affects the pictures (owner, 2026-08-10). The behaviour it chose is kept
+            at its default (camera locked, CAMERA_LOCK_INSTRUCTION appended) for the per-tile video
+            buttons, which is what it was set to anyway. */}
 
         {/* Announced once for the whole column rather than per tile — N identical placeholder
             elements announcing themselves individually is noise, which is why PendingTile is

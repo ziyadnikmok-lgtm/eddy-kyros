@@ -69,6 +69,36 @@ function fakeStore() {
   const get3 = makeBatchFolders(broken, 'FALLBACK', nextBatchName);
   ck('an unreadable store falls back rather than throwing', (await get3('Grace')) === 'FALLBACK');
 
+  // --- EDDY resolves per combo too; only the NUMBERING is a Max thing --------------------------
+  // Setting batchFolderFor to null on Eddy meant generateCombo never asked whose picture it was,
+  // so a run spanning Grace and Mia filed everything into one folder -- the owner's Grace images
+  // landed in Mia (2026-08-10).
+  ck('Eddy gets a plain per-character resolver, not null',
+    /const batchFolderFor = numberBatches \? preAlloc : plainFolders;/.test(g));
+  ck('the plain resolver caches its promise, like the numbered one',
+    /if \(!pending\.has\(who\)\) \{[\s\S]{0,200}libraryStore\.ensureFolder\(who\)/.test(g));
+  ck('a combo with no name falls back to the run folder', /if \(!who\) return Promise\.resolve\(libFolderId\);/.test(g));
+  ck('a failed ensureFolder falls back rather than throwing', /catch \{ return libFolderId; \}/.test(g));
+  ck('the symptom is recorded', /Grace images landed in Mia/.test(g));
+
+  // replay: one Eddy run over two characters
+  {
+    const pend = new Map(); let calls = 0;
+    const plain = (name) => {
+      const who = String(name || '').trim();
+      if (!who) return Promise.resolve('FALLBACK');
+      if (!pend.has(who)) { calls += 1; pend.set(who, Promise.resolve('folder:' + who)); }
+      return pend.get(who);
+    };
+    const combos = ['Grace', 'Mia', 'Grace', 'Mia', 'Grace', ''];
+    const out = await Promise.all(combos.map(plain));
+    ck('Grace images go to Grace', out[0] === 'folder:Grace' && out[2] === 'folder:Grace');
+    ck('Mia images go to Mia', out[1] === 'folder:Mia');
+    ck('an unnamed combo goes to the run folder', out[5] === 'FALLBACK');
+    ck('two characters, two folder lookups - not six', calls === 2);
+    ck('and NO numbering on Eddy', !out.some((x) => /\s\d+$/.test(x)));
+  }
+
   console.log(f ? `\nFAIL — ${f}` : `\nPASS — ${p}/${p}`);
   process.exit(f ? 1 : 0);
 })();
