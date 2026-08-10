@@ -4497,8 +4497,11 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // Same suffix the run applies, or the banner would promise "Grace 3" and the pictures would
     // land in "Grace Outfit 3" -- the drift this preview exists to prevent.
     const suffixed = [...names].sort().map((n) => (maxOutfit ? `${n} Outfit` : n));
+    // Eddy files into her plain folder, so the banner must not promise a number the run will not
+    // create. Only the Max tabs are numbered -- see numberBatches in run().
+    if (!maxNano && !maxOutfit) return suffixed;
     return suffixed.map((n) => nextBatchName(libItemFolders, n));
-  }, [maxOutfit, libItems, libItemFolders, pickedBases, pickedBasePhotos, basePhotoPairs, characterName]);
+  }, [maxNano, maxOutfit, libItems, libItemFolders, pickedBases, pickedBasePhotos, basePhotoPairs, characterName]);
 
   const baseSlotRows = useMemo(() => (maxOutfit ? [] : pickedBasePhotos).map((id) => {
     const pair = basePhotoPairs.get(id);
@@ -5518,14 +5521,25 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
      * Resolved through the same allocator, so the run's fallback IS this click's folder: one
      * click, one folder, whatever each combo turns out to know about itself.
      */
+    /**
+     * NUMBERED BATCHES ARE A MAX THING. Eddy is not.
+     *
+     * Eddy files everything of hers in HER folder -- "Grace" -- run after run. The Max tabs run in
+     * bulk, fifty images at a time, so each click gets its own numbered folder to keep today's
+     * batch apart from last week's. Eddy is worked one shot at a time and a folder per click would
+     * be dozens of folders holding one picture each (owner, 2026-08-10).
+     */
+    const numberBatches = maxNano || maxOutfit;
     const preAlloc = makeBatchFolders(libraryStore, libFolderId);
     const runWho = String(characterName || '').trim();
-    const runFolderId = runWho
+    const runFolderId = (numberBatches && runWho)
       ? await preAlloc(maxOutfit ? `${runWho} Outfit` : runWho)
       : libFolderId;
     // The SAME allocator instance, so a combo naming her explicitly reuses the folder the run
     // already made rather than opening a second one for the same click.
-    const batchFolderFor = preAlloc;
+    // null on Eddy: generateCombo then leaves libFolderId alone and the plain per-character
+    // folder resolved above stands.
+    const batchFolderFor = numberBatches ? preAlloc : null;
     libFolderId = runFolderId;
     const runCtx = { charPayload, ratio, videoRatio, perImageCost, libFolderId, batchFolderFor };
 
