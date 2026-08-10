@@ -5507,7 +5507,26 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
      *
      * libFolderId stays as the floor for a combo with no name attached.
      */
-    const batchFolderFor = makeBatchFolders(libraryStore, libFolderId);
+    /**
+     * THE RUN'S OWN NUMBERED FOLDER, used as the floor.
+     *
+     * libFolderId above is the PLAIN folder -- "Grace" -- and handing that to the allocator as the
+     * fallback meant any combo whose name did not resolve landed in the unnumbered pile beside the
+     * numbered ones. On the Eddy tab that was most of them, which is why Eddy filled "Grace" while
+     * Max Nano made "Grace 1", "Grace 2" (owner, 2026-08-10).
+     *
+     * Resolved through the same allocator, so the run's fallback IS this click's folder: one
+     * click, one folder, whatever each combo turns out to know about itself.
+     */
+    const preAlloc = makeBatchFolders(libraryStore, libFolderId);
+    const runWho = String(characterName || '').trim();
+    const runFolderId = runWho
+      ? await preAlloc(maxOutfit ? `${runWho} Outfit` : runWho)
+      : libFolderId;
+    // The SAME allocator instance, so a combo naming her explicitly reuses the folder the run
+    // already made rather than opening a second one for the same click.
+    const batchFolderFor = preAlloc;
+    libFolderId = runFolderId;
     const runCtx = { charPayload, ratio, videoRatio, perImageCost, libFolderId, batchFolderFor };
 
     // Identifies THIS run's jobs. Read once so every jid in the batch shares it.
