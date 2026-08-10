@@ -1359,7 +1359,37 @@ export default function EddyCollection({
     const files = [];
     for (let idx = 0; idx < picked.length; idx += 1) {
       const it = picked[idx];
-      const dataUrl = thumbs[it.id] || await store.getImage(it.id);
+      /**
+       * A row can hold BYTES or a URL, and only bytes were handled.
+       *
+       * Generated results are stored as a URL to /api/gallery/<id>/image, not as a data URL — so
+       * this regex failed on every one of them, every row `continue`d, and a Library full of
+       * pictures reported "No images to save" (owner, 2026-08-10). Only hand-added rows, which
+       * really are data URLs, ever worked.
+       *
+       * Fetched here rather than earlier: this is the one place that needs the FULL image, and
+       * fetching every row up front would pull hundreds of megabytes for a save of twelve.
+       */
+      let dataUrl = thumbs[it.id] || await store.getImage(it.id);
+      if (dataUrl && !/^data:/.test(dataUrl)) {
+        try {
+          // eslint-disable-next-line no-await-in-loop -- sequential; a parallel burst of 500
+          // fetches is what took the renderer down before.
+          const resp = await fetch(dataUrl, { credentials: 'include' });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          // eslint-disable-next-line no-await-in-loop
+          const blob = await resp.blob();
+          // eslint-disable-next-line no-await-in-loop
+          dataUrl = await new Promise((res, rej) => {
+            const fr = new FileReader();
+            fr.onload = () => res(fr.result);
+            fr.onerror = rej;
+            fr.readAsDataURL(blob);
+          });
+        } catch {
+          continue;   // named in the count below rather than silently vanishing
+        }
+      }
       const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || '');
       if (!m) continue;   // a prompt-only card with no picture — nothing to save
       const ext = (m[1].split('/')[1] || 'png').replace('jpeg', 'jpg');
@@ -1367,6 +1397,11 @@ export default function EddyCollection({
       files.push({ fileName: `${String(idx + 1).padStart(3, '0')}_${nm}.${ext}`, b64: m[2], mime: m[1] });
     }
     if (!files.length) { notify('No images to save — these cards have no picture', 'error'); return; }
+    // A row whose picture could not be fetched is dropped above. Say so, rather than letting the
+    // save look complete at a smaller number than was selected.
+    if (files.length < picked.length) {
+      notify(`${picked.length - files.length} of ${picked.length} could not be read and will be skipped`, 'info');
+    }
     const bytesOf = (b64) => { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i += 1) a[i] = bin.charCodeAt(i); return a; };
 
     /**
@@ -1398,12 +1433,22 @@ export default function EddyCollection({
       const directory = await window.electronAPI.autoDownloadFolder({ folderName });
       if (!directory) { notify('Could not create a folder in Downloads', 'error'); return; }
       let n = 0;
+      let lastErr = '';
       for (const f of files) {
         // eslint-disable-next-line no-await-in-loop -- sequential writes, and cleanBytes is async
         try { await window.electronAPI.saveFileToFolder({ directory, fileName: f.fileName, data: await cleanBytes(f) }); n += 1; }
-        catch { /* skip a bad one, keep the rest */ }
+        catch (e) { lastErr = e?.message || 'unknown error'; }   // skip a bad one, keep the rest
       }
-      notify(`Saved ${n} image${n === 1 ? '' : 's'} to Downloads/${folderName} ✨`, 'success');
+      /**
+       * A run that saved NOTHING must not report success.
+       *
+       * Every failure was swallowed and the toast said "Saved 0 images ✨" — which reads as done,
+       * so the missing files look like a mystery rather than an error (owner, 2026-08-10). The
+       * count is now checked, and the reason for the last failure is carried out of the loop.
+       */
+      if (!n) notify(`Nothing could be saved${lastErr ? ` — ${lastErr}` : ''}`, 'error');
+      else if (n < files.length) notify(`Saved ${n} of ${files.length} to Downloads/${folderName} — ${files.length - n} failed${lastErr ? `: ${lastErr}` : ''}`, 'info');
+      else notify(`Saved ${n} image${n === 1 ? '' : 's'} to Downloads/${folderName} ✨`, 'success');
     } else if (isElectron && window.electronAPI?.chooseDownloadFolder && window.electronAPI?.saveFileToFolder) {
       const directory = await window.electronAPI.chooseDownloadFolder({
         title: `Choose where to save the ${(title || 'these').toLowerCase()} images`,
@@ -1411,12 +1456,16 @@ export default function EddyCollection({
       });
       if (!directory) return;
       let n = 0;
+      let lastErr = '';
       for (const f of files) {
         // eslint-disable-next-line no-await-in-loop -- sequential writes, and cleanBytes is async
         try { await window.electronAPI.saveFileToFolder({ directory, fileName: f.fileName, data: await cleanBytes(f) }); n += 1; }
-        catch { /* skip a bad one, keep the rest */ }
+        catch (e) { lastErr = e?.message || 'unknown error'; }   // skip a bad one, keep the rest
       }
-      notify(`Saved ${n} image${n === 1 ? '' : 's'} to the folder ✨`, 'success');
+      // Same as above: zero saved is a failure, not a quiet success.
+      if (!n) notify(`Nothing could be saved${lastErr ? ` — ${lastErr}` : ''}`, 'error');
+      else if (n < files.length) notify(`Saved ${n} of ${files.length} — ${files.length - n} failed${lastErr ? `: ${lastErr}` : ''}`, 'info');
+      else notify(`Saved ${n} image${n === 1 ? '' : 's'} to the folder ✨`, 'success');
     } else {
       let n = 0;
       for (const f of files) {
