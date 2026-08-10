@@ -6034,7 +6034,12 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
         )}
 
         <p className="text-xs text-zinc-500">
-          {pickedOutfits.length || 1} outfit{(pickedOutfits.length || 1) === 1 ? '' : 's'} × {pickedPoses.length || 1} pose{(pickedPoses.length || 1) === 1 ? '' : 's'} = <span className="text-zinc-300">{combos.length} image{combos.length === 1 ? '' : 's'}</span>
+          {/* The sum is written in the terms of the tab you are on. Max Outfit has no poses, so
+              "5 outfits x 1 pose" was describing a multiplication that does not happen there —
+              its images come from the PHOTOS you ticked, one each. */}
+          {maxOutfit
+            ? <>{pickedBases.length} photo{pickedBases.length === 1 ? '' : 's'} = <span className="text-zinc-300">{combos.length} image{combos.length === 1 ? '' : 's'}</span></>
+            : <>{pickedOutfits.length || 1} outfit{(pickedOutfits.length || 1) === 1 ? '' : 's'} × {pickedPoses.length || 1} pose{(pickedPoses.length || 1) === 1 ? '' : 's'} = <span className="text-zinc-300">{combos.length} image{combos.length === 1 ? '' : 's'}</span></>}
         </p>
 
           {/* WHICH KINDS, at a size worth reading. This was a grey one-liner under a grey
