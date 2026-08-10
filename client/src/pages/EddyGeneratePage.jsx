@@ -4935,6 +4935,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     const videoRatio = runCtx ? runCtx.videoRatio : toVideoAspectRatio(ratio);
     const perImageCost = runCtx ? runCtx.perImageCost : seedreamCost(resolution, Math.max(1, perRunImages));
     let libFolderId = runCtx ? runCtx.libFolderId : null;
+    let filedUnder = '';
     /**
      * WHOSE picture is this one?
      *
@@ -4963,6 +4964,9 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       // (owner, 2026-08-10).
       if (who && maxOutfit) who = `${who} Outfit`;
       if (who) libFolderId = await runCtx.batchFolderFor(who);
+      // Carried out with the result so a mis-filed picture can be re-filed later. Nothing else on
+      // a finished tile knows the character.
+      filedUnder = who;
     }
     if (!runCtx) {
       try {
@@ -5301,7 +5305,18 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           // Regenerate needs after a reload. Persisted with the lite shape (it's just two ids); the
           // rehydrate effect turns it back into a working regenerate closure. Stored as a fresh plain
           // copy so nothing here can be mutated by a later combos rebuild.
-          combo: { outfitId: combo.outfitId || null, poseId: combo.poseId || null },
+          // basePhotoId and baseId are kept too, and they are the ONLY thing on a finished
+          // result that says WHOSE picture it is. Without them a mis-filed image cannot be
+          // re-filed, because nothing left on the tile knows the character (owner, 2026-08-10).
+          combo: {
+            outfitId: combo.outfitId || null,
+            poseId: combo.poseId || null,
+            basePhotoId: combo.basePhotoId || null,
+            baseId: combo.baseId || null,
+          },
+          // Resolved at generation time rather than re-derived later: the pairing can change
+          // afterwards, and this has to record where the picture ACTUALLY went.
+          charName: filedUnder || '',
           regenCost: perImageCost,
           // THE closures this result was made by, capturing this batch's runCtx snapshot. A fresh
           // result therefore carries the batch that produced it — its face reference, aspect ratio,
@@ -5387,7 +5402,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       notify(`Saved to the gallery but not to Eddy: ${err?.message || 'unknown error'}`, 'error');
     }
 
-    return { image: first, videoPrompt: poseVideoPrompt, uid: resultUid };
+    return { image: first, videoPrompt: poseVideoPrompt, uid: resultUid, charName: filedUnder };
     // maxNano belongs here as much as maxOutfit: both decide which Library folder a result lands
     // in (see resolveLibraryFolder), and leaving it out means a stale closure can file a Max Nano
     // run as though it were an Eddy one. It only escaped notice because sourceImages is rebuilt
@@ -5743,13 +5758,34 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       }
       if (!queued.length) { await clearJobQueue(mode); return; }
 
-      notify(`Picking up where the last run stopped — ${queued.length} still to generate.`, 'success');
+      /**
+       * ASK. Never spend money because a tab was re-opened.
+       *
+       * This fired automatically, so leaving the page and coming back started a paid run with no
+       * click -- the owner watched images regenerate on a tab switch (2026-08-10). An unfinished
+       * queue is a reasonable thing to offer; it is not a reasonable thing to charge for on its
+       * own initiative.
+       *
+       * Declining CLEARS the record rather than leaving it to ask again on every visit. "No" means
+       * no, not "later".
+       */
+      const each = seedreamCost(resolution, Math.max(1, perRunImages));
+      const ok = window.confirm(
+        `A run was interrupted with ${queued.length} image${queued.length === 1 ? '' : 's'} left.
+
+`
+        + `Finish it now? About $${(queued.length * each).toFixed(2)}.
+
+`
+        + 'Cancel discards the rest of that run.',
+      );
+      if (!ok) { await clearJobQueue(mode); return; }
       // Straight into the normal path: same pool, same prices, same bookkeeping. run() rewrites the
       // queue record from this shorter list, so a second interruption resumes what is left of it.
       runRef.current?.(queued);
     })();
     return () => { alive = false; };
-  }, [loading, baseImage, maxOutfit, pickedBasePhotos, mode, notify]);
+  }, [loading, baseImage, maxOutfit, pickedBasePhotos, mode, notify, resolution, perRunImages]);
 
   /* -------------------------------------------------------------------------------------------
    * The inline results flow. Everything below acts on RESULTS, never on the page's live controls:

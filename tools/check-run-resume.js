@@ -12,6 +12,10 @@
 const fs = require('fs');
 const g = fs.readFileSync('D:/Kyros/app/client/src/pages/EddyGeneratePage.jsx', 'utf8');
 
+// The resume effect's dependency array, isolated so the check below reads THAT list and not
+// some other hook's.
+const s_deps = (/runRef\.current\?\.\(queued\);[\s\S]{0,400}?\n  \}, \[[^\]]*\]\);/.exec(g) || [''])[0];
+
 let pass = 0, fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };
 
@@ -37,8 +41,9 @@ check('then migrated so it is not read twice', /await jobQueueStore\.set\(jobQue
 // --- the resume gate ------------------------------------------------------------------------------
 check('the gate asks whether image 1 is available, not whether a slot is filled',
   g.includes('const canResume = maxOutfit || pickedBasePhotos.length > 0 || !!baseImage;'));
-check('and it is in the deps, or it reads a stale value',
-  /\}, \[loading, baseImage, maxOutfit, pickedBasePhotos, mode, notify\]\);/.test(g));
+check('and the deps it reads are all listed',
+  ['loading', 'baseImage', 'maxOutfit', 'pickedBasePhotos', 'mode', 'resolution', 'perRunImages']
+    .every((d) => new RegExp('\\}, \\[[^\\]]*\\b' + d + '\\b[^\\]]*\\]\\);').test(s_deps)));
 
 // --- replay: which tabs can resume ------------------------------------------------------------------
 const canResume = (maxOutfit, picked, baseImage) => maxOutfit || picked > 0 || !!baseImage;
@@ -57,6 +62,27 @@ check('starting a Max Outfit run does not erase the Max Nano one',
 check('each tab reads its own', store.get(key('maxOutfit')).jobs[0].jid === 'b');
 store.set(key('maxNano'), null);
 check('clearing one leaves the other', store.get(key('maxOutfit')) !== null);
+
+// --- RESUMING MUST NEVER SPEND MONEY ON ITS OWN (owner, 2026-08-10) ---------------------------
+// It fired automatically, so leaving the page and coming back started a paid run with no click --
+// the owner watched images regenerate on a tab switch. An unfinished queue is a reasonable thing
+// to OFFER; it is not a reasonable thing to charge for unprompted.
+check('the resume asks before spending', /const ok = window\.confirm\(/.test(g));
+check('the prompt states the cost', /About \$\$\{\(queued\.length \* each\)\.toFixed\(2\)\}/.test(g));
+check('and how many are left', /A run was interrupted with \$\{queued\.length\} image/.test(g));
+check('declining CLEARS the queue rather than asking again every visit',
+  /if \(!ok\) \{ await clearJobQueue\(mode\); return; \}/.test(g));
+check('the cancel wording says what cancel does', /Cancel discards the rest of that run/.test(g));
+check('nothing dispatches before the confirm', (() => {
+  const i = g.indexOf('const ok = window.confirm(');
+  const j = g.indexOf('runRef.current?.(queued)');
+  return i > -1 && j > i;
+})());
+check('the reason is recorded', /Never spend money because a tab was re-opened/.test(g));
+
+// a completed run must leave nothing to resume
+check('a finished job is marked done', /await markJob\(mode, jid, 'done'\)/.test(g));
+check('and the queue clears at the end of a run', /if \(!outOfCredits\) await clearJobQueue\(mode\);/.test(g));
 
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
