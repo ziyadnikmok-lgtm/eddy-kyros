@@ -449,6 +449,14 @@ export const photoMatch = {
   recreate: (body) => request('/photo-match/recreate', { method: 'POST', body }),
 };
 
+export const pinterestFeed = {
+  // Search, for the browse tab. Separate from the single-pin scraper below.
+  search: (body) => request('/pinterest-feed/search', { method: 'POST', body }),
+  // i.pinimg.com refuses a request carrying a browser Origin, so EVERY pin image -- thumbnail and
+  // full size -- has to come through the proxy. This route already existed for the old page.
+  proxyUrl: (u) => `/api/pinterest/proxy?url=${encodeURIComponent(u)}`,
+};
+
 export const pinterest = {
   fetch: (body) => request('/pinterest', { method: 'POST', body }),
   push: (urlOrBody, feature = 'pinterest', imageUrl = null) => {

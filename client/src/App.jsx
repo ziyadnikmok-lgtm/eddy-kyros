@@ -64,6 +64,7 @@ const SeedreamEditPage = lazy(() => import('./pages/SeedreamEditPage'));
 const SeedreamGeneratePage = lazy(() => import('./pages/SeedreamGeneratePage'));
 const OutfitSwapSeedreamPage = lazy(() => import('./pages/OutfitSwapSeedreamPage'));
 const PhotoMatchSeedreamPage = lazy(() => import('./pages/PhotoMatchSeedreamPage'));
+const PinterestFeedPage = lazy(() => import('./pages/PinterestFeedPage'));
 const SceneRecreateSeedreamPage = lazy(() => import('./pages/SceneRecreateSeedreamPage'));
 const PoseRemixSeedreamPage = lazy(() => import('./pages/PoseRemixSeedreamPage'));
 const EddyGeneratePage = lazy(() => import('./pages/EddyGeneratePage'));
@@ -112,6 +113,7 @@ const NAV_ICONS = {
   seedreamGenerate: IconMagicWandSparkle,
   outfitSwapSeedream: IconLayers,
   photoMatchSeedream: IconCrosshairs,
+  pinterestFeed: IconCrosshairs,
   sceneRecreateSeedream: IconCamera,
   poseRemixSeedream: IconSwap,
   eddyGenerate: IconBadgeSparkle,
@@ -168,6 +170,7 @@ const NAV_COLORS = {
   seedreamGenerate: ['#fda4af', '#e11d48'],
   outfitSwapSeedream: ['#f9a8d4', '#c026d3'],
   photoMatchSeedream: ['#f0abfc', '#a21caf'],
+  pinterestFeed: ['#fca5a5', '#b91c1c'],
   sceneRecreateSeedream: ['#67e8f9', '#0891b2'],
   poseRemixSeedream: ['#fbcfe8', '#db2777'],
   eddyGenerate: ['#fde68a', '#f59e0b'],
@@ -237,6 +240,9 @@ const NAV_SECTIONS = [
       { id: 'seedreamEdit', label: 'Seedream 5 Pro' },
       { id: 'outfitSwapSeedream', label: 'Outfit Swap' },
       { id: 'photoMatchSeedream', label: 'Photo Match' },
+      // Beside Photo Match on purpose: browsing Pinterest is the step BEFORE a match, and
+      // the tab's only job is to hand it sources.
+      { id: 'pinterestFeed', label: 'Pinterest' },
       { id: 'sceneRecreateSeedream', label: 'Scene Recreate' },
       { id: 'poseRemixSeedream', label: 'Pose Remix' },
     ],
@@ -419,6 +425,7 @@ const PAGE_DESCRIPTIONS = {
   seedreamGenerate: "Pick your character, type a prompt — Seedream 5.0 Pro generates a new photo of her.",
   outfitSwapSeedream: 'Put the outfit from image 2 onto the person in image 1 — via Seedream 5.0 Pro (no Gemini)',
   photoMatchSeedream: 'Paste any photo — match background & pose with your character, via Seedream 5.0 Pro (no Gemini)',
+  pinterestFeed: 'Search Pinterest, tick the shots you want, send them straight into Photo Match',
   sceneRecreateSeedream: 'Put your character in a scene and remix it — new background, outfit, lighting — via Seedream 5.0 Pro',
   poseRemixSeedream: 'Repose your character into any pose — sexy, flirty, sexual, or read from a reference — via Seedream 5.0 Pro',
   eddyGenerate: 'Your character, in any outfit and pose',
@@ -494,6 +501,7 @@ const PAGES = {
   seedreamGenerate: SeedreamGeneratePage,
   outfitSwapSeedream: OutfitSwapSeedreamPage,
   photoMatchSeedream: PhotoMatchSeedreamPage,
+  pinterestFeed: PinterestFeedPage,
   sceneRecreateSeedream: SceneRecreateSeedreamPage,
   poseRemixSeedream: PoseRemixSeedreamPage,
   eddyGenerate: EddyGeneratePage,

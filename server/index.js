@@ -86,6 +86,9 @@ const reelCopyRoute = require('./routes/reelCopy');
 const postCloneRoute = require('./routes/postClone');
 const profileCloneRoute = require('./routes/profileClone');
 const pinterestRoute = require('./routes/pinterest');
+// Search, for the browse tab. Separate file from the single-pin scraper above -- different
+// upstream and a different failure mode, so a change at one end cannot break the other.
+const pinterestFeedRoute = require('./routes/pinterestFeed');
 const instagramFramesRoute = require('./routes/instagramFrames');
 const instagramReelRoute = require('./routes/instagramReel');
 const promptKnowledgeRoute = require('./routes/promptKnowledge');
@@ -460,6 +463,9 @@ app.use('/api/reel-copy', cloneLimiter, reelCopyRoute);
 app.use('/api/post-clone', cloneLimiter, postCloneRoute);
 app.use('/api/profile-clone', cloneLimiter, profileCloneRoute);
 app.use('/api/pinterest', generateLimiter, pinterestRoute);
+// NOT behind generateLimiter: that budget exists for paid generations, and browsing a grid
+// must not eat it. Pinterest's own rate limit is the real ceiling and is surfaced as 429.
+app.use('/api/pinterest-feed', pinterestFeedRoute);
 app.use('/api/instagram-frames', readLimiter, instagramFramesRoute);
 app.use('/api/instagram-reel', instagramReelRoute);
 app.use('/api/prompt-knowledge', promptKnowledgeRoute);
