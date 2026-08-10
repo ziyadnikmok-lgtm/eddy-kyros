@@ -3105,14 +3105,42 @@ const resultsStore = createPageStore('eddy-results-v1');
  * character before resuming and the rest of the batch is generated as HER.
  */
 const jobQueueStore = createPageStore('eddy-jobqueue-v1');
-const JOB_QUEUE_KEY = 'unfinished';
+/**
+ * ONE RECORD PER TAB, not one shared between them.
+ *
+ * This was a single key with the mode stored INSIDE it, and readJobQueue discarded a record whose
+ * mode did not match. So starting a Max Outfit run overwrote an unfinished Max Nano one, and each
+ * tab then read the other's record and threw it away -- the run was gone with nothing said (owner
+ * wanted a run to survive leaving the page, 2026-08-10).
+ *
+ * Keying by mode means the three tabs keep three independent records and can each have work
+ * outstanding at once, which is the actual situation: they are separate queues on separate
+ * sources.
+ *
+ * The old key is still read once on load, so a run left unfinished by the previous build is
+ * recovered rather than orphaned by this change.
+ */
+const JOB_QUEUE_KEY_LEGACY = 'unfinished';
+const jobQueueKey = (mode) => `unfinished:${mode || 'eddy'}`;
 
 /** Newest-wins read of the stored run, or null when there is nothing outstanding. */
 async function readJobQueue(mode) {
   try {
-    const rec = await jobQueueStore.get(JOB_QUEUE_KEY, null);
+    let rec = await jobQueueStore.get(jobQueueKey(mode), null);
+    if (!rec) {
+      // Pre-split record. Claimed only by the tab it belongs to, then migrated to that tab's key
+      // so the next read finds it in the new place and the old one stops being consulted.
+      const legacy = await jobQueueStore.get(JOB_QUEUE_KEY_LEGACY, null);
+      if (legacy && (legacy.mode || 'eddy') === mode) {
+        rec = legacy;
+        try {
+          await jobQueueStore.set(jobQueueKey(mode), legacy);
+          await jobQueueStore.set(JOB_QUEUE_KEY_LEGACY, null);
+        } catch { /* the read still stands even if the migration write fails */ }
+      }
+    }
     if (!rec || !Array.isArray(rec.jobs) || !rec.jobs.length) return null;
-    if ((rec.mode || 'eddy') !== mode) return null;   // another tab's run — not ours to resume
+    if ((rec.mode || 'eddy') !== mode) return null;   // belt and braces on a hand-edited record
     return rec;
   } catch { return null; }
 }
@@ -3122,19 +3150,20 @@ async function readJobQueue(mode) {
  * record has to survive a kill at ANY instant, and a kill between "sent" and "done" must read as
  * sent (possibly billed) rather than queued (safe to re-run).
  */
-async function markJob(jid, status) {
+async function markJob(mode, jid, status) {
   try {
-    const rec = await jobQueueStore.get(JOB_QUEUE_KEY, null);
+    const key = jobQueueKey(mode);
+    const rec = await jobQueueStore.get(key, null);
     if (!rec || !Array.isArray(rec.jobs)) return;
     const jobs = rec.jobs.map((j) => (j.jid === jid ? { ...j, status } : j));
     // Nothing left to owe — clear rather than leave an empty husk that reads as an unfinished run.
-    if (jobs.every((j) => j.status === 'done' || j.status === 'failed')) await jobQueueStore.set(JOB_QUEUE_KEY, null);
-    else await jobQueueStore.set(JOB_QUEUE_KEY, { ...rec, jobs });
+    if (jobs.every((j) => j.status === 'done' || j.status === 'failed')) await jobQueueStore.set(key, null);
+    else await jobQueueStore.set(key, { ...rec, jobs });
   } catch { /* bookkeeping only — never fail a generation over it */ }
 }
 
-async function clearJobQueue() {
-  try { await jobQueueStore.set(JOB_QUEUE_KEY, null); } catch { /* nothing to do */ }
+async function clearJobQueue(mode) {
+  try { await jobQueueStore.set(jobQueueKey(mode), null); } catch { /* nothing to do */ }
 }
 
 /**
@@ -5418,7 +5447,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
      */
     const jidOf = (i) => `j-${runStamp}-${i}`;
     try {
-      await jobQueueStore.set(JOB_QUEUE_KEY, {
+      await jobQueueStore.set(jobQueueKey(mode), {
         mode, startedAt: runStamp,
         jobs: batch.map((combo, i) => ({ jid: jidOf(i), combo, status: 'queued' })),
       });
@@ -5434,16 +5463,16 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       // enough to matter, and the safe reading of "we don't know" is "it may have been billed".
       // Under-claiming here costs a duplicate image; over-claiming costs nothing but a Retry click.
       const jid = jidOf(idx);
-      await markJob(jid, 'sent');
+      await markJob(mode, jid, 'sent');
       try {
         const res = await generateCombo(combo, { runCtx });
         out.push(res);
-        await markJob(jid, 'done');
+        await markJob(mode, jid, 'done');
         // A retry that SUCCEEDS clears its own entry, so the "Retry N failed" count always equals
         // what is still outstanding rather than what has ever failed.
         setFailedCombos((prev) => prev.filter((f) => f.combo !== combo));
       } catch (err) {
-        await markJob(jid, 'failed');
+        await markJob(mode, jid, 'failed');
         // The reason is already on the feed card; this keeps the COMBO so it can be re-run.
         // Deduped by combo identity — retrying a combo that fails again must not stack a second
         // entry and inflate the count.
@@ -5477,7 +5506,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // The run is over one way or another, so nothing is owed. Cleared on CANCEL too: cancelling is
     // a deliberate "don't send the rest", and resuming it on the next launch would be the opposite
     // of what was asked — and would spend money doing it.
-    await clearJobQueue();
+    await clearJobQueue(mode);
 
     if (cancelRef.current) {
       // Cancelled is NOT failed: the unsent combos were never attempted and never charged, so they
@@ -5523,7 +5552,21 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
    */
   const resumedRef = useRef(false);
   useEffect(() => {
-    if (resumedRef.current || loading || !baseImage) return undefined;
+    /**
+     * The gate is "do we have what a resumed combo needs", and that is NOT always baseImage.
+     *
+     * It read `!baseImage` -- the single Main-photo slot. Max Outfit never fills that slot (its
+     * sources are Library rows carried on each combo) and a multi-base run does not either, so
+     * neither tab ever resumed: the record sat in IndexedDB and the effect returned on the first
+     * line, silently (owner, 2026-08-10).
+     *
+     * Each mode supplies image 1 differently, so each is asked its own question:
+     *   Max Outfit  -> the combo carries baseId; nothing on the page is needed
+     *   ticked bases -> the combo carries basePhotoId; likewise
+     *   otherwise    -> the single slot really is the source, so wait for it to load
+     */
+    const canResume = maxOutfit || pickedBasePhotos.length > 0 || !!baseImage;
+    if (resumedRef.current || loading || !canResume) return undefined;
     let alive = true;
     (async () => {
       const rec = await readJobQueue(mode);
@@ -5538,7 +5581,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
         // and already in the gallery — the sweep on the Library files them.
         notify(`${sent.length} image${sent.length === 1 ? ' was' : 's were'} still generating when the app closed. They finish on the server — open the Library and they are pulled in.`, 'success');
       }
-      if (!queued.length) { await clearJobQueue(); return; }
+      if (!queued.length) { await clearJobQueue(mode); return; }
 
       notify(`Picking up where the last run stopped — ${queued.length} still to generate.`, 'success');
       // Straight into the normal path: same pool, same prices, same bookkeeping. run() rewrites the
@@ -5546,7 +5589,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       runRef.current?.(queued);
     })();
     return () => { alive = false; };
-  }, [loading, baseImage, mode, notify]);
+  }, [loading, baseImage, maxOutfit, pickedBasePhotos, mode, notify]);
 
   /* -------------------------------------------------------------------------------------------
    * The inline results flow. Everything below acts on RESULTS, never on the page's live controls:
