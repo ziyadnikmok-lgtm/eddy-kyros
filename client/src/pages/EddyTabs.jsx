@@ -3,6 +3,8 @@ import { Card, Btn, Spinner } from '../components/UI';
 import { useApp } from '../context/AppContext';
 import { gallery as galleryApi } from '../services/api';
 import { createEddyCollection } from '../lib/eddyCollectionStore';
+import { planPoseViewBackfill } from '../lib/poseViewBackfill';
+import { readPoseView, poseSentence } from '../lib/poseText';
 import EddyCollection from '../components/EddyCollection';
 import EddySheetImport from '../components/EddySheetImport';
 
@@ -19,6 +21,31 @@ import EddySheetImport from '../components/EddySheetImport';
  * browser that files it here — so a refresh leaves the picture safe yet missing from Eddy.
  * This finds those and files them by the character tag they were generated under.
  */
+/**
+ * Stamp `poseView` onto Library rows that predate it, by matching each row's saved prompt back to
+ * the Pose card that produced it. Offline and exact — no vision pass, no cost.
+ */
+async function backfillPoseViews(libraryStore, quiet) {
+  try {
+    const [rows, poseCards] = await Promise.all([
+      libraryStore.listItems(),
+      createEddyCollection('eddy-pose').listItems(),
+    ]);
+    const { patches, stats } = planPoseViewBackfill(rows, poseCards, { readPoseView, poseSentence });
+    if (!patches.size) return stats;
+    await libraryStore.updateItems(patches);
+    if (!quiet) {
+      // eslint-disable-next-line no-console -- one line, only on a manual run
+      console.info('[eddy] poseView backfill', stats);
+    }
+    return stats;
+  } catch {
+    // Never fail the recovery sweep over this: the field is an optimisation for outfit matching,
+    // not something an image depends on.
+    return null;
+  }
+}
+
 function RecoverFromGallery({ onDone }) {
   const { notify } = useApp();
   const [busy, setBusy] = useState(false);
@@ -39,6 +66,17 @@ function RecoverFromGallery({ onDone }) {
       // Existing entries point at /gallery/<id>/image, so the id in the URL is the dedupe key.
       const have = new Set((await store.listItems()).map((i) => (i.url || '').split('/gallery/')[1]?.split('/')[0]).filter(Boolean));
       const missing = mine.filter((g) => !have.has(g.id));
+      /**
+       * BACKFILL FIRST, and regardless of whether anything was missing.
+       *
+       * Max Outfit reads `poseView` off a Library row to give a back shot a back outfit. Rows made
+       * before that field existed have none, so every one of them reads as "front" — a back shot
+       * could be handed a front garment and nothing would say so.
+       *
+       * It costs nothing and looks at no pictures: the row already stores the prompt it was
+       * generated with, and that prompt carries the pose verbatim. See planPoseViewBackfill.
+       */
+      await backfillPoseViews(store, quiet);
       if (!missing.length) { if (!quiet) notify('Nothing missing — Library is up to date', 'success'); return; }
 
       // Tags the server always writes; anything left is the caller's own marker, not a character.

@@ -206,34 +206,112 @@ function outfitView(folderName) {
 }
 
 /**
- * Deal outfits to photos, matching angle where possible.
+ * Least-used picker — a port of RotationPicker from cloth_swap_paired.py.
  *
- * Each pool rotates independently, so within a view no outfit repeats until every one of that view
- * has been used — the no-dupe rule, applied per pool rather than across the whole selection.
+ * Least-used wins, ties broken at RANDOM. Not a round-robin cursor, which is what this used to be:
+ * a cursor is fair only if every pick comes in the same order, and pairing means some pools get
+ * pulled from twice as often as others. Least-used is fair regardless of call order.
  *
- * A photo whose view has no outfit selected falls back to the whole selection rather than being
- * skipped: silently generating nothing for a third of the batch would be far worse than one
- * mismatched garment, and the caller reports how many fell back.
+ * Usage is NOT persisted, matching theirs exactly — the counter resets every run, and within a run
+ * it is global across every character and every pair.
  */
-function matchOutfits(bases, outfits, viewOfBase, viewOfOutfit) {
+function makeRotationPicker(pool, rng) {
+  const usage = new Map(pool.map((p) => [p, 0]));
+  return {
+    pick() {
+      if (!pool.length) return null;
+      const min = Math.min(...pool.map((p) => usage.get(p)));
+      const candidates = pool.filter((p) => usage.get(p) === min);
+      const choice = candidates[Math.floor(rng() * candidates.length) % candidates.length];
+      usage.set(choice, usage.get(choice) + 1);
+      return choice;
+    },
+    usage,
+  };
+}
+
+/**
+ * [a, b, c, d] -> [(a,b), (c,d)]. An odd tail pairs with ITSELF, so it still gets an assignment.
+ * Verbatim behaviour from sequential_pairs().
+ */
+function sequentialPairs(items) {
+  const out = [];
+  for (let i = 0; i < items.length; i += 2) {
+    out.push(i + 1 < items.length ? [items[i], items[i + 1]] : [items[i], items[i]]);
+  }
+  return out;
+}
+
+/**
+ * Deal outfits to photos exactly the way cloth_swap_paired.py deals them to poses.
+ *
+ * THE RULES, from the friend's source rather than from his docs (which had drifted — his README
+ * corrects three of them by name):
+ *
+ *   1. Three FLAT pools: front, back, closeup. No per-category fairness — he chose flat pools on
+ *      purpose because the categories are not balanced anyway. Each individual FILE still gets used
+ *      roughly equally, which is the actual guarantee.
+ *   2. Close-ups are separated FIRST and paired among themselves, against their own pool.
+ *   3. Photos are walked in order, in pairs of two, and EACH PAIR SHARES ITS PICK — one outfit per
+ *      two shots. Cheaper, and it reads as a mini look rather than a new outfit every image.
+ *   4. A mixed front/back pair pulls from BOTH pools INDEPENDENTLY. Those are two different
+ *      garments, not one garment in two views: the front and back libraries are not 1:1 matched, so
+ *      pretending they are gives worse swaps than letting each pool serve its own best file.
+ *   5. Least-used picking, ties random, non-persistent, global across the run.
+ *
+ * `rng` is injectable so the checks can drive it deterministically; it defaults to Math.random.
+ *
+ * A photo whose pool is EMPTY falls back to the whole selection rather than being skipped — his
+ * script raises and dies there, which is right for a batch script and wrong for a UI. The count is
+ * returned so the caller can say how many fell back.
+ */
+function matchOutfits(bases, outfits, viewOfBase, viewOfOutfit, rng = Math.random) {
   const pools = { front: [], back: [], closeup: [] };
   for (const o of outfits) pools[viewOfOutfit(o)].push(o);
-  const cursors = { front: 0, back: 0, closeup: 0, all: 0 };
+  const pickers = {
+    front: makeRotationPicker(pools.front, rng),
+    back: makeRotationPicker(pools.back, rng),
+    closeup: makeRotationPicker(pools.closeup, rng),
+  };
+  const anyPicker = makeRotationPicker(outfits, rng);
+
+  const closeupBases = bases.filter((b) => viewOfBase(b) === 'closeup');
+  const normalBases = bases.filter((b) => viewOfBase(b) !== 'closeup');
+
+  const assigned = new Map();
   let fellBack = 0;
-  const rows = bases.map((b) => {
-    const view = viewOfBase(b);
-    const pool = pools[view];
-    if (pool.length) {
-      const o = pool[cursors[view] % pool.length];
-      cursors[view] += 1;
-      return { baseId: b, outfitId: o, matched: true };
+
+  // Normal pairs: one pick per pool the pair actually needs.
+  for (const [a, b] of sequentialPairs(normalBases)) {
+    const views = new Set([viewOfBase(a), viewOfBase(b)]);
+    const frontPick = views.has('front') ? pickers.front.pick() : null;
+    const backPick = views.has('back') ? pickers.back.pick() : null;
+    for (const id of a === b ? [a] : [a, b]) {
+      const want = viewOfBase(id) === 'back' ? backPick : frontPick;
+      if (want) { assigned.set(id, { outfitId: want, matched: true }); continue; }
+      const fallback = anyPicker.pick();
+      if (fallback) fellBack += 1;
+      assigned.set(id, { outfitId: fallback, matched: false });
     }
-    if (!outfits.length) return { baseId: b, outfitId: null, matched: false };
-    fellBack += 1;
-    const o = outfits[cursors.all % outfits.length];
-    cursors.all += 1;
-    return { baseId: b, outfitId: o, matched: false };
-  });
+  }
+
+  // Close-up pairs: one pick from the close-up pool, shared by both shots.
+  for (const [a, b] of sequentialPairs(closeupBases)) {
+    const pick = pickers.closeup.pick();
+    for (const id of a === b ? [a] : [a, b]) {
+      if (pick) { assigned.set(id, { outfitId: pick, matched: true }); continue; }
+      const fallback = anyPicker.pick();
+      if (fallback) fellBack += 1;
+      assigned.set(id, { outfitId: fallback, matched: false });
+    }
+  }
+
+  // Original order out, so the results column matches the order you picked in.
+  const rows = bases.map((b) => ({
+    baseId: b,
+    outfitId: assigned.get(b)?.outfitId ?? null,
+    matched: assigned.get(b)?.matched ?? false,
+  }));
   return { rows, fellBack };
 }
 
@@ -3831,7 +3909,8 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       if (!outfitRotation) return bases.flatMap((b) => os.map((o) => ({ outfitId: o, poseId: null, baseId: b })));
       const chosen = pickedOutfits.length ? pickedOutfits : [];
       if (smartMatch && chosen.length) {
-        // Angle-aware: a back shot gets a back outfit, a close-up gets a close-up one.
+        // Angle-aware, pairs of two, least-used pools -- the algorithm ported from
+        // cloth_swap_paired.py. See matchOutfits for the rules and where they came from.
         const byId = new Map(libItems.map((i) => [i.id, i]));
         const outfitFolderName = (id) => outfitFolders.find((f) => f.id === outfits.find((o) => o.id === id)?.folderId)?.name || '';
         const { rows } = matchOutfits(
@@ -5715,8 +5794,8 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             <input type="checkbox" checked={smartMatch} onChange={(e) => setSmartMatch(e.target.checked)}
               className="mt-0.5 cursor-pointer accent-rose-500" />
             <span className="text-xs leading-relaxed text-zinc-400">
-              <span className="font-semibold text-zinc-200">Match the angle</span>
-              {' — a back shot gets a back outfit, a close-up gets a close-up one. A photo whose angle has no outfit picked falls back to the whole selection rather than being skipped.'}
+              <span className="font-semibold text-zinc-200">Smart pairing</span>
+              {" — the friend's pipeline rules: photos are taken two at a time and each PAIR shares one outfit; a back shot gets a back outfit, a close-up gets a close-up one; and the least-used outfit always wins, so none repeats before the rest have had a turn."}
             </span>
           </label>
         )}
