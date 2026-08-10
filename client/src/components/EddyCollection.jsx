@@ -1264,7 +1264,23 @@ export default function EddyCollection({
         // data URLs can be handed straight to the anchor; the mime is already in the string.
         ext = (src.match(/^data:([^;/]+)\/([^;]+)/) || [])[2] || 'png';
       } else {
-        const resp = await fetch(src, { credentials: 'include' });
+        /**
+         * ABSOLUTE url, built from the window's own origin.
+         *
+         * A relative "/api/…" resolves against the document, and this window starts life on a
+         * file:// temp page before redirecting to http://127.0.0.1:<port>. Any fetch that races
+         * that redirect -- or any renderer that kept the file:// base -- resolves to
+         * file:///api/gallery/… , which cannot be fetched and reports the bare "Failed to fetch"
+         * the owner saw, while the very same URL returned 200 from curl and the grid <img> beside
+         * it rendered fine (2026-08-10).
+         *
+         * The <img> works because the HTML parser resolves against the CURRENT base at paint time;
+         * a fetch() built earlier does not. Pinning the origin removes the difference.
+         */
+        const absolute = /^https?:/i.test(src)
+          ? src
+          : new URL(src, window.location.origin).toString();
+        const resp = await fetch(absolute, { credentials: 'include' });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const blob = await resp.blob();
         href = URL.createObjectURL(blob);
@@ -1293,7 +1309,18 @@ export default function EddyCollection({
       await downloadBlob(blob, `${base}.${ext}`);
       return true;
     } catch (err) {
-      notify(`Could not download that file — ${err.message || 'unknown error'}`, 'error');
+      /**
+       * Say WHICH url failed, not just that something did.
+       *
+       * "Could not download that file — Failed to fetch" was true and useless: it named neither
+       * the request nor the reason, and diagnosing it meant reading five layers of source to
+       * guess (owner, 2026-08-10). A fetch failure is almost always a wrong or unreachable URL,
+       * so the URL is the one thing worth printing.
+       */
+      // eslint-disable-next-line no-console -- the toast is short; the console carries the detail
+      console.error('[eddy] download failed', { id: it.id, src: String(src).slice(0, 200), err });
+      const where = /^data:/.test(String(src)) ? 'stored image data' : String(src).slice(0, 60);
+      notify(`Could not download — ${err.message || 'unknown error'} (${where})`, 'error');
       return false;
     }
   };
@@ -1375,7 +1402,9 @@ export default function EddyCollection({
         try {
           // eslint-disable-next-line no-await-in-loop -- sequential; a parallel burst of 500
           // fetches is what took the renderer down before.
-          const resp = await fetch(dataUrl, { credentials: 'include' });
+          // Same origin pinning as the tile download above -- see the comment there.
+          const abs = /^https?:/i.test(dataUrl) ? dataUrl : new URL(dataUrl, window.location.origin).toString();
+          const resp = await fetch(abs, { credentials: 'include' });
           if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
           // eslint-disable-next-line no-await-in-loop
           const blob = await resp.blob();

@@ -89,5 +89,24 @@ check('and still uses downloadSelected, which owns "Remove after download"',
   col.includes('onClick={downloadSelected}>') && /purgeOnDownload && done\.length/.test(col));
 check('the reason both were kept is recorded', /swapping them would have quietly dropped that feature/.test(col));
 
+// --- 7. the fetch must resolve against the WINDOW ORIGIN (owner, 2026-08-10) ------------------
+// "Failed to fetch (/api/gallery/914a807a-.../image)" while the SAME url returned 200 from curl
+// and the grid <img> beside it rendered fine. A relative path resolves against the document, and
+// this window starts on a file:// temp page before redirecting to http://127.0.0.1:<port> -- so
+// the fetch could resolve to file:///api/gallery/... , which cannot be fetched.
+check('the tile download builds an absolute URL', col.includes('new URL(src, window.location.origin).toString()'));
+check('the bulk fetch does too', col.includes('new URL(dataUrl, window.location.origin).toString()'));
+check('an already-absolute URL is left alone', (col.match(/\/\^https\?:\/i\.test\(/g) || []).length >= 2);
+check('the reason is recorded, including why the <img> worked',
+  /the HTML parser resolves against the CURRENT base at paint time/.test(col));
+
+const origin = 'http://127.0.0.1:18421';
+const abs = (src) => (/^https?:/i.test(src) ? src : new URL(src, origin).toString());
+check('a relative gallery path becomes absolute',
+  abs('/api/gallery/914a807a/image') === 'http://127.0.0.1:18421/api/gallery/914a807a/image');
+check('a query string survives', abs('/api/gallery/x/image?r=9').endsWith('/image?r=9'));
+check('an absolute http URL is untouched', abs('http://example.com/a.png') === 'http://example.com/a.png');
+check('https is untouched too', abs('https://i.pinimg.com/x.jpg') === 'https://i.pinimg.com/x.jpg');
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
