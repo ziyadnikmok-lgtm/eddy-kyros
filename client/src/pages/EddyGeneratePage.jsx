@@ -4442,7 +4442,10 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     }
     if (!names.size && characterName) names.add(characterName.trim());
     if (!names.size) return [];
-    return [...names].sort().map((n) => nextBatchName(libItemFolders, n));
+    // Same suffix the run applies, or the banner would promise "Grace 3" and the pictures would
+    // land in "Grace Outfit 3" -- the drift this preview exists to prevent.
+    const suffixed = [...names].sort().map((n) => (maxOutfit ? `${n} Outfit` : n));
+    return suffixed.map((n) => nextBatchName(libItemFolders, n));
   }, [maxOutfit, libItems, libItemFolders, pickedBases, pickedBasePhotos, basePhotoPairs, characterName]);
 
   const baseSlotRows = useMemo(() => (maxOutfit ? [] : pickedBasePhotos).map((id) => {
@@ -4576,7 +4579,19 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   }, [combos, poses, libItems]);
 
   const sourceImages = [baseImage, faceImage].filter(Boolean);
-  const perRunImages = sourceImages.length + (pickedPoses.length ? 1 : 0);
+  /**
+   * How many images ONE generation sends.
+   *
+   * Counted off the single slots, which are EMPTY when base photos are ticked -- so a multi-base
+   * run reported 1 image per request when it actually sends three (her photo, her face, the pose
+   * diagram). That number drives the Seedream cap check and the price, so both were wrong on
+   * exactly the runs this page was built for (owner, 2026-08-10).
+   *
+   * A ticked run always sends a main photo, and a face whenever her character folder matched --
+   * counted as present, because the cap has to be checked against the worst case, not the best.
+   */
+  const perRunImages = (pickedBasePhotos.length ? 2 : sourceImages.length)
+    + (pickedPoses.length ? 1 : 0);
   const overCap = perRunImages > SEEDREAM_MAX_IMAGES;
   // Priced per ENGINE. Showing Seedream's rate while Nano Banana 2 runs would misstate the bill on
   // the one control where spend is agreed.
@@ -4849,6 +4864,11 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
         if (who === MAX_OUTFIT_FOLDER || who === MAX_NANO_FOLDER || who === 'Eddy' || who === 'Eddy NSFW') who = '';
       }
       if (!who) who = String(characterName || '').trim();
+      // Max Outfit's output is a DIFFERENT thing from Max Nano's -- same woman, new garment -- so
+      // it gets its own series rather than sharing her numbering. "Grace 3" and "Grace Outfit 3"
+      // are then two independent counts, which is what makes the folder name say what is in it
+      // (owner, 2026-08-10).
+      if (who && maxOutfit) who = `${who} Outfit`;
       if (who) libFolderId = await runCtx.batchFolderFor(who);
     }
     if (!runCtx) {
