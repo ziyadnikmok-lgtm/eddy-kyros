@@ -262,6 +262,24 @@ function libraryRowView(row) {
  * folder NAME ("1. Lingerie - back", "7. CloseUps - Underboob"). Read from the name so the rule
  * survives folders being renamed or re-nested by hand.
  */
+/**
+ * An outfit's angle: its OWN label first, the folder second.
+ *
+ * Folder placement is the documented signal and stays the default -- it survives renames and
+ * re-imports. But an outfit in no folder, or in one whose name says nothing, silently read as
+ * "front", and nothing on screen disagreed. Two close-up crops ticked that way emptied the
+ * close-up pool: both close-up photos fell back to any outfit, and both FRONT photos were handed a
+ * close-up crop. Four wrong images from one unlabelled folder (owner, 2026-08-10).
+ *
+ * row.poseView is the per-tile override, set by the three buttons on the card. Explicit beats
+ * inferred, so a labelled outfit is right wherever it lives.
+ */
+function outfitViewOf(row, folderName) {
+  const v = row?.poseView;
+  if (v === 'front' || v === 'back' || v === 'closeup') return v;
+  return outfitView(folderName);
+}
+
 function outfitView(folderName) {
   const n = String(folderName || '').toLowerCase();
   if (n.includes('closeup') || n.includes('close-up') || n.includes('underboob')) return 'closeup';
@@ -4303,7 +4321,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     if (!maxOutfit || !smartMatch || !pickedBases.length || !pickedOutfits.length) return [];
     const byId = new Map(libItems.map((i) => [i.id, i]));
     const outfitFolderName = (id) => outfitFolders.find((f) => f.id === outfits.find((o) => o.id === id)?.folderId)?.name || '';
-    const covered = new Set(pickedOutfits.map((o) => outfitView(outfitFolderName(o))));
+    const covered = new Set(pickedOutfits.map((o) => outfitViewOf(outfits.find((x) => x.id === o), outfitFolderName(o))));
     const need = new Map();
     for (const b of pickedBases) {
       const v = libraryRowView(byId.get(b));
@@ -4361,7 +4379,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     let bad = 0;
     const kinds = new Set();
     for (const o of pickedOutfits) {
-      const ov = outfitView(outfitFolderName(o));
+      const ov = outfitViewOf(outfits.find((x) => x.id === o), outfitFolderName(o));
       for (const pid of pickedPoses) {
         const pv = readPoseView(poseById.get(pid)?.prompt);
         // front vs back is handled by backPrompt and is NOT a mismatch. Close-up is: a close-up
@@ -4496,6 +4514,30 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     return { id, src: src || baseThumbs[id] || '', name: pair?.name || 'no match', missing: !src };
   }).filter((r) => r.src), [maxOutfit, pickedBasePhotos, basePhotoPairs, charThumbs, baseThumbs]);
 
+  /**
+   * Ticked outfits whose angle is a GUESS, not a fact.
+   *
+   * outfitView defaults to "front" for a folder it does not recognise, and that default is silent.
+   * Two close-up crops ticked from an unnamed folder emptied the close-up pool and put a crop on
+   * every full-body photo -- four wrong images, with nothing on screen having said anything
+   * (owner, 2026-08-10). The default is right most of the time, which is exactly why it needs to
+   * be visible when it is load-bearing.
+   *
+   * Only counts outfits with NO explicit label AND no angle word in the folder name. A folder
+   * called "1. Lingerie - front" is an answer, not a guess.
+   */
+  const unlabelledOutfits = useMemo(() => {
+    if (!pickedOutfits.length) return 0;
+    const folderName = (id) => outfitFolders.find((f) => f.id === outfits.find((o) => o.id === id)?.folderId)?.name || '';
+    return pickedOutfits.filter((id) => {
+      const row = outfits.find((o) => o.id === id);
+      if (row?.poseView === 'front' || row?.poseView === 'back' || row?.poseView === 'closeup') return false;
+      const n = folderName(id).toLowerCase();
+      return !(n.includes('closeup') || n.includes('close-up') || n.includes('underboob')
+        || n.includes('back') || n.includes('front'));
+    }).length;
+  }, [pickedOutfits, outfits, outfitFolders]);
+
   const combos = useMemo(() => {
     // Max Nano never sends an outfit — a stale selection from an Eddy session would otherwise
     // multiply the run and dress her in something this page does not even show.
@@ -4525,7 +4567,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
         const all = bases.flatMap((b) => os.map((o) => ({ outfitId: o, poseId: null, baseId: b })));
         if (!pickedOutfits.length) return all;
         const compatible = all.filter((c) => (
-          (outfitView(outfitFolderNameX(c.outfitId)) === 'closeup')
+          (outfitViewOf(outfits.find((x) => x.id === c.outfitId), outfitFolderNameX(c.outfitId)) === 'closeup')
           === (libraryRowView(byIdX.get(c.baseId)) === 'closeup')
         ));
         return compatible.length ? compatible : all;
@@ -4539,7 +4581,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
         const { rows } = matchOutfits(
           bases, chosen,
           (b) => libraryRowView(byId.get(b)),
-          (o) => outfitView(outfitFolderName(o)),
+          (o) => outfitViewOf(outfits.find((x) => x.id === o), outfitFolderName(o)),
         );
         return rows.map((r) => ({ outfitId: r.outfitId, poseId: null, baseId: r.baseId, matched: r.matched }));
       }
@@ -4570,7 +4612,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     const all = bp.flatMap((b) => os.flatMap((o) => ps.map((p) => ({ outfitId: o, poseId: p, basePhotoId: b }))));
     if (!pickedOutfits.length || !pickedPoses.length) return all;
     const compatible = all.filter((c) => (
-      (outfitView(outfitFolderName(c.outfitId)) === 'closeup')
+      (outfitViewOf(outfits.find((x) => x.id === c.outfitId), outfitFolderName(c.outfitId)) === 'closeup')
       === (readPoseView(poseById.get(c.poseId)?.prompt) === 'closeup')
     ));
     return compatible.length ? compatible : all;
@@ -6843,6 +6885,18 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
                 there — and it is the line that explains the total. */}
             <span className="text-zinc-600">
               {maxOutfit ? ' ticked' : ' — each one runs every pose and outfit below'}
+            </span>
+          </div>
+        )}
+        {unlabelledOutfits > 0 && (
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.07] p-3 text-xs leading-relaxed text-amber-200">
+            <span className="font-semibold">
+              {unlabelledOutfits} outfit{unlabelledOutfits === 1 ? '' : 's'} {unlabelledOutfits === 1 ? 'has' : 'have'} no angle — {unlabelledOutfits === 1 ? 'it is' : 'they are'} being treated as front.
+            </span>
+            <span className="mt-1 block text-amber-200/75">
+              An outfit&rsquo;s angle comes from its folder. If {unlabelledOutfits === 1 ? 'this is a close-up crop' : 'these are close-up crops'}, put {unlabelledOutfits === 1 ? 'it' : 'them'} in a
+              {' '}<span className="font-semibold">CloseUps</span> folder — or use the front / back / close-up buttons on the card. Otherwise a
+              close-up garment gets handed to a full-body photo.
             </span>
           </div>
         )}

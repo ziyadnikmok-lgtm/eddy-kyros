@@ -578,6 +578,24 @@ export default function EddyCollection({
     await refresh();
   }, [store, refresh, notify]);
 
+  /**
+   * An OUTFIT's angle, written to the row.
+   *
+   * Poses keep theirs inside the prompt JSON (mergePoseView). Outfits cannot: theirs is routinely
+   * "Empty prompt" -- the garment is the picture, and there is no sentence to merge into. So this
+   * writes the row's own poseView field, which outfitViewOf reads ahead of the folder name.
+   *
+   * Needed because folder placement was the ONLY signal, and an outfit in an unnamed folder read
+   * as "front" in silence -- two close-up crops ticked that way put a crop on every full-body
+   * photo (owner, 2026-08-10).
+   */
+  const setOutfitView = useCallback(async (it, view) => {
+    // Clicking the active one clears it, so a wrong label can be undone back to the folder's
+    // answer rather than only swapped for another wrong one.
+    await store.updateItem(it.id, { poseView: it.poseView === view ? '' : view });
+    await refresh();
+  }, [store, refresh]);
+
   const labelOneView = useCallback(async (it, dataUrl) => {
     if (!dataUrl) return false;
     const mt = (dataUrl.match(/^data:([^;]+);base64,/) || [])[1] || 'image/jpeg';
@@ -1238,46 +1256,40 @@ export default function EddyCollection({
       .replace(/^[_.-]+|[_.-]+$/g, '') || 'image';
 
     try {
-      /**
-       * NEVER fetch() anything but a real http(s) URL here.
-       *
-       * The server's CSP is `connectSrc: ['self', 'https:']` (server/index.js). `imgSrc` also
-       * allows data: and blob:, which is why these pictures DISPLAY perfectly while downloading
-       * them fails — an <img> and a fetch() are governed by different directives, so "it is on
-       * screen" says nothing about whether it can be fetched.
-       *
-       * Two ways that bit:
-       *   - data: was fetched to turn it into a Blob. Fixed once already (owner, 2026-08-08) by
-       *     decoding the base64 instead, which is also cheaper.
-       *   - a server URL was fetched, the Blob wrapped in URL.createObjectURL, and that blob: URL
-       *     fetched straight back to get the SAME Blob returned. Blocked for the same reason, and
-       *     pointless besides: the Blob was already in hand (owner, 2026-08-10 — "Failed to fetch"
-       *     on a Library picture that was visibly on screen).
-       *
-       * So: fetch the http URL once and keep what it returns; decode data: locally; never make a
-       * round trip through an object URL.
-       */
-      let blob;
+      let href = src;
+      let revoke = false;
       let ext = 'png';
 
       if (/^data:/.test(src)) {
+        // data URLs can be handed straight to the anchor; the mime is already in the string.
+        ext = (src.match(/^data:([^;/]+)\/([^;]+)/) || [])[2] || 'png';
+      } else {
+        const resp = await fetch(src, { credentials: 'include' });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const blob = await resp.blob();
+        href = URL.createObjectURL(blob);
+        revoke = true;
+        ext = (blob.type.split('/')[1] || 'png');
+      }
+      ext = ext.replace('jpeg', 'jpg').replace('quicktime', 'mov');
+
+      // downloadBlob strips generator metadata and stamps a fresh capture time before saving, so
+      // nothing posted carries the prompt or the model name. It needs a Blob, which a data URL is
+      // not — but do NOT fetch() a data: URL to get one. Electron's CSP blocks that, and every
+      // download of a locally-stored image died on "Failed to fetch" while remote ones worked
+      // (owner, 2026-08-08). Decoding the base64 is both allowed and cheaper.
+      let blob;
+      if (revoke) {
+        blob = await (await fetch(href)).blob();
+        URL.revokeObjectURL(href);
+      } else {
         const m2 = /^data:([^;]+);base64,(.+)$/.exec(src);
         if (!m2) throw new Error('unreadable image data');
         const bin = atob(m2[2]);
         const bytes = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
         blob = new Blob([bytes], { type: m2[1] });
-        ext = (m2[1].split('/')[1] || 'png');
-      } else {
-        const resp = await fetch(src, { credentials: 'include' });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        blob = await resp.blob();
-        ext = (blob.type.split('/')[1] || 'png');
       }
-      ext = ext.replace('jpeg', 'jpg').replace('quicktime', 'mov');
-
-      // downloadBlob strips generator metadata and stamps a fresh capture time before saving, so
-      // nothing posted carries the prompt or the model name.
       await downloadBlob(blob, `${base}.${ext}`);
       return true;
     } catch (err) {
@@ -1345,61 +1357,16 @@ export default function EddyCollection({
     // way to download just the folder you were looking at (owner, 2026-08-08).
     const picked = selected.length ? visible.filter((i) => selected.includes(i.id)) : visible;
     const files = [];
-    let unreadable = 0;
     for (let idx = 0; idx < picked.length; idx += 1) {
       const it = picked[idx];
-      /**
-       * A LIBRARY ROW HOLDS A URL, NOT BYTES — and this loop used to only accept `data:`.
-       *
-       * That is deliberate storage design (a 25-image batch would otherwise pour tens of megabytes
-       * into IndexedDB), so store.getImage returns '' for every Library card and the old
-       * `thumbs[id] || getImage(id)` pair resolved to nothing. Every card was skipped, files came
-       * out empty, and the button reported "these cards have no picture" for a folder plainly full
-       * of them (owner, 2026-08-10). Outfit/Pose/Character hold real bytes, which is why it only
-       * ever failed on the Library.
-       *
-       * `it.url` is consulted the same way the per-card download already does, and a URL is fetched
-       * to bytes here rather than skipped.
-       */
-      const src = thumbs[it.id] || it.url || await store.getImage(it.id);
-      if (!src) continue;                  // genuinely a prompt-only card — nothing to save
-      let mime = '';
-      let b64 = '';
-      const m = /^data:([^;]+);base64,(.+)$/.exec(src);
-      if (m) {
-        mime = m[1]; b64 = m[2];
-      } else {
-        try {
-          const resp = await fetch(src, { credentials: 'include' });
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-          const blob = await resp.blob();
-          mime = blob.type || 'image/png';
-          // Straight to base64 so the rest of this function — cleanBytes, the Electron writes and
-          // the browser fallback — keeps working on the shape it already expects.
-          b64 = await new Promise((res, rej) => {
-            const fr = new FileReader();
-            fr.onload = () => res(String(fr.result).split(',')[1] || '');
-            fr.onerror = () => rej(fr.error);
-            fr.readAsDataURL(blob);
-          });
-        } catch {
-          // A row pointing at another machine's gallery 404s here. Counted, not silent.
-          unreadable += 1;
-          continue;
-        }
-      }
-      if (!b64) { unreadable += 1; continue; }
-      const ext = (mime.split('/')[1] || 'png').replace('jpeg', 'jpg');
+      const dataUrl = thumbs[it.id] || await store.getImage(it.id);
+      const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || '');
+      if (!m) continue;   // a prompt-only card with no picture — nothing to save
+      const ext = (m[1].split('/')[1] || 'png').replace('jpeg', 'jpg');
       const nm = String(it.name || it.prompt || it.id).replace(/[^a-z0-9._-]+/gi, '_').replace(/^[_.-]+|[_.-]+$/g, '').slice(0, 50) || 'image';
-      files.push({ fileName: `${String(idx + 1).padStart(3, '0')}_${nm}.${ext}`, b64, mime });
+      files.push({ fileName: `${String(idx + 1).padStart(3, '0')}_${nm}.${ext}`, b64: m[2], mime: m[1] });
     }
-    if (!files.length) {
-      notify(unreadable
-        ? `None of those ${unreadable} could be read — their pictures are not on this machine`
-        : 'No images to save — these cards have no picture', 'error');
-      return;
-    }
-    if (unreadable) notify(`${unreadable} could not be read and were skipped — their pictures are not on this machine`, 'error');
+    if (!files.length) { notify('No images to save — these cards have no picture', 'error'); return; }
     const bytesOf = (b64) => { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i += 1) a[i] = bin.charCodeAt(i); return a; };
 
     /**
@@ -2307,6 +2274,22 @@ export default function EddyCollection({
                   by (see readPoseView in EddyGeneratePage). "Retry label" re-classifies WITHOUT
                   touching the description above (labelOneView / mergePoseView), unlike
                   Re-describe with AI which rewrites everything. */}
+              {/* OUTFITS get the same three buttons, for the same reason the Pose tab needed them:
+                  the automatic answer is a guess you cannot see. Shown regardless of prompt text,
+                  because an outfit's prompt is routinely empty and that is not a problem here. */}
+              {describeKind === 'outfit' && (thumbs[it.id] || it.url) && (
+                <div className="flex items-center gap-1 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2 py-1">
+                  {['front', 'back', 'closeup'].map((v) => (
+                    <button key={v} type="button" onClick={() => setOutfitView(it, v)}
+                      title={it.poseView === v ? `Clear this label — fall back to the folder` : `Mark this outfit as ${v}`}
+                      className={cn('rounded px-1.5 py-0.5 text-[0.625rem] font-bold uppercase tracking-wide transition cursor-pointer',
+                        it.poseView === v ? 'bg-blue-500/25 text-blue-200' : 'text-zinc-600 hover:text-zinc-300')}>
+                      {v === 'closeup' ? 'close-up' : v}
+                    </button>
+                  ))}
+                  {!it.poseView && <span className="ml-0.5 text-[0.625rem] text-zinc-600">from folder</span>}
+                </div>
+              )}
               {withPrompt && describeKind === 'pose' && !isPosePromptBroken(it.prompt) && it.prompt?.trim() && (thumbs[it.id] || it.url) && (
                 <div className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2 py-1">
                   {/* SET IT BY HAND. The AI label was the only way to set this, and it is a paid
