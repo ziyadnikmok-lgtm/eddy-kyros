@@ -6037,15 +6037,24 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           {pickedOutfits.length || 1} outfit{(pickedOutfits.length || 1) === 1 ? '' : 's'} × {pickedPoses.length || 1} pose{(pickedPoses.length || 1) === 1 ? '' : 's'} = <span className="text-zinc-300">{combos.length} image{combos.length === 1 ? '' : 's'}</span>
         </p>
 
-          {/* Which KINDS those images are. The total alone cannot tell you whether the close-ups
-              survived the pairing filter, and that is the number worth seeing before spending. */}
+          {/* WHICH KINDS, at a size worth reading. This was a grey one-liner under a grey
+              one-liner, which is where a number goes to be ignored — and it is the number
+              that says whether the close-ups survived the pairing filter. Same chip language
+              as the pickers above, colour-coded per kind so the shape registers before the
+              text does. */}
           {viewBreakdown && (
-            <p className="text-xs text-zinc-500">
-              {[['front', 'front'], ['back', 'back'], ['closeup', 'close-up']]
-                .filter(([k]) => viewBreakdown[k])
-                .map(([k, label]) => `${viewBreakdown[k]} ${label}`)
-                .join('  ·  ')}
-            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              {[
+                ['front', 'Front', 'border-sky-500/40 bg-sky-500/[0.10] text-sky-200'],
+                ['back', 'Back', 'border-violet-500/40 bg-violet-500/[0.10] text-violet-200'],
+                ['closeup', 'Close-up', 'border-rose-500/40 bg-rose-500/[0.10] text-rose-200'],
+              ].filter(([k]) => viewBreakdown[k]).map(([k, label, tone]) => (
+                <span key={k} className={cn('flex items-baseline gap-1.5 rounded-lg border px-2.5 py-1.5', tone)}>
+                  <span className="text-sm font-bold tabular-nums">{viewBreakdown[k]}</span>
+                  <span className="text-[0.6875rem] font-semibold uppercase tracking-wider opacity-80">{label}</span>
+                </span>
+              ))}
+            </div>
           )}
 
         {/* There is deliberately no output-mode toggle here. Generation makes images, full stop —
