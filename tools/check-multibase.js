@@ -151,5 +151,38 @@ check('and the total you would get by unticking it',
 check('the summary line names the outfits, not just the photos',
   /outfitRotation \? 'with one of' : String\.fromCharCode\(215\)/.test(gen));
 
+// --- MAX OUTFIT GETS EDDY'S CLOSE-UP RULE (owner, 2026-08-10) ---------------------------------
+// Rotation ON was angle-aware via matchOutfits. Rotation OFF -- the cross product, the BIG runs --
+// had no filter at all, so every close-up outfit was paired with every full-body photo at full
+// price. Same rule as Eddy now: close-up pairs only with close-up; front/back is left alone
+// because a back shot already swaps in the outfit's back description.
+check('the cross-product path filters by view', /const compatible = all\.filter\(\(c\) => \([\s\S]{0,200}libraryRowView\(byIdX\.get\(c\.baseId\)\) === 'closeup'/.test(gen));
+check('and falls back to the unfiltered product rather than showing 0',
+  /return compatible\.length \? compatible : all;/.test(gen));
+check('the skipped-pairings banner covers Max Outfit too', /if \(maxOutfit\) \{[\s\S]{0,1400}return bad \? \{ bad, total: pickedOutfits\.length \* pickedBases\.length/.test(gen));
+check('but stays quiet with rotation ON, where nothing is ever skipped',
+  /if \(outfitRotation \|\| !pickedBases\.length \|\| !pickedOutfits\.length\) return null;/.test(gen));
+check('the banner says photo on Max Outfit and pose on Eddy',
+  /full-body \{maxOutfit \? 'photo' : 'pose'\}/.test(gen));
+check('and states how many of the total survive',
+  /\{eddyMismatches\.total - eddyMismatches\.bad\} of \{eddyMismatches\.total\} will run/.test(gen));
+check('the front/back/close-up chips already read baseId, so Max Outfit gets them',
+  /const v = c\.baseId \? libraryRowView\(libById\.get\(c\.baseId\)\)/.test(gen));
+
+// replay: 4 photos (1 close-up) x 6 outfits (2 close-up)
+check('cross product drops exactly the mismatched pairs', (() => {
+  const photos = [['p1', 'front'], ['p2', 'front'], ['p3', 'front'], ['p4', 'closeup']];
+  const outs = [['o1', 'front'], ['o2', 'front'], ['o3', 'front'], ['o4', 'front'], ['o5', 'closeup'], ['o6', 'closeup']];
+  const all = photos.flatMap(([p, pv]) => outs.map(([o, ov]) => ({ p, o, ok: (ov === 'closeup') === (pv === 'closeup') })));
+  const kept = all.filter((c) => c.ok);
+  // 3 front photos x 4 front outfits = 12, plus 1 close-up photo x 2 close-up outfits = 2
+  return all.length === 24 && kept.length === 14;
+})());
+check('and if nothing survives, everything runs rather than nothing', (() => {
+  const all = [{ ok: false }, { ok: false }];
+  const kept = all.filter((c) => c.ok);
+  return (kept.length ? kept : all).length === 2;
+})());
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

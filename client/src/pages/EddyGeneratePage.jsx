@@ -4180,7 +4180,34 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
    * used the outfit's back description (backPrompt) rather than its front one.
    */
   const eddyMismatches = useMemo(() => {
-    if (maxOutfit || maxNano || !pickedOutfits.length || !pickedPoses.length) return null;
+    if (maxNano) return null;
+    /**
+     * MAX OUTFIT, cross-product mode: same arithmetic against PHOTOS instead of poses.
+     *
+     * The filter above silently drops these pairs. Dropping them is right; dropping them without
+     * saying so means the count on the button disagrees with photos x outfits and there is nothing
+     * on screen to explain the gap -- which is precisely the confusion the one-outfit-per-photo
+     * toggle just caused.
+     *
+     * Only for the cross product: with rotation ON there is one outfit per photo, so no pair is
+     * ever skipped and the banner would be noise.
+     */
+    if (maxOutfit) {
+      if (outfitRotation || !pickedBases.length || !pickedOutfits.length) return null;
+      const byId = new Map(libItems.map((i) => [i.id, i]));
+      const folderName = (id) => outfitFolders.find((f) => f.id === outfits.find((o) => o.id === id)?.folderId)?.name || '';
+      let bad = 0;
+      const kinds = new Set();
+      for (const o of pickedOutfits) {
+        const ov = outfitView(folderName(o));
+        for (const b of pickedBases) {
+          const bv = libraryRowView(byId.get(b));
+          if ((ov === 'closeup') !== (bv === 'closeup')) { bad += 1; kinds.add(ov === 'closeup' ? 'closeup-outfit' : 'closeup-pose'); }
+        }
+      }
+      return bad ? { bad, total: pickedOutfits.length * pickedBases.length, kinds: [...kinds] } : null;
+    }
+    if (!pickedOutfits.length || !pickedPoses.length) return null;
     const outfitFolderName = (id) => outfitFolders.find((f) => f.id === outfits.find((o) => o.id === id)?.folderId)?.name || '';
     const poseById = new Map(poses.map((x) => [x.id, x]));
     let bad = 0;
@@ -4195,7 +4222,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       }
     }
     return bad ? { bad, total: pickedOutfits.length * pickedPoses.length, kinds: [...kinds] } : null;
-  }, [maxOutfit, maxNano, pickedOutfits, pickedPoses, outfits, outfitFolders, poses]);
+  }, [maxOutfit, maxNano, outfitRotation, pickedBases, pickedOutfits, pickedPoses, libItems, outfits, outfitFolders, poses]);
 
   /**
    * base photo id -> { name, faceId }. Matched by FOLDER NAME, which is the only thing the two
@@ -4283,7 +4310,32 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     if (maxOutfit) {
       // One row per SOURCE image. Cross-product multiplies instead — the expensive branch, opt-in.
       const bases = pickedBases.length ? pickedBases : [];
-      if (!outfitRotation) return bases.flatMap((b) => os.map((o) => ({ outfitId: o, poseId: null, baseId: b })));
+      if (!outfitRotation) {
+        /**
+         * CROSS PRODUCT -- and it needs the same angle filter Eddy has.
+         *
+         * Rotation ON gets its angle awareness from matchOutfits. Rotation OFF had none at all, so
+         * unticking "one outfit per photo" silently paired every close-up outfit with every
+         * full-body photo and the reverse -- images wrong before they start, at full price, and the
+         * bigger selection is exactly where that hurts (owner, 2026-08-10).
+         *
+         * Same rule as the Eddy tab: close-up pairs only with close-up. Front vs back is NOT
+         * filtered, because a back shot already swaps in the outfit's back description.
+         *
+         * Same fallback too: if the filter empties the run, the unfiltered product stands. A
+         * Generate button silently reading 0 is worse than a banner you can read, and
+         * missingOutfitKinds above already names what is unmatched.
+         */
+        const byIdX = new Map(libItems.map((i) => [i.id, i]));
+        const outfitFolderNameX = (id) => outfitFolders.find((f) => f.id === outfits.find((o) => o.id === id)?.folderId)?.name || '';
+        const all = bases.flatMap((b) => os.map((o) => ({ outfitId: o, poseId: null, baseId: b })));
+        if (!pickedOutfits.length) return all;
+        const compatible = all.filter((c) => (
+          (outfitView(outfitFolderNameX(c.outfitId)) === 'closeup')
+          === (libraryRowView(byIdX.get(c.baseId)) === 'closeup')
+        ));
+        return compatible.length ? compatible : all;
+      }
       const chosen = pickedOutfits.length ? pickedOutfits : [];
       if (smartMatch && chosen.length) {
         // Angle-aware, pairs of two, least-used pools -- the algorithm ported from
@@ -6438,9 +6490,10 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           <div className="rounded-lg border border-sky-500/40 bg-sky-500/[0.07] p-3 text-xs leading-relaxed text-sky-200">
             <span className="font-semibold">{eddyMismatches.bad} pairing{eddyMismatches.bad === 1 ? '' : 's'} skipped — close-up and full-body do not mix.</span>
             <span className="mt-1 block text-sky-300/80">
-              A close-up outfit has no lower half to give a full-body pose, and a full-body outfit gets
-              cropped away by a close-up. Those combinations are not generated; the count on the button
-              is what will actually run.
+              A close-up outfit has no lower half to give a full-body {maxOutfit ? 'photo' : 'pose'}, and a
+              full-body outfit gets cropped away by a close-up. Those combinations are not generated;
+              {' '}{eddyMismatches.total - eddyMismatches.bad} of {eddyMismatches.total} will run, and the
+              count on the button is what will actually happen.
             </span>
           </div>
         )}
