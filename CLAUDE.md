@@ -444,9 +444,27 @@ anything raised needs a 429 retry on that path first — Photo Match had none wh
 
 ## Working with Eddy (the collaborator)
 
-Remote `friend` → `share-clean`. **`git fetch friend share-clean` before every push.** Pushes here
-are whole-file copies, so a stale copy silently reverts his commits — this destroyed one of his
-`eddy.css` rules on 2026-08-09 and it was only noticed because the owner asked.
+Remote `friend` → `share-clean`. **Push with `python tools/share-push.py <files> -m "..."`.**
+
+That script exists because fetching first is not enough — I fetched, then overwrote anyway, four
+times on 2026-08-09: an `eddy.css` rule, `CLAUDE.md`, a stale-comment cleanup, and his entire
+"unfinished run survives a restart" feature. Every one was caught by reading the diff afterwards,
+and noticing afterwards is not a process.
+
+The two histories are unrelated (742 local commits share no base with his branch), so a real merge
+is unavailable and every push is a whole-file copy — a silent overwrite by construction. The script
+compares his version to mine per file and REFUSES when any line exists on his side and not on mine.
+
+**When it refuses, do not reach for `--force`.** Copy his version down, re-apply your change on top,
+run it again:
+
+```bash
+git show friend/share-clean:<file> > <file>   # his version becomes the base
+# re-apply your change with anchors that FAIL LOUDLY if they are missing
+python tools/share-push.py <file> -m "..."
+```
+
+`--force` is for when the owner has read the report and decided his version should go.
 
 When his change and a requested change conflict, **merge, do not pick a side**, and say which parts
 came from where.
