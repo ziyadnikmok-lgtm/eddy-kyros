@@ -4619,8 +4619,11 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
    * A ticked run always sends a main photo, and a face whenever her character folder matched --
    * counted as present, because the cap has to be checked against the worst case, not the best.
    */
-  const perRunImages = (pickedBasePhotos.length ? 2 : sourceImages.length)
-    + (pickedPoses.length ? 1 : 0);
+  const perRunImages = maxOutfit
+    // Her finished photo + the garment. No face close-up and no pose diagram -- image 1 already
+    // holds her face and her pose, and only the clothes change.
+    ? 1 + (pickedOutfits.length ? 1 : 0)
+    : (pickedBasePhotos.length ? 2 : sourceImages.length) + (pickedPoses.length ? 1 : 0);
   const overCap = perRunImages > SEEDREAM_MAX_IMAGES;
   // Priced per ENGINE. Showing Seedream's rate while Nano Banana 2 runs would misstate the bill on
   // the one control where spend is agreed.
@@ -5011,7 +5014,18 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
         poseView = libraryRowView(row);
       }
       const mainImg = comboMain || charPayload[0] || null;      // sourceImages = [baseImage, faceImage]
-      const faceImg = comboFace || charPayload[1] || null;
+      /**
+       * MAX OUTFIT SENDS NO FACE CLOSE-UP. Two images: her finished photo, and the garment.
+       *
+       * Image 1 is already a finished picture of HER -- her face, her body, her room -- and only
+       * the clothes change. A face reference adds nothing it does not already have, and it did
+       * active harm: the run-level Face slot is ONE photo, so every combo got whatever was in it.
+       * A batch spanning Grace and Mia put GRACE'S FACE on Mia's pictures (owner, 2026-08-10).
+       *
+       * The other tabs still send it, because there image 1 is a base photo and the close-up is
+       * what pins her identity through a pose change.
+       */
+      const faceImg = maxOutfit ? null : (comboFace || charPayload[1] || null);
       payload = mainImg ? [mainImg] : [];
       let outfitIndex = 0;
       let poseIndex = 0;
