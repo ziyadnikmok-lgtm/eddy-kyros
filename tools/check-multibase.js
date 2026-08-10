@@ -128,5 +128,28 @@ check('the Generate gate accepts base photos on both tabs',
 check('and the "add a photo first" guard does too',
   /if \(!maxOutfit && !baseImage && !pickedBasePhotos\.length\)/.test(gen));
 
+// --- MAX OUTFIT IS NOT A CROSS PRODUCT (owner, 2026-08-10) ------------------------------------
+// 4 photos + 6 outfits reported "4 images" and read as a bug. It is the "One outfit per photo"
+// setting doing exactly what it says -- but the UI stated one number without naming the other, so
+// there was nothing on screen to disagree with the reading. Both totals are now shown.
+check('rotation ON deals one outfit per photo', (() => {
+  const bases = ['b1', 'b2', 'b3', 'b4'], os = ['o1', 'o2', 'o3', 'o4', 'o5', 'o6'];
+  return bases.map((b, i) => ({ baseId: b, outfitId: os[i % os.length] })).length === 4;
+})());
+check('rotation OFF is the full cross product', (() => {
+  const bases = ['b1', 'b2', 'b3', 'b4'], os = ['o1', 'o2', 'o3', 'o4', 'o5', 'o6'];
+  return bases.flatMap((b) => os.map((o) => ({ baseId: b, outfitId: o }))).length === 24;
+})());
+check('round-robin wraps when outfits run out, rather than dropping photos', (() => {
+  const bases = ['b1', 'b2', 'b3', 'b4', 'b5'], os = ['o1', 'o2'];
+  const rows = bases.map((b, i) => ({ baseId: b, outfitId: os[i % os.length] }));
+  return rows.length === 5 && rows[4].outfitId === 'o1';
+})());
+check('the checkbox states the CURRENT total', /Now: \$\{pickedBases\.length\} image/.test(gen));
+check('and the total you would get by unticking it',
+  /\$\{pickedBases\.length \* pickedOutfits\.length\} images/.test(gen));
+check('the summary line names the outfits, not just the photos',
+  /outfitRotation \? 'with one of' : String\.fromCharCode\(215\)/.test(gen));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

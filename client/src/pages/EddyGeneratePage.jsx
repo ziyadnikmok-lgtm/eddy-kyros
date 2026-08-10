@@ -6307,7 +6307,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
               "5 outfits x 1 pose" was describing a multiplication that does not happen there —
               its images come from the PHOTOS you ticked, one each. */}
           {maxOutfit
-            ? <>{pickedBases.length} photo{pickedBases.length === 1 ? '' : 's'} = <span className="text-zinc-300">{combos.length} image{combos.length === 1 ? '' : 's'}</span></>
+            ? <>{pickedBases.length} photo{pickedBases.length === 1 ? '' : 's'}{pickedOutfits.length > 0 && <> {outfitRotation ? 'with one of' : String.fromCharCode(215)} {pickedOutfits.length} outfit{pickedOutfits.length === 1 ? '' : 's'}</>} = <span className="text-zinc-300">{combos.length} image{combos.length === 1 ? '' : 's'}</span></>
             : <>{pickedBasePhotos.length > 1 && <>{pickedBasePhotos.length} photos × </>}{pickedOutfits.length || 1} outfit{(pickedOutfits.length || 1) === 1 ? '' : 's'} × {pickedPoses.length || 1} pose{(pickedPoses.length || 1) === 1 ? '' : 's'} = <span className="text-zinc-300">{combos.length} image{combos.length === 1 ? '' : 's'}</span></>}
         </p>
 
@@ -6383,12 +6383,21 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             <span className="text-xs leading-relaxed text-zinc-400">
               <span className="font-semibold text-zinc-200">One outfit per photo</span>
               {' — outfits are dealt round-robin, so each is used about equally. Uncheck to make EVERY '}
-              <span className="text-zinc-300">photo x outfit</span> combination
+              <span className="text-zinc-300">photo x outfit</span> combination.
+              {/* The ARITHMETIC, said in both directions and attached to the checkbox that changes
+                  it. Ticking 4 photos and 6 outfits and being told "4 images" reads as a bug -- it
+                  is this setting, and the old wording put the two numbers in an aside that did not
+                  say which one you were getting (owner, 2026-08-10). */}
               {pickedBases.length > 0 && pickedOutfits.length > 1 && (
-                <span className="text-amber-300">
-                  {` (${pickedBases.length} instead of ${pickedBases.length * pickedOutfits.length})`}
+                <span className="mt-1 block">
+                  <span className="text-zinc-300">{`Now: ${pickedBases.length} image${pickedBases.length === 1 ? '' : 's'}`}</span>
+                  <span className="text-zinc-600">{' — each photo gets one of your '}</span>
+                  <span className="text-zinc-300">{`${pickedOutfits.length} outfits`}</span>
+                  <span className="text-zinc-600">{'. Unticked: '}</span>
+                  <span className="text-amber-300">{`${pickedBases.length * pickedOutfits.length} images`}</span>
+                  <span className="text-zinc-600">{' — every photo in every outfit.'}</span>
                 </span>
-              )}.
+              )}
             </span>
           </label>
         )}
