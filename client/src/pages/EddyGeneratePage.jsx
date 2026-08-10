@@ -147,6 +147,21 @@ async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, ch
   // worst case is "in the wrong folder" — recoverable by dragging — instead of "gone".
   const generic = async () => (await libraryStore.ensureFolder(nsfw ? 'Eddy NSFW' : 'Eddy'))?.id || null;
   /**
+   * Her own folder, with the ENGINE nested inside it: "Grace" > "Seedream", "Grace" > "Nano".
+   *
+   * Nested rather than two flat siblings, because flat names sort away from the "Grace" folder she
+   * already has, so opening Grace shows none of that work and it reads as the images having gone
+   * missing. Nesting keeps the engines apart -- the point of the split, since the two models give
+   * visibly different results from the same references -- while opening Grace still shows all of it,
+   * because a folder's view includes its whole subtree (subtreeIds in EddyCollection).
+   *
+   * Max Nano and Max Outfit take her folder too, under their own name: different work, and mixing
+   * them into one pile makes a batch impossible to find afterwards.
+   *
+   * Every step falls back to the level above and finally to generic(), so a failure anywhere still
+   * lands the picture somewhere reachable rather than nowhere.
+   */
+  /**
    * ONE FOLDER PER CHARACTER. Nothing below it, and no tab above it.
    *
    * "Max Nano > Grace" and "Grace > Seedream" were both tried and both removed at the owner's call
@@ -3606,6 +3621,12 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     const name = (window.prompt('Save these photos and build as a model:', activeModel || '') || '').trim();
     if (!name) return;
     if (maxOutfit && !pickedBases.length) { notify('Pick the photos to dress first', 'error'); return; }
+    // Second gate. The button being disabled is a UI state, not a guarantee — Retry failed and
+    // any other caller reach run() directly.
+    if (missingOutfitKinds.length) {
+      notify(`No ${missingOutfitKinds.map((k) => k.label).join(' or ')} outfit picked — those photos would get the wrong kind of garment`, 'error');
+      return;
+    }
     // Max Outfit has no single main photo: every combo carries its own Library picture.
     if (!maxOutfit && !baseImage) { notify('Add the main photo first', 'error'); return; }
     const entry = { name, baseImage, faceImage, build };
@@ -3898,6 +3919,33 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
 
 
   // No outfit or no pose still counts as one run — the cross product just collapses to 1.
+  /**
+   * WHICH KINDS OF OUTFIT THIS SELECTION IS MISSING.
+   *
+   * A close-up shot needs a close-up outfit; a back shot needs a back one. With none selected the
+   * matcher used to quietly borrow from the rest of the selection, so a close-up got a full-body
+   * garment and nothing said so — you only found out by looking at the finished images.
+   *
+   * This turns that into a hard stop: the kinds are named, the photo counts are shown, and Generate
+   * is disabled until you tick one. Better to be told now than to pay for 40 wrong swaps.
+   *
+   * Only in Max Outfit, only with smart pairing ON, and only once you have picked some outfits —
+   * before that there is nothing to warn about yet.
+   */
+  const missingOutfitKinds = useMemo(() => {
+    if (!maxOutfit || !smartMatch || !pickedBases.length || !pickedOutfits.length) return [];
+    const byId = new Map(libItems.map((i) => [i.id, i]));
+    const outfitFolderName = (id) => outfitFolders.find((f) => f.id === outfits.find((o) => o.id === id)?.folderId)?.name || '';
+    const covered = new Set(pickedOutfits.map((o) => outfitView(outfitFolderName(o))));
+    const need = new Map();
+    for (const b of pickedBases) {
+      const v = libraryRowView(byId.get(b));
+      if (!covered.has(v)) need.set(v, (need.get(v) || 0) + 1);
+    }
+    const LABEL = { closeup: 'close-up', back: 'back', front: 'front' };
+    return [...need.entries()].map(([view, count]) => ({ view, count, label: LABEL[view] || view }));
+  }, [maxOutfit, smartMatch, pickedBases, pickedOutfits, libItems, outfits, outfitFolders]);
+
   const combos = useMemo(() => {
     // Max Nano never sends an outfit — a stale selection from an Eddy session would otherwise
     // multiply the run and dress her in something this page does not even show.
@@ -4734,7 +4782,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // here is exactly what run() itself reads: the guards, the ctx inputs, and generateCombo. sourceImages
     // is an unmemoized array literal today, so it rebuilds run() every render — listed anyway so
     // memoizing it later can't silently turn charPayload into a stale (previous-face) closure.
-  }, [baseImage, overCap, perRunImages, aspectRatio, combos, sourceImages, resolution, nsfw, characterName, maxOutfit, pickedBases, libraryStore, notify, generateCombo, engine, pickedOutfits, pickedPoses]);
+  }, [baseImage, overCap, perRunImages, aspectRatio, combos, sourceImages, resolution, nsfw, characterName, maxOutfit, pickedBases, missingOutfitKinds, libraryStore, notify, generateCombo, engine, pickedOutfits, pickedPoses]);
 
   /* -------------------------------------------------------------------------------------------
    * The inline results flow. Everything below acts on RESULTS, never on the page's live controls:
@@ -5843,7 +5891,27 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             </span>
           )}
         </p>
-        <Btn className="w-full" disabled={(maxOutfit ? !pickedBases.length : !baseImage) || overCap} onClick={() => run()}>
+        {/* Named, counted, and BLOCKING. A silent fallback here costs a whole batch of wrong
+            swaps that you only notice by opening the images. */}
+        {missingOutfitKinds.length > 0 && (
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.07] p-3 text-xs leading-relaxed text-amber-200">
+            <span className="font-semibold">Pick an outfit for every kind of shot.</span>
+            {missingOutfitKinds.map((k) => (
+              <span key={k.view} className="mt-1 block">
+                {k.count} {k.label} photo{k.count === 1 ? '' : 's'} selected, but no <span className="font-semibold">{k.label}</span> outfit —
+                {k.view === 'closeup'
+                  ? ' tick something from a "7. CloseUps" folder.'
+                  : k.view === 'back'
+                    ? ' tick something from a "- back" folder.'
+                    : ' tick something from a "- front" folder.'}
+              </span>
+            ))}
+            <span className="mt-1.5 block text-amber-300/80">
+              Or untick those photos. Turning off Smart pairing also lets it run, but then a close-up can get a full-body garment.
+            </span>
+          </div>
+        )}
+        <Btn className="w-full" disabled={(maxOutfit ? !pickedBases.length : !baseImage) || overCap || missingOutfitKinds.length > 0} onClick={() => run()}>
           {/* NO DOLLAR FIGURE ON GEMINI, deliberately. seedreamCost prices Muapi's published
               Seedream rates; this repo has no ground truth for Gemini/Vertex image cost, and the
               amber money rule means a number shown here is read as authoritative. An absent price
