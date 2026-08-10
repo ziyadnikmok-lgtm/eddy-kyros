@@ -237,6 +237,23 @@ export default function EddyCollection({
     const v = parseInt(localStorage.getItem('eddy.grid.cols') || '', 10);
     return Number.isFinite(v) && v >= 1 && v <= 8 ? v : 4;
   });
+  /**
+   * SHOW THE PROMPT under each card.
+   *
+   * Separate from `withPrompt`, which is a different thing: that one turns a collection INTO a
+   * prompt list and changes the card layout (object-contain, an add-prompt row, a duration badge).
+   * Base Library is a picture grid and should stay one -- what was missing is only being able to
+   * READ the prompt a base photo was generated with (owner, 2026-08-10).
+   *
+   * Remembered per collection, so turning it on in Base Library does not switch it on in Pose.
+   */
+  const [showPrompts, setShowPrompts] = useState(() => {
+    try { return localStorage.getItem(`eddy.showPrompts.${dbName}`) === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(`eddy.showPrompts.${dbName}`, showPrompts ? '1' : '0'); } catch { /* private mode */ }
+  }, [showPrompts, dbName]);
+
   const [imgH, setImgH] = useState(() => {
     const v = parseInt(localStorage.getItem('eddy.grid.imgH') || '', 10);
     return Number.isFinite(v) && v >= 120 && v <= 720 ? v : 320;
@@ -2223,6 +2240,21 @@ export default function EddyCollection({
               className="h-1 w-28 cursor-pointer accent-rose-500" />
             <span className="w-10 tabular-nums text-zinc-500">{imgH}px</span>
           </span>
+          {/* Only offered where a prompt is worth reading but the card is not a prompt card.
+              On a withPrompt collection the text is already the point and is always shown. */}
+          {!withPrompt && items.some((i) => (i.prompt || '').trim()) && (
+            <button
+              type="button"
+              onClick={() => setShowPrompts((v) => !v)}
+              aria-pressed={showPrompts}
+              title="Show the prompt each image was generated with"
+              className={cn('rounded-full border px-2.5 py-1 text-[0.625rem] font-semibold transition cursor-pointer',
+                showPrompts ? 'border-rose-500 bg-rose-500/15 text-rose-300'
+                            : 'border-white/[0.07] bg-white/[0.02] text-zinc-400 hover:border-zinc-600')}
+            >
+              {showPrompts ? '✓ Prompts' : 'Show prompts'}
+            </button>
+          )}
           {newestBatch.length > 0 && newestBatch.length < visible.length && (
             <button
               onClick={() => setSelected(newestBatch)}
@@ -2402,6 +2434,23 @@ export default function EddyCollection({
                     <input type="file" accept={mediaKind === 'video' ? 'video/mp4,video/webm,video/quicktime' : 'image/png,image/jpeg,image/webp'} className="hidden"
                       onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) attachTo(it.id, f); }} />
                   </label>
+                )}
+                {/* The prompt, under the picture rather than over it: an overlay would cover the
+                    thing you are looking at, and this text is read deliberately, not glanced at.
+                    Click to copy -- reusing a prompt is the reason to look at one. */}
+                {showPrompts && !withPrompt && (it.prompt || '').trim() && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigator.clipboard?.writeText(it.prompt.trim());
+                      notify('Prompt copied', 'success');
+                    }}
+                    title="Click to copy"
+                    className="mt-1 block w-full rounded-md bg-black/40 px-2 py-1.5 text-left text-[0.625rem] leading-snug text-zinc-400 transition hover:bg-black/60 hover:text-zinc-200 cursor-pointer"
+                  >
+                    <span className="line-clamp-3">{it.prompt.trim()}</span>
+                  </button>
                 )}
                 <button onClick={() => removeItem(it.id)} title="Delete"
                   className="absolute right-1 top-1 h-6 w-6 rounded-full bg-black/70 text-xs text-zinc-300 hover:text-red-400 cursor-pointer">×</button>

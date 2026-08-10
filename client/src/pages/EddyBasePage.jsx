@@ -347,7 +347,10 @@ export default function EddyBasePage() {
           ? { id: saveToId }
           : await baseStore.ensureFolder(charName || 'Base');
         // eslint-disable-next-line no-await-in-loop
-        const stored = await baseStore.addItems([{ dataUrl, prompt: instruction.trim(), name: `base-${Date.now()}` }], folder.id);
+        // The prompt ACTUALLY SENT, not the raw instruction. `prompt` is the assembled text --
+        // the instruction plus whatever the page adds around it -- and saving the shorter version
+        // meant the row could not reproduce its own picture (owner, 2026-08-10).
+        const stored = await baseStore.addItems([{ dataUrl, prompt, name: `base-${Date.now()}` }], folder.id);
         // The Base Library row id is kept on the result. Filing it into a different folder later is
         // then a folderId update on THAT row — a move, not a second copy of the same picture.
         // Replace THIS run's placeholder rather than prepending, so results stay in the order the
