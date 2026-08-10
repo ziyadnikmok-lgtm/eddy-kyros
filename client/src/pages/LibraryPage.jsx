@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { library as libraryApi, gallery as galleryApi, video as videoApi } from '../services/api';
 import { stashSourceHandoff } from '../lib/sourceHandoff';
-import { downloadBlob } from '../lib/stripMetadata';
+import { downloadBlob, stripMetadata, stripEnabled } from '../lib/stripMetadata';
 import { cascadeDeleteFromCollections } from '../lib/galleryCascade';
 import { useApp } from '../context/AppContext';
 import { Btn, Badge, Spinner, Empty, ConfirmDialog, Toggle, Modal } from '../components/UI';
@@ -1166,8 +1166,35 @@ export default function LibraryPage() {
             }
 
             const contentDispositionName = filenameFromContentDisposition(response.headers.get('content-disposition'));
-            const fileName = sanitizeDownloadName(contentDispositionName || buildBulkDownloadName(item, { spoofEnabled: spoof }));
-            const data = new Uint8Array(await response.arrayBuffer());
+            let fileName = sanitizeDownloadName(contentDispositionName || buildBulkDownloadName(item, { spoofEnabled: spoof }));
+            let blob = await response.blob();
+
+            /**
+             * STRIP THE GENERATOR METADATA -- the single-image download always did, this did not.
+             *
+             * A mass download with spoofing OFF fetched the bytes and wrote them straight to disk,
+             * so fifty files landed carrying the EXIF that names the model, and nothing in the
+             * filename said so. One image saved from the same page was clean. That is the worst
+             * shape for this: the unsafe path is the bulk one, and it looked identical to the safe
+             * one (owner, 2026-08-10).
+             *
+             * Skipped when spoofing is on -- the server has already rebuilt that file as an iPhone
+             * photo, complete with the camera EXIF it is supposed to have, and stripping would
+             * throw that away. Skipped for video too: stripMetadata returns it untouched, since a
+             * container rewrite is a different job.
+             */
+            if (!spoof && item.mediaType === 'image' && stripEnabled()) {
+              const res = await stripMetadata(blob);
+              blob = res.blob;
+              if (res.cleaned && !/_metadatacleaned/i.test(fileName)) {
+                const dot = fileName.lastIndexOf('.');
+                fileName = dot > 0
+                  ? `${fileName.slice(0, dot)}_metadatacleaned${fileName.slice(dot)}`
+                  : `${fileName}_metadatacleaned`;
+              }
+            }
+
+            const data = new Uint8Array(await blob.arrayBuffer());
             await window.electronAPI.saveFileToFolder({ directory, fileName, data });
             savedCount += 1;
           } catch (err) {
@@ -1404,7 +1431,18 @@ export default function LibraryPage() {
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {showSpoofToggle ? <Toggle checked={spoofEnabled} onChange={setSpoofEnabled} label="iPhone" /> : null}
+            {/* "iPhone" said which device, not what the switch does. It is a metadata cleaner:
+                every tag the generator wrote is removed and replaced with the ordinary EXIF a phone
+                photo carries -- camera, lens, capture time. Off still strips (see the bulk save),
+                it just does not add the camera back. */}
+            {showSpoofToggle ? (
+              <Toggle
+                checked={spoofEnabled}
+                onChange={setSpoofEnabled}
+                label="Clean metadata"
+                title="Removes the generator metadata and saves as a normal iPhone 17 Pro Max photo with a recent capture time. Off: metadata is still removed, but no camera details are added."
+              />
+            ) : null}
             {MEDIA_FILTERS.map((filter) => {
               const count = filter.value === 'all' ? totals.all : filter.value === 'image' ? totals.images : totals.videos;
               return (
