@@ -57,7 +57,12 @@ check('combos multiply by the ticked photos', /const bp = pickedBasePhotos\.leng
 check('with none ticked the product is unchanged', /: \[null\];/.test(gen));
 check('each combo resolves its OWN base', /if \(combo\?\.basePhotoId\) \{/.test(gen));
 check('and its OWN face', /if \(f\) comboFace = parseDataUrl/.test(gen));
-check('the face falls back to the slot rather than failing', /const faceImg = comboFace \|\| charPayload\[1\] \|\| null;/.test(gen));
+// On Eddy/Max Nano the pairing wins and the slot is the fallback. Max Outfit sends NO face at
+// all -- image 1 is already a finished picture of her -- so the whole expression is now gated.
+check('the face falls back to the slot rather than failing (Eddy/Max Nano)',
+  gen.includes('const faceImg = maxOutfit ? null : (comboFace || charPayload[1] || null);'));
+check('and Max Outfit is excluded, so a mixed batch cannot cross faces',
+  /faceImg = maxOutfit \? null/.test(gen));
 check('an unreadable base photo fails loudly', /throw new Error\('That base photo could not be read'\)/.test(gen));
 check('collections are read through a ref, not deps', /basePhotosRef\.current\.pairs\.get\(combo\.basePhotoId\)/.test(gen));
 
