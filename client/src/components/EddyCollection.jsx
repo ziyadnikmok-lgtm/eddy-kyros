@@ -97,6 +97,22 @@ function durationFromPrompt(prompt) {
 // usable without ever mounting all of it.
 const COLLECTION_PAGE = 120;
 
+/**
+ * The GRID version of a row's picture.
+ *
+ * A Library row points at the full-resolution file. A 2K image decodes to roughly 22 MB of bitmap,
+ * and a folder of 500 held every one of them at full size — which is what "the app goes black" is:
+ * the Electron renderer running out of memory (owner, 2026-08-09).
+ *
+ * /thumb is 400px wide at JPEG 70, about 26x less, and a card is a few hundred pixels wide. Only
+ * gallery-backed rows have one; a locally-stored data URL is returned untouched, because there is
+ * no server copy to ask for and those are already small.
+ */
+function gridSrc(src) {
+  const m = /\/gallery\/([^/?#]+)\/image(\?.*)?$/.exec(String(src || ''));
+  return m ? `${galleryApi.thumbUrl(m[1])}${m[2] || ''}` : src;
+}
+
 export default function EddyCollection({
   dbName,
   title,
@@ -2080,7 +2096,7 @@ export default function EddyCollection({
                   />
                   ) : (
                   <img
-                    src={thumbs[it.id] || it.url}
+                    src={gridSrc(thumbs[it.id] || it.url)}
                     alt={it.name}
                     // A 404 on a gallery URL is otherwise indistinguishable from a very slow load.
                     onError={() => markBroken(it.id)}
