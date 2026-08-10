@@ -43,7 +43,14 @@ const scan = (src) => {
   // The deps array of a hook: `}, [ ... ]);`
   // Component-level hooks close at two spaces too; a nested one is a different scope.
   const depRe = /^  \}\s*,\s*\[([^\]]*)\]\s*\)\s*;/gm;
-  while ((m = depRe.exec(text))) {
+  // ...and the ONE-LINE form: `  useEffect(() => { ... }, [a, b]);`
+  //
+  // The multi-line pattern above misses it -- the line starts with `useEffect`, not `}` -- and
+  // that gap let a real crash through on 2026-08-10: a one-line ref-sync effect naming a memo
+  // declared 800 lines below it. The checker reported 6/6 PASS on the file that was crashing.
+  const oneLineRe = /^  use(?:Effect|Memo|Callback|LayoutEffect)\(.*\}\s*,\s*\[([^\]]*)\]\s*\)\s*;\s*$/gm;
+  for (const re of [depRe, oneLineRe]) {
+  while ((m = re.exec(text))) {
     const at = m.index;
     for (const raw of m[1].split(',')) {
       const name = raw.trim().split(/[.?[]/)[0];
@@ -53,6 +60,7 @@ const scan = (src) => {
         bad.push({ name, line: text.slice(0, at).split('\n').length, declLine: text.slice(0, declAt).split('\n').length });
       }
     }
+  }
   }
   return bad;
 };
@@ -65,6 +73,22 @@ const broken = [
   '  const combos = useMemo(() => [], [x]);',
 ].join(String.fromCharCode(10));
 const caught = scan(broken);
+// The one-line form, proved separately. This is the exact text of the 2026-08-10 crash. Without
+// this case the checker reported PASS on a file that blanked the page every time it loaded -- a
+// green check on a broken thing is worse than no check, because it stops you looking.
+const ONE_LINE_CRASH = [
+  'export default function P() {',
+  '  const [baseThumbs, setBaseThumbs] = useState({});',
+  '  useEffect(() => { basePhotosRef.current = { thumbs: baseThumbs, pairs: basePhotoPairs }; }, [baseThumbs, basePhotoPairs]);',
+  '  const basePhotoPairs = useMemo(() => new Map(), []);',
+  '}',
+].join(String.fromCharCode(10));
+const oneLineHits = scan(ONE_LINE_CRASH);
+check('the scanner catches the ONE-LINE form (the shape it missed)',
+  oneLineHits.some((h) => h.name === 'basePhotoPairs'));
+check('and does not flag the dep that IS declared above it',
+  !oneLineHits.some((h) => h.name === 'baseThumbs'));
+
 check('the scanner catches the crash it was written for',
   caught.length === 1 && caught[0].name === 'combos');
 

@@ -3292,7 +3292,6 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   const staticCameraRef = useRef(staticCamera);
   useEffect(() => { staticCameraRef.current = staticCamera; }, [staticCamera]);
   useEffect(() => { libItemsRef.current = libItems; }, [libItems]);
-  useEffect(() => { basePhotosRef.current = { thumbs: baseThumbs, pairs: basePhotoPairs }; }, [baseThumbs, basePhotoPairs]);
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [resolution, setResolution] = useState(_cache.resolution);
 
@@ -4117,6 +4116,13 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     }
     return out;
   }, [baseItems, baseFolders, charItems, charFolders]);
+
+  // Mirrored into a ref for generateCombo, and placed HERE rather than up with the other ref
+  // syncs: a deps array is evaluated during RENDER, so naming basePhotoPairs above its own
+  // declaration is a TDZ ReferenceError that blanks the page. Third time this shape has bitten
+  // (2026-08-09 poseView, viewBreakdown; 2026-08-10 this) -- check-tdz-deps.js now catches the
+  // single-line hook form it missed here.
+  useEffect(() => { basePhotosRef.current = { thumbs: baseThumbs, pairs: basePhotoPairs }; }, [baseThumbs, basePhotoPairs]);
 
   /**
    * What the ticked base photos resolved to, so the pairing is visible BEFORE money is spent.
