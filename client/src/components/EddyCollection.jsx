@@ -2069,6 +2069,28 @@ export default function EddyCollection({
             {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
           <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs" onClick={downloadSelected}>Download</Btn>
+          {/* WHITE PLATE LIVES HERE, with the selection it acts on.
+              It was only in the toolbar at the very top of the page, which is where you are not: you
+              tick cards while scrolled down among them, so the button sat off-screen the entire time
+              it was waiting to be pressed (owner, 2026-08-09). This bar follows the selection, so it
+              is on screen whenever there is something to plate. */}
+          {enablePlate && (plating ? (
+            <Btn variant="ghost" className="!rounded-lg !py-1 !px-3 !text-xs" onClick={stopPlating}>
+              Stop{plateProgress ? ` ${plateProgress.done}/${plateProgress.total}` : ''}
+            </Btn>
+          ) : plateRunnable.length > 0 && (
+            <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs !border-sky-500/40 !text-sky-200"
+              onClick={plateSelected}
+              title="Regenerate on Seedream with the room removed, and paste it back onto the card. Originals are kept.">
+              White plate {plateRunnable.length} · ${(plateRunnable.length * PLATE_COST_PER_IMAGE).toFixed(2)}
+            </Btn>
+          ))}
+          {/* Says WHY the count is lower than what you ticked, rather than leaving you to wonder. */}
+          {enablePlate && !plating && plateMirrorSkips.length > 0 && (
+            <span className="text-[0.6875rem] text-amber-300/80">
+              {plateMirrorSkips.length} mirror skipped — the mirror is the shot
+            </span>
+          )}
           {/* Turns this folder into a queue: saved images leave, what remains is what is still to
               do. Off by default, remembered per collection, and it only ever drops files that
               actually saved — these live in IndexedDB alone, so a delete on a failed download

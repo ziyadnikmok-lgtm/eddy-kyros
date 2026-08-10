@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { library as libraryApi, gallery as galleryApi, video as videoApi } from '../services/api';
 import { stashSourceHandoff } from '../lib/sourceHandoff';
 import { downloadBlob } from '../lib/stripMetadata';
+import { cascadeDeleteFromCollections } from '../lib/galleryCascade';
 import { useApp } from '../context/AppContext';
 import { Btn, Badge, Spinner, Empty, ConfirmDialog, Toggle, Modal } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
@@ -893,6 +894,10 @@ export default function LibraryPage() {
     try {
       if (deleteTarget.mediaType === 'image') await galleryApi.remove(deleteTarget.originalId);
       else await videoApi.removeHistory(deleteTarget.originalId);
+      // ...and out of Eddy's collections, which hold a URL to this image rather than its bytes.
+      // Without this the picture is gone but the tiles pointing at it stay, rendering as broken
+      // boxes you can still select and still generate from.
+      if (deleteTarget.mediaType === 'image') await cascadeDeleteFromCollections([deleteTarget.originalId]);
 
       setItems((prev) => prev.filter((item) => item.id !== deleteTarget.id));
       setTotals((prev) => ({
@@ -918,16 +923,34 @@ export default function LibraryPage() {
     openLightbox(imagePreviewUrls, index >= 0 ? index : 0);
   }, [imageItems, imagePreviewUrls, openLightbox]);
 
-  const handleImageDownload = useCallback((item) => {
-    const anchor = document.createElement('a');
-    anchor.href = spoofAvailable && spoofEnabled
+  /**
+   * Download ONE image.
+   *
+   * A bare `<a download>` does not save in Electron -- it navigates, so the click did nothing
+   * visible and no file arrived (owner, 2026-08-10). VideoLibraryCard.handleDownload in this same
+   * file already said so in a comment and already did it the other way; the image path had simply
+   * never been brought across.
+   *
+   * Fetch the bytes and hand them to downloadBlob, which is also what strips generator metadata
+   * and stamps a fresh capture time -- so a single download now gets the same treatment as a bulk
+   * one instead of quietly shipping EXIF that says which model made it.
+   */
+  const handleImageDownload = useCallback(async (item) => {
+    const spoof = spoofAvailable && spoofEnabled;
+    const url = spoof
       ? galleryApi.spoofedDownloadUrl(item.originalId)
-      : item.downloadUrl;
-    if (!(spoofAvailable && spoofEnabled)) {
-      anchor.download = item.metadata?.filename || `image-${item.originalId}.png`;
+      : (item.downloadUrl || `/api/gallery/${item.originalId}/image`);
+    try {
+      const resp = await fetch(url, { credentials: 'include' });
+      if (!resp.ok) throw new Error(`Download failed (${resp.status})`);
+      const blob = await resp.blob();
+      const named = filenameFromContentDisposition(resp.headers.get('content-disposition'));
+      const fallback = item.metadata?.filename || `image-${item.originalId}.png`;
+      await downloadBlob(blob, sanitizeDownloadName(named || fallback));
+    } catch (err) {
+      notify(err?.message || 'Download failed', 'error');
     }
-    anchor.click();
-  }, [spoofAvailable, spoofEnabled]);
+  }, [spoofAvailable, spoofEnabled, notify]);
 
   const handleContextAction = useCallback(async (action) => {
     const item = contextMenu?.item;
@@ -1295,6 +1318,7 @@ export default function LibraryPage() {
       for (const videoItem of videos) {
         await videoApi.removeHistory(videoItem.originalId);
       }
+      if (imageIds.length > 0) await cascadeDeleteFromCollections(imageIds);
       setItems((prev) => prev.filter((item) => !selectedIds.has(item.id)));
       setTotals((prev) => ({
         all: Math.max(0, prev.all - selected.length),

@@ -1,5 +1,40 @@
 const BASE = '/api';
 
+/**
+ * Save a downloaded blob to disk.
+ *
+ * `<a download>` + a blob URL does NOT save in Electron -- it navigates, so the click appeared to
+ * do nothing and no file arrived (owner, 2026-08-10). Both zip paths below did exactly that.
+ *
+ * In Electron the bytes go through the downloads:save-file IPC into the OS Downloads folder, which
+ * also de-dupes the name rather than clobbering an earlier zip. In a plain browser the anchor is
+ * still correct, so it stays as the fallback.
+ */
+async function saveDownloadedBlob(blob, fileName) {
+  const api = typeof window !== 'undefined' ? window.electronAPI : null;
+  if (api?.autoDownloadFolder && api?.saveFileToFolder) {
+    try {
+      const directory = await api.autoDownloadFolder({ folderName: 'Kyros Studio Downloads' });
+      if (directory) {
+        const data = new Uint8Array(await blob.arrayBuffer());
+        const saved = await api.saveFileToFolder({ directory, fileName, data });
+        return saved?.filePath || true;
+      }
+    } catch {
+      // Fall through to the anchor. A failed IPC must not mean "no download at all".
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.click();
+  // Revoking synchronously can cancel the download before it starts in some builds.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  return true;
+}
+
+
 const DEFAULT_TIMEOUT_MS = 30_000;
 const LONG_TIMEOUT_MS = 5 * 60_000;
 const VIDEO_ANALYZE_TIMEOUT_MS = 3 * 60_000;
@@ -258,12 +293,8 @@ export const video = {
       throw new Error(json?.error?.message || `Download failed (${res.status})`);
     }
     const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `videos-${Date.now()}.zip`;
-    a.click();
-    URL.revokeObjectURL(url);
+    // Date.now() only names the file; the IPC de-dupes if one already exists.
+    return saveDownloadedBlob(blob, `videos-${Date.now()}.zip`);
   },
 };
 
@@ -327,12 +358,7 @@ export const loraDatasets = {
       throw new Error(json?.error?.message || `Download failed (${res.status})`);
     }
     const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `lora-dataset-${id}.zip`;
-    a.click();
-    URL.revokeObjectURL(url);
+    return saveDownloadedBlob(blob, `lora-dataset-${id}.zip`);
   },
 };
 export const batch = {
@@ -387,12 +413,8 @@ export const gallery = {
       throw new Error(json?.error?.message || `Download failed (${res.status})`);
     }
     const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `gallery-${Date.now()}.zip`;
-    a.click();
-    URL.revokeObjectURL(url);
+    // Date.now() only names the file; the IPC de-dupes if one already exists.
+    return saveDownloadedBlob(blob, `gallery-${Date.now()}.zip`);
   },
   imageUrl: (id) => `${BASE}/gallery/${id}/image`,
   spoofedDownloadUrl: (id) => `${BASE}/gallery/${id}/download-spoofed`,

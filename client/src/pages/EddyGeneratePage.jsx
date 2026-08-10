@@ -1183,7 +1183,20 @@ const UNDRESS_TEXTS = [
  * scrolling hundreds of finished results to find either (owner, 2026-08-07). pickerFolders adds
  * the folder chips, which is what makes "pick HER face" a two-click job.
  */
-function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerDb, pickerLabel, pickerFolders, pickerRole, pickerStrip, onPickFolder }) {
+/**
+ * multi / pickedIds / onMultiChange / multiRows — SEVERAL photos in one slot.
+ *
+ * The base photos started life as a separate picker further down the page, which meant the thing
+ * you were generating from was not shown in the slot labelled "Main photo" — you had to trust a
+ * line of text saying it had been paired (owner, 2026-08-10). Now "Select from Base" ticks as many
+ * as you like and they appear in the slot itself, with the faces they were paired with appearing
+ * in the face slot beside it. Seeing both is the whole point: a wrong pairing looks exactly like a
+ * right one until the pictures come back.
+ *
+ * multiRows renders the slot's contents and is display-only, so the FACE slot can show the paired
+ * faces without its own picker becoming multi-select.
+ */
+function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerDb, pickerLabel, pickerFolders, pickerRole, pickerStrip, onPickFolder, multi = false, pickedIds, onMultiChange, multiRows, multiEmptyHint }) {
   const { notify } = useApp();
   const store = useMemo(() => createEddyCollection(dbName), [dbName]);
   // The collection the Library button browses. Falls back to the page's general library so a slot
@@ -1331,6 +1344,33 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
   };
 
   // A Library entry is a URL to the server copy, so it has to be fetched before it can be sent.
+  /**
+   * Ticking, for a multi slot.
+   *
+   * The picker's row ids are prefixed (`eddy:<itemId>`) because the general library mixes server
+   * rows in; the caller only ever knows the raw item id, so strip it at this boundary rather than
+   * making every consumer remember the prefix.
+   */
+  const rawId = (id) => String(id).replace(/^eddy:/, '');
+  const isTicked = (id) => (pickedIds || []).includes(rawId(id));
+  const toggleOne = (id) => {
+    if (!onMultiChange) return;
+    const r = rawId(id);
+    const cur = pickedIds || [];
+    onMultiChange(cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r]);
+  };
+  /**
+   * Select-all applies to the FOLDER IN VIEW, not the whole collection, and not just the images
+   * scrolled into view -- "Select all" that silently means "the first 120" is the kind of quiet
+   * truncation that shows up later as missing output.
+   */
+  const toggleAllShown = (on) => {
+    if (!onMultiChange) return;
+    const inView = library.filter((l) => !pickFolder || l.folderId === pickFolder).map((l) => rawId(l.id));
+    const cur = pickedIds || [];
+    onMultiChange(on ? [...new Set([...cur, ...inView])] : cur.filter((x) => !inView.includes(x)));
+  };
+
   const pickFromLibrary = async (src, folderId = null) => {
     /**
      * Reports the folder the picture came from, not just the picture.
@@ -1398,7 +1438,40 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
         </span>
       </div>
 
-      {value ? (
+      {multiRows && multiRows.length > 0 ? (
+        /* The picked set, in the slot. Scrolls at a fixed height so ticking forty photos cannot
+           push the rest of the page off-screen. */
+        <div className="max-h-[26rem] overflow-y-auto rounded-lg bg-black/20 p-1.5">
+          <div className="grid grid-cols-3 gap-1.5">
+            {multiRows.map((r) => (
+              <div key={r.id} className="group relative">
+                <img
+                  src={r.src}
+                  alt=""
+                  loading="lazy"
+                  className={`aspect-[3/4] w-full rounded-md object-cover ${r.missing ? 'opacity-40 ring-1 ring-amber-500/60' : ''}`}
+                />
+                {r.name && (
+                  <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate rounded-b-md bg-black/70 px-1 py-0.5 text-[9px] text-zinc-300">
+                    {r.name}
+                  </span>
+                )}
+                {onMultiChange && (
+                  <button
+                    type="button"
+                    title="Remove"
+                    onClick={() => onMultiChange((pickedIds || []).filter((x) => x !== r.id))}
+                    className="absolute right-0.5 top-0.5 hidden h-5 w-5 items-center justify-center rounded-full bg-black/80 text-xs text-zinc-300 hover:text-red-400 group-hover:flex cursor-pointer"
+                  >
+                    x
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          {multiEmptyHint && <p className="mt-1.5 px-1 text-[10px] leading-relaxed text-amber-300/90">{multiEmptyHint}</p>}
+        </div>
+      ) : value ? (
         <img src={value} alt="" className="aspect-[3/4] w-full rounded-lg object-cover bg-zinc-950" />
       ) : (
         <div className="flex aspect-[3/4] flex-col items-center justify-center gap-3 rounded-lg bg-white/[0.02] px-3 text-center">
@@ -1441,16 +1514,40 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
               <p className="text-xs text-zinc-400">
                 {libraryLoading
                   ? 'Loading your gallery…'
-                  : `${library.length} image${library.length === 1 ? '' : 's'} · showing ${Math.min(libraryShown, library.length)} · click one to use it`}
+                  : multi
+                    ? `${(pickedIds || []).length} ticked of ${library.length} · click to tick, click again to untick`
+                    : `${library.length} image${library.length === 1 ? '' : 's'} · showing ${Math.min(libraryShown, library.length)} · click one to use it`}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowLibrary(false)}
-              className="rounded-lg border border-zinc-600 bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-100 transition hover:border-zinc-500 cursor-pointer"
-            >
-              Close
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              {multi && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => toggleAllShown(true)}
+                    className="rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-2 text-xs font-semibold text-zinc-100 transition hover:border-zinc-500 cursor-pointer"
+                  >
+                    Select all{pickFolder ? ' in folder' : ''}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleAllShown(false)}
+                    className="rounded-lg border border-zinc-700 bg-transparent px-3 py-2 text-xs font-semibold text-zinc-400 transition hover:border-zinc-500 cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowLibrary(false)}
+                className={cn('rounded-lg border px-4 py-2 text-sm font-semibold transition cursor-pointer',
+                  multi ? 'border-rose-500 bg-rose-500/20 text-rose-200 hover:bg-rose-500/30'
+                        : 'border-zinc-600 bg-zinc-800 text-zinc-100 hover:border-zinc-500')}
+              >
+                {multi ? `Done${(pickedIds || []).length ? ` (${(pickedIds || []).length})` : ''}` : 'Close'}
+              </button>
+            </div>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6" onClick={(e) => e.stopPropagation()}>
             {libraryLoading ? (
@@ -1484,10 +1581,19 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
                   {library.filter((l) => !pickFolder || l.folderId === pickFolder).slice(0, libraryShown).map((l) => (
                     <button
                       key={l.id}
-                      onClick={() => pickFromLibrary(l.src, l.folderId)}
-                      className="group aspect-[3/4] overflow-hidden rounded-xl border-2 border-zinc-700 bg-zinc-950 transition hover:border-rose-500 cursor-pointer"
+                      /* In multi mode a click TICKS and the picker stays open -- closing on each
+                         pick is what makes choosing twelve photos twelve trips. */
+                      onClick={() => (multi ? toggleOne(l.id) : pickFromLibrary(l.src, l.folderId))}
+                      className={cn('group relative aspect-[3/4] overflow-hidden rounded-xl border-2 bg-zinc-950 transition cursor-pointer',
+                        multi && isTicked(l.id) ? 'border-rose-500 ring-2 ring-rose-500/40' : 'border-zinc-700 hover:border-rose-500')}
                     >
                       <img src={l.src} alt="" className="h-full w-full object-cover transition group-hover:scale-[1.03]" loading="lazy" />
+                      {multi && (
+                        <span className={cn('absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-md border-2 text-xs font-bold',
+                          isTicked(l.id) ? 'border-rose-500 bg-rose-500 text-white' : 'border-white/40 bg-black/50 text-transparent')}>
+                          {String.fromCharCode(10003)}
+                        </span>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -1529,7 +1635,7 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
           is the common action on this page, and with Base Library empty the row below the picture
           was simply dead space (owner, 2026-08-07). Full width so it reads as part of the slot
           rather than a stray control. */}
-      {pickerDb && value && (
+      {pickerDb && (value || (multiRows && multiRows.length > 0)) && (
         <button type="button" onClick={openLibrary}
           className="mt-2 w-full rounded-lg border border-rose-500/40 bg-rose-500/[0.07] px-3 py-2 text-xs font-semibold text-rose-300 transition hover:border-rose-500 hover:bg-rose-500/15 cursor-pointer">
           Select from {pickerLabel || 'Library'}
@@ -3078,7 +3184,7 @@ function _getRunSnap() {
 }
 
 const _cache = {
-  baseImage: '', faceImage: '', characterName: '', pickedOutfits: [], pickedPoses: [], pickedBases: [], outfitRotation: true, smartMatch: true, instruction: '',
+  baseImage: '', faceImage: '', characterName: '', pickedOutfits: [], pickedPoses: [], pickedBases: [], pickedBasePhotos: [], outfitRotation: true, smartMatch: true, instruction: '',
   // staticCamera defaults ON: the user asked for the camera lock to be the standing default, so a
   // fresh page (or one whose stored value predates this feature) starts with movement/zoom locked out.
   nsfw: false, aspectRatio: 'auto', resolution: '1K', staticCamera: true,
@@ -3149,7 +3255,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   // The favorited item ids per picker store, read from each store's small `favorites` key — NOT from
   // item.favorite. A Set per slot so the picker star fill, the "★ Favorite" count and the favorite
   // filter all derive from the same source a big-index rewrite can never clobber. Loaded in loadAll.
-  const [favSets, setFavSets] = useState({ outfit: new Set(), pose: new Set(), base: new Set() });
+  const [favSets, setFavSets] = useState({ outfit: new Set(), pose: new Set(), base: new Set(), basephoto: new Set() });
   const [poseThumbs, setPoseThumbs] = useState({});
   const [loading, setLoading] = useState(true);
 
@@ -3162,6 +3268,29 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   const [pickedPoses, setPickedPoses] = useState(_cache.pickedPoses);
   // Max Outfit's sources: ids of Library items, each becoming one generation.
   const [pickedBases, setPickedBases] = useState(_cache.pickedBases || []);
+  /**
+   * MULTIPLE MAIN PHOTOS, each carrying its own face.
+   *
+   * The page took exactly one main photo and one face close-up, so running the same poses across
+   * six of her base shots meant six runs and six manual re-pairings — and picking the wrong face
+   * for a base is silent, because both slots look filled either way.
+   *
+   * Both collections keep a folder per character (mirrorFolders writes the same name into Base
+   * Library and Character), so the folder name is the link. Tick base photos here and each one is
+   * paired with the close-up from HER character folder automatically.
+   *
+   * The single slots above still work and are unchanged. This overrides them only while something
+   * is ticked.
+   */
+  const [pickedBasePhotos, setPickedBasePhotos] = useState(_cache.pickedBasePhotos || []);
+  const [baseItems, setBaseItems] = useState([]);
+  const [baseFolders, setBaseFolders] = useState([]);
+  const [baseThumbs, setBaseThumbs] = useState({});
+  const [charItems, setCharItems] = useState([]);
+  const [charFolders, setCharFolders] = useState([]);
+  // Her face pictures, needed to SHOW the pairing rather than describe it. Character folders
+  // hold a handful of photos each, so this is a small read next to the Library's thousands.
+  const [charThumbs, setCharThumbs] = useState({});
   const [libItems, setLibItems] = useState([]);
   const [libItemFolders, setLibItemFolders] = useState([]);
   const [libThumbs, setLibThumbs] = useState({});
@@ -3460,8 +3589,44 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     return () => { alive = false; };
   }, [characterName, baseImage, faceImage, charStore, baseStore]);
 
+  /**
+   * MAX OUTFIT: take her name from the Library folder the source photos came out of.
+   *
+   * Filing has always been by characterName, and every tab agrees on it -- her pictures go in her
+   * folder. But the effect above only reads the Main-photo and Face slots, and Max Outfit uses
+   * neither: its sources are Library rows. So the name stayed empty and a whole batch of Natalie's
+   * outfit swaps filed under the generic "Max Outfit" pile instead of Natalie (owner, 2026-08-10).
+   *
+   * The source photos came OUT of her folder -- they were generated in Max Nano and filed there --
+   * so the folder they live in is the answer, no new bookkeeping required.
+   *
+   * Only fills a name that is EMPTY, and only when the picked photos agree. A mixed selection
+   * spanning two women has no single right answer, and guessing one would file half the run under
+   * the wrong person -- silently, which is the failure worth avoiding.
+   */
+  useEffect(() => {
+    if (!maxOutfit || characterName || !pickedBases.length) return;
+    const byId = new Map(libItems.map((i) => [i.id, i]));
+    const names = new Set();
+    for (const id of pickedBases) {
+      const fid = byId.get(id)?.folderId;
+      const n = fid ? (libItemFolders.find((f) => f.id === fid)?.name || '').trim() : '';
+      if (!n) return;                        // one unfiled photo -> no confident answer
+      names.add(n);
+    }
+    if (names.size !== 1) return;            // two women in one run -> leave it to the picker
+    const only = [...names][0];
+    // The tab's own buckets are not people. Filing under them would be a no-op that looks like
+    // a decision.
+    if (only === MAX_OUTFIT_FOLDER || only === MAX_NANO_FOLDER || only === 'Eddy' || only === 'Eddy NSFW') return;
+    setCharacterName(only);
+  }, [maxOutfit, characterName, pickedBases, libItems, libItemFolders]);
+
   // Read inside generateCombo. A ref rather than a dep, so a Library write mid-batch cannot
   // rebuild the callback underneath a running run.
+  // Read inside generateCombo. Refs rather than deps, so loading a collection mid-batch cannot
+  // rebuild the callback underneath a running run.
+  const basePhotosRef = useRef({ thumbs: {}, pairs: new Map() });
   const libItemsRef = useRef([]);
   const generateComboRef = useRef(null);
   // Points at the latest run(), for the resume-the-unfinished-queue effect. See its assignment
@@ -3507,7 +3672,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // in the star fill, the count and the filter immediately.
     // `base` stays empty: the Library has no favourites list of its own, and slot.favIds is
     // dereferenced unconditionally below.
-    setFavSets({ outfit: new Set(oFav), pose: new Set(pFav), base: new Set() });
+    setFavSets({ outfit: new Set(oFav), pose: new Set(pFav), base: new Set(), basephoto: new Set() });
     // An outfit is only usable if it has an image; a pose is usable with an image OR a prompt.
     setOutfits(oItems);
     setPoses(pItems);
@@ -3532,6 +3697,28 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
      * `i.url ||` first: a Library row stores a gallery URL and no local bytes (see the addItems
      * call in run()), so getImage returns nothing for almost all of them.
      */
+    /**
+     * Base photos and characters, for the multi-select above.
+     *
+     * Skipped in Max Outfit, which sources from the Library instead and would otherwise pay for two
+     * collection reads it never looks at.
+     */
+    if (!maxOutfit) {
+      try {
+        const [bItems, bFolders, cItems, cFolders] = await Promise.all([
+          baseStore.listItems(), baseStore.listFolders(),
+          charStore.listItems(), charStore.listFolders(),
+        ]);
+        const bT = {};
+        const cT = {};
+        await Promise.all([
+          ...bItems.map(async (i) => { bT[i.id] = i.url || await baseStore.getImage(i.id); }),
+          ...cItems.map(async (i) => { cT[i.id] = i.url || await charStore.getImage(i.id); }),
+        ]);
+        setBaseItems(bItems); setBaseFolders(bFolders); setBaseThumbs(bT);
+        setCharItems(cItems); setCharFolders(cFolders); setCharThumbs(cT);
+      } catch { /* an unreadable collection leaves the picker empty rather than breaking the page */ }
+    }
     if (maxOutfit) {
       try {
         const [lItems, lFolders] = await Promise.all([libraryStore.listItems(), libraryStore.listFolders()]);
@@ -3543,7 +3730,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       } catch { /* an unreadable Library leaves the picker empty rather than breaking the page */ }
     }
     setLoading(false);
-  }, [outfitStore, poseStore, libraryStore, maxOutfit]);
+  }, [outfitStore, poseStore, libraryStore, baseStore, charStore, maxOutfit]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -3605,6 +3792,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       setPickedOutfits((v) => (v.length ? v : saved.pickedOutfits || []));
       setPickedPoses((v) => (v.length ? v : saved.pickedPoses || []));
       setPickedBases((v) => (v.length ? v : saved.pickedBases || []));
+      setPickedBasePhotos((v) => (v.length ? v : saved.pickedBasePhotos || []));
       setOutfitRotation((v) => (v === true && typeof saved.outfitRotation === 'boolean' ? saved.outfitRotation : v));
       setSmartMatch((v) => (v === true && typeof saved.smartMatch === 'boolean' ? saved.smartMatch : v));
       setInstruction((v) => (v ? v : saved.instruction || ''));
@@ -3691,7 +3879,8 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       return;
     }
     // Max Outfit has no single main photo: every combo carries its own Library picture.
-    if (!maxOutfit && !baseImage) { notify('Add the main photo first', 'error'); return; }
+    // Ticked base photos ARE the main photos; the single slot above is then unused.
+    if (!maxOutfit && !baseImage && !pickedBasePhotos.length) { notify('Add the main photo first', 'error'); return; }
     const entry = { name, baseImage, faceImage, build };
     const next = [...models.filter((m) => m.name !== name), entry].sort((a, b) => a.name.localeCompare(b.name));
     setModels(next);
@@ -3714,14 +3903,14 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   }, [activeModel, models, notify]);
 
   useEffect(() => {
-    const snap = { baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, outfitRotation, smartMatch, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine };
+    const snap = { baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, outfitRotation, smartMatch, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine };
     Object.assign(_cache, snap);
     stateStore.set('state', snap);
   // pickedBases / outfitRotation / smartMatch are IN the snapshot above, so they have to be in
   // these deps too. Without them this effect never re-ran when only a Max Outfit control changed,
   // and the whole selection was gone on the next app start — the snapshot is only written from
   // here.
-  }, [baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, outfitRotation, smartMatch, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine]);
+  }, [baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, outfitRotation, smartMatch, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine]);
 
   /**
    * Submits ONE video job and returns as soon as Muapi accepts it (a taskId) — the render finishes
@@ -4024,7 +4213,34 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
    * used the outfit's back description (backPrompt) rather than its front one.
    */
   const eddyMismatches = useMemo(() => {
-    if (maxOutfit || maxNano || !pickedOutfits.length || !pickedPoses.length) return null;
+    if (maxNano) return null;
+    /**
+     * MAX OUTFIT, cross-product mode: same arithmetic against PHOTOS instead of poses.
+     *
+     * The filter above silently drops these pairs. Dropping them is right; dropping them without
+     * saying so means the count on the button disagrees with photos x outfits and there is nothing
+     * on screen to explain the gap -- which is precisely the confusion the one-outfit-per-photo
+     * toggle just caused.
+     *
+     * Only for the cross product: with rotation ON there is one outfit per photo, so no pair is
+     * ever skipped and the banner would be noise.
+     */
+    if (maxOutfit) {
+      if (outfitRotation || !pickedBases.length || !pickedOutfits.length) return null;
+      const byId = new Map(libItems.map((i) => [i.id, i]));
+      const folderName = (id) => outfitFolders.find((f) => f.id === outfits.find((o) => o.id === id)?.folderId)?.name || '';
+      let bad = 0;
+      const kinds = new Set();
+      for (const o of pickedOutfits) {
+        const ov = outfitView(folderName(o));
+        for (const b of pickedBases) {
+          const bv = libraryRowView(byId.get(b));
+          if ((ov === 'closeup') !== (bv === 'closeup')) { bad += 1; kinds.add(ov === 'closeup' ? 'closeup-outfit' : 'closeup-pose'); }
+        }
+      }
+      return bad ? { bad, total: pickedOutfits.length * pickedBases.length, kinds: [...kinds] } : null;
+    }
+    if (!pickedOutfits.length || !pickedPoses.length) return null;
     const outfitFolderName = (id) => outfitFolders.find((f) => f.id === outfits.find((o) => o.id === id)?.folderId)?.name || '';
     const poseById = new Map(poses.map((x) => [x.id, x]));
     let bad = 0;
@@ -4039,7 +4255,85 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       }
     }
     return bad ? { bad, total: pickedOutfits.length * pickedPoses.length, kinds: [...kinds] } : null;
-  }, [maxOutfit, maxNano, pickedOutfits, pickedPoses, outfits, outfitFolders, poses]);
+  }, [maxOutfit, maxNano, outfitRotation, pickedBases, pickedOutfits, pickedPoses, libItems, outfits, outfitFolders, poses]);
+
+  /**
+   * base photo id -> { name, faceId }. Matched by FOLDER NAME, which is the only thing the two
+   * collections share: mirrorFolders writes the same name into Base Library and Character.
+   *
+   * Her face is the one marked BASE in the Character tab, else her earliest — the same rule the
+   * Base page uses, so the same photo leads the payload wherever you generate from.
+   */
+  const basePhotoPairs = useMemo(() => {
+    const baseFolderName = (id) => baseFolders.find((f) => f.id === id)?.name?.trim() || '';
+    const charFolderByName = new Map(charFolders.map((f) => [f.name.trim().toLowerCase(), f.id]));
+    const out = new Map();
+    for (const b of baseItems) {
+      const name = baseFolderName(b.folderId);
+      const charFolderId = name ? charFolderByName.get(name.toLowerCase()) : null;
+      let faceId = null;
+      if (charFolderId) {
+        const mine = charItems.filter((i) => i.folderId === charFolderId);
+        const lead = mine.find((i) => i.role === 'base')
+          || [...mine].sort((a, c) => (a.createdAt || 0) - (c.createdAt || 0))[0];
+        faceId = lead?.id || null;
+      }
+      out.set(b.id, { name, faceId });
+    }
+    return out;
+  }, [baseItems, baseFolders, charItems, charFolders]);
+
+  // Mirrored into a ref for generateCombo, and placed HERE rather than up with the other ref
+  // syncs: a deps array is evaluated during RENDER, so naming basePhotoPairs above its own
+  // declaration is a TDZ ReferenceError that blanks the page. Third time this shape has bitten
+  // (2026-08-09 poseView, viewBreakdown; 2026-08-10 this) -- check-tdz-deps.js now catches the
+  // single-line hook form it missed here.
+  useEffect(() => { basePhotosRef.current = { thumbs: baseThumbs, pairs: basePhotoPairs }; }, [baseThumbs, basePhotoPairs]);
+
+  /**
+   * What the ticked base photos resolved to, so the pairing is visible BEFORE money is spent.
+   *
+   * A base photo whose folder has no matching character is the case worth surfacing: it still
+   * generates, using whatever is in the face slot above, and that is a quiet substitution nobody
+   * would notice until the faces came back wrong.
+   */
+  const basePhotoSummary = useMemo(() => {
+    if (!pickedBasePhotos.length) return null;
+    const byName = new Map();
+    let unmatched = 0;
+    for (const id of pickedBasePhotos) {
+      const pair = basePhotoPairs.get(id);
+      if (!pair?.faceId) { unmatched += 1; continue; }
+      byName.set(pair.name, (byName.get(pair.name) || 0) + 1);
+    }
+    // The pairs themselves, in ticked order, so the UI can SHOW base-beside-face. A tally reads
+    // "face taken from Grace x8" -- true, and still no help deciding whether it took the RIGHT
+    // eight. Two thumbnails side by side answer that without being read.
+    const rows = pickedBasePhotos.map((id) => {
+      const pair = basePhotoPairs.get(id);
+      return { id, name: pair?.name || '', faceId: pair?.faceId || null };
+    });
+    return { rows, people: [...byName.entries()].sort((a2, b2) => b2[1] - a2[1]), unmatched, total: pickedBasePhotos.length };
+  }, [pickedBasePhotos, basePhotoPairs]);
+
+  /**
+   * What the two photo slots SHOW once base photos are ticked: the bases on the left, the faces
+   * they were paired with on the right, in the same order. Same data the run uses, so the slots
+   * are the check -- if the face beside a base is the wrong woman, you can see it before paying.
+   */
+  const baseSlotRows = useMemo(() => pickedBasePhotos.map((id) => {
+    const pair = basePhotoPairs.get(id);
+    return { id, src: baseThumbs[id] || '', name: pair?.name || '' };
+  }).filter((r) => r.src), [pickedBasePhotos, basePhotoPairs, baseThumbs]);
+
+  const faceSlotRows = useMemo(() => pickedBasePhotos.map((id) => {
+    const pair = basePhotoPairs.get(id);
+    const src = pair?.faceId ? charThumbs[pair.faceId] : '';
+    // No character folder of the same name -> the face slot's own picture is used instead. Shown
+    // as a dimmed amber tile rather than omitted, because a MISSING row would make the two
+    // columns fall out of step and every pairing below it would read as wrong.
+    return { id, src: src || baseThumbs[id] || '', name: pair?.name || 'no match', missing: !src };
+  }).filter((r) => r.src), [pickedBasePhotos, basePhotoPairs, charThumbs, baseThumbs]);
 
   const combos = useMemo(() => {
     // Max Nano never sends an outfit — a stale selection from an Eddy session would otherwise
@@ -4049,7 +4343,32 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     if (maxOutfit) {
       // One row per SOURCE image. Cross-product multiplies instead — the expensive branch, opt-in.
       const bases = pickedBases.length ? pickedBases : [];
-      if (!outfitRotation) return bases.flatMap((b) => os.map((o) => ({ outfitId: o, poseId: null, baseId: b })));
+      if (!outfitRotation) {
+        /**
+         * CROSS PRODUCT -- and it needs the same angle filter Eddy has.
+         *
+         * Rotation ON gets its angle awareness from matchOutfits. Rotation OFF had none at all, so
+         * unticking "one outfit per photo" silently paired every close-up outfit with every
+         * full-body photo and the reverse -- images wrong before they start, at full price, and the
+         * bigger selection is exactly where that hurts (owner, 2026-08-10).
+         *
+         * Same rule as the Eddy tab: close-up pairs only with close-up. Front vs back is NOT
+         * filtered, because a back shot already swaps in the outfit's back description.
+         *
+         * Same fallback too: if the filter empties the run, the unfiltered product stands. A
+         * Generate button silently reading 0 is worse than a banner you can read, and
+         * missingOutfitKinds above already names what is unmatched.
+         */
+        const byIdX = new Map(libItems.map((i) => [i.id, i]));
+        const outfitFolderNameX = (id) => outfitFolders.find((f) => f.id === outfits.find((o) => o.id === id)?.folderId)?.name || '';
+        const all = bases.flatMap((b) => os.map((o) => ({ outfitId: o, poseId: null, baseId: b })));
+        if (!pickedOutfits.length) return all;
+        const compatible = all.filter((c) => (
+          (outfitView(outfitFolderNameX(c.outfitId)) === 'closeup')
+          === (libraryRowView(byIdX.get(c.baseId)) === 'closeup')
+        ));
+        return compatible.length ? compatible : all;
+      }
       const chosen = pickedOutfits.length ? pickedOutfits : [];
       if (smartMatch && chosen.length) {
         // Angle-aware, pairs of two, least-used pools -- the algorithm ported from
@@ -4084,14 +4403,45 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
      */
     const outfitFolderName = (id) => outfitFolders.find((f) => f.id === outfits.find((o) => o.id === id)?.folderId)?.name || '';
     const poseById = new Map(poses.map((x) => [x.id, x]));
-    const all = os.flatMap((o) => ps.map((p) => ({ outfitId: o, poseId: p })));
+    // With base photos ticked the product gains a dimension: every photo gets every pairing. With
+    // none ticked it is exactly what it always was, driven by the single slot above.
+    const bp = pickedBasePhotos.length ? pickedBasePhotos : [null];
+    const all = bp.flatMap((b) => os.flatMap((o) => ps.map((p) => ({ outfitId: o, poseId: p, basePhotoId: b }))));
     if (!pickedOutfits.length || !pickedPoses.length) return all;
     const compatible = all.filter((c) => (
       (outfitView(outfitFolderName(c.outfitId)) === 'closeup')
       === (readPoseView(poseById.get(c.poseId)?.prompt) === 'closeup')
     ));
     return compatible.length ? compatible : all;
-  }, [pickedOutfits, pickedPoses, pickedBases, outfitRotation, smartMatch, libItems, outfits, outfitFolders, poses, maxNano, maxOutfit]);
+  }, [pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, outfitRotation, smartMatch, libItems, outfits, outfitFolders, poses, maxNano, maxOutfit]);
+
+  /**
+   * THE BREAKDOWN: how many of the images about to be made are front, back and close-up.
+   *
+   * The button says "Generate 92 images". That total hides the thing that actually matters once
+   * pairings started being skipped -- whether the close-ups are in there at all. A run that quietly
+   * dropped every close-up looks identical to one that kept them, right up until you open the
+   * results.
+   *
+   * Counted off the COMBOS, not the selection, so it reflects what will really run: skipped
+   * pairings are already gone by this point.
+   *
+   * The view comes from whichever side carries it in this mode -- the pose card on Eddy and Max
+   * Nano, the source photo on Max Outfit.
+   */
+  const viewBreakdown = useMemo(() => {
+    if (!combos.length) return null;
+    const poseById = new Map(poses.map((x) => [x.id, x]));
+    const libById = new Map(libItems.map((i) => [i.id, i]));
+    const counts = { front: 0, back: 0, closeup: 0 };
+    for (const c of combos) {
+      const v = c.baseId ? libraryRowView(libById.get(c.baseId))
+        : (c.poseId ? readPoseView(poseById.get(c.poseId)?.prompt) : 'front');
+      counts[v] = (counts[v] || 0) + 1;
+    }
+    // Nothing to say when it is all one kind -- the total already said it.
+    return Object.values(counts).filter(Boolean).length > 1 ? counts : null;
+  }, [combos, poses, libItems]);
 
   const sourceImages = [baseImage, faceImage].filter(Boolean);
   const perRunImages = sourceImages.length + (pickedPoses.length ? 1 : 0);
@@ -4413,6 +4763,27 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
        * local bytes is used directly.
        */
       let comboMain = null;
+      let comboFace = null;
+      /**
+       * This combo's OWN base photo, and the face that belongs with it.
+       *
+       * Resolved per generation rather than from the run snapshot, because with several base photos
+       * ticked each row is a different woman-and-room. The face comes from her character folder via
+       * basePhotoPairs; if she has none, the face slot above is used as before rather than the run
+       * failing.
+       */
+      if (combo?.basePhotoId) {
+        const src = basePhotosRef.current.thumbs[combo.basePhotoId]
+          || await baseStore.getImage(combo.basePhotoId);
+        if (!src) throw new Error('That base photo could not be read');
+        comboMain = parseDataUrl(src.startsWith('data:') ? src : await urlToDataUrl(src));
+        if (!comboMain) throw new Error('That base photo could not be decoded');
+        const faceId = basePhotosRef.current.pairs.get(combo.basePhotoId)?.faceId;
+        if (faceId) {
+          const f = await charStore.getImage(faceId);
+          if (f) comboFace = parseDataUrl(f.startsWith('data:') ? f : await urlToDataUrl(f));
+        }
+      }
       if (combo?.baseId) {
         const row = libItemsRef.current.find((i) => i.id === combo.baseId);
         const src = row?.url || (row ? await libraryStore.getImage(row.id) : '');
@@ -4435,7 +4806,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
         poseView = libraryRowView(row);
       }
       const mainImg = comboMain || charPayload[0] || null;      // sourceImages = [baseImage, faceImage]
-      const faceImg = charPayload[1] || null;
+      const faceImg = comboFace || charPayload[1] || null;
       payload = mainImg ? [mainImg] : [];
       let outfitIndex = 0;
       let poseIndex = 0;
@@ -4741,7 +5112,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // in (see resolveLibraryFolder), and leaving it out means a stale closure can file a Max Nano
     // run as though it were an Eddy one. It only escaped notice because sourceImages is rebuilt
     // every render, which happens to rebuild this callback too — an accident, not a guarantee.
-  }, [sourceImages, aspectRatio, baseImage, resolution, perRunImages, nsfw, characterName, maxNano, maxOutfit, libraryStore, wantsNude, wantsBody, undressChip, instruction, faceImage, outfits, poses, poseStore, outfitStore, submitVideoJob, notify, sendPoseImage, sendOutfitImage, faceless, lighting, build, engine, wantsExpression]);
+  }, [sourceImages, aspectRatio, baseImage, resolution, perRunImages, nsfw, characterName, maxNano, maxOutfit, libraryStore, baseStore, charStore, wantsNude, wantsBody, undressChip, instruction, faceImage, outfits, poses, poseStore, outfitStore, submitVideoJob, notify, sendPoseImage, sendOutfitImage, faceless, lighting, build, engine, wantsExpression]);
 
   // Keep the ref pointed at the latest generateCombo every render, so the mount-time rehydrate
   // effect's rebuilt regenerate closures reach the current one at click time (see the ref's comment).
@@ -4935,7 +5306,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // is an unmemoized array literal today, so it rebuilds run() every render — listed anyway so
     // memoizing it later can't silently turn charPayload into a stale (previous-face) closure.
     // mode and maxNano are read when the queue record is written and when the folder is resolved.
-  }, [baseImage, overCap, perRunImages, aspectRatio, combos, sourceImages, resolution, nsfw, characterName, mode, maxNano, maxOutfit, pickedBases, missingOutfitKinds, libraryStore, notify, generateCombo, engine, pickedOutfits, pickedPoses]);
+  }, [baseImage, overCap, perRunImages, aspectRatio, combos, sourceImages, resolution, nsfw, characterName, mode, maxNano, maxOutfit, pickedBases, pickedBasePhotos, missingOutfitKinds, libraryStore, notify, generateCombo, engine, pickedOutfits, pickedPoses]);
 
   // Assigned AFTER run() exists — `run` is a const, so touching it any earlier is a temporal dead
   // zone error that takes the whole page down. Same stabilisation generateComboRef uses: the resume
@@ -5594,6 +5965,10 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             pickerDb="eddy-base"
             pickerLabel="Base"
             pickerFolders
+            multi={!maxOutfit}
+            pickedIds={pickedBasePhotos}
+            onMultiChange={setPickedBasePhotos}
+            multiRows={baseSlotRows}
           />
           <ImageSlot
             title="2 · Face close-up"
@@ -5608,6 +5983,12 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             pickerRole="base"
             onPickFolder={(n) => n && setCharacterName(n)}
             pickerStrip
+            /* Display-only: no `multi`, so this slot's own picker stays single-select. It mirrors
+               whatever the base slot resolved to. */
+            multiRows={faceSlotRows}
+            multiEmptyHint={basePhotoSummary?.unmatched
+              ? `${basePhotoSummary.unmatched} base photo${basePhotoSummary.unmatched === 1 ? '' : 's'} had no character folder of the same name — ${basePhotoSummary.unmatched === 1 ? 'it uses' : 'they use'} whatever is picked in this slot. Name the Base Library folder the same as her Character folder to pair them.`
+              : null}
           />
         </div>
       </Card>
@@ -5646,6 +6027,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
               : slot.items.filter((i) => !slot.favIds.has(i.id)));
           const setPicked = slot.key === 'outfit' ? setPickedOutfits
             : slot.key === 'base' ? setPickedBases
+            : slot.key === 'basephoto' ? setPickedBasePhotos
             : setPickedPoses;
           const allVisiblePicked = visible.length > 0 && visible.every((i) => slot.picked.includes(i.id));
           return (
@@ -6006,8 +6388,33 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
         )}
 
         <p className="text-xs text-zinc-500">
-          {pickedOutfits.length || 1} outfit{(pickedOutfits.length || 1) === 1 ? '' : 's'} × {pickedPoses.length || 1} pose{(pickedPoses.length || 1) === 1 ? '' : 's'} = <span className="text-zinc-300">{combos.length} image{combos.length === 1 ? '' : 's'}</span>
+          {/* The sum is written in the terms of the tab you are on. Max Outfit has no poses, so
+              "5 outfits x 1 pose" was describing a multiplication that does not happen there —
+              its images come from the PHOTOS you ticked, one each. */}
+          {maxOutfit
+            ? <>{pickedBases.length} photo{pickedBases.length === 1 ? '' : 's'}{pickedOutfits.length > 0 && <> {outfitRotation ? 'with one of' : String.fromCharCode(215)} {pickedOutfits.length} outfit{pickedOutfits.length === 1 ? '' : 's'}</>} = <span className="text-zinc-300">{combos.length} image{combos.length === 1 ? '' : 's'}</span></>
+            : <>{pickedBasePhotos.length > 1 && <>{pickedBasePhotos.length} photos × </>}{pickedOutfits.length || 1} outfit{(pickedOutfits.length || 1) === 1 ? '' : 's'} × {pickedPoses.length || 1} pose{(pickedPoses.length || 1) === 1 ? '' : 's'} = <span className="text-zinc-300">{combos.length} image{combos.length === 1 ? '' : 's'}</span></>}
         </p>
+
+          {/* WHICH KINDS, at a size worth reading. This was a grey one-liner under a grey
+              one-liner, which is where a number goes to be ignored — and it is the number
+              that says whether the close-ups survived the pairing filter. Same chip language
+              as the pickers above, colour-coded per kind so the shape registers before the
+              text does. */}
+          {viewBreakdown && (
+            <div className="flex flex-wrap items-center gap-2">
+              {[
+                ['front', 'Front', 'border-sky-500/40 bg-sky-500/[0.10] text-sky-200'],
+                ['back', 'Back', 'border-violet-500/40 bg-violet-500/[0.10] text-violet-200'],
+                ['closeup', 'Close-up', 'border-rose-500/40 bg-rose-500/[0.10] text-rose-200'],
+              ].filter(([k]) => viewBreakdown[k]).map(([k, label, tone]) => (
+                <span key={k} className={cn('flex items-baseline gap-1.5 rounded-lg border px-2.5 py-1.5', tone)}>
+                  <span className="text-sm font-bold tabular-nums">{viewBreakdown[k]}</span>
+                  <span className="text-[0.6875rem] font-semibold uppercase tracking-wider opacity-80">{label}</span>
+                </span>
+              ))}
+            </div>
+          )}
 
         {/* There is deliberately no output-mode toggle here. Generation makes images, full stop —
             so the button below quotes images, and video is chosen per result once you can see what
@@ -6061,12 +6468,21 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             <span className="text-xs leading-relaxed text-zinc-400">
               <span className="font-semibold text-zinc-200">One outfit per photo</span>
               {' — outfits are dealt round-robin, so each is used about equally. Uncheck to make EVERY '}
-              <span className="text-zinc-300">photo x outfit</span> combination
+              <span className="text-zinc-300">photo x outfit</span> combination.
+              {/* The ARITHMETIC, said in both directions and attached to the checkbox that changes
+                  it. Ticking 4 photos and 6 outfits and being told "4 images" reads as a bug -- it
+                  is this setting, and the old wording put the two numbers in an aside that did not
+                  say which one you were getting (owner, 2026-08-10). */}
               {pickedBases.length > 0 && pickedOutfits.length > 1 && (
-                <span className="text-amber-300">
-                  {` (${pickedBases.length} instead of ${pickedBases.length * pickedOutfits.length})`}
+                <span className="mt-1 block">
+                  <span className="text-zinc-300">{`Now: ${pickedBases.length} image${pickedBases.length === 1 ? '' : 's'}`}</span>
+                  <span className="text-zinc-600">{' — each photo gets one of your '}</span>
+                  <span className="text-zinc-300">{`${pickedOutfits.length} outfits`}</span>
+                  <span className="text-zinc-600">{'. Unticked: '}</span>
+                  <span className="text-amber-300">{`${pickedBases.length * pickedOutfits.length} images`}</span>
+                  <span className="text-zinc-600">{' — every photo in every outfit.'}</span>
                 </span>
-              )}.
+              )}
             </span>
           </label>
         )}
@@ -6107,10 +6523,19 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           <div className="rounded-lg border border-sky-500/40 bg-sky-500/[0.07] p-3 text-xs leading-relaxed text-sky-200">
             <span className="font-semibold">{eddyMismatches.bad} pairing{eddyMismatches.bad === 1 ? '' : 's'} skipped — close-up and full-body do not mix.</span>
             <span className="mt-1 block text-sky-300/80">
-              A close-up outfit has no lower half to give a full-body pose, and a full-body outfit gets
-              cropped away by a close-up. Those combinations are not generated; the count on the button
-              is what will actually run.
+              A close-up outfit has no lower half to give a full-body {maxOutfit ? 'photo' : 'pose'}, and a
+              full-body outfit gets cropped away by a close-up. Those combinations are not generated;
+              {' '}{eddyMismatches.total - eddyMismatches.bad} of {eddyMismatches.total} will run, and the
+              count on the button is what will actually happen.
             </span>
+          </div>
+        )}
+        {/* The pairing itself is shown in the two photo slots above -- this is only the
+            arithmetic, which the slots cannot show. */}
+        {basePhotoSummary && (
+          <div className="rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 py-2 text-xs leading-relaxed text-zinc-400">
+            <span className="font-semibold text-zinc-200">{basePhotoSummary.total} base photo{basePhotoSummary.total === 1 ? '' : 's'}</span>
+            <span className="text-zinc-600">{' — each one runs every pose and outfit below'}</span>
           </div>
         )}
         {missingOutfitKinds.length > 0 && (
@@ -6131,7 +6556,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             </span>
           </div>
         )}
-        <Btn className="w-full" disabled={(maxOutfit ? !pickedBases.length : !baseImage) || overCap || missingOutfitKinds.length > 0} onClick={() => run()}>
+        <Btn className="w-full" disabled={(maxOutfit ? !pickedBases.length : (!baseImage && !pickedBasePhotos.length)) || overCap || missingOutfitKinds.length > 0} onClick={() => run()}>
           {/* NO DOLLAR FIGURE ON GEMINI, deliberately. seedreamCost prices Muapi's published
               Seedream rates; this repo has no ground truth for Gemini/Vertex image cost, and the
               amber money rule means a number shown here is read as authoritative. An absent price

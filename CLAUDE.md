@@ -345,7 +345,21 @@ Shipped broken this way: **Max Outfit, 2026-08-09** — in the sidebar, in the p
 `check_maxoutfit.js` walks every sidebar id and fails if any is missing from `VALID_PAGE_IDS`. Keep
 that check alive.
 
-## 2. Lint runs. Do not ship past it
+## 2. Lint runs, and so does the TDZ check
+
+`npm run lint` and `npm run check:tdz` (from `client/`). Both are cheap; both have caught a shipped
+bug within an hour of existing.
+
+`tools/check-tdz-deps.js` exists for the failure lint cannot see: a hook dependency array naming a
+`const` declared LATER in the same component body. The array is evaluated DURING render, so that is
+a ReferenceError and the page goes blank. It happened twice on 2026-08-09 — `poseView` read outside
+its block, and `viewBreakdown` naming `combos`. `no-undef` cannot see either: the name IS defined,
+just later, and the syntax is valid.
+
+`no-use-before-define` is a WARNING only. It also flags 16 harmless cases — a const arrow referenced
+by a handler that runs after mount — and a config that fails on day one gets deleted.
+
+## 2b. Lint runs. Do not ship past it
 
 `client/eslint.config.js` — `npm run lint`. Deliberately narrow: **`no-undef` is an error**,
 hygiene rules only warn (102 pre-existing warnings; a config that fails on day one gets deleted).
