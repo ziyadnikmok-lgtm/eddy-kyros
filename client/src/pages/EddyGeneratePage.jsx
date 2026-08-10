@@ -3182,6 +3182,9 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   const [baseThumbs, setBaseThumbs] = useState({});
   const [charItems, setCharItems] = useState([]);
   const [charFolders, setCharFolders] = useState([]);
+  // Her face pictures, needed to SHOW the pairing rather than describe it. Character folders
+  // hold a handful of photos each, so this is a small read next to the Library's thousands.
+  const [charThumbs, setCharThumbs] = useState({});
   const [libItems, setLibItems] = useState([]);
   const [libItemFolders, setLibItemFolders] = useState([]);
   const [libThumbs, setLibThumbs] = useState({});
@@ -3569,9 +3572,13 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           charStore.listItems(), charStore.listFolders(),
         ]);
         const bT = {};
-        await Promise.all(bItems.map(async (i) => { bT[i.id] = i.url || await baseStore.getImage(i.id); }));
+        const cT = {};
+        await Promise.all([
+          ...bItems.map(async (i) => { bT[i.id] = i.url || await baseStore.getImage(i.id); }),
+          ...cItems.map(async (i) => { cT[i.id] = i.url || await charStore.getImage(i.id); }),
+        ]);
         setBaseItems(bItems); setBaseFolders(bFolders); setBaseThumbs(bT);
-        setCharItems(cItems); setCharFolders(cFolders);
+        setCharItems(cItems); setCharFolders(cFolders); setCharThumbs(cT);
       } catch { /* an unreadable collection leaves the picker empty rather than breaking the page */ }
     }
     if (maxOutfit) {
@@ -4127,7 +4134,14 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       if (!pair?.faceId) { unmatched += 1; continue; }
       byName.set(pair.name, (byName.get(pair.name) || 0) + 1);
     }
-    return { people: [...byName.entries()].sort((a2, b2) => b2[1] - a2[1]), unmatched, total: pickedBasePhotos.length };
+    // The pairs themselves, in ticked order, so the UI can SHOW base-beside-face. A tally reads
+    // "face taken from Grace x8" -- true, and still no help deciding whether it took the RIGHT
+    // eight. Two thumbnails side by side answer that without being read.
+    const rows = pickedBasePhotos.map((id) => {
+      const pair = basePhotoPairs.get(id);
+      return { id, name: pair?.name || '', faceId: pair?.faceId || null };
+    });
+    return { rows, people: [...byName.entries()].sort((a2, b2) => b2[1] - a2[1]), unmatched, total: pickedBasePhotos.length };
   }, [pickedBasePhotos, basePhotoPairs]);
 
   const combos = useMemo(() => {
@@ -6286,20 +6300,46 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
         {/* WHO each ticked photo resolved to. The face is chosen automatically from her
             character folder, and an automatic choice you cannot see is one you cannot check. */}
         {basePhotoSummary && (
-          <div className="rounded-lg border border-white/[0.07] bg-white/[0.02] p-3 text-xs leading-relaxed text-zinc-400">
-            <span className="font-semibold text-zinc-200">{basePhotoSummary.total} base photo{basePhotoSummary.total === 1 ? '' : 's'}</span>
-            {basePhotoSummary.people.length > 0 && (' — face taken from ')}
-            {basePhotoSummary.people.map(([name, n], i) => (
-              <span key={name}>
-                {i > 0 && ', '}
-                <span className="font-semibold text-rose-300">{name}</span>
-                <span className="text-zinc-600">{` x${n}`}</span>
-              </span>
-            ))}
+          <div className="rounded-lg border border-white/[0.07] bg-white/[0.02] p-3">
+            <div className="text-xs leading-relaxed text-zinc-400">
+              <span className="font-semibold text-zinc-200">{basePhotoSummary.total} base photo{basePhotoSummary.total === 1 ? '' : 's'}</span>
+              <span className="text-zinc-600">{' — each one runs every pose and outfit below'}</span>
+            </div>
+            {/* BASE on the left, HER FACE on the right. The pairing is automatic, and an automatic
+                choice you cannot see is one you cannot check -- a wrong face looks exactly like a
+                right one until the pictures come back. */}
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+              {basePhotoSummary.rows.map((row) => (
+                <div
+                  key={row.id}
+                  className={`flex items-center gap-1.5 rounded-lg border p-1.5 ${row.faceId ? 'border-white/[0.07] bg-black/20' : 'border-amber-500/40 bg-amber-500/[0.06]'}`}
+                  title={row.faceId ? `${row.name} — face paired automatically` : 'No matching character folder'}
+                >
+                  <img
+                    src={baseThumbs[row.id] || ''}
+                    alt=""
+                    className="h-14 w-14 shrink-0 rounded-md object-cover"
+                  />
+                  <span className="shrink-0 text-zinc-600">→</span>
+                  {row.faceId && charThumbs[row.faceId] ? (
+                    <img
+                      src={charThumbs[row.faceId]}
+                      alt=""
+                      className="h-14 w-14 shrink-0 rounded-md object-cover ring-1 ring-rose-400/30"
+                    />
+                  ) : (
+                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border border-dashed border-amber-500/40 text-center text-[9px] leading-tight text-amber-300/80">
+                      face slot above
+                    </div>
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-zinc-300">{row.name || '—'}</span>
+                </div>
+              ))}
+            </div>
             {basePhotoSummary.unmatched > 0 && (
-              <span className="mt-1 block text-amber-300/90">
+              <div className="mt-2 text-xs leading-relaxed text-amber-300/90">
                 {basePhotoSummary.unmatched} photo{basePhotoSummary.unmatched === 1 ? '' : 's'} in a folder with no matching character — {basePhotoSummary.unmatched === 1 ? 'it uses' : 'they use'} the face close-up above instead. Name the Base Library folder the same as her Character folder to pair them.
-              </span>
+              </div>
             )}
           </div>
         )}
