@@ -1317,6 +1317,33 @@ export default function EddyCollection({
        * guess (owner, 2026-08-10). A fetch failure is almost always a wrong or unreachable URL,
        * so the URL is the one thing worth printing.
        */
+      /**
+       * LAST RESORT: take the pixels off the <img> that is ALREADY ON SCREEN.
+       *
+       * The picture is visibly rendered in the grid, so the bytes are in the renderer whatever the
+       * fetch did. Reading them off the element cannot fail the way a request can -- no network,
+       * no origin, no CSP, no cache. It re-encodes rather than copying the original file, which is
+       * a fair trade against not getting the file at all, and downloadBlob strips metadata either
+       * way.
+       *
+       * Used only after the fetch has already failed. The fetch stays first because it returns the
+       * ORIGINAL bytes at original quality (owner, 2026-08-10, after "Failed to fetch" on a URL
+       * that returned 200 from curl in the same second).
+       */
+      try {
+        const el = document.querySelector(`img[data-eddy-img="${it.id}"]`);
+        if (el && el.naturalWidth) {
+          const canvas = document.createElement('canvas');
+          canvas.width = el.naturalWidth;
+          canvas.height = el.naturalHeight;
+          canvas.getContext('2d').drawImage(el, 0, 0);
+          const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
+          if (blob) {
+            await downloadBlob(blob, `${base}.png`);
+            return true;
+          }
+        }
+      } catch { /* fall through to the error below */ }
       // eslint-disable-next-line no-console -- the toast is short; the console carries the detail
       console.error('[eddy] download failed', { id: it.id, src: String(src).slice(0, 200), err });
       const where = /^data:/.test(String(src)) ? 'stored image data' : String(src).slice(0, 60);
@@ -2227,6 +2254,10 @@ export default function EddyCollection({
                   />
                   ) : (
                   <img
+                    data-eddy-img={it.id}
+                    // crossOrigin so the canvas fallback above can read the pixels back. Same
+                    // origin here, but an untainted canvas is what makes toBlob legal at all.
+                    crossOrigin="anonymous"
                     src={gridSrc(thumbs[it.id] || it.url)}
                     alt={it.name}
                     // A 404 on a gallery URL is otherwise indistinguishable from a very slow load.
