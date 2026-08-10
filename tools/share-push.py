@@ -156,7 +156,17 @@ def main() -> None:
         if not args.no_dist and (REPO / 'client/dist').is_dir():
             shutil.rmtree(wt / 'client/dist', ignore_errors=True)
             shutil.copytree(REPO / 'client/dist', wt / 'client/dist')
-        git('add', '-A', '--', 'client', 'server', 'CLAUDE.md', 'tools', cwd=wt, check=False)
+        # Stage the files ACTUALLY NAMED, not a fixed set of directories. The hard-coded list
+        # left out docs/, so a spec was copied into the worktree, never staged, and the commit
+        # then failed with an empty stderr -- the push reported nothing and did nothing
+        # (2026-08-10). A tool that silently drops a file it was handed is worse than no tool.
+        git('add', '-A', '--', *files, cwd=wt, check=False)
+        if not args.no_dist and (REPO / 'client/dist').is_dir():
+            git('add', '-A', '--', 'client/dist', cwd=wt, check=False)
+        staged = git('diff', '--cached', '--name-only', cwd=wt).strip()
+        if not staged:
+            print('  nothing to push -- his branch already matches these files')
+            return
         git('commit', '-q', '-m', args.message, cwd=wt)
         print(git('push', REMOTE, f'HEAD:{BRANCH}', cwd=wt).strip() or '  pushed')
     finally:
