@@ -4366,7 +4366,15 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
    * would notice until the faces came back wrong.
    */
   const basePhotoSummary = useMemo(() => {
-    if (!pickedBasePhotos.length) return null;
+    /**
+     * Never on Max Outfit.
+     *
+     * Its picker is hidden there (multi={!maxOutfit}), but pickedBasePhotos is PERSISTED state
+     * shared with Eddy and Max Nano -- so a selection made on Eddy kept rendering "2 base photos
+     * ticked" on a tab with no base-photo picker and no way to clear it (owner, 2026-08-10). It was
+     * also inert: the Max Outfit branch of combos never reads pickedBasePhotos.
+     */
+    if (maxOutfit || !pickedBasePhotos.length) return null;
     const byName = new Map();
     let unmatched = 0;
     for (const id of pickedBasePhotos) {
@@ -4382,26 +4390,61 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       return { id, name: pair?.name || '', faceId: pair?.faceId || null };
     });
     return { rows, people: [...byName.entries()].sort((a2, b2) => b2[1] - a2[1]), unmatched, total: pickedBasePhotos.length };
-  }, [pickedBasePhotos, basePhotoPairs]);
+  }, [maxOutfit, pickedBasePhotos, basePhotoPairs]);
 
   /**
    * What the two photo slots SHOW once base photos are ticked: the bases on the left, the faces
    * they were paired with on the right, in the same order. Same data the run uses, so the slots
    * are the check -- if the face beside a base is the wrong woman, you can see it before paying.
    */
-  const baseSlotRows = useMemo(() => pickedBasePhotos.map((id) => {
+  // Empty on Max Outfit for the same reason as basePhotoSummary: the selection persists across
+  // tabs but means nothing here. Gated at the source rather than relying on the slots being
+  // hidden, so it stays correct if that layout ever changes.
+  /**
+   * The folder names this click will actually create -- "Mia 4", not "Mia".
+   *
+   * The banner named the character, which stopped being the whole answer the moment each run got
+   * its own numbered folder: it said "Mia" while the pictures went to "Mia 4". That is exactly the
+   * invisible-state problem the banner was built to end, reintroduced by the feature above it.
+   *
+   * Computed from the SAME nextBatchName the run uses, so the preview cannot drift from the
+   * result. It is a preview, not a reservation -- generating twice without reloading shows the
+   * same number twice, and the second run still files correctly because the allocator re-reads the
+   * folder list at run time.
+   */
+  const batchPreview = useMemo(() => {
+    const names = new Set();
+    if (maxOutfit) {
+      const byId = new Map(libItems.map((i) => [i.id, i]));
+      for (const b of pickedBases) {
+        const fid = byId.get(b)?.folderId;
+        const n = fid ? (libItemFolders.find((f) => f.id === fid)?.name || '').trim() : '';
+        if (n && n !== MAX_OUTFIT_FOLDER && n !== MAX_NANO_FOLDER && n !== 'Eddy' && n !== 'Eddy NSFW') names.add(n);
+      }
+    } else {
+      for (const id of pickedBasePhotos) {
+        const n = basePhotoPairs.get(id)?.name;
+        if (n) names.add(n);
+      }
+    }
+    if (!names.size && characterName) names.add(characterName.trim());
+    if (!names.size) return [];
+    return [...names].sort().map((n) => nextBatchName(libItemFolders, n));
+  }, [maxOutfit, libItems, libItemFolders, pickedBases, pickedBasePhotos, basePhotoPairs, characterName]);
+
+  const baseSlotRows = useMemo(() => (maxOutfit ? [] : pickedBasePhotos).map((id) => {
     const pair = basePhotoPairs.get(id);
     return { id, src: baseThumbs[id] || '', name: pair?.name || '' };
-  }).filter((r) => r.src), [pickedBasePhotos, basePhotoPairs, baseThumbs]);
+  }).filter((r) => r.src), [maxOutfit, pickedBasePhotos, basePhotoPairs, baseThumbs]);
 
-  const faceSlotRows = useMemo(() => pickedBasePhotos.map((id) => {
+  const faceSlotRows = useMemo(() => (maxOutfit ? [] : pickedBasePhotos).map((id) => {
     const pair = basePhotoPairs.get(id);
     const src = pair?.faceId ? charThumbs[pair.faceId] : '';
     // No character folder of the same name -> the face slot's own picture is used instead. Shown
     // as a dimmed amber tile rather than omitted, because a MISSING row would make the two
     // columns fall out of step and every pairing below it would read as wrong.
     return { id, src: src || baseThumbs[id] || '', name: pair?.name || 'no match', missing: !src };
-  }).filter((r) => r.src), [pickedBasePhotos, basePhotoPairs, charThumbs, baseThumbs]);
+  }).filter((r) => r.src), [maxOutfit, pickedBasePhotos, basePhotoPairs, charThumbs, baseThumbs]);
 
   const combos = useMemo(() => {
     // Max Nano never sends an outfit — a stale selection from an Eddy session would otherwise
@@ -6607,7 +6650,23 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             ended up in "Eddy" (owner, 2026-08-09). */}
         <p className="text-center text-xs text-zinc-500">
           Saving into Library ›{' '}
-          {characterName ? (
+          {batchPreview.length > 0 ? (
+            /* The folders this click WILL create, named exactly as they will read in the Library.
+               Several when the run spans several characters -- one click, one folder each. */
+            <>
+              {batchPreview.map((n, i) => (
+                <span key={n}>
+                  {i > 0 && <span className="text-zinc-600">{' · '}</span>}
+                  <span className="font-semibold text-rose-300">{n}</span>
+                </span>
+              ))}
+              {characterName && (
+                <button type="button" onClick={() => setCharacterName('')}
+                  title="File this batch in the generic folder instead"
+                  className="ml-1.5 text-zinc-600 hover:text-zinc-300 cursor-pointer">×</button>
+              )}
+            </>
+          ) : characterName ? (
             <>
               {/* The FULL path this lands in, exactly as it reads in the Library. Her name alone
                   was not the answer: plain Eddy nests the engine under her, and the two Max tabs

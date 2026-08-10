@@ -79,8 +79,8 @@ check('they are read from the character store, not the base store', /cItems\.map
 check('the Main photo slot shows the ticked bases', /multiRows=\{baseSlotRows\}/.test(gen));
 check('the Face slot shows the faces they paired with', /multiRows=\{faceSlotRows\}/.test(gen));
 check('the two lists are built in the SAME order, or the columns lie',
-  /const baseSlotRows = useMemo\(\(\) => pickedBasePhotos\.map/.test(gen)
-  && /const faceSlotRows = useMemo\(\(\) => pickedBasePhotos\.map/.test(gen));
+  gen.includes('const baseSlotRows = useMemo(() => (maxOutfit ? [] : pickedBasePhotos).map')
+  && gen.includes('const faceSlotRows = useMemo(() => (maxOutfit ? [] : pickedBasePhotos).map'));
 check('an unpaired row is kept, not dropped -- dropping it desynchronises the columns',
   /src: src \|\| baseThumbs\[id\] \|\| '', name: pair\?\.name \|\| 'no match', missing: !src/.test(gen));
 check('the face slot itself stays single-select', /Display-only: no `multi`/.test(gen));
