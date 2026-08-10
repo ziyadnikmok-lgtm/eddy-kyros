@@ -478,8 +478,13 @@ async function withRateLimitRetry(fn, { attempts = 4, baseDelayMs = 4000 } = {})
  */
 const TERMINAL_CODES = new Set([
   'VALIDATION_ERROR', 'WAVESPEED_KEY_REQUIRED', 'NO_WAVESPEED_KEY', 'INVALID_API_KEY', 'INVALID_MODEL',
+  // No credits is the same kind of problem as no key: the account cannot pay, so the next attempt
+  // and every remaining combo fail identically. It arrived as a generic WAVESPEED_ERROR and was
+  // retried four times per image (owner's log, 2026-08-10). Falling back to Seedream cannot help
+  // either -- it bills the SAME account.
+  'INSUFFICIENT_CREDITS',
 ]);
-const isTerminalError = (err) => TERMINAL_CODES.has(err?.code) || err?.status === 401;
+const isTerminalError = (err) => TERMINAL_CODES.has(err?.code) || err?.status === 401 || err?.status === 402;
 
 /**
  * Retry anything that is not terminal — rate limits, connection drops, timeouts, empty results, and
@@ -5488,7 +5493,20 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // not abandon the rest, so a throw is absorbed here — generateCombo has already marked its
     // own feed card failed with the real reason.
     let attempted = 0;
+    /**
+     * STOP THE WHOLE BATCH when the account runs dry.
+     *
+     * Marking the error terminal stops the four retries per image, but the pool would still walk
+     * every remaining combo and fail each one the same way -- an 81-image batch making 81 requests
+     * to be told 81 times that there is no money. The rest of the queue is preserved (the job
+     * record is only cleared for jobs actually attempted), so topping up and reopening resumes it.
+     *
+     * Deliberately narrow: only this. Any other failure still leaves the batch running, because
+     * one bad combo must not abandon the rest.
+     */
+    let outOfCredits = false;
     const runCombo = async (combo, idx) => {
+      if (outOfCredits) return;
       attempted += 1;
       // Marked SENT before the request, never after: a kill lands between these two lines often
       // enough to matter, and the safe reading of "we don't know" is "it may have been billed".
@@ -5503,6 +5521,15 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
         // what is still outstanding rather than what has ever failed.
         setFailedCombos((prev) => prev.filter((f) => f.combo !== combo));
       } catch (err) {
+        if (err?.code === 'INSUFFICIENT_CREDITS' || err?.status === 402) {
+          outOfCredits = true;
+          // Left QUEUED, not failed: nothing is wrong with the combo and it was never generated.
+          // A failed mark would drop it from the resume list and lose work that was only waiting
+          // for a top-up.
+          await markJob(mode, jid, 'queued');
+          notify('WaveSpeed is out of credits — the rest of this run is on hold. Top up and it picks up where it stopped.', 'error');
+          return;
+        }
         await markJob(mode, jid, 'failed');
         // The reason is already on the feed card; this keeps the COMBO so it can be re-run.
         // Deduped by combo identity — retrying a combo that fails again must not stack a second
@@ -5527,7 +5554,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // taken on a finished result (the per-tile Animate button and the bulk Generate video action),
     // and both of those quote their cost and wait for a confirmation first.
     try {
-      await runPool(batch, parallelFor(engine), runCombo, () => cancelRef.current);
+      await runPool(batch, parallelFor(engine), runCombo, () => cancelRef.current || outOfCredits);
     } finally {
       // finally, always: a rejection anywhere in the pool skipped this, leaving the counter
       // stuck above zero -- permanent "1 batch running" plus a beforeunload warning on every
@@ -5537,7 +5564,11 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // The run is over one way or another, so nothing is owed. Cleared on CANCEL too: cancelling is
     // a deliberate "don't send the rest", and resuming it on the next launch would be the opposite
     // of what was asked — and would spend money doing it.
-    await clearJobQueue(mode);
+    //
+    // NOT cleared when the account ran dry: that is the one stop the user did not choose, and the
+    // untried combos are still worth generating once there is money. Leaving the record is what
+    // makes "top up and reopen" resume the rest.
+    if (!outOfCredits) await clearJobQueue(mode);
 
     if (cancelRef.current) {
       // Cancelled is NOT failed: the unsent combos were never attempted and never charged, so they

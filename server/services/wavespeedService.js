@@ -16,6 +16,24 @@ const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 3_000;
 
 /** Retry a fetch call on connection errors (timeout, ECONNREFUSED, etc.) */
+/**
+ * Out of credits, told apart from every other 400.
+ *
+ * WaveSpeed reports it as a plain 400 with the reason only in the body, so it reached the client
+ * as a generic WAVESPEED_ERROR -- indistinguishable from a bad request, therefore retried four
+ * times per image and then attempted on every remaining combo in the batch. Seven identical
+ * failures in three seconds; an 81-image batch would be 324 pointless calls (owner's log,
+ * 2026-08-10).
+ *
+ * Narrow on purpose: only "insufficient credit(s)". A blanket 400 rule would also swallow a stale
+ * media URL, which genuinely is worth retrying.
+ */
+function throwIfOutOfCredits(status, text) {
+  if (status === 400 && /insufficient\s+credit/i.test(text || '')) {
+    throw new AppError('WaveSpeed is out of credits - top up your account to continue', 402, 'INSUFFICIENT_CREDITS');
+  }
+}
+
 async function _fetchWithRetry(url, options, retries = MAX_RETRIES) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -239,6 +257,7 @@ async function generateImage(prompt, options = {}) {
     const text = await resp.text().catch(() => '');
     if (resp.status === 401) throw new AppError('WaveSpeed auth failed', 401, 'INVALID_API_KEY');
     if (resp.status === 429) throw new AppError('WaveSpeed rate limited', 429, 'RATE_LIMITED');
+    throwIfOutOfCredits(resp.status, text);
     throw new AppError(`WaveSpeed image error (${resp.status}): ${text.slice(0, 300)}`, 502, 'WAVESPEED_ERROR');
   }
 
@@ -374,6 +393,7 @@ async function generateSeedDreamEdit(imageInputs, prompt, opts = {}) {
     log.error('seeddream_api_error', { status: resp.status, body: text.slice(0, 500) });
     if (resp.status === 401) throw new AppError('WaveSpeed auth failed', 401, 'INVALID_API_KEY');
     if (resp.status === 429) throw new AppError('WaveSpeed rate limited', 429, 'RATE_LIMITED');
+    throwIfOutOfCredits(resp.status, text);
     throw new AppError(`SeedDream error (${resp.status}): ${text.slice(0, 300)}`, 502, 'WAVESPEED_ERROR');
   }
 
@@ -528,6 +548,7 @@ async function generateImg2Img(imageBase64, mimeType, prompt, options = {}) {
     log.error('wavespeed_img2img_error', { status: resp.status, body: text.slice(0, 500) });
     if (resp.status === 401) throw new AppError('WaveSpeed auth failed', 401, 'INVALID_API_KEY');
     if (resp.status === 429) throw new AppError('WaveSpeed rate limited', 429, 'RATE_LIMITED');
+    throwIfOutOfCredits(resp.status, text);
     throw new AppError(`WaveSpeed img2img error (${resp.status}): ${text.slice(0, 300)}`, 502, 'WAVESPEED_ERROR');
   }
 
@@ -695,6 +716,7 @@ async function generateNanoBanana2Edit(imageInputs, prompt, opts = {}) {
     if (resp.status >= 400 && resp.status < 500 && resp.status !== 429) _forgetUploads(usedHashes);
     if (resp.status === 401) throw new AppError('WaveSpeed auth failed - check your key', 401, 'INVALID_API_KEY');
     if (resp.status === 429) throw new AppError('WaveSpeed rate limited', 429, 'RATE_LIMITED');
+    throwIfOutOfCredits(resp.status, text);
     throw new AppError(`Nano Banana 2 error (${resp.status}): ${text.slice(0, 300)}`, 502, 'WAVESPEED_ERROR');
   }
 
@@ -780,6 +802,7 @@ async function generateSeedream5Edit(imageInputs, prompt, opts = {}) {
     if (resp.status >= 400 && resp.status < 500 && resp.status !== 429) _forgetUploads(usedHashes);
     if (resp.status === 401) throw new AppError('WaveSpeed auth failed - check your key', 401, 'INVALID_API_KEY');
     if (resp.status === 429) throw new AppError('WaveSpeed rate limited', 429, 'RATE_LIMITED');
+    throwIfOutOfCredits(resp.status, text);
     throw new AppError(`Seedream error (${resp.status}): ${text.slice(0, 300)}`, 502, 'WAVESPEED_ERROR');
   }
 

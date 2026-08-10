@@ -21,8 +21,11 @@ check('nothing writes the bare shared key any more',
   !/jobQueueStore\.set\(JOB_QUEUE_KEY,/.test(g));
 check('markJob is told which tab it is patching', g.includes('async function markJob(mode, jid, status)'));
 check('clearJobQueue too', g.includes('async function clearJobQueue(mode)'));
-check('every markJob call passes it', (g.match(/await markJob\(mode, jid,/g) || []).length === 3
-  && !/await markJob\(jid,/.test(g));
+// Counted as 'none of the old shape', not 'exactly N of the new one'. A hard-coded 3 went red
+// the moment a fourth status was added (queued, for an out-of-credits hold) -- which is a
+// correct change failing a test that was measuring the wrong thing.
+check('every markJob call passes the mode',
+  (g.match(/await markJob\(mode, jid,/g) || []).length >= 3 && !/await markJob\(jid,/.test(g));
 check('every clearJobQueue call passes it', !/await clearJobQueue\(\)/.test(g));
 check('the run writes to its own key', g.includes('await jobQueueStore.set(jobQueueKey(mode), {'));
 
