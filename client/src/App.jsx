@@ -304,6 +304,10 @@ const ALL_NAV_ITEMS = NAV_SECTIONS.flatMap((s) => s.items);
 const APP_VERSION = '8.1.3';
 
 const FEED_HIDDEN_PAGES = new Set([
+  // Pinterest generates nothing -- it fetches source material and hands it on. A feed of unrelated
+  // results beside a search grid is noise, and it costs the grid a third of the window
+  // (owner, 2026-08-10).
+  'pinterestFeed',
   // Eddy Generate grew its own inline results area (select tiles, shared instruction,
   // Regenerate, Generate video). Showing the shared feed too put every result on screen twice.
   // Both ids route to EddyGeneratePage, so both must be listed or the panel returns via /eddy.

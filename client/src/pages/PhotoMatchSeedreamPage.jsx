@@ -487,8 +487,25 @@ export default function PhotoMatchSeedreamPage() {
     const pending = consumeSourceHandoff('photoMatchSeedream');
     const items = pending.filter((p) => p?.dataUrl);
     if (!items.length) return;
-    setSources(items.map((it, i) => ({ id: `s-${Date.now()}-${i}`, dataUrl: it.dataUrl })));
-    notify(`${items.length} source${items.length > 1 ? 's' : ''} loaded ⚡`, 'success');
+    /**
+     * REPLACE or ADD, as the sender asked.
+     *
+     * This always replaced, so sending a second batch from Pinterest silently discarded the first
+     * -- fine when you meant a new scene, wrong when you were building one set out of several
+     * searches. The sender writes its intent alongside the stash; absent means ADD, because losing
+     * work is the worse mistake of the two (owner, 2026-08-10).
+     */
+    let mode = 'add';
+    try { mode = window.sessionStorage.getItem('kyros.pendingSourceMode.photoMatchSeedream') || 'add'; } catch { /* private mode */ }
+    try { window.sessionStorage.removeItem('kyros.pendingSourceMode.photoMatchSeedream'); } catch { /* ignore */ }
+    const incoming = items.map((it, i) => ({ id: `s-${Date.now()}-${i}`, dataUrl: it.dataUrl }));
+    setSources((prev) => {
+      if (mode === 'replace' || !prev.length) return incoming;
+      // Deduped on the image itself: sending the same pin twice must not queue it twice.
+      const have = new Set(prev.map((x) => x.dataUrl));
+      return [...prev, ...incoming.filter((x) => !have.has(x.dataUrl))];
+    });
+    notify(`${items.length} source${items.length > 1 ? 's' : ''} ${mode === 'replace' ? 'loaded' : 'added'} ⚡`, 'success');
   }, [notify]);
 
   const fetchGallery = useCallback(async () => {

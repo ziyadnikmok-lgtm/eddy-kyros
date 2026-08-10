@@ -13,6 +13,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { pinterestFeed } from '../services/api';
 import { createPageStore } from '../lib/pageStateStore';
+import { stashSourceHandoff } from '../lib/sourceHandoff';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Spinner, Badge } from '../components/UI';
 import { cn } from '../lib/utils';
@@ -37,6 +38,10 @@ const DESTINATIONS = [
  */
 const MIN_LONG_EDGE = 600;
 
+// 100 a page. 25 meant scrolling for a handful of usable shots, and Pinterest serves a page
+// this size in the same single request (owner, 2026-08-10).
+const PAGE_SIZE = 100;
+
 export default function PinterestFeedPage() {
   const { notify, navigateTo } = useApp();
 
@@ -52,6 +57,14 @@ export default function PinterestFeedPage() {
   const [dest, setDest] = useState(DESTINATIONS[0].id);
   const [restored, setRestored] = useState(false);
   const [sending, setSending] = useState(false);
+  // Replace what is already in the destination, or add to it. Remembered, because whichever
+  // one you want you tend to want repeatedly.
+  const [replaceTarget, setReplaceTarget] = useState(() => {
+    try { return localStorage.getItem('kyros.pinterest.replaceTarget') !== '0'; } catch { return true; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('kyros.pinterest.replaceTarget', replaceTarget ? '1' : '0'); } catch { /* private mode */ }
+  }, [replaceTarget]);
   // Origin URLs already pulled into Kyros. Dedupe reads this; the send writes to it.
   const [seen, setSeen] = useState(() => new Set());
 
@@ -87,7 +100,7 @@ export default function PinterestFeedPage() {
     setLoading(true);
     setError('');
     try {
-      const r = await pinterestFeed.search({ query: q, bookmark: more ? bookmark : '', safe });
+      const r = await pinterestFeed.search({ query: q, bookmark: more ? bookmark : '', safe, pageSize: PAGE_SIZE });
       setPins((prev) => {
         const next = more ? [...prev, ...r.pins] : r.pins;
         // Pinterest returns the same pin across pages often enough to matter; a duplicate tile is
@@ -163,7 +176,29 @@ export default function PinterestFeedPage() {
       notify('None of those pins could be downloaded — Pinterest may be blocking the proxy', 'error');
       return;
     }
-    window.dispatchEvent(new CustomEvent(target.event, { detail: { images } }));
+    /**
+     * STASH, then navigate, then fire the event -- the order Frame Grabber uses, and the reason it
+     * works where this did not.
+     *
+     * Dispatching a CustomEvent alone dropped everything silently: the destination is lazy-loaded,
+     * so the event fired into the void before its chunk had mounted. lib/sourceHandoff exists for
+     * exactly this -- the destination consumes it ON MOUNT, with no timing race. The event is
+     * still fired afterwards for a page that happens to be open already; the destination dedups.
+     *
+     * The payload key is `items`, not `images`. That is what every other sender uses and what the
+     * listeners read, and getting it wrong was the other half of why nothing arrived.
+     */
+    const itemsPayload = images.map((im) => ({ dataUrl: im.dataUrl, name: im.name }));
+    stashSourceHandoff(target.id, itemsPayload);
+    // REPLACE or ADD. Replacing is the common case -- a new scene means a new set -- but appending
+    // is what you want when building one batch out of several searches.
+    try {
+      window.sessionStorage.setItem(`kyros.pendingSourceMode.${target.id}`, replaceTarget ? 'replace' : 'add');
+    } catch { /* private mode: the destination falls back to adding, which loses nothing */ }
+    navigateTo(target.id);
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent(target.event, { detail: { items: itemsPayload } }));
+    }, 300);
     setSeen((cur) => new Set([...cur, ...chosen.map((p) => p.orig)]));
     setPicked([]);
     notify(
@@ -172,8 +207,7 @@ export default function PinterestFeedPage() {
         : `Sent ${images.length} to ${target.label}`,
       failed.length ? 'info' : 'success',
     );
-    navigateTo(target.id);
-  }, [pins, picked, dest, notify, navigateTo]);
+  }, [pins, picked, dest, notify, navigateTo, replaceTarget]);
 
   const inputRef = useRef(null);
 
@@ -233,6 +267,11 @@ export default function PinterestFeedPage() {
             {sending ? <Spinner size={12} /> : null}
             Send {picked.length} to {DESTINATIONS.find((d) => d.id === dest)?.label}
           </Btn>
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-zinc-400">
+            <input type="checkbox" checked={replaceTarget} onChange={(e) => setReplaceTarget(e.target.checked)}
+              className="cursor-pointer accent-rose-500" />
+            {replaceTarget ? 'Replace what is there' : 'Add to what is there'}
+          </label>
           <button onClick={() => setPicked([])}
             className="text-xs text-zinc-500 underline hover:text-zinc-300 cursor-pointer">Clear</button>
         </Card>

@@ -125,5 +125,55 @@ check('the 404/400 endpoints are recorded so nobody re-derives them',
 check('the scrape risk is stated in the source, not just in a chat message',
   /THIS IS A SCRAPE/.test(src) && /THIS IS A SCRAPE/.test(page));
 
+// --- THE HANDOFF ACTUALLY ARRIVES (owner, 2026-08-10: "i click send it didnt send") ------------
+// A CustomEvent alone dropped everything: the destination is lazy-loaded, so the event fired into
+// the void before its chunk had mounted. lib/sourceHandoff exists for exactly this and is consumed
+// ON MOUNT. Frame Grabber has always done it in this order; the Pinterest tab did not.
+check('the payload is stashed before navigating', (() => {
+  const i = page.indexOf('stashSourceHandoff(target.id, itemsPayload)');
+  const j = page.indexOf('navigateTo(target.id)');
+  return i > -1 && j > i;
+})());
+check('the event fires AFTER the navigate, for a page already open', (() => {
+  const j = page.indexOf('navigateTo(target.id)');
+  const k = page.indexOf('new CustomEvent(target.event');
+  return k > j;
+})());
+check('the payload key is `items`, matching every other sender and every listener',
+  /detail: \{ items: itemsPayload \}/.test(page));
+check('and the old `images` key is gone', !/detail: \{ images \}/.test(page));
+check('the reason is recorded', /fired into the void before its chunk had mounted/.test(page));
+
+// --- 100 a page ---------------------------------------------------------------------------------
+check('a page is 100, not 25', /const PAGE_SIZE = 100;/.test(page));
+check('the search sends it', /pageSize: PAGE_SIZE/.test(page));
+check('Load more still pages by bookmark', /search\(query, true\)/.test(page));
+
+// --- replace or add -------------------------------------------------------------------------------
+check('the toggle exists and is remembered', /localStorage\.getItem\('kyros\.pinterest\.replaceTarget'\)/.test(page));
+check('the intent travels with the stash', /kyros\.pendingSourceMode\.\$\{target\.id\}/.test(page));
+const pm = fs.readFileSync(path.join(ROOT, 'client/src/pages/PhotoMatchSeedreamPage.jsx'), 'utf8');
+check('Photo Match reads that intent', /kyros\.pendingSourceMode\.photoMatchSeedream/.test(pm));
+check('and clears it, so it cannot leak into the next handoff', /removeItem\('kyros\.pendingSourceMode\.photoMatchSeedream'\)/.test(pm));
+check('ABSENT means ADD -- losing work is the worse mistake', /let mode = 'add';/.test(pm));
+check('adding dedups on the image itself', /const have = new Set\(prev\.map\(\(x\) => x\.dataUrl\)\)/.test(pm));
+check('replacing into an EMPTY list is the same as adding', /if \(mode === 'replace' \|\| !prev\.length\) return incoming;/.test(pm));
+
+// --- no generation feed on a page that generates nothing ---------------------------------------------
+const appSrc = fs.readFileSync(path.join(ROOT, 'client/src/App.jsx'), 'utf8');
+check('Pinterest is in FEED_HIDDEN_PAGES', /const FEED_HIDDEN_PAGES = new Set\(\[[\s\S]{0,400}'pinterestFeed',/.test(appSrc));
+
+// replay the replace/add rule
+const merge = (prev, incoming, mode) => {
+  if (mode === 'replace' || !prev.length) return incoming;
+  const have = new Set(prev.map((x) => x.dataUrl));
+  return [...prev, ...incoming.filter((x) => !have.has(x.dataUrl))];
+};
+const A = [{ dataUrl: 'a' }, { dataUrl: 'b' }];
+const B = [{ dataUrl: 'b' }, { dataUrl: 'c' }];
+check('replace discards what was there', merge(A, B, 'replace').length === 2);
+check('add keeps both and dedups the overlap', merge(A, B, 'add').map((x) => x.dataUrl).join() === 'a,b,c');
+check('add into an empty list just loads', merge([], B, 'add').length === 2);
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
