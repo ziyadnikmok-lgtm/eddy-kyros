@@ -1238,40 +1238,46 @@ export default function EddyCollection({
       .replace(/^[_.-]+|[_.-]+$/g, '') || 'image';
 
     try {
-      let href = src;
-      let revoke = false;
+      /**
+       * NEVER fetch() anything but a real http(s) URL here.
+       *
+       * The server's CSP is `connectSrc: ['self', 'https:']` (server/index.js). `imgSrc` also
+       * allows data: and blob:, which is why these pictures DISPLAY perfectly while downloading
+       * them fails — an <img> and a fetch() are governed by different directives, so "it is on
+       * screen" says nothing about whether it can be fetched.
+       *
+       * Two ways that bit:
+       *   - data: was fetched to turn it into a Blob. Fixed once already (owner, 2026-08-08) by
+       *     decoding the base64 instead, which is also cheaper.
+       *   - a server URL was fetched, the Blob wrapped in URL.createObjectURL, and that blob: URL
+       *     fetched straight back to get the SAME Blob returned. Blocked for the same reason, and
+       *     pointless besides: the Blob was already in hand (owner, 2026-08-10 — "Failed to fetch"
+       *     on a Library picture that was visibly on screen).
+       *
+       * So: fetch the http URL once and keep what it returns; decode data: locally; never make a
+       * round trip through an object URL.
+       */
+      let blob;
       let ext = 'png';
 
       if (/^data:/.test(src)) {
-        // data URLs can be handed straight to the anchor; the mime is already in the string.
-        ext = (src.match(/^data:([^;/]+)\/([^;]+)/) || [])[2] || 'png';
-      } else {
-        const resp = await fetch(src, { credentials: 'include' });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const blob = await resp.blob();
-        href = URL.createObjectURL(blob);
-        revoke = true;
-        ext = (blob.type.split('/')[1] || 'png');
-      }
-      ext = ext.replace('jpeg', 'jpg').replace('quicktime', 'mov');
-
-      // downloadBlob strips generator metadata and stamps a fresh capture time before saving, so
-      // nothing posted carries the prompt or the model name. It needs a Blob, which a data URL is
-      // not — but do NOT fetch() a data: URL to get one. Electron's CSP blocks that, and every
-      // download of a locally-stored image died on "Failed to fetch" while remote ones worked
-      // (owner, 2026-08-08). Decoding the base64 is both allowed and cheaper.
-      let blob;
-      if (revoke) {
-        blob = await (await fetch(href)).blob();
-        URL.revokeObjectURL(href);
-      } else {
         const m2 = /^data:([^;]+);base64,(.+)$/.exec(src);
         if (!m2) throw new Error('unreadable image data');
         const bin = atob(m2[2]);
         const bytes = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
         blob = new Blob([bytes], { type: m2[1] });
+        ext = (m2[1].split('/')[1] || 'png');
+      } else {
+        const resp = await fetch(src, { credentials: 'include' });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        blob = await resp.blob();
+        ext = (blob.type.split('/')[1] || 'png');
       }
+      ext = ext.replace('jpeg', 'jpg').replace('quicktime', 'mov');
+
+      // downloadBlob strips generator metadata and stamps a fresh capture time before saving, so
+      // nothing posted carries the prompt or the model name.
       await downloadBlob(blob, `${base}.${ext}`);
       return true;
     } catch (err) {
@@ -1339,16 +1345,61 @@ export default function EddyCollection({
     // way to download just the folder you were looking at (owner, 2026-08-08).
     const picked = selected.length ? visible.filter((i) => selected.includes(i.id)) : visible;
     const files = [];
+    let unreadable = 0;
     for (let idx = 0; idx < picked.length; idx += 1) {
       const it = picked[idx];
-      const dataUrl = thumbs[it.id] || await store.getImage(it.id);
-      const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || '');
-      if (!m) continue;   // a prompt-only card with no picture — nothing to save
-      const ext = (m[1].split('/')[1] || 'png').replace('jpeg', 'jpg');
+      /**
+       * A LIBRARY ROW HOLDS A URL, NOT BYTES — and this loop used to only accept `data:`.
+       *
+       * That is deliberate storage design (a 25-image batch would otherwise pour tens of megabytes
+       * into IndexedDB), so store.getImage returns '' for every Library card and the old
+       * `thumbs[id] || getImage(id)` pair resolved to nothing. Every card was skipped, files came
+       * out empty, and the button reported "these cards have no picture" for a folder plainly full
+       * of them (owner, 2026-08-10). Outfit/Pose/Character hold real bytes, which is why it only
+       * ever failed on the Library.
+       *
+       * `it.url` is consulted the same way the per-card download already does, and a URL is fetched
+       * to bytes here rather than skipped.
+       */
+      const src = thumbs[it.id] || it.url || await store.getImage(it.id);
+      if (!src) continue;                  // genuinely a prompt-only card — nothing to save
+      let mime = '';
+      let b64 = '';
+      const m = /^data:([^;]+);base64,(.+)$/.exec(src);
+      if (m) {
+        mime = m[1]; b64 = m[2];
+      } else {
+        try {
+          const resp = await fetch(src, { credentials: 'include' });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const blob = await resp.blob();
+          mime = blob.type || 'image/png';
+          // Straight to base64 so the rest of this function — cleanBytes, the Electron writes and
+          // the browser fallback — keeps working on the shape it already expects.
+          b64 = await new Promise((res, rej) => {
+            const fr = new FileReader();
+            fr.onload = () => res(String(fr.result).split(',')[1] || '');
+            fr.onerror = () => rej(fr.error);
+            fr.readAsDataURL(blob);
+          });
+        } catch {
+          // A row pointing at another machine's gallery 404s here. Counted, not silent.
+          unreadable += 1;
+          continue;
+        }
+      }
+      if (!b64) { unreadable += 1; continue; }
+      const ext = (mime.split('/')[1] || 'png').replace('jpeg', 'jpg');
       const nm = String(it.name || it.prompt || it.id).replace(/[^a-z0-9._-]+/gi, '_').replace(/^[_.-]+|[_.-]+$/g, '').slice(0, 50) || 'image';
-      files.push({ fileName: `${String(idx + 1).padStart(3, '0')}_${nm}.${ext}`, b64: m[2], mime: m[1] });
+      files.push({ fileName: `${String(idx + 1).padStart(3, '0')}_${nm}.${ext}`, b64, mime });
     }
-    if (!files.length) { notify('No images to save — these cards have no picture', 'error'); return; }
+    if (!files.length) {
+      notify(unreadable
+        ? `None of those ${unreadable} could be read — their pictures are not on this machine`
+        : 'No images to save — these cards have no picture', 'error');
+      return;
+    }
+    if (unreadable) notify(`${unreadable} could not be read and were skipped — their pictures are not on this machine`, 'error');
     const bytesOf = (b64) => { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i += 1) a[i] = bin.charCodeAt(i); return a; };
 
     /**
