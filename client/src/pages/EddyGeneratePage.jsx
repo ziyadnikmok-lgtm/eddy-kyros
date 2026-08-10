@@ -6423,16 +6423,33 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             {slot.picked.length > 0 && (
               slot.picked.length > COMPACT_PICKED ? (
                 <div className="flex flex-wrap gap-1.5">
-                  {slot.picked.map((id) => (
-                    <button key={id} type="button" title="Click to remove"
-                      onClick={() => toggle(setPicked)(id)}
-                      className="group relative h-12 w-12 shrink-0 overflow-hidden rounded-md bg-white/[0.04] cursor-pointer">
-                      {slot.thumbs[id]
-                        ? <img src={slot.thumbs[id]} alt="" loading="lazy" className="h-full w-full object-cover" />
-                        : <span className="flex h-full w-full items-center justify-center text-[0.5rem] uppercase text-zinc-600">No pic</span>}
-                      <span className="absolute inset-0 hidden items-center justify-center bg-black/70 text-sm font-bold text-red-300 group-hover:flex">×</span>
-                    </button>
-                  ))}
+                  {slot.picked.map((id) => {
+                    // Same label the rows below show, at thumbnail size: one letter in the corner.
+                    // The compact view appears once a selection passes COMPACT_PICKED, which is
+                    // exactly when a mismatched kind is hardest to spot by eye.
+                    const it = slot.items.find((i) => i.id === id);
+                    const view = slot.key === 'pose'
+                      ? readPoseView(it?.prompt)
+                      : slot.key === 'outfit'
+                        ? outfitViewOf(it, slot.folders.find((f) => f.id === it?.folderId)?.name || '')
+                        : null;
+                    const DOT = { front: 'bg-sky-500', back: 'bg-violet-500', closeup: 'bg-rose-500' };
+                    return (
+                      <button key={id} type="button" title={view ? `${view === 'closeup' ? 'Close-up' : view[0].toUpperCase() + view.slice(1)} — click to remove` : 'Click to remove'}
+                        onClick={() => toggle(setPicked)(id)}
+                        className="group relative h-12 w-12 shrink-0 overflow-hidden rounded-md bg-white/[0.04] cursor-pointer">
+                        {slot.thumbs[id]
+                          ? <img src={slot.thumbs[id]} alt="" loading="lazy" className="h-full w-full object-cover" />
+                          : <span className="flex h-full w-full items-center justify-center text-[0.5rem] uppercase text-zinc-600">No pic</span>}
+                        {view && (
+                          <span className={cn('absolute left-0.5 top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full text-[0.5rem] font-bold text-white', DOT[view])}>
+                            {view === 'closeup' ? 'C' : view === 'back' ? 'B' : 'F'}
+                          </span>
+                        )}
+                        <span className="absolute inset-0 hidden items-center justify-center bg-black/70 text-sm font-bold text-red-300 group-hover:flex">×</span>
+                      </button>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="space-y-1.5">
@@ -6441,12 +6458,41 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
                     const label = slot.key === 'pose'
                       ? (poseSentence(it?.prompt) || 'No pose text — the picture carries it')
                       : (it?.prompt || 'Empty prompt');
+                    /**
+                     * FRONT / BACK / CLOSE-UP, on the row.
+                     *
+                     * This label decides which outfit a pose is paired with, and it was invisible
+                     * here -- you could read the sentence and still not know what the matcher
+                     * thought it was. Ticking close-up outfits against front poses is how four
+                     * wrong images got generated (owner, 2026-08-10); seeing both kinds side by
+                     * side is what makes that mismatch obvious before spending.
+                     *
+                     * Read exactly the way the run reads it: the pose's saved label, the outfit's
+                     * own label falling back to its folder.
+                     */
+                    const view = slot.key === 'pose'
+                      ? readPoseView(it?.prompt)
+                      : slot.key === 'outfit'
+                        ? outfitViewOf(it, slot.folders.find((f) => f.id === it?.folderId)?.name || '')
+                        : null;
+                    const VIEW_TONE = {
+                      front: 'border-sky-500/40 bg-sky-500/[0.12] text-sky-200',
+                      back: 'border-violet-500/40 bg-violet-500/[0.12] text-violet-200',
+                      closeup: 'border-rose-500/40 bg-rose-500/[0.12] text-rose-200',
+                    };
                     return (
                       <div key={id} className="flex items-start gap-2 rounded-lg bg-white/[0.02] p-1.5">
                         {slot.thumbs[id]
                           ? <img src={slot.thumbs[id]} alt="" loading="lazy" className="h-12 w-12 shrink-0 rounded-md object-cover bg-zinc-950" />
                           : <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-white/[0.04] text-[0.5rem] uppercase text-zinc-600">No pic</span>}
-                        <p className="line-clamp-3 text-[0.625rem] leading-tight text-zinc-400">{label}</p>
+                        <div className="min-w-0 flex-1">
+                          {view && (
+                            <span className={cn('mb-0.5 inline-block rounded border px-1.5 py-px text-[0.5625rem] font-bold uppercase tracking-wider', VIEW_TONE[view])}>
+                              {view === 'closeup' ? 'close-up' : view}
+                            </span>
+                          )}
+                          <p className="line-clamp-3 text-[0.625rem] leading-tight text-zinc-400">{label}</p>
+                        </div>
                         <button onClick={() => toggle(setPicked)(id)}
                           className="ml-auto shrink-0 px-1 text-xs text-zinc-600 hover:text-red-400 cursor-pointer" title="Remove">×</button>
                       </div>
