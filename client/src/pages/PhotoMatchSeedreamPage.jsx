@@ -266,7 +266,24 @@ export default function PhotoMatchSeedreamPage() {
   }, [charStore]);
 
   const [sources, setSources] = useState([]);        // batch targets [{id, dataUrl}]
-  const [characterId, setCharacterId] = useState(null);
+  /**
+   * SEVERAL CHARACTERS, not one.
+   *
+   * Every source photo is recreated once per ticked character, so one scene can be compared
+   * across models in a single run instead of one run each with a manual re-pick between them
+   * (owner, 2026-08-10).
+   *
+   * characterId stays as the HEAD of the list rather than being replaced: it feeds eddyRefs,
+   * charName, the cost line and the identity badge, and every one of those is correct for a
+   * single-character run. Keeping it means the existing behaviour is untouched when one is
+   * ticked, and the list is what the run loop iterates.
+   */
+  const [characterIds, setCharacterIds] = useState([]);
+  const characterId = characterIds[0] ?? null;
+  const setCharacterId = useCallback((id) => setCharacterIds(id ? [id] : []), []);
+  const toggleCharacter = useCallback((id) => {
+    setCharacterIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  }, []);
 
   const [extra, setExtra] = useState(_cache.extra);
   const [exactRecreate, setExactRecreate] = useState(_cache.exactRecreate);
@@ -302,13 +319,18 @@ export default function PhotoMatchSeedreamPage() {
     let cancelled = false;
     (async () => {
       const [s, charId, ex] = await Promise.all([
-        store.get('sources', []), store.get('characterId', null), store.get('extra', ''),
+        store.get('sources', []), store.get('characterIds', null), store.get('extra', ''),
       ]);
       if (cancelled) return;
       // Never clobber: this resolves AFTER the (synchronous) source-handoff effect, so images
       // just sent from Frame Library would otherwise be overwritten by the old saved ones.
       if (Array.isArray(s) && s.length) setSources((cur) => (cur.length ? cur : s));
-      if (charId) setCharacterId((cur) => cur ?? charId);
+      // Restores the LIST. A stored single id from before this change still loads, so an
+      // in-progress selection is not thrown away by the upgrade.
+      if (charId) {
+        const ids = Array.isArray(charId) ? charId : [charId];
+        setCharacterIds((cur) => (cur.length ? cur : ids.filter(Boolean)));
+      }
       if (ex) setExtra((cur) => (cur ? cur : ex));
       setRestored(true);
     })();
@@ -317,7 +339,7 @@ export default function PhotoMatchSeedreamPage() {
 
   // Persist only after restore, or the first empty render would wipe the save.
   useEffect(() => { if (restored) store.set('sources', sources); }, [sources, restored]);
-  useEffect(() => { if (restored) store.set('characterId', characterId); }, [characterId, restored]);
+  useEffect(() => { if (restored) store.set('characterIds', characterIds); }, [characterIds, restored]);
   useEffect(() => { if (restored) store.set('extra', extra); }, [extra, restored]);
 
   useEffect(() => { _cache.extra = extra; }, [extra]);
@@ -354,12 +376,16 @@ export default function PhotoMatchSeedreamPage() {
    * Character tab already lets you mark which photo is the base face. Sorting purely by date
    * would hand it whichever photo happened to be uploaded first. Same rule as the Base tab.
    */
-  const eddyRefs = useMemo(() => {
-    if (!characterId) return [];
-    const mine = charItems.filter((i) => i.folderId === characterId);
+  // Pulled out so the run loop can resolve refs for EVERY ticked character, not just the head.
+  // Same ordering rule for all of them -- base face first -- because the model treats the leading
+  // image as the primary subject.
+  const refsForCharacter = useCallback((id) => {
+    if (!id) return [];
+    const mine = charItems.filter((i) => i.folderId === id);
     const rank = (i) => (i.role === 'base' ? 0 : i.role === 'body' ? 1 : 2);
     return [...mine].sort((a, b) => rank(a) - rank(b) || (a.createdAt || 0) - (b.createdAt || 0));
-  }, [charItems, characterId]);
+  }, [charItems]);
+  const eddyRefs = useMemo(() => refsForCharacter(characterId), [refsForCharacter, characterId]);
   const charName = chars.find((c) => c.id === characterId)?.name || '';
   // NOT filtered by isActive: references are created with isActive:false by default
   // (server/services/referenceManager.js), so filtering on it silently discarded every one of
@@ -382,7 +408,12 @@ export default function PhotoMatchSeedreamPage() {
   const costPerJob = engine === 'nano2'
     ? (NANO2_COST[resolution] ?? NANO2_COST['1K'])
     : seedreamCost(resolution, imagesPerJob);
-  const totalCost = costPerJob * Math.max(1, sources.length);
+  /**
+   * The run is photos x CHARACTERS. Ticking a second woman doubles the bill, and the price on the
+   * button is where that has to be visible -- it is the one number agreed before spending.
+   */
+  const runCount = Math.max(1, sources.length) * Math.max(1, characterIds.length);
+  const totalCost = costPerJob * runCount;
 
   // ── sources ────────────────────────────────────────────────────────────────
   const addSources = useCallback(async (files) => {
@@ -559,19 +590,34 @@ export default function PhotoMatchSeedreamPage() {
 
   const handleMatch = async () => {
     if (!sources.length) { notify('Add at least one source photo', 'error'); return; }
-    if (!characterId) { notify('Pick the character whose identity to use', 'error'); return; }
+    if (!characterIds.length) { notify('Pick the character whose identity to use', 'error'); return; }
 
     // Without identity images Seedream can only fall back on the source photo's face — the exact
     // failure this page exists to prevent. Fail loudly instead of quietly producing the stand-in.
     // Straight from the collection: these are already data URLs, so there is no fetch to fail
     // and no server round-trip per reference.
-    const charRefs = [];
-    for (const r of eddyRefs.slice(0, MAX_CHAR_IMAGES)) {
-      const dataUrl = charThumbs[r.id] || await charStore.getImage(r.id);
-      const img = dataUrl ? parseDataUrl(dataUrl) : null;
-      if (img) charRefs.push(img);
+    /**
+     * Identity images for EACH ticked character, resolved once up front.
+     *
+     * Loaded before anything is dispatched so a character with no usable photo is caught here
+     * rather than failing partway through a paid batch. One that cannot load is dropped and
+     * named; the run continues with the rest instead of being abandoned.
+     */
+    const perChar = [];
+    const unloadable = [];
+    for (const cid of characterIds) {
+      const refs = [];
+      for (const r of refsForCharacter(cid).slice(0, MAX_CHAR_IMAGES)) {
+        const dataUrl = charThumbs[r.id] || await charStore.getImage(r.id);
+        const img = dataUrl ? parseDataUrl(dataUrl) : null;
+        if (img) refs.push(img);
+      }
+      const name = chars.find((c) => c.id === cid)?.name || '';
+      if (refs.length) perChar.push({ id: cid, name, refs });
+      else unloadable.push(name || cid);
     }
-    if (!charRefs.length) { notify('No character identity images could be loaded — add a primary image to this character', 'error'); return; }
+    if (!perChar.length) { notify('No character identity images could be loaded — add a primary image to this character', 'error'); return; }
+    if (unloadable.length) notify(`Skipped ${unloadable.join(', ')} — no identity image could be loaded`, 'error');
 
     // A Mood preset deliberately overrides the scene's expression. The base prompt must stop
     // demanding the expression be preserved, or the two instructions cancel and the model does
@@ -588,28 +634,42 @@ export default function PhotoMatchSeedreamPage() {
     const allowLightingChange = ALL_PRESETS.some((preset) => preset.lightingChange && extra.includes(preset.text));
 
     const { wantsNude, addGenericNudeLine } = nudeState({ nsfw, instruction: extra });
-    const prompt = buildMatchInstruction({
-      characterName: charName,
-      wantsNude,
-      addGenericNudeLine,
-      sourceFaceBlurred: blurSource,
-      faceless,
-      refCount: charRefs.length,
-      masterPrompt: charDetail?.masterPrompt,
-      exactRecreate,
-      varyBackground,
-      allowExpressionChange,
-      allowHairChange,
-      allowBodyChange,
-      allowLightingChange,
-    });
-    let finalPrompt = extra.trim() ? `${prompt}\n\n${extra.trim()}` : prompt;
-    if (finalPrompt.length > SEEDREAM_PROMPT_BUDGET) {
-      // Seedream 422s on an over-long prompt and the whole batch dies. The base instruction is
-      // what makes identity work, so the extra text is what gives.
-      finalPrompt = finalPrompt.slice(0, SEEDREAM_PROMPT_BUDGET);
-      notify(`Instructions trimmed to ${SEEDREAM_PROMPT_BUDGET} characters — Seedream rejects longer prompts`, 'error');
-    }
+    /**
+     * A prompt PER CHARACTER. It carries her name and her reference count, so one prompt reused
+     * across two women would name the wrong one and state the wrong number of identity images.
+     *
+     * masterPrompt is the head character's only: charDetail is fetched for the selected id, and
+     * fetching one per character would be a request each on every run. A master prompt is an
+     * optional refinement, so the honest behaviour is to apply it where it is known rather than
+     * guess it for the others — noted here because a silently-missing master prompt would look
+     * like the preset had stopped working.
+     */
+    let trimmed = false;
+    const promptFor = (who, refCount) => {
+      const base = buildMatchInstruction({
+        characterName: who.name,
+        wantsNude,
+        addGenericNudeLine,
+        sourceFaceBlurred: blurSource,
+        faceless,
+        refCount,
+        masterPrompt: who.id === characterId ? charDetail?.masterPrompt : undefined,
+        exactRecreate,
+        varyBackground,
+        allowExpressionChange,
+        allowHairChange,
+        allowBodyChange,
+        allowLightingChange,
+      });
+      let out = extra.trim() ? `${base}\n\n${extra.trim()}` : base;
+      if (out.length > SEEDREAM_PROMPT_BUDGET) {
+        // Seedream 422s on an over-long prompt and the whole batch dies. The base instruction
+        // is what makes identity work, so the extra text is what gives.
+        out = out.slice(0, SEEDREAM_PROMPT_BUDGET);
+        trimmed = true;
+      }
+      return out;
+    };
 
     // Resolve 'auto' per source — each photo has its own ratio — before pushPending and before
     // the call. Seedream 422s on the literal string 'auto'.
@@ -618,16 +678,31 @@ export default function PhotoMatchSeedreamPage() {
       : sources.map(() => aspectRatio);
     const ratioById = new Map(sources.map((s, i) => [s.id, ratios[i]]));
 
+    /**
+     * THE CROSS PRODUCT: every source photo, once per ticked character.
+     *
+     * Job ids gain the character id because a job is keyed by source id, and the same photo now
+     * appears once per woman — without it three characters would write into one tile and you
+     * would see whichever finished last rather than all three.
+     */
+    const work = perChar.flatMap((who) => sources.map((src) => ({ src, who })));
+    if (trimmed) notify(`Instructions trimmed to ${SEEDREAM_PROMPT_BUDGET} characters — Seedream rejects longer prompts`, 'error');
+
     setRunning(true);
-    setJobs(sources.map((s) => ({ id: s.id, thumb: s.dataUrl, status: 'queued', result: null, error: null })));
+    setJobs(work.map(({ src, who }) => ({
+      id: `${src.id}::${who.id}`, thumb: src.dataUrl, status: 'queued', result: null, error: null,
+      // Shown on the tile so a mixed batch says WHOSE result each one is.
+      charName: perChar.length > 1 ? who.name : '',
+    })));
 
     // Simple concurrency pool — each job holds an HTTP request while Muapi renders.
-    const queue = [...sources];
+    const queue = [...work];
     const workers = Array.from({ length: Math.min(MAX_CONCURRENT_JOBS, queue.length) }, async () => {
       while (queue.length) {
-        const source = queue.shift();
-        if (!source) return;
-        await runOne(source, charRefs, ratioById.get(source.id), finalPrompt);
+        const item = queue.shift();
+        if (!item) return;
+        await runOne({ ...item.src, id: `${item.src.id}::${item.who.id}` },
+          item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length));
       }
     });
     await Promise.all(workers);
@@ -748,9 +823,13 @@ export default function PhotoMatchSeedreamPage() {
               2 · Character <span className="text-zinc-600 font-normal normal-case">the identity to put in</span>
             </h3>
             <div className="flex items-center gap-2">
-              {characterId && charImagesUsed > 0 && <Badge color="green">{charImagesUsed} identity ref{charImagesUsed > 1 ? 's' : ''}</Badge>}
-              {characterId && (
-                <button onClick={() => setCharacterId(null)} className="text-[0.6875rem] text-zinc-500 hover:text-zinc-300 transition cursor-pointer underline">Clear</button>
+              {/* With several ticked the ref count belongs to the FIRST one only, so saying
+                  "5 identity refs" would misdescribe the run. Say how many women instead. */}
+              {characterIds.length > 1
+                ? <Badge color="green">{characterIds.length} characters</Badge>
+                : characterId && charImagesUsed > 0 && <Badge color="green">{charImagesUsed} identity ref{charImagesUsed > 1 ? 's' : ''}</Badge>}
+              {characterIds.length > 0 && (
+                <button onClick={() => setCharacterIds([])} className="text-[0.6875rem] text-zinc-500 hover:text-zinc-300 transition cursor-pointer underline">Clear</button>
               )}
             </div>
           </div>
@@ -770,14 +849,23 @@ export default function PhotoMatchSeedreamPage() {
                     const lead = mine.find((i) => i.role === 'base') || [...mine].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
                     return (
                       <button key={c.id} type="button"
-                        onClick={() => setCharacterId((prev) => (prev === c.id ? null : c.id))}
-                        className={cn('overflow-hidden rounded-xl border-2 text-left transition cursor-pointer',
-                          characterId === c.id ? 'border-rose-500' : 'border-white/[0.07] hover:border-zinc-600')}>
+                        // Toggles into a LIST. Clicking a second character adds her rather than
+                        // replacing the first, so one scene can be run across several models.
+                        onClick={() => toggleCharacter(c.id)}
+                        className={cn('relative overflow-hidden rounded-xl border-2 text-left transition cursor-pointer',
+                          characterIds.includes(c.id) ? 'border-rose-500' : 'border-white/[0.07] hover:border-zinc-600')}>
+                        {characterIds.length > 1 && characterIds.includes(c.id) && (
+                          // The ORDER, not just that it is ticked: results come back per character
+                          // and the number is how a tile is matched to a face at a glance.
+                          <span className="absolute left-1.5 top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-[0.625rem] font-bold text-white">
+                            {characterIds.indexOf(c.id) + 1}
+                          </span>
+                        )}
                         {lead && charThumbs[lead.id]
                           ? <img src={charThumbs[lead.id]} alt="" loading="lazy" className="aspect-[3/4] w-full object-cover bg-zinc-950" />
                           : <span className="flex aspect-[3/4] w-full items-center justify-center bg-white/[0.03] text-xs text-zinc-600">No photo</span>}
                         <span className={cn('block px-2 py-1.5 text-xs font-semibold',
-                          characterId === c.id ? 'bg-rose-500/15 text-rose-300' : 'bg-white/[0.02] text-zinc-400')}>
+                          characterIds.includes(c.id) ? 'bg-rose-500/15 text-rose-300' : 'bg-white/[0.02] text-zinc-400')}>
                           {c.name} <span className="text-zinc-600">{mine.length}</span>
                         </span>
                       </button>
@@ -786,7 +874,9 @@ export default function PhotoMatchSeedreamPage() {
                 </div>
               {characterId && (
                 <p className="text-[0.625rem] text-zinc-600 leading-relaxed">
-                  Sends all {charImagesUsed} of {charName || 'this character'}'s photo{charImagesUsed === 1 ? '' : 's'} first, then the source photo — Seedream keeps whoever is in image 1, and identity comes only from those.
+                  {characterIds.length > 1
+                    ? <>Each source photo is generated once per character — {characterIds.length} runs of every photo. Each run sends that character&rsquo;s own photos first, then the source.</>
+                    : <>Sends all {charImagesUsed} of {charName || 'this character'}&rsquo;s photo{charImagesUsed === 1 ? '' : 's'} first, then the source photo — Seedream keeps whoever is in image 1, and identity comes only from those.</>}
                   {charImagesUsed === 1 && (
                     <span className="block mt-1 text-yellow-400/90">
                       Only one photo of her is on file. One identity image against the source photo is a weak
@@ -918,7 +1008,12 @@ export default function PhotoMatchSeedreamPage() {
           </div>
           <p className="text-[0.625rem] text-zinc-600">
             {imagesPerJob} image{imagesPerJob > 1 ? 's' : ''} per match → <span className="text-zinc-400 font-mono">${costPerJob.toFixed(3)}</span> each
-            {sources.length > 1 && <> · {sources.length} photos → <span className="text-zinc-400 font-mono">${totalCost.toFixed(3)}</span> total</>}
+            {runCount > 1 && (
+              <> · {sources.length} photo{sources.length === 1 ? '' : 's'}
+                {characterIds.length > 1 && <> × {characterIds.length} characters</>}
+                {' = '}{runCount} image{runCount === 1 ? '' : 's'} → <span className="text-zinc-400 font-mono">${totalCost.toFixed(3)}</span> total
+              </>
+            )}
             {aspectRatio === 'auto' && <> · Auto snaps each photo to its closest Seedream ratio</>}
           </p>
         </Card>
@@ -927,7 +1022,7 @@ export default function PhotoMatchSeedreamPage() {
           {running ? <Spinner size={16} /> : null}
           {running
             ? `Matching… (${doneJobs.length}/${jobs.length})`
-            : `Photo Match${sources.length > 1 ? ` · ${sources.length} photos` : ''} · $${totalCost.toFixed(3)}`}
+            : `Photo Match${runCount > 1 ? ` · ${runCount} images` : ''} · $${totalCost.toFixed(3)}`}
         </Btn>
 
         {/* Results */}
@@ -948,6 +1043,14 @@ export default function PhotoMatchSeedreamPage() {
                       : job.status === 'failed' ? <Badge color="red">Failed</Badge>
                       : job.status === 'running' ? <Badge color="yellow">Matching…</Badge>
                       : <Badge color="zinc">Queued</Badge>}
+                    {/* WHOSE result this is. With several characters ticked the same source photo
+                        appears once per woman, and the thumbnails are identical — without the name
+                        the only way to tell them apart is to open each one. */}
+                    {job.charName && <span className="text-[0.625rem] font-semibold text-rose-300">{job.charName}</span>}
+                    {/* WHOSE result this is. With several characters ticked the same source photo
+                        appears once per woman and the thumbnails are identical -- without the name
+                        the only way to tell them apart is to open each one. */}
+                    {job.charName && <span className="text-[0.625rem] font-semibold text-rose-300">{job.charName}</span>}
                     {job.status === 'done' && <span className="text-[0.625rem] text-zinc-600 font-mono">${costPerJob.toFixed(3)}</span>}
                   </div>
 
