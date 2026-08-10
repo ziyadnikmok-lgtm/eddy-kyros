@@ -4853,7 +4853,18 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // character source photos — do not block it for a missing main photo. A RE-ROLL does need them
     // (with none, Seedream would edit nothing yet still bill). So block only when there is NEITHER a
     // resolvable base image NOR a character photo. Thrown before any pushPending/charge.
-    if (!isEdit && !charPayload.length) throw new Error('Add the main character photo first');
+    /**
+     * Image 1 does not always come from charPayload.
+     *
+     * charPayload is built from the single photo SLOTS. A Max Outfit combo carries its own source
+     * as baseId, and a ticked Eddy/Max Nano combo carries basePhotoId -- in both cases the slots
+     * are empty and this guard threw on every generation. Live runs never hit it because the
+     * caller had already filled something, but a RESUMED run dispatches combos straight in: the
+     * resume worked, then every image failed with "Add the main character photo first" (owner,
+     * 2026-08-10, after leaving the page mid-run).
+     */
+    const hasOwnMain = !!(combo?.baseId || combo?.basePhotoId);
+    if (!isEdit && !hasOwnMain && !charPayload.length) throw new Error('Add the main character photo first');
 
     let ratio;
     if (isEdit) {
@@ -5349,7 +5360,13 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   // touching what is currently picked in the pickers.
   const run = useCallback(async (only) => {
     const batch = Array.isArray(only) && only.length ? only : combos;
-    if (!baseImage) { notify('Add the main photo first', 'error'); return; }
+    // Same question the Generate button asks (see the gate above it) rather than a stale copy that
+    // only knew about the single slot. A resumed batch brings its own sources on each combo.
+    const batchHasOwnMain = batch.every((c) => c?.baseId || c?.basePhotoId);
+    if (!maxOutfit && !baseImage && !pickedBasePhotos.length && !batchHasOwnMain) {
+      notify('Add the main photo first', 'error');
+      return;
+    }
     if (overCap) { notify(`That's ${perRunImages} images per run — Seedream takes ${SEEDREAM_MAX_IMAGES}`, 'error'); return; }
 
     // A big batch is confirmed with its real cost in the message, because the number is reached by
