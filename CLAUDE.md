@@ -498,3 +498,72 @@ than pattern-matching it — pattern checks passed while three real bugs shipped
 **Nothing here has been verified by generating a real image.** Every claim in this file is about code
 behaviour. The app is Electron + browser IndexedDB; a generation triggered outside it does not touch
 the Library. On-screen verification is the owner's, and it has caught what the checks did not.
+
+---
+
+## DEBUGGING — read before touching a reported bug
+
+Written 2026-08-10, after a day where basic fixes each took five rounds. Every rule below is one
+that day cost hours to learn.
+
+### 1. Is the app even running your code?
+
+A correct fix that never reaches the window is indistinguishable from a broken one. That day:
+`client/dist` was rebuilt every time, but nothing reloaded the renderer — build finished 11:50:33,
+the new chunk was not fetched until 11:54, when the user reloaded by hand.
+
+| Changed | Needs |
+|---|---|
+| `client/src/**` | `npm run build:client` — a watcher now auto-reloads the window |
+| `server/**` | the server process to restart — the fork runs `--watch` in dev. Reloading the WINDOW never helps; the window is not the server |
+| `electron/main.js` | a full app quit. Nothing can watch its own bootstrap |
+
+To find the stale layer: `curl` the endpoint, then `grep` the SERVED bundle for a string from the
+new code. Server right + bundle right = the window is stale, so reload rather than re-fix.
+`client/dist` is tracked in git, so `git checkout`/`stash`/`reset --hard` can replace the running UI.
+
+### 2. Make the error name itself before theorising
+
+A vague message costs one user round-trip per guess. `Could not download that file — Failed to
+fetch` produced five theories across five rounds; printing the URL ended it in one.
+
+- Symptom with no detail → **the first edit is to the error message**, not the suspected code.
+- Say plainly when a cause is unproven. "I could not reproduce it" beats a confident wrong answer.
+- After two failed theories, stop theorising and remove the dependency on the fragile path.
+
+### 3. Fix the root, not the leaf
+
+`<a download>` was patched at three call sites in the morning; all three funnelled through one
+helper with 53 callers, and the same bug was reported again hours later.
+
+**Fixing the same shape twice in one session is the signal.** Grep for the pattern before the third
+fix, and fix at the lowest shared point still correct for every caller.
+
+### 4. Never assert an exact count in a check file
+
+Three suites went red on correct changes: `exactly 3 markJob calls`, `exactly 2 catch blocks`, `the
+exact deps array`. Assert membership and shape — `>= 3`, "none of the old form", `.every(d =>
+deps.includes(d))`.
+
+**Run every `tools/check-*.js` before any push**, not just the one you wrote. All 19 run in seconds.
+A commit was pushed that day with a suite already red.
+
+### 5. Never write a regex through a bash heredoc
+
+`
+` inside `python - <<'PY'` becomes a real newline and lands inside the pattern:
+`SyntaxError: Invalid regular expression: missing /`. It happened five times that day and twice a
+broken file was pushed.
+
+Use the **Write** tool for anything containing an escape, or build it: `NB = chr(92) + 'n'`. Prefer
+`String.includes(...)` over a regex for source checks. This repo is **CRLF**, so a literal `
+` in
+a pattern fails on correct code — use `\s+`.
+
+### 6. The tooling is not above suspicion
+
+`share-push.py` had two bugs the same day: it silently dropped files outside a hard-coded directory
+list, and it could not express a deletion at all. `check-tdz-deps.js` reported 6/6 PASS on a file
+that crashed on every render — its pattern only matched multi-line hooks.
+
+A green check on a broken thing is worse than no check, because it stops you looking.

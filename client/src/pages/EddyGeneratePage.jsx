@@ -5741,12 +5741,26 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
      *   otherwise    -> the single slot really is the source, so wait for it to load
      */
     const canResume = maxOutfit || pickedBasePhotos.length > 0 || !!baseImage;
-    if (resumedRef.current || loading || !canResume) return undefined;
+    /**
+     * NEVER WHILE A RUN IS LIVE, and never more than once.
+     *
+     * Two faults, and together they duplicated a paid run. pickedBasePhotos is in this effect's
+     * deps, so picking a different base photo re-fired it -- and resumedRef was set only AFTER the
+     * early return, so a first pass that found no record never armed the guard. Mid-run there IS a
+     * record: the run writes its own queue up front. So changing a base photo while generating
+     * offered to "resume" the jobs that were already in flight, and accepting ran them twice
+     * (owner, 2026-08-10).
+     *
+     * The flag is now set BEFORE the first await -- one attempt per mount, whatever the outcome --
+     * and an in-flight run is never treated as something to recover. Nothing about picking a new
+     * photo, pose or outfit can now touch work that is already running.
+     */
+    if (resumedRef.current || loading || !canResume || inFlight > 0) return undefined;
+    resumedRef.current = true;
     let alive = true;
     (async () => {
       const rec = await readJobQueue(mode);
       if (!alive || !rec) return;
-      resumedRef.current = true;               // one attempt per mount, whatever the outcome
 
       const queued = rec.jobs.filter((j) => j.status === 'queued').map((j) => j.combo);
       const sent = rec.jobs.filter((j) => j.status === 'sent');
@@ -5785,7 +5799,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       runRef.current?.(queued);
     })();
     return () => { alive = false; };
-  }, [loading, baseImage, maxOutfit, pickedBasePhotos, mode, notify, resolution, perRunImages]);
+  }, [loading, baseImage, maxOutfit, pickedBasePhotos, inFlight, mode, notify, resolution, perRunImages]);
 
   /* -------------------------------------------------------------------------------------------
    * The inline results flow. Everything below acts on RESULTS, never on the page's live controls:
