@@ -85,8 +85,12 @@ def his_only(path: str) -> list[str]:
     theirs = r.stdout
     local = (REPO / path)
     mine = local.read_text(encoding='utf-8', errors='replace') if local.exists() else ''
-    mine_set = {l.strip() for l in mine.splitlines()}
-    return [l for l in theirs.splitlines() if meaningful(l) and l.strip() not in mine_set]
+    # Compared WITHOUT a trailing comma. Adding a key after an existing one in JSON turns
+    # `"lint": "eslint src"` into `"lint": "eslint src",` — the same line, reported as a deletion.
+    # A guard that cries wolf gets forced past, so the noise matters as much as the misses.
+    norm = lambda t: t.strip().rstrip(',')
+    mine_set = {norm(l) for l in mine.splitlines()}
+    return [l for l in theirs.splitlines() if meaningful(l) and norm(l) not in mine_set]
 
 
 def main() -> None:
