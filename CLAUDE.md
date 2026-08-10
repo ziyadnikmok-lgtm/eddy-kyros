@@ -518,6 +518,20 @@ the new chunk was not fetched until 11:54, when the user reloaded by hand.
 | `server/**` | the server process to restart — the fork runs `--watch` in dev. Reloading the WINDOW never helps; the window is not the server |
 | `electron/main.js` | a full app quit. Nothing can watch its own bootstrap |
 
+**Restart it for the owner — do not ask them to.** One command, and it rebuilds first so the restart
+cannot serve a stale dist:
+
+```
+powershell -ExecutionPolicy Bypass -File toolsestart-kyros.ps1
+```
+
+It refuses to restart if the build fails, so a broken build never replaces a working window. It
+matches electron processes by PATH, not by name, so it cannot kill an unrelated Electron app.
+
+`--watch` on the server fork was tried and REVERTED: fork() sets up an IPC channel and --watch
+restarts the child out from under it, so the window opened and the backend never answered. Do not
+re-add it; use the restart script.
+
 To find the stale layer: `curl` the endpoint, then `grep` the SERVED bundle for a string from the
 new code. Server right + bundle right = the window is stale, so reload rather than re-fix.
 `client/dist` is tracked in git, so `git checkout`/`stash`/`reset --hard` can replace the running UI.

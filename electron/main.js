@@ -735,16 +735,17 @@ async function startBackendProcess() {
   serverProcess = fork(serverEntry, [], {
     execPath: process.execPath,
     /**
-     * --watch in development, so a server route change takes effect without quitting the app.
+     * NO --watch HERE, and this is deliberate.
      *
-     * Routes are require()d once at boot, so editing server/routes/*.js did nothing until a full
-     * restart -- and reloading the window never helped, because the window is not the server.
-     * That is what "Route not found: POST /api/pinterest-feed/search" was on 2026-08-10: the file
-     * existed, the process predated it.
+     * Adding it looked right -- routes are require()d once at boot, so a server change needs a
+     * process restart -- but fork() sets up an IPC channel and --watch restarts the child out from
+     * under it, and reloading the window never helps because the window is not the server. The
+     * result: Electron launched, the window opened, and the backend never answered
+     * (2026-08-10, caught in testing before it reached the owner).
      *
-     * Never when packaged: --watch restarts on any file change, and a shipped app must not.
+     * So a server/**.js change still needs a full app restart. tools/restart-kyros.ps1 does it in
+     * one command, and rebuilds the client on the way so the restart cannot serve a stale dist.
      */
-    execArgv: app.isPackaged ? [] : ['--watch'],
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',

@@ -30,13 +30,17 @@ check('dev only; a packaged dist never changes underneath itself',
 check('a missing watcher cannot stop the app booting', /could not watch the build/.test(main));
 check('a destroyed window is not reloaded', main.includes('if (mainWindow && !mainWindow.isDestroyed())'));
 
-// --- the server restarts on a route change ----------------------------------------------------------
-check('the fork runs with --watch in dev', main.includes("execArgv: app.isPackaged ? [] : ['--watch'],"));
-check('and never when packaged', /app\.isPackaged \? \[\] : \['--watch'\]/.test(main));
-check('the symptom is recorded', /Route not found: POST \/api\/pinterest-feed\/search/.test(main));
+// --- the server does NOT auto-restart, and that is deliberate ---------------------------------
+// --watch looked right here, but fork() sets up an IPC channel and --watch restarts the child out
+// from under it: Electron launched, the window opened, and the backend never answered. Caught in
+// testing, reverted, and the reason recorded so nobody re-adds it.
+check('no --watch on the server fork', !/execArgv/.test(main));
+check('and the reason is written down, so it is not re-added',
+  main.includes('fork() sets up an IPC channel and --watch restarts the child out from'));
+check('the restart script is named as the answer instead', main.includes('tools/restart-kyros.ps1'));
 
 // --- the reasoning is written down where the next person will look ------------------------------------
-check('the renderer-vs-server split is explained', /the window is not the server/.test(main));
+check('the renderer-vs-server split is explained', main.includes('the window is not the server'));
 check('the measured evidence is kept', /11:50/.test(main) && /11:54/.test(main));
 
 // --- replay: which change needs what ------------------------------------------------------------------
