@@ -62,5 +62,20 @@ check('an edit is exempt, as before', comboGate(true, { outfitId: 'o1' }, 0) ===
 check('a batch where only SOME combos self-source is blocked',
   runGate(false, '', 0, [{ baseId: 'lib-1' }, { outfitId: 'o1' }]) === false);
 
+// --- the RETRY button must not be dead on the tabs with no Main-photo slot ------------------
+// A failed Max Outfit batch listed its failures and offered a disabled button: the images were
+// paid for, the combos were held, and there was no way to re-run them (owner, 2026-08-10).
+check('the retry button is not gated on baseImage alone',
+  !/<Btn className="flex-1 !py-1\.5 !text-xs" disabled=\{!baseImage\}/.test(g));
+check('it accepts a batch whose combos carry their own sources',
+  /!failedCombos\.every\(\(f\) => f\.combo\?\.baseId \|\| f\.combo\?\.basePhotoId\)/.test(g));
+check('Max Outfit is allowed outright', /disabled=\{!maxOutfit && !baseImage/.test(g));
+
+const retryDisabled = (maxOutfit, baseImage, picked, combos) =>
+  !maxOutfit && !baseImage && !picked && !combos.every((c) => c.baseId || c.basePhotoId);
+check('Max Outfit retry is enabled', retryDisabled(true, '', 0, [{ baseId: 'x' }]) === false);
+check('a ticked Max Nano retry is enabled', retryDisabled(false, '', 0, [{ basePhotoId: 'b' }]) === false);
+check('plain Eddy with nothing loaded is still disabled', retryDisabled(false, '', 0, [{ outfitId: 'o' }]) === true);
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

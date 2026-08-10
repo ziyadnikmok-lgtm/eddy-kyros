@@ -6899,7 +6899,13 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
               <span className="text-amber-200/50"> · {failedCombos[0].message}</span>
             </p>
             <div className="flex gap-2">
-              <Btn className="flex-1 !py-1.5 !text-xs" disabled={!baseImage}
+              {/* NOT disabled on !baseImage. That is the single Main-photo slot, which Max Outfit
+                  never fills and a ticked run does not either -- so a failed Max Outfit batch
+                  showed its failures and offered a dead button (owner, 2026-08-10). The failed
+                  combos carry their own sources; run() checks that properly now. */}
+              <Btn className="flex-1 !py-1.5 !text-xs"
+                disabled={!maxOutfit && !baseImage && !pickedBasePhotos.length
+                  && !failedCombos.every((f) => f.combo?.baseId || f.combo?.basePhotoId)}
                 onClick={() => run(failedCombos.map((f) => f.combo))}>
                 Retry {failedCombos.length} failed · ${(failedCombos.length * perImagePrice).toFixed(3)}
               </Btn>

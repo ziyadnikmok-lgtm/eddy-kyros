@@ -325,7 +325,20 @@ async function _downloadImageAsBase64(url, modelId) {
 // ── SeedDream v4.5 edit-sequential ────────────────────────────
 const SEEDDREAM_MODEL_ID = 'bytedance/seedream-v4.5/edit-sequential';
 const SEEDDREAM_POLL_INTERVAL_MS = 1500;
-const SEEDDREAM_MAX_POLL_MS = 180_000; // 3 min — sequential edit takes longer
+/**
+ * 4 min, not 3.
+ *
+ * WaveSpeed GENERATED the images and billed for them; the server stopped waiting first and threw
+ * the result away, so the app reported 0 generated while the pictures sat finished on WaveSpeed
+ * (owner, 2026-08-10). The client already allows 5 min for this route, so the server was the
+ * tighter of the two limits for no reason -- it now sits inside the client's budget with a margin
+ * rather than below it.
+ *
+ * Raising this does not make a hung request hang forever: the client's own 5-min ceiling still
+ * ends it, and a timed-out prediction id is now logged so the image can be fetched rather than
+ * being paid for and lost.
+ */
+const SEEDDREAM_MAX_POLL_MS = 240_000;
 
 /**
  * Edit 1–4 images with SeedDream v4.5, preserving character identity across all.
@@ -437,6 +450,11 @@ async function _pollSeedDreamResult(key, taskId, { maxMs = SEEDDREAM_MAX_POLL_MS
   }
   // Name the id: the prediction usually finishes moments later, and its result URL is
   // https://api.wavespeed.ai/api/v3/predictions/<id>/result — recoverable rather than lost.
+  //
+  // Logged at ERROR with the id on its own field, not only inside the message, so an abandoned
+  // BILLED prediction can be found by grepping the log rather than by reading every line. This is
+  // money already spent: the one thing that must never happen quietly.
+  log.error('wavespeed_timeout_billed', { taskId, label, waitedMs: maxMs });
   throw new AppError(`${label} timed out after ${Math.round(maxMs / 1000)}s (prediction ${taskId})`, 504, 'WAVESPEED_TIMEOUT');
 }
 
