@@ -4041,6 +4041,34 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     return bad ? { bad, total: pickedOutfits.length * pickedPoses.length, kinds: [...kinds] } : null;
   }, [maxOutfit, maxNano, pickedOutfits, pickedPoses, outfits, outfitFolders, poses]);
 
+  /**
+   * THE BREAKDOWN: how many of the images about to be made are front, back and close-up.
+   *
+   * The button says "Generate 92 images". That total hides the thing that actually matters once
+   * pairings started being skipped -- whether the close-ups are in there at all. A run that quietly
+   * dropped every close-up looks identical to one that kept them, right up until you open the
+   * results.
+   *
+   * Counted off the COMBOS, not the selection, so it reflects what will really run: skipped
+   * pairings are already gone by this point.
+   *
+   * The view comes from whichever side carries it in this mode -- the pose card on Eddy and Max
+   * Nano, the source photo on Max Outfit.
+   */
+  const viewBreakdown = useMemo(() => {
+    if (!combos.length) return null;
+    const poseById = new Map(poses.map((x) => [x.id, x]));
+    const libById = new Map(libItems.map((i) => [i.id, i]));
+    const counts = { front: 0, back: 0, closeup: 0 };
+    for (const c of combos) {
+      const v = c.baseId ? libraryRowView(libById.get(c.baseId))
+        : (c.poseId ? readPoseView(poseById.get(c.poseId)?.prompt) : 'front');
+      counts[v] = (counts[v] || 0) + 1;
+    }
+    // Nothing to say when it is all one kind -- the total already said it.
+    return Object.values(counts).filter(Boolean).length > 1 ? counts : null;
+  }, [combos, poses, libItems]);
+
   const combos = useMemo(() => {
     // Max Nano never sends an outfit — a stale selection from an Eddy session would otherwise
     // multiply the run and dress her in something this page does not even show.
@@ -6008,6 +6036,17 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
         <p className="text-xs text-zinc-500">
           {pickedOutfits.length || 1} outfit{(pickedOutfits.length || 1) === 1 ? '' : 's'} × {pickedPoses.length || 1} pose{(pickedPoses.length || 1) === 1 ? '' : 's'} = <span className="text-zinc-300">{combos.length} image{combos.length === 1 ? '' : 's'}</span>
         </p>
+
+          {/* Which KINDS those images are. The total alone cannot tell you whether the close-ups
+              survived the pairing filter, and that is the number worth seeing before spending. */}
+          {viewBreakdown && (
+            <p className="text-xs text-zinc-500">
+              {[['front', 'front'], ['back', 'back'], ['closeup', 'close-up']]
+                .filter(([k]) => viewBreakdown[k])
+                .map(([k, label]) => `${viewBreakdown[k]} ${label}`)
+                .join('  ·  ')}
+            </p>
+          )}
 
         {/* There is deliberately no output-mode toggle here. Generation makes images, full stop —
             so the button below quotes images, and video is chosen per result once you can see what
