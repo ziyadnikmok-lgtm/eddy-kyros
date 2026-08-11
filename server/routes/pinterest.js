@@ -263,6 +263,15 @@ router.get('/proxy', async (req, res) => {
 
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    /**
+     * CACHE IT. A pinimg URL is content-addressed -- the bytes behind it never change.
+     *
+     * Without this the browse grid re-fetches every thumbnail whenever the grid re-renders, which
+     * is what turned one page of pins into hundreds of proxy requests and got the real downloads
+     * rate-limited. A day is long enough to cover a session and short enough that a pulled image
+     * eventually stops being served from disk.
+     */
+    res.setHeader('Cache-Control', 'private, max-age=86400, immutable');
     if (upstream.headers['content-length']) {
       res.setHeader('Content-Length', upstream.headers['content-length']);
     }

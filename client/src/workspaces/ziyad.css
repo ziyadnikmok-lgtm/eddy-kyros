@@ -1,0 +1,59 @@
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+   ZIYAD'S UI — this file belongs to Ziyad.
+
+   Everything in here applies ONLY to the "Ziyad" tab. Eddy's tab never sees it. Same one rule:
+   every selector must stay INSIDE the block below, because CSS nesting is what scopes it to
+   this tab. A rule outside the block hits BOTH tabs.
+
+   See eddy.css for the full "what you can / cannot change here" notes — they are identical.
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+
+:root[data-workspace="ziyad"] {
+  /* Violet. The ramp keeps every step's lightness and chroma from the default rose and rotates
+     only the HUE (→300), so contrast and readability stay exactly as they were tuned. */
+  --color-rose-50: oklch(96.9% .015 300);
+  --color-rose-100: oklch(94.1% .03 300);
+  --color-rose-200: oklch(89.2% .058 300);
+  --color-rose-300: oklch(81% .117 300);
+  --color-rose-400: oklch(71.2% .194 300);
+  --color-rose-500: oklch(64.5% .246 300);
+  --color-rose-600: oklch(58.6% .253 300);
+  --color-rose-700: oklch(51.4% .222 300);
+  --color-rose-800: oklch(45.5% .188 300);
+  --color-rose-900: oklch(41% .159 300);
+  --color-rose-950: oklch(27.1% .105 300);
+  --color-accent: #9b3df0;
+  --color-accent-hover: #7c1fd6;
+  --color-accent-muted: #9b3df020;
+
+  /* The few places the pink is a hard-coded hex rather than a rose utility. */
+  & ::selection { background: #9b3df040; }
+  & .spinner { border-top-color: #9b3df0; }
+  & input[type=range].rose-slider::-webkit-slider-thumb,
+  & input[type=range].rose-slider::-moz-range-thumb {
+    border-color: #9b3df0;
+    box-shadow: 0 0 8px 1px rgba(155, 61, 240, 0.7);
+  }
+
+  /* ── Eddy Generate: keep the ORIGINAL pose/outfit layout ────────────────────────────────
+     Eddy restacked the two pickers vertically (pose on top) and made the thumbnail grid a fixed
+     3 columns at double height. That is his tab's layout; this restores mine:
+       - Outfit and Pose side by side again (2 columns from the sm breakpoint up)
+       - Outfit FIRST — he reordered the array in shared code, so `order` puts it back here
+       - thumbnails back to auto-fill from 112px, in a 460px-tall scroller
+     Pure CSS on the shared markup, so his tab is untouched. */
+  & [data-picker-slot="outfit"] { order: -1; }
+  & [data-picker-grid] {
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    max-height: 460px;
+  }
+  @media (min-width: 40rem) {
+    & [data-picker-slots] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  /* Same generated smoke, violet flood instead of pink — otherwise the backdrop stays pink and
+     fights the rest of the theme. Identical SVG, only flood-color differs. */
+  & .smoke-deep {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1600' height='1000' viewBox='0 0 1600 1000' preserveAspectRatio='xMidYMid slice'%3E%3Cdefs%3E%3Cfilter id='s' x='-25%' y='-25%' width='150%' height='150%' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.004 0.009' numOctaves='6' seed='29' stitchTiles='stitch' result='t'/%3E%3CfeColorMatrix in='t' type='luminanceToAlpha' result='a'/%3E%3CfeComponentTransfer in='a' result='b'%3E%3CfeFuncA type='gamma' amplitude='3.1' exponent='1.5' offset='-0.2'/%3E%3C/feComponentTransfer%3E%3CfeGaussianBlur in='b' stdDeviation='1.4' result='g'/%3E%3CfeFlood flood-color='%239b3df0' result='p'/%3E%3CfeComposite in='p' in2='g' operator='in'/%3E%3C/filter%3E%3ClinearGradient id='f' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23000'/%3E%3Cstop offset='.34' stop-color='%23222'/%3E%3Cstop offset='.72' stop-color='%23fff'/%3E%3Cstop offset='1' stop-color='%23ddd'/%3E%3C/linearGradient%3E%3Cmask id='m' maskContentUnits='objectBoundingBox'%3E%3Crect width='1' height='1' fill='url(%23f)'/%3E%3C/mask%3E%3C/defs%3E%3Cg mask='url(%23m)'%3E%3Crect width='1600' height='1000' filter='url(%23s)'/%3E%3C/g%3E%3C/svg%3E");
+  }
+}

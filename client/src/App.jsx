@@ -1,6 +1,4 @@
 import { lazy, Suspense, useState, useEffect, useCallback } from 'react';
-const LoginPage = lazy(() => import('./pages/LoginPage'));
-const RegisterPage = lazy(() => import('./pages/RegisterPage'));
 const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
@@ -9,8 +7,10 @@ import { useApp } from './context/AppContext';
 import { Toasts, Spinner } from './components/UI';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { PageErrorBoundary } from './components/ErrorBoundary';
-import GenerationFeedPanel from './components/GenerationFeedPanel';
+import GenerationFeedPanel, { GenerationFeedVideoWatcher } from './components/GenerationFeedPanel';
 import { keys as keysApi } from './services/api';
+import { WORKSPACES, getWorkspace, setWorkspace as persistWorkspace, workspaceEngines } from './lib/workspace';
+import { cn } from './lib/utils';
 import {
   IconBadgeSparkle,
   IconFlame,
@@ -43,7 +43,6 @@ const CarouselPage = lazy(() => import('./pages/CarouselPage'));
 const StorytellerPage = lazy(() => import('./pages/StorytellerPage'));
 const AutoGeneratorPage = lazy(() => import('./pages/AutoGeneratorPage'));
 const CharactersPage = lazy(() => import('./pages/CharactersPage'));
-const GalleryPage = lazy(() => import('./pages/GalleryPage'));
 const LibraryPage = lazy(() => import('./pages/LibraryPage'));
 const PasteInboxPage = lazy(() => import('./pages/PasteInboxPage'));
 const SceneRecreatePage = lazy(() => import('./pages/SceneRecreatePage'));
@@ -56,11 +55,14 @@ const LoraDatasetPage = lazy(() => import('./pages/LoraDatasetPage'));
 const ApiKeysPage = lazy(() => import('./pages/ApiKeysPage'));
 const VideoPage = lazy(() => import('./pages/VideoPage'));
 const VideoGalleryPage = lazy(() => import('./pages/VideoGalleryPage'));
+const VideoEditorPage = lazy(() => import('./pages/VideoEditorPage'));
 const SeedanceVideoPage = lazy(() => import('./pages/SeedanceVideoPage'));
 const SeedanceOmniPage = lazy(() => import('./pages/SeedanceOmniPage'));
 const SeedreamEditPage = lazy(() => import('./pages/SeedreamEditPage'));
+const SeedreamGeneratePage = lazy(() => import('./pages/SeedreamGeneratePage'));
 const OutfitSwapSeedreamPage = lazy(() => import('./pages/OutfitSwapSeedreamPage'));
 const PhotoMatchSeedreamPage = lazy(() => import('./pages/PhotoMatchSeedreamPage'));
+const PinterestFeedPage = lazy(() => import('./pages/PinterestFeedPage'));
 const SceneRecreateSeedreamPage = lazy(() => import('./pages/SceneRecreateSeedreamPage'));
 const PoseRemixSeedreamPage = lazy(() => import('./pages/PoseRemixSeedreamPage'));
 const EddyGeneratePage = lazy(() => import('./pages/EddyGeneratePage'));
@@ -68,13 +70,22 @@ const EddyLibraryPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ def
 const EddyOutfitPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.EddyOutfitPage })));
 const EddyPosePage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.EddyPosePage })));
 const EddyEnvironmentPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.EddyEnvironmentPage })));
+const EddyBaseLibraryPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.EddyBaseLibraryPage })));
+const EddyBasePage = lazy(() => import('./pages/EddyBasePage'));
+// Same component as Eddy, in its Max Nano mode — see the `mode` prop on EddyGeneratePage.
+const EddyMaxOutfitPage = lazy(() => import('./pages/EddyGeneratePage').then((m) => ({ default: () => <m.default mode="maxOutfit" /> })));
+const EddyMaxNanoPage = lazy(async () => {
+  const m = await import('./pages/EddyGeneratePage');
+  const Page = m.default;
+  return { default: () => <Page mode="maxNano" /> };
+});
 const VideoLibraryPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.VideoLibraryPage })));
 const EddyCharacterPage = lazy(() => import('./pages/EddyCharacterPage'));
-const ReformatPage = lazy(() => import('./pages/ReformatPage'));
 const NsfwGeneratePage = lazy(() => import('./pages/NsfwGeneratePage'));
 const ImageEditorPage = lazy(() => import('./pages/ImageEditorPage'));
 const BillingPage = lazy(() => import('./pages/BillingPage'));
 const InstagramFramesPage = lazy(() => import('./pages/InstagramFramesPage'));
+const InstagramReelPage = lazy(() => import('./pages/InstagramReelPage'));
 const LogsPage = lazy(() => import('./pages/LogsPage'));
 const PhotoMatchPage = lazy(() => import('./pages/PhotoMatchPage'));
 const PoseFixPage = lazy(() => import('./pages/PoseFixPage'));
@@ -96,8 +107,10 @@ const NAV_ICONS = {
   seedanceVideo: IconVideo,
   seedanceOmni: IconVideo,
   seedreamEdit: IconLayers,
+  seedreamGenerate: IconMagicWandSparkle,
   outfitSwapSeedream: IconLayers,
   photoMatchSeedream: IconCrosshairs,
+  pinterestFeed: IconCrosshairs,
   sceneRecreateSeedream: IconCamera,
   poseRemixSeedream: IconSwap,
   eddyGenerate: IconBadgeSparkle,
@@ -106,10 +119,15 @@ const NAV_ICONS = {
   eddyOutfit: IconLayers,
   eddyPose: IconSwap,
   eddyEnvironment: IconGrid2,
+  eddyMaxNano: IconBadgeSparkle,
+  eddyMaxOutfit: IconBadgeSparkle,
+  eddyBase: IconGrid2,
+  eddyBaseLibrary: IconGrid2,
   videoLibrary: IconGrid2,
   eddyCharacter: IconUsers,
   postClone: IconCopies,
   instagramFrames: IconImage,
+  instagramReel: IconCamera,
   frameLibrary: IconGrid2,
   styleLibrary: IconColorPalette,
   promptBuilder: IconMagicWandSparkle,
@@ -118,8 +136,8 @@ const NAV_ICONS = {
   storyteller: IconBookOpen,
   library: IconGrid2,
   pasteInbox: IconClipboard,
-  gallery: IconImage,
   imageEditor: IconRulerPen,
+  videoEditor: IconVideo,
   characters: IconUsers,
   keys: IconKey,
   billing: IconCreditCards,
@@ -146,8 +164,10 @@ const NAV_COLORS = {
   seedanceVideo:  ['#f9a8d4', '#d946a8'],
   seedanceOmni:   ['#c4b5fd', '#d946a8'],
   seedreamEdit:   ['#f0abfc', '#c026d3'],
+  seedreamGenerate: ['#fda4af', '#e11d48'],
   outfitSwapSeedream: ['#f9a8d4', '#c026d3'],
   photoMatchSeedream: ['#f0abfc', '#a21caf'],
+  pinterestFeed: ['#fca5a5', '#b91c1c'],
   sceneRecreateSeedream: ['#67e8f9', '#0891b2'],
   poseRemixSeedream: ['#fbcfe8', '#db2777'],
   eddyGenerate: ['#fde68a', '#f59e0b'],
@@ -156,10 +176,15 @@ const NAV_COLORS = {
   eddyOutfit: ['#fdba74', '#ea580c'],
   eddyPose: ['#fda4af', '#e11d48'],
   eddyEnvironment: ['#a7f3d0', '#059669'],
+  eddyMaxNano: ['#93c5fd', '#2563eb'],
+  eddyMaxOutfit: ['#c4b5fd', '#7c3aed'],
+  eddyBase: ['#a7f3d0', '#059669'],
+  eddyBaseLibrary: ['#6ee7b7', '#047857'],
   videoLibrary: ['#c4b5fd', '#7c3aed'],
   eddyCharacter: ['#fcd34d', '#f59e0b'],
   postClone:      ['#d8b4fe', '#9333ea'],
   instagramFrames: ['#f9a8d4', '#e879f9'],
+  instagramReel:  ['#fbcfe8', '#c026d3'],
   frameLibrary:    ['#fcd34d', '#f43f5e'],
   styleLibrary:   ['#6ee7b7', '#059669'],
   promptBuilder:  ['#a5b4fc', '#4f46e5'],
@@ -167,8 +192,8 @@ const NAV_COLORS = {
   storyteller:    ['#bef264', '#65a30d'],
   library:        ['#67e8f9', '#0284c7'],
   pasteInbox:     ['#c084fc', '#7c3aed'],
-  gallery:        ['#fcd34d', '#d97706'],
   imageEditor:    ['#f9a8d4', '#db2777'],
+  videoEditor:    ['#c4b5fd', '#7c3aed'],
   characters:     ['#c4b5fd', '#7c3aed'],
   keys:           ['#94a3b8', '#475569'],
   billing:        ['#86efac', '#16a34a'],
@@ -191,10 +216,16 @@ const NAV_SECTIONS = [
     label: 'Eddy',
     items: [
       { id: 'eddy', label: 'Eddy' },
+      // Directly under Eddy: it is the same page in another mode, so it belongs beside the page it
+      // mirrors rather than down among the collections (owner, 2026-08-09).
+      { id: 'eddyMaxNano', label: 'Max Nano' },
+      // Stage 2 sits beside stage 1: Max Nano makes the poses, Max Outfit dresses them.
+      { id: 'eddyMaxOutfit', label: 'Max Outfit' },
       { id: 'eddyLibrary', label: 'Library' },
       { id: 'eddyOutfit', label: 'Outfit' },
       { id: 'eddyPose', label: 'Pose' },
-      { id: 'eddyEnvironment', label: 'Environment' },
+      { id: 'eddyBase', label: 'Base' },
+      { id: 'eddyBaseLibrary', label: 'Base Library' },
       { id: 'eddyCharacter', label: 'Character' },
     ],
   },
@@ -202,9 +233,11 @@ const NAV_SECTIONS = [
     engine: 'seedream',
     label: 'Seedream · Seedance',
     items: [
+      { id: 'seedreamGenerate', label: 'Generate' },
       { id: 'seedreamEdit', label: 'Seedream 5 Pro' },
       { id: 'outfitSwapSeedream', label: 'Outfit Swap' },
       { id: 'photoMatchSeedream', label: 'Photo Match' },
+      { id: 'sceneRecreateSeedream', label: 'Scene Recreate' },
       { id: 'poseRemixSeedream', label: 'Pose Remix' },
     ],
   },
@@ -220,18 +253,20 @@ const NAV_SECTIONS = [
   {
     label: 'Media Grab',
     items: [
+      // Pinterest belongs here, not under Seedream: this section is where source material is
+      // FETCHED from, and generating with it is a separate step further down (owner, 2026-08-10).
+      { id: 'pinterestFeed', label: 'Pinterest' },
       { id: 'instagramFrames', label: 'Frame Grabber' },
       { id: 'frameLibrary', label: 'Frame Library' },
+      { id: 'instagramReel', label: 'Instagram' },
     ],
   },
   {
     label: 'Content',
     items: [
-      // The main gallery, back on both engines. It is called Gallery here because Eddy has its
-      // own Library above — two rows reading "Library" said nothing about which was which.
-      { id: 'library', label: 'Gallery' },
       { id: 'pasteInbox', label: 'Paste Inbox' },
       { id: 'imageEditor', label: 'Image Editor' },
+      { id: 'videoEditor', label: 'Video Editor' },
     ],
   },
   {
@@ -251,9 +286,10 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    // Only listed on Gemini, by request. API Keys lives here, so if a key ever needs adding
-    // while on Seedream, switch engines or go to /keys directly.
-    engine: 'gemini',
+    // UNGATED since 2026-08-09. This was tagged engine:'gemini' back when Gemini was a sidebar
+    // you could switch to. Gemini is gone, so leaving the tag would have made API Keys — the only
+    // place the WaveSpeed key is entered — unreachable from every workspace. A section holding the
+    // credentials for the engine you are using must never be behind that engine's own toggle.
     label: 'Account',
     items: [
       { id: 'keys', label: 'API Keys' },
@@ -268,16 +304,31 @@ const ALL_NAV_ITEMS = NAV_SECTIONS.flatMap((s) => s.items);
 const APP_VERSION = '8.1.3';
 
 const FEED_HIDDEN_PAGES = new Set([
+  // Pinterest generates nothing -- it fetches source material and hands it on. A feed of unrelated
+  // results beside a search grid is noise, and it costs the grid a third of the window
+  // (owner, 2026-08-10).
+  'pinterestFeed',
+  // Eddy Generate grew its own inline results area (select tiles, shared instruction,
+  // Regenerate, Generate video). Showing the shared feed too put every result on screen twice.
+  // Both ids route to EddyGeneratePage, so both must be listed or the panel returns via /eddy.
+  'eddyGenerate',
+  'eddyMaxNano',
+  'eddyMaxOutfit',
+  'eddy',
   'eddyLibrary',
   'eddyOutfit',
   'eddyPose',
   'eddyEnvironment',
+  'eddyMaxNano',
+  'eddyMaxOutfit',
+  'eddyBase',
+  'eddyBaseLibrary',
   'videoLibrary',
   'eddyCharacter',
   'library',
-  'gallery',
   'videoGallery',
   'imageEditor',
+  'videoEditor',
   'characters',
   'keys',
   'billing',
@@ -286,12 +337,35 @@ const FEED_HIDDEN_PAGES = new Set([
   'logs',
   'instagramFrames',
   'frameLibrary',
+  // Same reason as eddyGenerate/eddy above: this page grows its own inline shot-review grid
+  // (Task 5+), so the shared Generation Feed would just duplicate it in a second column.
+  'instagramReel',
 ]);
 
 // Pages where controls panel is narrow and feed takes the rest of the space
 const FEED_DOMINANT_PAGES = new Set([
   'generate', 'nsfwGenerate', 'batch', 'video', 'seedanceVideo', 'seedanceOmni', 'auto',
   'scene', 'postClone', 'carousel', 'photoMatch', 'poseFix', 'nanoBypass', 'outfitSwap',
+]);
+
+// Pages that lay out their OWN scroll regions and must not sit inside <main>'s single scroller.
+//
+// WHY: Eddy Generate is a two-column workspace — setup form left, results right — and the whole
+// point is that you can watch results land while the form is still on screen. A page that scrolls
+// as one document cannot do that: scrolling to the results scrolls the form away. So <main> stops
+// scrolling for these pages and hands its exact height down, and the page puts `overflow-y-auto`
+// on each column instead. Only pages that actually build their own scrollers belong here; anything
+// else listed would simply have its overflow clipped.
+const SELF_SCROLL_PAGES = new Set([
+  // Both ids route to EddyGeneratePage — same reason both are in FEED_HIDDEN_PAGES.
+  'eddyGenerate',
+  'eddy',
+  // Mirrors EddyGeneratePage's two-column shell (fixed left setup column, flex-1 right results
+  // column, both independently scrollable) — same layout, same need for a bounded height.
+  'instagramReel',
+  // The video editor lays out its own header / tools+preview+adjust / timeline and needs a bounded
+  // height to hang them from — same reason as Eddy.
+  'videoEditor',
 ]);
 
 const NAV_COLLAPSED_KEY = 'kyros_nav_collapsed';
@@ -346,11 +420,13 @@ const PAGE_DESCRIPTIONS = {
   nsfwGenerate: 'WaveSpeed Turbo LoRA — uncensored image generation',
   batch: 'Generate multiple images in parallel',
   video: 'Generate videos from images using AI',
-  seedanceVideo: 'Muapi Seedance 2 — turn a grabbed frame or gallery photo into a short video',
+  seedanceVideo: 'Muapi Seedance 2 Omni — show it photos of your model and it builds a fresh video of her (reference, not a first frame)',
   seedanceOmni: 'Reference a real video and recreate its motion with your model — plus reusable trained characters',
   seedreamEdit: "Muapi Seedream 5.0 Pro Edit — ByteDance's flagship image editor, up to 10 reference images",
+  seedreamGenerate: "Pick your character, type a prompt — Seedream 5.0 Pro generates a new photo of her.",
   outfitSwapSeedream: 'Put the outfit from image 2 onto the person in image 1 — via Seedream 5.0 Pro (no Gemini)',
   photoMatchSeedream: 'Paste any photo — match background & pose with your character, via Seedream 5.0 Pro (no Gemini)',
+  pinterestFeed: 'Search Pinterest, tick the shots you want, send them straight into Photo Match',
   sceneRecreateSeedream: 'Put your character in a scene and remix it — new background, outfit, lighting — via Seedream 5.0 Pro',
   poseRemixSeedream: 'Repose your character into any pose — sexy, flirty, sexual, or read from a reference — via Seedream 5.0 Pro',
   eddyGenerate: 'Your character, in any outfit and pose',
@@ -358,12 +434,17 @@ const PAGE_DESCRIPTIONS = {
   eddyLibrary: 'All your Eddy images',
   eddyOutfit: 'Outfits, organised in folders',
   eddyPose: 'Your saved pose prompts',
+  eddyMaxNano: 'Her, in every pose you pick — Nano Banana 2 at 2K, no outfit swap',
+  eddyMaxOutfit: 'Pick a Library folder, pick outfits — Seedream 5.0 Pro swaps the clothes and keeps everything else',
+  eddyBase: 'Make a new base photo of a saved character, from her own references',
+  eddyBaseLibrary: 'Your generated base photos, filed by character',
   eddyCharacter: 'Characters from a base image — no prompt needed',
   auto: 'AI-planned multi-day content schedules',
   carousel: 'Generate slide variations from a source image',
   scene: 'Upload a scene and recreate it with your character',
   postClone: 'Clone Instagram posts with your character',
   instagramFrames: 'Grab frames from any public Instagram Reel or TikTok Video — send to Photo Match or Scene Recreate',
+  instagramReel: 'Recreate a reel with your model',
   frameLibrary: 'Manage your downloaded Instagram/TikTok frames and reference images',
   styleLibrary: 'Manage reusable style building blocks',
   promptBuilder: 'Visual prompt composition with Nano-Banana formula',
@@ -373,7 +454,7 @@ const PAGE_DESCRIPTIONS = {
   library: 'Browse and manage all generated images and videos',
   pasteInbox: 'Save pasted images for quick reuse in Photo Match or Scene Recreate',
   imageEditor: 'Crop, adjust and touch up any image in your gallery',
-  gallery: 'Browse and manage all generated images',
+  videoEditor: 'Trim, add stickers and text, and adjust any video from your gallery',
   videoGallery: 'Browse and manage all generated videos',
   characters: 'Manage character identities and references',
   keys: 'Configure API keys and connections',
@@ -404,6 +485,7 @@ const PAGES = {
   scene: SceneRecreatePage,
   postClone: PostClonePage,
   instagramFrames: InstagramFramesPage,
+  instagramReel: InstagramReelPage,
   frameLibrary: FrameLibraryPage,
   styleLibrary: StyleLibraryPage,
   promptBuilder: PromptBuilderPage,
@@ -417,8 +499,10 @@ const PAGES = {
   seedanceVideo: SeedanceVideoPage,
   seedanceOmni: SeedanceOmniPage,
   seedreamEdit: SeedreamEditPage,
+  seedreamGenerate: SeedreamGeneratePage,
   outfitSwapSeedream: OutfitSwapSeedreamPage,
   photoMatchSeedream: PhotoMatchSeedreamPage,
+  pinterestFeed: PinterestFeedPage,
   sceneRecreateSeedream: SceneRecreateSeedreamPage,
   poseRemixSeedream: PoseRemixSeedreamPage,
   eddyGenerate: EddyGeneratePage,
@@ -427,11 +511,15 @@ const PAGES = {
   eddyOutfit: EddyOutfitPage,
   eddyPose: EddyPosePage,
   eddyEnvironment: EddyEnvironmentPage,
+  eddyMaxNano: EddyMaxNanoPage,
+  eddyMaxOutfit: EddyMaxOutfitPage,
+  eddyBase: EddyBasePage,
+  eddyBaseLibrary: EddyBaseLibraryPage,
   videoLibrary: VideoLibraryPage,
   eddyCharacter: EddyCharacterPage,
   auto: AutoGeneratorPage,
-  gallery: GalleryPage,
   imageEditor: ImageEditorPage,
+  videoEditor: VideoEditorPage,
   characters: CharactersPage,
   keys: ApiKeysPage,
   billing: BillingPage,
@@ -476,11 +564,69 @@ const ENGINE_KEY = 'kyros.engine';
 // root value scales the whole interface.
 const UI_SCALE_KEY = 'kyros.uiScale';
 const UI_SCALE_MIN = 16;
-const UI_SCALE_MAX = 26;
+// Raised from 26: the old ceiling was not big enough on a large monitor — everything is sized in
+// rem off this, so it is the single control that grows the whole interface.
+const UI_SCALE_MAX = 36;
+
+/**
+ * The browser-style workspace tabs across the very top of the app.
+ *
+ * Deliberately looks like browser tabs (rounded top corners, the active one joined to the frame
+ * below it) so it reads as "which workspace am I in", not as another nav row inside the app. The
+ * active tab's dot uses `bg-rose-500`, which is itself re-themed per workspace — so the tab strip
+ * shows each workspace in its OWN colour.
+ */
+function WorkspaceTabs({ current, onSelect }) {
+  return (
+    <div className="relative z-10 flex shrink-0 items-end gap-1.5 px-3 lg:px-4">
+      {WORKSPACES.map((w) => {
+        const active = w.id === current;
+        return (
+          <button
+            key={w.id}
+            type="button"
+            onClick={() => onSelect(w.id)}
+            aria-current={active ? 'true' : undefined}
+            title={active ? `${w.label} — current workspace` : `Switch to ${w.label}`}
+            className={cn(
+              // Sized like a real browser tab: tall, wide, generous type, joined to the frame below.
+              'group relative flex min-w-[190px] items-center gap-3 overflow-hidden rounded-t-2xl border border-b-0 px-6 py-3.5 text-base font-bold tracking-wide transition cursor-pointer',
+              // High contrast between states: the selected tab is a LIT panel (pale surface, pure
+              // white text, its own colour along the top edge); the others are pressed-down and
+              // dimmed. The two used to differ only by a few percent of black, which is not enough
+              // to tell at a glance which workspace you are in.
+              active
+                ? 'border-white/25 bg-[#2a2440] text-white shadow-[0_-6px_22px_-6px_rgba(0,0,0,0.85)]'
+                : 'border-transparent bg-black/60 text-zinc-500 hover:bg-black/45 hover:text-zinc-200',
+            )}
+          >
+            {/* The active tab wears its workspace's colour as a thick top edge — tells you which tab
+                AND whose it is in one glance, without relying on the small dot alone. */}
+            {active && (
+              <span className="pointer-events-none absolute inset-x-0 top-0 h-1" style={{ backgroundColor: w.swatch }} />
+            )}
+            <span
+              className="h-3 w-3 shrink-0 rounded-full transition"
+              style={{ backgroundColor: w.swatch, opacity: active ? 1 : 0.35 }}
+            />
+            {w.label}
+            {/* Fills the 1px seam between the active tab and the frame, so the tab reads as joined
+                to the page below it the way a browser tab does. */}
+            {active && <span className="pointer-events-none absolute inset-x-0 -bottom-px h-px bg-[#2a2440]" />}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function MainApp({ onLogout, currentUser }) {
   const { activeKey, setActiveKey, vertexActive, setVertexActive, integrationRefreshToken, page, navigateTo } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Which workspace tab is active. Initialised from the same store main.jsx already applied before
+  // first paint, so state and the DOM attribute never disagree on load.
+  const [workspace, setWorkspaceState] = useState(getWorkspace);
+  const changeWorkspace = useCallback((id) => setWorkspaceState(persistWorkspace(id)), []);
   // Collapse is desktop-only: on mobile the sidebar is already a drawer.
   const [navCollapsed, setNavCollapsed] = useState(readNavCollapsed);
   const toggleNavCollapsed = useCallback(() => {
@@ -493,6 +639,7 @@ function MainApp({ onLogout, currentUser }) {
   const [apifyConnected, setApifyConnected] = useState(false);
   const isFeedDominant = FEED_DOMINANT_PAGES.has(page);
   const showGenerationFeed = !FEED_HIDDEN_PAGES.has(page);
+  const isSelfScroll = SELF_SCROLL_PAGES.has(page);
 
   useEffect(() => {
     if (page === 'admin' && !currentUser?.isAdmin) {
@@ -529,6 +676,13 @@ function MainApp({ onLogout, currentUser }) {
   const [engine, setEngine] = useState(() => {
     try { return localStorage.getItem(ENGINE_KEY) || 'seedream'; } catch { return 'seedream'; }
   });
+  // Engines this workspace offers (Eddy = Seedream only). The engine is remembered globally, so a
+  // value the current workspace does not offer has to be corrected — otherwise switching to Eddy
+  // while on Gemini filters every section out and the sidebar looks broken with no way back.
+  const allowedEngines = workspaceEngines(workspace);
+  useEffect(() => {
+    if (!allowedEngines.includes(engine)) setEngine(allowedEngines[0]);
+  }, [allowedEngines, engine]);
   const [uiScale, setUiScale] = useState(() => {
     const saved = Number(localStorage.getItem(UI_SCALE_KEY));
     return Number.isFinite(saved) && saved >= UI_SCALE_MIN && saved <= UI_SCALE_MAX ? saved : 20;
@@ -553,9 +707,13 @@ function MainApp({ onLogout, currentUser }) {
 
   return (
     <TooltipPrimitive.Provider delayDuration={200}>
-    <div className="relative flex h-screen overflow-hidden bg-[#0c0a12] text-white p-3 lg:p-4">
-      {/* Deep — procedural pink smoke (see .smoke-deep in index.css) */}
+    {/* flex-col (was flex-row): the workspace tab strip is a row ABOVE the application frame, the
+        way browser tabs sit above the page. The frame keeps flex-1 so it still fills the rest. */}
+    <div className="relative flex flex-col h-screen overflow-hidden bg-[#0c0a12] text-white p-3 lg:p-4">
+      {/* Deep — procedural smoke, tinted per workspace (see .smoke-deep in index.css) */}
       <div className="pointer-events-none absolute inset-0 smoke-deep" />
+
+      <WorkspaceTabs current={workspace} onSelect={changeWorkspace} />
 
       {/* Inner Application frame container (Helios floating dashboard shell).
           Translucent on purpose: an opaque fill here covers the backdrop completely. The glass
@@ -572,9 +730,11 @@ function MainApp({ onLogout, currentUser }) {
           <nav className="flex-1 overflow-y-auto px-3 py-2 scrollbar-none">
             {/* Which engine's tools are listed. Seedream by default; Gemini keeps its own
                 versions of Photo Match, Outfit Swap, Scene Recreate and Pose Remix. */}
-            {!navCollapsed && (
+            {/* Hidden entirely when the workspace offers only one engine — a switcher with a single
+                option is just noise. */}
+            {!navCollapsed && allowedEngines.length > 1 && (
               <div className="mb-2 flex gap-1 rounded-xl border border-white/[0.06] bg-black/20 p-1">
-                {[['seedream', 'Seedream'], ['gemini', 'Gemini']].map(([id, label]) => (
+                {[['seedream', 'Seedream'], ['gemini', 'Gemini']].filter(([id]) => allowedEngines.includes(id)).map(([id, label]) => (
                   <button
                     key={id}
                     onClick={() => setEngine(id)}
@@ -606,7 +766,14 @@ function MainApp({ onLogout, currentUser }) {
               </div>
             )}
             {visibleSections.map((section, sIdx) => (
-              <div key={section.label} className={`mb-0.5 ${sIdx > 0 ? 'pt-1' : ''}`}>
+              // data-nav-group is the hook a workspace CSS file uses to hide a whole section from
+              // its OWN tab (e.g. eddy.css hides the Gemini group). Slugged from the label so it is
+              // stable and readable: "Seedream · Seedance" -> "seedream-seedance".
+              <div
+                key={section.label}
+                data-nav-group={section.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}
+                className={`mb-0.5 ${sIdx > 0 ? 'pt-1' : ''}`}
+              >
                 <div className={`flex items-center gap-2 py-1 ${navCollapsed ? 'px-2' : 'px-3'}`}>
                   {!navCollapsed && <span className="text-sm font-black text-white/90 uppercase tracking-[0.16em] whitespace-nowrap">{section.label}</span>}
                   <div className="flex-1 h-px bg-white/[0.045]" />
@@ -775,11 +942,16 @@ function MainApp({ onLogout, currentUser }) {
         </header>
 
         <div className="flex flex-1 overflow-hidden">
-          <main className={`${isFeedDominant ? 'w-[430px] xl:w-[460px] 2xl:w-[500px] shrink-0 overflow-y-auto overflow-x-hidden safe-bottom ambient-glow border-r border-white/[0.05] bg-white/[0.012] p-3 lg:p-5' : `flex-1 overflow-y-auto overflow-x-hidden safe-bottom ambient-glow ${showGenerationFeed ? 'border-r border-white/[0.05]' : ''} p-3 sm:p-4 lg:p-6`}`}>
+          {/* Three shapes, one element. isSelfScroll comes FIRST because it is the only one that
+              turns <main>'s own scroller off — a self-scrolling page has to receive a fixed height
+              to hang its columns' `overflow-y-auto` from, and `overflow-y-auto` here would give it
+              an unbounded one instead. flex-col + a min-h-0 child is what passes that height down
+              without the classic flexbox overflow blowout. */}
+          <main className={`${isSelfScroll ? 'flex flex-1 flex-col overflow-hidden safe-bottom ambient-glow p-3 sm:p-4 lg:p-6' : isFeedDominant ? 'w-[430px] xl:w-[460px] 2xl:w-[500px] shrink-0 overflow-y-auto overflow-x-hidden safe-bottom ambient-glow border-r border-white/[0.05] bg-white/[0.012] p-3 lg:p-5' : `flex-1 overflow-y-auto overflow-x-hidden safe-bottom ambient-glow ${showGenerationFeed ? 'border-r border-white/[0.05]' : ''} p-3 sm:p-4 lg:p-6`}`}>
             {/* A page with no generation feed owns the whole area — the collection tabs manage
                 their own columns, so a 1152px cap there just wastes a wide monitor. Pages that
                 DO show the feed keep the cap: prose and forms are unreadable at full width. */}
-            <div className={`relative ${isFeedDominant || !showGenerationFeed ? 'max-w-none' : 'mx-auto max-w-6xl'}`}>
+            <div className={`relative ${isSelfScroll ? 'flex min-h-0 flex-1 flex-col max-w-none' : isFeedDominant || !showGenerationFeed ? 'max-w-none' : 'mx-auto max-w-6xl'}`}>
               <PageErrorBoundary pageKey={page}>
                 <Suspense fallback={<PageFallback />}>
                   <PageComponent key={page} />
@@ -788,6 +960,9 @@ function MainApp({ onLogout, currentUser }) {
             </div>
           </main>
           {showGenerationFeed && <GenerationFeedPanel mode={isFeedDominant ? 'workspace' : 'rail'} />}
+          {/* Outside the showGenerationFeed gate on purpose: pages that hide the panel still
+              submit video jobs, and this watch is the only thing that resolves them. */}
+          <GenerationFeedVideoWatcher />
         </div>
       </div>
 

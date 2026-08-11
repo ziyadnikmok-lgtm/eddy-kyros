@@ -1,5 +1,40 @@
 const BASE = '/api';
 
+/**
+ * Save a downloaded blob to disk.
+ *
+ * `<a download>` + a blob URL does NOT save in Electron -- it navigates, so the click appeared to
+ * do nothing and no file arrived (owner, 2026-08-10). Both zip paths below did exactly that.
+ *
+ * In Electron the bytes go through the downloads:save-file IPC into the OS Downloads folder, which
+ * also de-dupes the name rather than clobbering an earlier zip. In a plain browser the anchor is
+ * still correct, so it stays as the fallback.
+ */
+async function saveDownloadedBlob(blob, fileName) {
+  const api = typeof window !== 'undefined' ? window.electronAPI : null;
+  if (api?.autoDownloadFolder && api?.saveFileToFolder) {
+    try {
+      const directory = await api.autoDownloadFolder({ folderName: 'Kyros Studio Downloads' });
+      if (directory) {
+        const data = new Uint8Array(await blob.arrayBuffer());
+        const saved = await api.saveFileToFolder({ directory, fileName, data });
+        return saved?.filePath || true;
+      }
+    } catch {
+      // Fall through to the anchor. A failed IPC must not mean "no download at all".
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.click();
+  // Revoking synchronously can cancel the download before it starts in some builds.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  return true;
+}
+
+
 const DEFAULT_TIMEOUT_MS = 30_000;
 const LONG_TIMEOUT_MS = 5 * 60_000;
 const VIDEO_ANALYZE_TIMEOUT_MS = 3 * 60_000;
@@ -19,6 +54,10 @@ const LONG_RUNNING_PATHS = [
   // Omni uploads up to 3 videos + 9 images to Muapi before submitting — well past 30s.
   '/seedance-omni',
   '/outfit-swap', '/pose-fix',
+  // Instagram-reel ingest runs yt-dlp (120s server timeout) and analyze runs ffmpeg scene
+  // detection + one Gemini call per shot — both routinely exceed the 30s default and would
+  // otherwise abort mid-flight.
+  '/instagram-reel',
 ];
 
 const EXTRA_LONG_PATHS = ['/profile-clone'];
@@ -128,7 +167,13 @@ async function _fetchOnce(path, method, body, externalSignal, timeoutMs, cache) 
     const res = await fetch(`${BASE}${path}`, config);
     const json = await res.json().catch(() => null);
     if (!res.ok) {
-      const msg = json?.error?.message || `Request failed (${res.status})`;
+      // Most routes error with { error: { message, code } }. A few (the instagram-reel ingest
+      // 422, whose route documents "the client renders that message inline") send a plain
+      // { error: "string" } — surface that verbatim so a real fallback message reaches the user
+      // instead of a generic "Request failed (422)".
+      const msg = json?.error?.message
+        || (typeof json?.error === 'string' ? json.error : null)
+        || `Request failed (${res.status})`;
       const err = new Error(msg);
       err.code = json?.error?.code || 'UNKNOWN';
       err.status = res.status;
@@ -185,7 +230,39 @@ export const keys = {
 };
 
 export const seedream = {
-  edit: (body) => request('/seedream/edit', { method: 'POST', body }),
+  // `opts` passes through to request() — Base uses it to raise timeoutMs, because Nano Banana 2
+  // shares this route and runs far longer than Seedream (a measured 182.8s of inference against
+  // the 5-minute default is close enough to the edge that a slow queue would abort a job that has
+  // already been billed).
+  edit: (body, opts) => request('/seedream/edit', { method: 'POST', body, ...opts }),
+};
+
+export const instagramReel = {
+  // Multipart video upload → { runId, videoPath, source }. Same FormData style as gallery.upload:
+  // request() detects the FormData body and lets the browser set the multipart boundary header,
+  // so no Content-Type is set by hand here.
+  ingestFile: (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return request('/instagram-reel/ingest', { method: 'POST', body: formData });
+  },
+  // JSON { url } → { runId, videoPath, source }. A failed download is a 422 whose plain-string
+  // { error } is surfaced by request()'s error unwrap above, so the page can show it inline.
+  ingestUrl: (url) => request('/instagram-reel/ingest', { method: 'POST', body: { url } }),
+  // { runId } → { shots: [{ index, startSec, durationSec, analysis, onScreenText,
+  // analysisFailed, recreatePrompt, keyframeDataUrl }], textTrack: [{ startSec, endSec, text }] }.
+  // The per-shot on-screen text (analysis.onScreenText) is the editable static overlay; textTrack is
+  // the whole-reel TIMED overlay track (the counter ticking) that assembly animates — both are data
+  // the page threads to /assemble, so there is no separate caption/overlay API call.
+  analyze: (runId) => request('/instagram-reel/analyze', { method: 'POST', body: { runId } }),
+  // { runId, segments: [{ galleryId, startSec, durationSec, black, bw, overlayText, textTrack }] } →
+  // { galleryId, filename }. Pure-ffmpeg stitch (no paid API) that lays the recreated base images
+  // over the original audio into the finished MP4, ANIMATING each segment's textTrack (timed
+  // drawtext) or burning the static overlayText when no track — saved to the Video Library,
+  // downloadable
+  // metadata-stripped via videoApi.cleanFileUrl(filename). Uses the shared instagram-reel LONG
+  // timeout (ffmpeg per-segment encodes exceed the 30s default), matching ingest/analyze.
+  assemble: (runId, segments) => request('/instagram-reel/assemble', { method: 'POST', body: { runId, segments } }),
 };
 
 export const seedanceOmni = {
@@ -216,13 +293,16 @@ export const video = {
       throw new Error(json?.error?.message || `Download failed (${res.status})`);
     }
     const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `videos-${Date.now()}.zip`;
-    a.click();
-    URL.revokeObjectURL(url);
+    // Date.now() only names the file; the IPC de-dupes if one already exists.
+    return saveDownloadedBlob(blob, `videos-${Date.now()}.zip`);
   },
+};
+
+export const videoEdit = {
+  // Multipart: sourceFilename + overlay_<i> PNGs + JSON fields. The server caps ffmpeg at 5 min;
+  // the client waits LONGER (7 min) so a near-cap encode is still received as success instead of the
+  // client aborting first and falsely reporting "failed" while the clip actually saved to the gallery.
+  export: (formData) => request('/video-edit', { method: 'POST', body: formData, timeoutMs: 7 * 60_000 }),
 };
 
 export const videoCompose = {
@@ -235,6 +315,7 @@ export const characters = {
   get: (id) => request(`/characters/${id}`),
   create: (data) => request('/characters', { method: 'POST', body: data }),
   update: (id, data) => request(`/characters/${id}`, { method: 'PATCH', body: data }),
+  duplicate: (id) => request(`/characters/${id}/duplicate`, { method: 'POST' }),
   remove: (id) => request(`/characters/${id}`, { method: 'DELETE' }),
   addReference: (id, data) => request(`/characters/${id}/references`, { method: 'POST', body: data }),
   toggleReference: (id, refId) => request(`/characters/${id}/references/${refId}/toggle`, { method: 'PATCH' }),
@@ -277,12 +358,7 @@ export const loraDatasets = {
       throw new Error(json?.error?.message || `Download failed (${res.status})`);
     }
     const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `lora-dataset-${id}.zip`;
-    a.click();
-    URL.revokeObjectURL(url);
+    return saveDownloadedBlob(blob, `lora-dataset-${id}.zip`);
   },
 };
 export const batch = {
@@ -337,12 +413,8 @@ export const gallery = {
       throw new Error(json?.error?.message || `Download failed (${res.status})`);
     }
     const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `gallery-${Date.now()}.zip`;
-    a.click();
-    URL.revokeObjectURL(url);
+    // Date.now() only names the file; the IPC de-dupes if one already exists.
+    return saveDownloadedBlob(blob, `gallery-${Date.now()}.zip`);
   },
   imageUrl: (id) => `${BASE}/gallery/${id}/image`,
   spoofedDownloadUrl: (id) => `${BASE}/gallery/${id}/download-spoofed`,
@@ -361,6 +433,7 @@ export const library = {
 
 export const eddyVision = {
   describe: (body) => request('/eddy/describe', { method: 'POST', body }),
+  classifyPoseView: (body) => request('/eddy/classify-pose-view', { method: 'POST', body }),
 };
 
 export const poseRemix = {
@@ -374,6 +447,14 @@ export const scene = {
 
 export const photoMatch = {
   recreate: (body) => request('/photo-match/recreate', { method: 'POST', body }),
+};
+
+export const pinterestFeed = {
+  // Search, for the browse tab. Separate from the single-pin scraper below.
+  search: (body) => request('/pinterest-feed/search', { method: 'POST', body }),
+  // i.pinimg.com refuses a request carrying a browser Origin, so EVERY pin image -- thumbnail and
+  // full size -- has to come through the proxy. This route already existed for the old page.
+  proxyUrl: (u) => `/api/pinterest/proxy?url=${encodeURIComponent(u)}`,
 };
 
 export const pinterest = {

@@ -2,6 +2,7 @@ const path = require('node:path');
 const wavespeed = require('./wavespeedService');
 const muapi = require('./muapiService');
 const videoHistory = require('./videoHistoryStore');
+const { ensureFaststart } = require('./videoFaststart');
 const apiKeyManager = require('./apiKeyManager');
 const { UPLOADS_DIR } = require('../paths');
 const { logUsageEvent, finishGenerationRun } = require('./eventLogger');
@@ -46,6 +47,16 @@ async function _reconcileMuapi(entry, { userId = null } = {}) {
     if (!fresh.localPath) {
       try {
         const { filename, filePath } = await wavespeed.downloadVideo(result.outputs[0], VIDEO_DIR);
+        // Seedance/Muapi ship MP4s with `moov` at the tail (not faststart), which makes the
+        // browser preview render BLACK until the whole file downloads. Re-mux to faststart now,
+        // while we hold the freshly-downloaded file, so the entry we record is streamable. A
+        // faststart failure must NOT fail the reconcile — the un-remuxed file still downloads/plays,
+        // so log and keep the original path.
+        try {
+          await ensureFaststart(filePath);
+        } catch (fsErr) {
+          log.warn('muapi_video_faststart_failed', { taskId, error: fsErr.message });
+        }
         videoHistory.update(fresh.id, { status: 'completed', videoUrl: result.outputs[0], localPath: filePath, filename });
         finishGenerationRun(taskId, { status: 'succeeded', outputCount: 1, provider: 'muapi', model: fresh.model });
         logUsageEvent({

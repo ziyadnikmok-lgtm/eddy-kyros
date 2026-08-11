@@ -3,7 +3,12 @@ import { AppProvider } from './context/AppContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import App from './App';
 import { startBackgroundQueues } from './lib/queueEngine';
+import { getWorkspace, applyWorkspace } from './lib/workspace';
 import './index.css';
+
+// Paint the saved workspace's theme BEFORE React mounts, otherwise the app flashes the default
+// (Eddy pink) for a frame and then repaints — visible on every launch.
+applyWorkspace(getWorkspace());
 
 // Keep generation queues (Photo Match / Pose Remix / Scene) processing + auto-retrying
 // even when you navigate away from their page.

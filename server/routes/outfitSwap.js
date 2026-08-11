@@ -18,7 +18,9 @@ const VALID_ASPECT_RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', 
 const VALID_IMAGE_SIZES = ['1K', '2K'];
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
-const MODEL_ID = 'gemini-3.1-flash-image-preview';
+// No "-preview" suffix: the Vertex allow-list is `gemini-3.1-flash-image`; the old preview id makes
+// resolveImageModel() throw "Unsupported image model" (same bug that broke Nano Bypass).
+const MODEL_ID = 'gemini-3.1-flash-image';
 const TEXT_MODEL = 'gemini-2.5-flash';
 
 const SAFETY_SETTINGS = [

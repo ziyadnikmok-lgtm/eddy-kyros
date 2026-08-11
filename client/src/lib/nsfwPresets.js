@@ -29,7 +29,6 @@ export const NSFW_PRESETS = [
   { group: 'Sexual', nsfwOnly: true, label: 'Hands on breasts', text: 'Her hands cup her bare breasts, fingers pressing into them.' },
 
   { group: 'Expression', expressionChange: true, label: 'Moaning', text: 'Her mouth is open in a soft moan, eyes half-closed, head tilted back in pleasure.' },
-  { group: 'Expression', expressionChange: true, label: 'Ahegao', text: 'An ahegao expression — eyes rolled upward, tongue out, cheeks deeply flushed.' },
   { group: 'Expression', expressionChange: true, label: 'Flushed', text: 'Flushed cheeks, breathless parted lips, aroused heavy-lidded eyes.' },
   { group: 'Expression', expressionChange: true, label: 'Innocent', text: 'Wide innocent doe eyes and softly parted lips, looking up at the camera.' },
   { group: 'Expression', expressionChange: true, label: 'Tongue out', text: 'Her tongue is out, extended past her lower lip, eyes on the camera.' },

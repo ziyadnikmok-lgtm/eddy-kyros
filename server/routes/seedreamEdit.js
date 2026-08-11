@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { AppError } = require('../middleware/errorHandler');
 const { generateSeedreamEdit, SEEDREAM_MAX_IMAGES } = require('../services/muapiService');
-const { generateSeedream5Edit } = require('../services/wavespeedService');
+const { generateSeedream5Edit, generateNanoBanana2Edit } = require('../services/wavespeedService');
 const imageStore = require('../services/imageStore');
 const galleryManager = require('../services/galleryManager');
 const apiKeyManager = require('../services/apiKeyManager');
@@ -30,7 +30,11 @@ function estimateCost(resolution, imageCount) {
  */
 router.post('/edit', async (req, res, next) => {
   try {
-    const { images, prompt, aspectRatio, resolution, provider, tags: extraTags } = req.body || {};
+    const { images, prompt, aspectRatio, resolution, provider, tags: extraTags, model } = req.body || {};
+    // model:'nano2' runs WaveSpeed's Nano Banana 2 edit instead of Seedream. Everything after the
+    // call is shared on purpose — same imageStore write, same gallery entry, same tag plumbing —
+    // so a Base image is a first-class gallery row like any other generation.
+    const useNano2 = model === 'nano2';
 
     if (!Array.isArray(images) || images.length === 0) {
       throw new AppError('images array is required', 400, 'VALIDATION_ERROR');
@@ -50,7 +54,11 @@ router.post('/edit', async (req, res, next) => {
     const ar = aspectRatio || '1:1';
     const res_ = resolution || '1K';
 
+    // Names the MODEL, not just the route. Base runs Nano Banana 2 through this same endpoint, so
+    // a failure here was being read as a Seedream problem on a page that never touches Seedream
+    // (owner, 2026-08-09: "it using nano banana 2 not seedream wtf").
     log.info('seedream_edit_req', {
+      model: useNano2 ? 'nano-banana-2' : 'seedream',
       userId: req.session?.userId,
       imageCount: images.length,
       prompt: prompt.slice(0, 100),
@@ -69,9 +77,17 @@ router.post('/edit', async (req, res, next) => {
     if (!useWavespeed && provider !== 'muapi') {
       log.warn('seedream_wavespeed_key_missing', { fellBackTo: 'muapi' });
     }
-    const result = useWavespeed
-      ? await generateSeedream5Edit(images, prompt, { aspectRatio: ar, resolution: res_ })
-      : await generateSeedreamEdit(images, prompt, { aspectRatio: ar, resolution: res_ });
+    // Nano Banana 2 is WaveSpeed-only — there is no Muapi equivalent to fall back to, so a
+    // missing key must fail loudly here rather than silently running Seedream and billing for a
+    // different model than the caller asked for.
+    if (useNano2 && !hasWsKey) {
+      throw new AppError('Nano Banana 2 needs a WaveSpeed key. Add one in API Keys.', 400, 'WAVESPEED_KEY_REQUIRED');
+    }
+    const result = useNano2
+      ? await generateNanoBanana2Edit(images, prompt, { aspectRatio: ar, resolution: res_ })
+      : useWavespeed
+        ? await generateSeedream5Edit(images, prompt, { aspectRatio: ar, resolution: res_ })
+        : await generateSeedreamEdit(images, prompt, { aspectRatio: ar, resolution: res_ });
 
     // allSettled: the provider has already generated and billed these. One gallery write
 // failing used to reject the whole request, so a paid image was lost to a 500.
@@ -92,7 +108,7 @@ const settled = await Promise.allSettled(result.images.map(async (img) => {
         // Extra tags let a caller mark WHERE a generation came from. Eddy uses this so its
         // Library can recover images whose request was cut short — the picture is saved here
         // regardless, but the browser is what normally files it.
-        tags: ['seedream-5-pro-edit', useWavespeed ? 'wavespeed' : 'muapi',
+        tags: [useNano2 ? 'nano-banana-2' : 'seedream-5-pro-edit', useNano2 || useWavespeed ? 'wavespeed' : 'muapi',
           ...(Array.isArray(extraTags) ? extraTags.filter((t) => typeof t === 'string').slice(0, 4) : [])],
       });
 

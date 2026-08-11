@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { seedanceOmni as omniApi, video as videoApi, gallery as galleryApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Select, Slider, Textarea, Input, Badge, Spinner } from '../components/UI';
@@ -10,6 +10,7 @@ import {
 import { pushPending, resolvePending, rejectPending, attachTaskId, failPending } from '../lib/generationFeed';
 import { loadOmniCharacters, saveOmniCharacter, removeOmniCharacter } from '../lib/omniCharacterStore';
 import { createPageStore } from '../lib/pageStateStore';
+import { createEddyCollection } from '../lib/eddyCollectionStore';
 import { cn } from '../lib/utils';
 
 const MODEL_MAP = Object.fromEntries(OMNI_MODELS.map((m) => [m.id, m]));
@@ -148,6 +149,40 @@ const store = createPageStore('kyros-seedance-omni-state');
 export default function SeedanceOmniPage() {
   const { notify } = useApp();
 
+  /**
+   * HER PHOTOS COME FROM EDDY, not from the server's character list (owner, 2026-08-11).
+   *
+   * NOTE the name clash this page already had: `characters` below is Omni's TRAINED characters
+   * (omniCharacterStore) — a Muapi feature, completely unrelated. These are Eddy's, so they are
+   * named for what they are and cannot be confused with them.
+   */
+  const charStore = useMemo(() => createEddyCollection('eddy-character'), []);
+  const [eddyChars, setEddyChars] = useState([]);        // folders in eddy-character
+  const [eddyCharItems, setEddyCharItems] = useState([]);
+  const [eddyCharThumbs, setEddyCharThumbs] = useState({});
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [f, i] = await Promise.all([charStore.listFolders(), charStore.listItems()]);
+        const map = {};
+        await Promise.all(i.map(async (it) => { map[it.id] = it.url || await charStore.getImage(it.id); }));
+        if (!alive) return;
+        setEddyChars(f); setEddyCharItems(i); setEddyCharThumbs(map);
+      } catch { /* an unreadable collection shows an empty picker, not a broken page */ }
+    })();
+    return () => { alive = false; };
+  }, [charStore]);
+
+  // Base face first — the leading reference is the one the model treats as the primary subject.
+  // Same ranking Photo Match and the Seedance Video tab use, so she behaves the same everywhere.
+  const refsForCharacter = useCallback((id) => {
+    if (!id) return [];
+    const mine = eddyCharItems.filter((i) => i.folderId === id);
+    const rank = (i) => (i.role === 'base' ? 0 : i.role === 'body' ? 1 : 2);
+    return [...mine].sort((a, b) => rank(a) - rank(b) || (a.createdAt || 0) - (b.createdAt || 0));
+  }, [eddyCharItems]);
+
   const [model, setModel] = useState(_cache.model);
   const [prompt, setPrompt] = useState(_cache.prompt);
   const [duration, setDuration] = useState(_cache.duration);
@@ -156,6 +191,10 @@ export default function SeedanceOmniPage() {
 
   const [videos, setVideos] = useState([]); // [{id, dataUrl, seconds}]
   const [images, setImages] = useState([]); // [{id, dataUrl}]
+  // Character shortcut for Reference Images. Not persisted: it resets after each add so the same
+  // character can be added again, and the IMAGES themselves are what the page already saves.
+  const [characterId, setCharacterId] = useState('');
+  const [charLoading, setCharLoading] = useState(false);
   const [dragging, setDragging] = useState(null);
 
   const [characters, setCharacters] = useState([]);
@@ -302,6 +341,47 @@ export default function SeedanceOmniPage() {
     })));
     setImages((prev) => [...prev, ...added]);
   }, [images.length, notify]);
+
+  /**
+   * Load EVERY photo a Character has straight into Reference Images.
+   *
+   * Omni genuinely takes multiple reference images (createOmniTask uploads each and sends them all
+   * as images_list), which is exactly what the Seedance 2 page cannot do — that model turns ONE
+   * image into the first frame. So here "use a character" means all of her, actually sent.
+   *
+   * APPENDS rather than replaces, and respects the remaining room, so a character can be combined
+   * with images already added by hand instead of wiping them.
+   */
+  const addCharacterImages = useCallback(async (id) => {
+    setCharacterId(id);
+    if (!id) return;
+    const mine = refsForCharacter(id);
+    if (!mine.length) { notify('That character has no photos yet — add some on the Eddy · Character tab', 'error'); return; }
+
+    const room = OMNI_MAX_IMAGES - images.length;
+    if (room <= 0) { notify(`Maximum ${OMNI_MAX_IMAGES} reference images`, 'error'); return; }
+    const take = mine.slice(0, room);
+    setCharLoading(true);
+    try {
+      const added = [];
+      for (const it of take) {
+        // Already in memory for the picker; getImage is the fallback for anything not thumbed yet.
+        // eslint-disable-next-line no-await-in-loop -- reads from IndexedDB, not the network
+        const dataUrl = eddyCharThumbs[it.id] || await charStore.getImage(it.id);
+        if (dataUrl) added.push({ id: `i-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, dataUrl });
+      }
+      if (!added.length) { notify('Could not read that character’s photos', 'error'); return; }
+      setImages((prev) => [...prev, ...added]);
+      const skipped = mine.length - take.length;
+      notify(
+        `Added ${added.length} photo${added.length === 1 ? '' : 's'}${skipped ? ` — ${skipped} skipped, only ${OMNI_MAX_IMAGES} fit` : ''}`,
+        skipped ? 'error' : 'success',
+      );
+    } finally {
+      setCharLoading(false);
+      setCharacterId('');   // reset so the same character can be added again if there is room
+    }
+  }, [refsForCharacter, eddyCharThumbs, charStore, images.length, notify]);
 
   // Ctrl+V → images (videos can't come off the clipboard).
   useEffect(() => {
@@ -552,6 +632,25 @@ export default function SeedanceOmniPage() {
               Reference Images <span className="text-zinc-600 font-normal normal-case">@image1–@image{OMNI_MAX_IMAGES}</span>
             </h3>
             <div className="flex items-center gap-2">
+              {/* Pick a character and ALL her photos are added as real reference images — Omni sends
+                  every one of them (images_list), unlike Seedance 2 which takes a single first frame.
+                  Appends, so it stacks with anything already added by hand. */}
+              <select
+                value={characterId}
+                onChange={(e) => addCharacterImages(e.target.value)}
+                disabled={charLoading || images.length >= OMNI_MAX_IMAGES}
+                title="Add every photo this character has as reference images"
+                className="rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 focus:border-rose-500 focus:outline-none disabled:opacity-50"
+              >
+                <option value="">+ Character…</option>
+                {/* The photo count is in the label: it is how many reference slots she will take,
+                    and this select is next to the x/OMNI_MAX_IMAGES counter it eats into. */}
+                {eddyChars.map((c) => {
+                  const n = refsForCharacter(c.id).length;
+                  return <option key={c.id} value={c.id}>{c.name || 'Unnamed'} ({n})</option>;
+                })}
+              </select>
+              {charLoading && <Spinner size={14} />}
               <Badge color="zinc">Ctrl+V</Badge>
               <span className="text-[0.6875rem] text-zinc-600 font-mono tabular-nums">{images.length}/{OMNI_MAX_IMAGES}</span>
             </div>
@@ -720,7 +819,8 @@ export default function SeedanceOmniPage() {
         <Card className="p-4 space-y-3">
           <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">Model</h3>
           <div className="grid [grid-template-columns:repeat(auto-fill,minmax(150px,1fr))] gap-2">
-            {OMNI_MODELS.map((m) => (
+            {/* Hide imagesOnly models here — this page references a VIDEO, which they reject. */}
+            {OMNI_MODELS.filter((m) => !m.imagesOnly).map((m) => (
               <button key={m.id} type="button" onClick={() => setModel(m.id)}
                 className={cn('text-left rounded-xl border p-3 transition-all duration-200 cursor-pointer',
                   model === m.id ? 'border-rose-500 ring-2 ring-rose-500/25 shadow-lg shadow-rose-500/10 bg-rose-500/[0.04]' : 'border-zinc-800/60 hover:border-zinc-600 bg-white/[0.02]')}>

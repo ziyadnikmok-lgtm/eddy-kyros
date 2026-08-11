@@ -3,6 +3,7 @@ import { video as videoApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Badge, Spinner, Empty, ConfirmDialog } from '../components/UI';
 import { VIDEO_MODELS } from '../config/photoModes';
+import { downloadBlob } from '../lib/stripMetadata';
 
 const MODEL_MAP = Object.fromEntries(VIDEO_MODELS.map((m) => [m.id, m]));
 
@@ -18,7 +19,7 @@ function formatDate(iso) {
 }
 
 export default function VideoGalleryPage() {
-  const { notify } = useApp();
+  const { notify, navigateTo } = useApp();
 
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -222,6 +223,7 @@ export default function VideoGalleryPage() {
               expanded={expandedId === v.id}
               onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)}
               onDelete={() => setDeleteTarget(v.id)}
+              onEdit={() => navigateTo('videoEditor', { filename: v.filename })}
               bulkMode={bulkMode}
               selected={selectedIds.has(v.id)}
               onSelect={() => toggleSelection(v.id)}
@@ -242,13 +244,36 @@ export default function VideoGalleryPage() {
   );
 }
 
-function VideoCard({ video, expanded, onToggle, onDelete, bulkMode, selected, onSelect }) {
+function VideoCard({ video, expanded, onToggle, onDelete, onEdit, bulkMode, selected, onSelect }) {
+  const { notify } = useApp();
   const v = video;
   const hasFile = !!v.filename;
   const videoSrc = hasFile ? videoApi.fileUrl(v.filename) : null;
-  // Playback uses the raw file; the download link uses the cleaned one, so scrubbing never
-  // pays for an audio re-encode.
-  const downloadSrc = hasFile ? videoApi.cleanFileUrl(v.filename) : null;
+
+  // The download was a bare `<a href={cleanFileUrl} download>`: it DID hit the clean (stripping)
+  // route, but the browser saved it named `clean` (the URL's last path segment) with no visible
+  // proof of stripping, and a bare anchor cannot read the X-Metadata-Stripped header — so a strip
+  // FAILURE (route serves the original and says so in the header) would have been handed over
+  // silently as if cleaned. This goes through the same fetch→header→downloadBlob path Eddy uses, so
+  // the saved name ends _metadatacleaned (or _NOT-cleaned, with a loud warning, on failure).
+  const handleDownload = async () => {
+    if (!hasFile) return;
+    try {
+      const resp = await fetch(videoApi.cleanFileUrl(v.filename), { credentials: 'include' });
+      if (!resp.ok) throw new Error(`Video download failed (${resp.status})`);
+      const stripped = resp.headers.get('X-Metadata-Stripped') === 'yes';
+      const ext = (v.filename.match(/\.[a-z0-9]+$/i) || ['.mp4'])[0];
+      const stem = v.filename.slice(0, v.filename.length - ext.length) || 'video';
+      const blob = await resp.blob();
+      // downloadBlob leaves video bytes alone (already stripped upstream) and keeps this honest name.
+      await downloadBlob(blob, `${stem}${stripped ? '_metadatacleaned' : '_NOT-cleaned'}${ext}`);
+      if (!stripped) {
+        notify('Metadata could NOT be removed from this clip — it saved as _NOT-cleaned. Do not publish it as-is.', 'error');
+      }
+    } catch (err) {
+      notify(err?.message || 'Video download failed', 'error');
+    }
+  };
 
   const statusColor = v.status === 'completed' ? 'green' : v.status === 'failed' ? 'red' : 'blue';
 
@@ -301,13 +326,20 @@ function VideoCard({ video, expanded, onToggle, onDelete, bulkMode, selected, on
         {!bulkMode && hasFile && (
           <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 flex flex-col justify-end p-3">
             <div className="flex gap-1.5 pointer-events-auto">
-              <a
-                href={downloadSrc}
-                download
-                className="flex-1 rounded-md bg-zinc-800/90 px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 transition text-center"
+              <button
+                type="button"
+                onClick={handleDownload}
+                className="flex-1 rounded-md bg-zinc-800/90 px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 transition text-center cursor-pointer"
               >
                 Download
-              </a>
+              </button>
+              <button
+                type="button"
+                onClick={onEdit}
+                className="rounded-md bg-rose-600/90 px-2 py-1.5 text-xs text-white hover:bg-rose-500 transition cursor-pointer"
+              >
+                Edit
+              </button>
               <button
                 onClick={onToggle}
                 className="rounded-md bg-zinc-800/90 px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 transition cursor-pointer"

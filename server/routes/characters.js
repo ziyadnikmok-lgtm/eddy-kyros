@@ -67,6 +67,15 @@ router.patch('/:id', (req, res, next) => {
   }
 });
 
+router.post('/:id/duplicate', (req, res, next) => {
+  try {
+    const character = referenceManager.duplicateCharacter(req.params.id);
+    res.status(201).json({ success: true, data: character });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.delete('/:id', (req, res, next) => {
   try {
     const result = referenceManager.deleteCharacter(req.params.id);

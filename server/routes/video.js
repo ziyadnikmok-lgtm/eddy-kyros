@@ -63,7 +63,13 @@ router.post('/generate', parseMultipartIfNeeded, requirePlanCapacity(), async (r
     let imageUrl;
     let imageBase64;
     let imageMimeType;
-    const imageData = req.body.image;
+    // A caller may send ONE image (`image`) or SEVERAL (`images`). When only the list is sent, its
+    // first entry is also the primary image, so the single-image path below (and the "an image is
+    // required" guard) keeps working unchanged instead of rejecting a perfectly valid request.
+    const imageList = Array.isArray(req.body.images)
+      ? req.body.images.filter((im) => im && typeof im.image === 'string' && im.image)
+      : [];
+    const imageData = req.body.image || imageList[0]?.image;
     const galleryId = req.body.galleryId;
 
     if (galleryId) {
@@ -85,7 +91,19 @@ router.post('/generate', parseMultipartIfNeeded, requirePlanCapacity(), async (r
     }
 
     if (isMuapiVideo) {
+      // Multiple source images: images_list is an array in Muapi's schema — the first is the frame
+      // the clip starts from, the rest ride along as extra reference. Falls back to the single
+      // image resolved above (upload / gallery) when the caller sends only one, so nothing else
+      // that posts here has to change.
+      let extraImages = imageList.map((im) => ({ base64: im.image, mimeType: im.imageMimeType || 'image/png' }));
+      // A gallery-sourced primary has no inline bytes in `images` (the client only sends galleryId),
+      // so it must be put back at the FRONT of the list — otherwise the picture the user actually
+      // chose as the first frame is silently dropped and an extra takes its place.
+      if (extraImages.length && galleryId && imageBase64) {
+        extraImages = [{ base64: imageBase64, mimeType: imageMimeType }, ...extraImages];
+      }
       const { taskId, status } = await muapi.createVideoTask(model, {
+        images: extraImages.length ? extraImages : undefined,
         imageBase64,
         imageMimeType,
         prompt: prompt ? String(prompt).slice(0, 2500) : '',

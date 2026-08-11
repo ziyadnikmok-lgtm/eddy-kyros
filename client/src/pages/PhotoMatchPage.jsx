@@ -14,6 +14,8 @@ import { loadSources, saveSources, clearSources } from '../lib/photoMatchSourceS
 import { addFramesToLibrary } from '../lib/frameLibrary';
 import { consumeSourceHandoff } from '../lib/sourceHandoff';
 import { extractOneLink, runWithConcurrency } from '../lib/frameExtract';
+import { autoBlurFace } from '../lib/autoBlurFace';
+import ManualBlurModal from '../components/ManualBlurModal';
 import { IconImage } from 'nucleo-glass';
 
 const PHOTO_MATCH_HANDOFF_KEY = 'kyros.photoMatch.handoff';
@@ -203,6 +205,7 @@ const PM_LAST_CHAR_KEY = 'kyros.photoMatch.lastCharId';
 const _cache = {
   selectedCharIds: [], bgStrength: 85, poseStrength: 85,
   exactRecreate: false, varyBackground: false, aspectRatio: '9:16', resolutionTier: '1K',
+  blurSource: true,
   imageModel: DEFAULT_IMAGE_MODEL,
   provider: 'gemini',
 };
@@ -237,6 +240,15 @@ export default function PhotoMatchPage() {
   });
   const [queueItems, setQueueItems] = useState(initialStoreState.queueItems);
   const [queuePaused, setQueuePaused] = useState(false);
+  // Auto-blur every source face as it's added (paste/drop/upload/handoff — addFiles is the one
+  // choke point all of them funnel through), because Gemini anchors on ANY face it's shown and no
+  // prompt wording reliably beats a visible one. blurSourceRef mirrors it for addFiles, which is a
+  // stable useCallback and must read the CURRENT toggle without retriggering on every flip.
+  const [blurSource, setBlurSource] = useState(_cache.blurSource ?? true);
+  const blurSourceRef = useRef(blurSource);
+  useEffect(() => { blurSourceRef.current = blurSource; _cache.blurSource = blurSource; }, [blurSource]);
+  const [blurringAll, setBlurringAll] = useState(false);
+  const [manualBlurId, setManualBlurId] = useState(null);   // source file id being hand-blurred, or null
   const [autoRetryAll, setAutoRetryAll] = useState(() => {
     try { const v = window.localStorage.getItem(PHOTO_MATCH_AUTORETRY_KEY); return v === null ? true : v === '1'; } catch { return true; }
   });
@@ -449,17 +461,44 @@ export default function PhotoMatchPage() {
     // Compress large images first
     const compressed = await Promise.all(valid.map(f => resizeAndCompressImage(f)));
 
-    const next = await Promise.all(compressed.map(async (f, i) => ({
-      file: f,
-      previewUrl: await fileToBase64(f),
-      id: `${f.name}-${f.size}-${Date.now()}-${Math.random()}`,
-      sourceUrl: validSourceUrls[i] || null,
-    })));
-    // Skip images already present (same name + size) so re-sending the same frame
-    // from Frame Grabber / Library doesn't create duplicates.
+    let missedBlur = 0;
+    const next = await Promise.all(compressed.map(async (f, i) => {
+      let previewUrl = await fileToBase64(f);
+      let file = f;
+      let blurred = false;
+      // Blurred BEFORE this becomes the file that's actually dispatched — runQueueJob reads
+      // .file, never .previewUrl, so a blur that only touched the preview would leave the real
+      // upload to Gemini unblurred.
+      if (blurSourceRef.current) {
+        const out = await autoBlurFace(previewUrl);
+        if (out.blurred) {
+          previewUrl = out.dataUrl;
+          const rebuilt = dataUrlToFile(out.dataUrl, f.name);
+          if (rebuilt) file = rebuilt;
+          blurred = true;
+        } else {
+          missedBlur += 1;
+        }
+      }
+      return {
+        file,
+        previewUrl,
+        blurred,
+        // The PRE-blur name+size, kept stable across a later re-blur (retry face blur below changes
+        // file.size again via its own re-encode). This is the dedupe/identity key — comparing on
+        // file.size directly would treat the same source photo as "different" after any blur pass.
+        origKey: `${f.name}::${f.size}`,
+        id: `${f.name}-${f.size}-${Date.now()}-${Math.random()}`,
+        sourceUrl: validSourceUrls[i] || null,
+      };
+    }));
+    if (missedBlur) notify(`${missedBlur} photo(s): no face found to blur — use "Retry face blur" below`, 'error');
+    // Skip images already present (same ORIGINAL name+size) so re-sending the same frame from Frame
+    // Grabber / Library doesn't create duplicates — keyed off origKey, not file.size, since blurring
+    // re-encodes the file and changes its byte size even for the exact same source image.
     setFiles(prev => {
-      const seen = new Set(prev.map(e => `${e.file?.name}::${e.file?.size}`));
-      const deduped = next.filter(e => !seen.has(`${e.file.name}::${e.file.size}`));
+      const seen = new Set(prev.map(e => e.origKey || `${e.file?.name}::${e.file?.size}`));
+      const deduped = next.filter((e) => !seen.has(e.origKey));
       return [...prev, ...deduped];
     });
     photoMatchStore.setValue('result', null);
@@ -472,6 +511,43 @@ export default function PhotoMatchPage() {
   const clearAll = () => {
     setFiles([]);
   };
+
+  // Re-run face detection in AGGRESSIVE mode over every source not already blurred — catches the
+  // profile/tilted faces the conservative pass at add-time misses. Rebuilds BOTH previewUrl and the
+  // actual dispatched .file (runQueueJob reads .file, never .previewUrl), same as addFiles above.
+  // Safe to press repeatedly: only un-blurred entries are ever touched.
+  const blurAllFaces = useCallback(async () => {
+    const targets = files.filter((f) => !f.blurred);
+    if (!targets.length) { notify('Every source is already blurred', 'info'); return; }
+    setBlurringAll(true);
+    let blurred = 0; let missed = 0;
+    const results = await Promise.all(targets.map(async (entry) => {
+      const out = await autoBlurFace(entry.previewUrl, { aggressive: true });
+      if (!out.blurred) { missed += 1; return null; }
+      const rebuilt = dataUrlToFile(out.dataUrl, entry.file?.name);
+      blurred += 1;
+      return { id: entry.id, previewUrl: out.dataUrl, file: rebuilt || entry.file, blurred: true };
+    }));
+    const byId = new Map(results.filter(Boolean).map((r) => [r.id, r]));
+    setFiles((prev) => prev.map((f) => (byId.has(f.id) ? { ...f, ...byId.get(f.id) } : f)));
+    setBlurringAll(false);
+    if (blurred && !missed) notify(`Blurred ${blurred} face${blurred === 1 ? '' : 's'} ✨`, 'success');
+    else if (blurred) notify(`Blurred ${blurred}; ${missed} still had no detectable face — click those to blur by hand`, 'error');
+    else notify('No faces detected — click a photo to blur by hand', 'error');
+  }, [files, notify]);
+
+  // Apply a hand-drawn blur box from the modal, mirroring blurAllFaces' file rebuild.
+  const applyManualBlur = useCallback((id, newDataUrl) => {
+    setFiles((prev) => prev.map((f) => {
+      if (f.id !== id) return f;
+      const rebuilt = dataUrlToFile(newDataUrl, f.file?.name);
+      return { ...f, previewUrl: newDataUrl, file: rebuilt || f.file, blurred: true };
+    }));
+    setManualBlurId(null);
+    notify('Face blurred by hand ✨', 'success');
+  }, [notify]);
+
+  const unblurredCount = files.filter((f) => !f.blurred).length;
 
   // Single-file handoff (from other pages / extensions)
   const applyFile = useCallback((f) => addFiles([f]), [addFiles]);
@@ -862,10 +938,23 @@ export default function PhotoMatchPage() {
             {files.length > 0 && (
               <div>
                 <div className="grid grid-cols-4 gap-2">
-                  {files.map(({ id, previewUrl, file: f }) => (
-                    <div key={id} className="relative group aspect-square rounded-lg overflow-hidden border border-zinc-700/60 bg-zinc-900 cursor-pointer"
+                  {files.map(({ id, previewUrl, file: f, blurred }) => (
+                    <div key={id} className={`relative group aspect-square rounded-lg overflow-hidden border bg-zinc-900 cursor-pointer ${
+                      blurSource && !blurred ? 'border-amber-500/70 ring-1 ring-amber-500/40' : 'border-zinc-700/60'
+                    }`}
                       onClick={(e) => { e.stopPropagation(); setPreviewSrc(previewUrl); }}>
                       <img src={previewUrl} alt={f.name} className="w-full h-full object-cover hover:scale-105 transition-transform duration-200" />
+                      {blurSource && (
+                        blurred
+                          ? <span className="absolute bottom-0.5 left-0.5 rounded bg-emerald-600/90 px-1 py-0.5 text-[0.5rem] font-bold uppercase tracking-wide text-white pointer-events-none">Blurred</span>
+                          : (
+                            <button type="button" onClick={(e) => { e.stopPropagation(); setManualBlurId(id); }}
+                              title="No face detected — click to blur it by hand"
+                              className="absolute bottom-0.5 left-0.5 rounded bg-amber-600/90 px-1 py-0.5 text-[0.5rem] font-bold uppercase tracking-wide text-white hover:bg-amber-500">
+                              Blur by hand
+                            </button>
+                          )
+                      )}
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); removeFile(id); }}
@@ -883,6 +972,28 @@ export default function PhotoMatchPage() {
                 </div>
                 <button type="button" onClick={clearAll} className="mt-2 text-xs text-zinc-600 hover:text-red-400 transition">Clear all</button>
               </div>
+            )}
+
+            {/* Auto-blur toggle + the bottom "retry" button — faces are blurred as photos are added
+                (paste, drop, upload, handoff — addFiles is the one path all of them go through), so
+                Gemini has no rival face to anchor on. Retry re-runs detection in AGGRESSIVE mode over
+                whatever the first pass missed; safe to press repeatedly. */}
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer">
+                <input type="checkbox" checked={blurSource} onChange={(e) => setBlurSource(e.target.checked)} className="accent-rose-500" />
+                Blur source faces
+              </label>
+              {files.length > 0 && blurSource && (
+                <button type="button" onClick={blurAllFaces} disabled={blurringAll || unblurredCount === 0}
+                  className="rounded-lg border border-zinc-700/60 bg-zinc-800/80 px-2.5 py-1 text-xs font-medium text-zinc-200 transition hover:bg-zinc-700/80 disabled:opacity-50 disabled:cursor-not-allowed">
+                  {blurringAll ? 'Blurring…' : unblurredCount > 0 ? `Retry face blur (${unblurredCount})` : 'All blurred ✓'}
+                </button>
+              )}
+            </div>
+            {blurSource && (
+              <p className="text-[0.625rem] leading-relaxed text-emerald-400/80">
+                Faces are blurred as photos are added, so Gemini has no rival face to copy. Turn off before adding if you want the original.
+              </p>
             )}
 
             <div className="pt-2 border-t border-zinc-800/80">
@@ -1280,6 +1391,13 @@ export default function PhotoMatchPage() {
             </button>
           </div>
         </div>
+      )}
+      {manualBlurId && files.some((f) => f.id === manualBlurId) && (
+        <ManualBlurModal
+          src={files.find((f) => f.id === manualBlurId).previewUrl}
+          onApply={(newDataUrl) => applyManualBlur(manualBlurId, newDataUrl)}
+          onClose={() => setManualBlurId(null)}
+        />
       )}
     </div>
   );

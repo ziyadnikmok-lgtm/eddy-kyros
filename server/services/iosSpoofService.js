@@ -3,23 +3,47 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-// iPhone 16 Pro EXIF data as an Exif buffer
-// We build a minimal EXIF IFD with Make, Model, LensMake, LensModel, FocalLength, FNumber
-// For simplicity, we use sharp's withExifMerge which writes EXIF tags
-
+/**
+ * What a downloaded photo claims to be.
+ *
+ * This is a METADATA CLEANER, not a disguise: every tag the generator wrote is removed, and what
+ * replaces it is the ordinary EXIF a phone photo carries. A file with NO metadata at all is itself
+ * unusual -- ordinary photos have a camera and a date -- so the point is to look like a normal
+ * photo, not like a scrubbed one.
+ *
+ * Lens numbers are the real 17 Pro Max main camera (24mm equivalent, f/1.78). Invented ones would
+ * be worse than none: a focal length no Apple lens has is a stronger tell than a missing tag.
+ */
 const IPHONE_EXIF = {
   IFD0: {
     Make: 'Apple',
-    Model: 'iPhone 16 Pro',
-    Software: '18.0',
+    Model: 'iPhone 17 Pro Max',
+    Software: '19.0',
   },
   IFD2: {
     LensMake: 'Apple',
-    LensModel: 'iPhone 16 Pro back triple camera 6.765mm f/1.78',
+    LensModel: 'iPhone 17 Pro Max back triple camera 6.765mm f/1.78',
     FocalLength: '6765/1000',
     FNumber: '178/100',
   },
 };
+
+/**
+ * A capture time, so the file reads as a photo taken recently rather than one with no date.
+ *
+ * Nothing wrote a date before, which left the most conspicuous gap in the set: a JPEG carrying a
+ * camera model and no DateTimeOriginal is a file someone edited, which is exactly the inference
+ * this is meant to avoid.
+ *
+ * Jittered a few hours back rather than "now": fifty files all stamped the same second is its own
+ * pattern, and a photo timestamped the instant it was downloaded is not one either.
+ */
+function captureStamp() {
+  const d = new Date(Date.now() - Math.floor(Math.random() * 6 * 3600 * 1000) - 600 * 1000);
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}:${p2(d.getMonth() + 1)}:${p2(d.getDate())} `
+    + `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+}
 
 function isAvailable() {
   // Always available — uses sharp (pure Node.js, no external binaries)
@@ -35,26 +59,39 @@ function isAvailable() {
  * @param {string} inputPath — path to source image file
  * @returns {{ filePath: string, filename: string, cleanup: () => void }}
  */
-async function spoofImage(inputPath) {
+async function spoofImage(inputPath, { clean = false } = {}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'iosspoof-'));
   const rand = Math.floor(Math.random() * 90000) + 10000;
   const outName = `IMG_${rand}.jpg`;
   const outPath = path.join(tmpDir, outName);
 
   try {
-    // Build minimal EXIF buffer with iPhone metadata
-    const exifBuf = buildExifBuffer(IPHONE_EXIF);
+    // Built per image, so each file gets its own capture time rather than a shared one.
+    /**
+     * clean = strip everything and write NOTHING back.
+     *
+     * Used by the bulk zip when the camera identity is switched off. The re-encode alone drops
+     * every tag the generator wrote, which is the part that must always happen; adding a phone's
+     * EXIF on top is the optional half.
+     */
+    const when = captureStamp();
+    const exifBuf = clean ? null : buildExifBuffer({
+      ...IPHONE_EXIF,
+      IFD0: { ...IPHONE_EXIF.IFD0, DateTime: when },
+      IFD2: { ...IPHONE_EXIF.IFD2, DateTimeOriginal: when, DateTimeDigitized: when },
+    });
 
-    await sharp(inputPath)
+    const pipeline = sharp(inputPath)
       .rotate() // auto-rotate based on existing EXIF before stripping
       .jpeg({
         quality: 97,
         progressive: true,
         chromaSubsampling: '4:4:4', // no chroma subsampling — preserves color detail
         mozjpeg: true,
-      })
-      .withExif(exifBuf)
-      .toFile(outPath);
+      });
+    // The re-encode above already dropped every original tag. Only the camera identity is
+    // conditional -- in clean mode nothing is written back, so the file carries no EXIF at all.
+    await (exifBuf ? pipeline.withExif(exifBuf) : pipeline).toFile(outPath);
 
     return {
       filePath: outPath,
@@ -82,13 +119,13 @@ function buildExifBuffer(exifData) {
  * Process multiple images. Returns array of spoofed file info.
  * Caller must call cleanup() on each item when done.
  */
-async function spoofBatch(filePaths) {
+async function spoofBatch(filePaths, opts = {}) {
   const results = [];
   const usedNames = new Set();
 
   for (const inputPath of filePaths) {
     try {
-      const result = await spoofImage(inputPath);
+      const result = await spoofImage(inputPath, opts);
       // Ensure unique filenames
       while (usedNames.has(result.filename)) {
         const rand = Math.floor(Math.random() * 90000) + 10000;
