@@ -3440,6 +3440,33 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   const [instruction, setInstruction] = useState(_cache.instruction);
 
   /**
+   * A prompt sent over from the Library's "Use in Generate".
+   *
+   * Read from sessionStorage on mount rather than relying on the event alone: this page is
+   * lazy-loaded, so an event dispatched before its chunk mounts fires into the void -- the same
+   * failure that made the Pinterest handoff silently drop everything (2026-08-10). The event is
+   * still listened for, so a page that is ALREADY open updates without a navigation.
+   *
+   * It fills the instruction box rather than generating. Reusing a prompt is a starting point you
+   * then edit, and spending money on someone's click in another tab would be indefensible.
+   */
+  useEffect(() => {
+    const take = (text) => {
+      const t = String(text || '').trim();
+      if (!t) return;
+      setInstruction(t);
+      notify('Prompt loaded — edit it and press Generate', 'success');
+    };
+    try {
+      const pending = window.sessionStorage.getItem('kyros.reusePrompt');
+      if (pending) { window.sessionStorage.removeItem('kyros.reusePrompt'); take(pending); }
+    } catch { /* private mode */ }
+    const onReuse = (e) => take(e?.detail?.prompt);
+    window.addEventListener('kyros:reuse-prompt', onReuse);
+    return () => window.removeEventListener('kyros:reuse-prompt', onReuse);
+  }, [notify]);
+
+  /**
    * A new base photo starts a new shoot, so the instruction clears with it.
    *
    * The instruction is the one field written FOR a particular picture — "much bigger bust",
