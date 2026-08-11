@@ -251,13 +251,22 @@ export default function EddyCollection({
     // ON by default, like the Gallery page. Off-by-default meant the prompt was there and looked
     // missing -- you had to know a toggle existed to find out (owner, 2026-08-11). The stored
     // value still wins once it has been set either way.
+    /**
+     * A NEW KEY, deliberately.
+     *
+     * The first version defaulted to OFF, and its write-back effect stamped '0' into storage on
+     * the very first mount -- before anyone had touched the toggle. Flipping the default to ON
+     * therefore changed nothing: the stale '0' won, and the owner still saw no prompts after the
+     * fix (2026-08-11). Versioning the key retires that value instead of trying to guess whether
+     * a stored '0' was a real choice or an artefact.
+     */
     try {
-      const v = localStorage.getItem(`eddy.showPrompts.${dbName}`);
+      const v = localStorage.getItem(`eddy.showPrompts.v2.${dbName}`);
       return v === null ? true : v === '1';
     } catch { return true; }
   });
   useEffect(() => {
-    try { localStorage.setItem(`eddy.showPrompts.${dbName}`, showPrompts ? '1' : '0'); } catch { /* private mode */ }
+    try { localStorage.setItem(`eddy.showPrompts.v2.${dbName}`, showPrompts ? '1' : '0'); } catch { /* private mode */ }
   }, [showPrompts, dbName]);
 
   const [imgH, setImgH] = useState(() => {

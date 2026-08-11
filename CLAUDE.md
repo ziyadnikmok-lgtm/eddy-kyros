@@ -501,6 +501,27 @@ the Library. On-screen verification is the owner's, and it has caught what the c
 
 ---
 
+## HOW TO TAKE AN INSTRUCTION (owner, 2026-08-11)
+
+**Take the idea, then make it better — do not just implement it literally.** The owner asks for a
+result, not a specification. Their words are the goal; the shape is yours to get right.
+
+- Build what was asked, then ask what would make it actually good in use, and do that too. "Add a
+  toggle" became a toggle that defaults sensibly, remembers per collection, hides where it makes no
+  sense, and says something when there is nothing to show.
+- **Fix the thing next to it while you are there** — the adjacent bug you can see is cheaper to fix
+  now than after it is reported.
+- Name the improvement in one line so it can be rejected. Do not silently widen scope.
+- Where their words and their goal disagree, follow the GOAL and say what you did. "Delete all"
+  meant "get these folders out of my way", so the work was merged into the plain folder rather than
+  ~40 generated images being destroyed.
+- Do not ask permission for the obvious better version. Do ask before anything destructive or
+  irreversible.
+- **Never hand back a half-answer.** If part is blocked, finish everything else and say plainly what
+  is left and why.
+
+---
+
 ## DEBUGGING — read before touching a reported bug
 
 Written 2026-08-10, after a day where basic fixes each took five rounds. Every rule below is one
@@ -522,7 +543,8 @@ the new chunk was not fetched until 11:54, when the user reloaded by hand.
 cannot serve a stale dist:
 
 ```
-powershell -ExecutionPolicy Bypass -File toolsestart-kyros.ps1
+powershell -ExecutionPolicy Bypass -File tools
+estart-kyros.ps1
 ```
 
 It refuses to restart if the build fails, so a broken build never replaces a working window. It
