@@ -73,5 +73,18 @@ check('an empty folder is empty, not a crash', order([]).length === 0);
 const capped = order(folder).slice(0, 2);
 check('trimming to the cap keeps the face', capped[0] === 'a');
 
+// --- the layout it was first shipped with was wrong (owner screenshot, 2026-08-11) ------------------
+// The picker was a third column inside the row that holds the source thumbnails, so it ran off the
+// card as soon as a couple of extras were loaded: "Pick from Gallery" was cut in half and the
+// character tiles disappeared past the edge.
+check('the picker is its own row, not a column beside the thumbnails',
+  /Its OWN full-width row, not a third column beside the thumbnails/.test(vid));
+check('the tiles wrap instead of hiding in a sideways scroll',
+  vid.includes('<div className="flex flex-wrap gap-2">') && !vid.includes('flex gap-2 overflow-x-auto pb-1'));
+check('the actions column can shrink — a flex child will not, by default',
+  vid.includes('<div className="flex min-w-0 flex-1 flex-col gap-2">'));
+check('and its buttons wrap rather than overflow', vid.includes('<div className="flex flex-wrap items-center gap-2">'));
+check('the reason is recorded at the fix', /was pushed past the card edge/.test(vid));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

@@ -547,8 +547,11 @@ export default function SeedanceVideoPage() {
                 </label>
               </div>
             )}
-            <div className="flex flex-col gap-2 flex-1">
-              <div className="flex items-center gap-2">
+            {/* min-w-0: a flex child refuses to shrink below its content by default, so with several
+                extras loaded this column was pushed past the card edge and "Pick from Gallery" was
+                cut in half. */}
+            <div className="flex min-w-0 flex-1 flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <label className="cursor-pointer">
                   <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleImageUpload} />
                   <span className="inline-block">
@@ -562,53 +565,58 @@ export default function SeedanceVideoPage() {
                   {showGallery ? 'Hide Gallery' : 'Pick from Gallery'}
                 </Btn>
               </div>
-              {/* Third way in: pick a character from EDDY and her photos land in the slot directly.
-                  Shown as her face rather than a name in a dropdown -- you pick a model by looking
-                  at her, and the old select gave no way to tell two blondes apart. */}
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <span className="text-[0.625rem] font-semibold uppercase tracking-wider text-zinc-500">
-                    Or use a character from Eddy
-                  </span>
-                  {charLoading && <Spinner size={12} />}
-                </div>
-                {chars.length === 0 ? (
-                  <p className="text-xs text-zinc-600">
-                    No characters yet — make one on the <span className="text-zinc-400">Eddy · Character</span> tab.
-                  </p>
-                ) : (
-                  <div className="flex gap-2 overflow-x-auto pb-1">
-                    {chars.map((c) => {
-                      const mine = refsForCharacter(c.id);
-                      const lead = mine[0];
-                      const on = characterId === c.id;
-                      return (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={() => applyCharacter(c.id)}
-                          disabled={charLoading}
-                          title={`${c.name || 'Unnamed'} — ${mine.length} photo${mine.length === 1 ? '' : 's'}${on ? ' (click to unpick)' : ''}`}
-                          className={cn('shrink-0 w-16 overflow-hidden rounded-lg border-2 transition cursor-pointer disabled:opacity-50',
-                            on ? 'border-rose-500' : 'border-transparent hover:border-zinc-600')}
-                        >
-                          {lead && charThumbs[lead.id]
-                            ? <img src={charThumbs[lead.id]} alt="" loading="lazy" className="aspect-[3/4] w-full object-cover bg-zinc-950" />
-                            : <span className="flex aspect-[3/4] w-full items-center justify-center bg-white/[0.03] text-[0.5rem] text-zinc-600">No photo</span>}
-                          <span className="block truncate px-1 py-0.5 text-[0.5625rem] text-zinc-400">{c.name || 'Unnamed'}</span>
-                          {/* The count is the useful number here: it is how many reference photos
-                              the model will actually get. */}
-                          <span className="block px-1 pb-0.5 text-[0.5rem] text-zinc-600">{mine.length} ref{mine.length === 1 ? '' : 's'}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
               {/* Every photo here is a REFERENCE the model studies — none becomes a first frame.
                   More angles of her = a stronger likeness in the generated video. */}
               <p className="text-xs text-zinc-500">PNG, JPG, WebP. Photos of your model — used as reference, not as the first frame.</p>
             </div>
+          </div>
+
+          {/* Third way in: pick a character from EDDY and her photos land in the slot directly.
+              Shown as her face rather than a name in a dropdown -- you pick a model by looking at
+              her, and the old select gave no way to tell two blondes apart.
+
+              Its OWN full-width row, not a third column beside the thumbnails: squeezed in there it
+              ran off the edge of the card as soon as a couple of extras were loaded, and the tiles
+              only WRAP because they have the width to. */}
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span className="text-[0.625rem] font-semibold uppercase tracking-wider text-zinc-500">
+                Or use a character from Eddy
+              </span>
+              {charLoading && <Spinner size={12} />}
+            </div>
+            {chars.length === 0 ? (
+              <p className="text-xs text-zinc-600">
+                No characters yet — make one on the <span className="text-zinc-400">Eddy · Character</span> tab.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {chars.map((c) => {
+                  const mine = refsForCharacter(c.id);
+                  const lead = mine[0];
+                  const on = characterId === c.id;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => applyCharacter(c.id)}
+                      disabled={charLoading}
+                      title={`${c.name || 'Unnamed'} — ${mine.length} photo${mine.length === 1 ? '' : 's'}${on ? ' (click to unpick)' : ''}`}
+                      className={cn('w-20 shrink-0 overflow-hidden rounded-lg border-2 transition cursor-pointer disabled:opacity-50',
+                        on ? 'border-rose-500' : 'border-transparent hover:border-zinc-600')}
+                    >
+                      {lead && charThumbs[lead.id]
+                        ? <img src={charThumbs[lead.id]} alt="" loading="lazy" className="aspect-[3/4] w-full object-cover bg-zinc-950" />
+                        : <span className="flex aspect-[3/4] w-full items-center justify-center bg-white/[0.03] text-[0.5rem] text-zinc-600">No photo</span>}
+                      <span className="block truncate px-1 py-0.5 text-[0.5625rem] text-zinc-400">{c.name || 'Unnamed'}</span>
+                      {/* The count is the useful number here: it is how many reference photos
+                          the model will actually get. */}
+                      <span className="block px-1 pb-0.5 text-[0.5rem] text-zinc-600">{mine.length} ref{mine.length === 1 ? '' : 's'}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {showGallery && (
