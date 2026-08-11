@@ -248,7 +248,13 @@ export default function EddyCollection({
    * Remembered per collection, so turning it on in Base Library does not switch it on in Pose.
    */
   const [showPrompts, setShowPrompts] = useState(() => {
-    try { return localStorage.getItem(`eddy.showPrompts.${dbName}`) === '1'; } catch { return false; }
+    // ON by default, like the Gallery page. Off-by-default meant the prompt was there and looked
+    // missing -- you had to know a toggle existed to find out (owner, 2026-08-11). The stored
+    // value still wins once it has been set either way.
+    try {
+      const v = localStorage.getItem(`eddy.showPrompts.${dbName}`);
+      return v === null ? true : v === '1';
+    } catch { return true; }
   });
   useEffect(() => {
     try { localStorage.setItem(`eddy.showPrompts.${dbName}`, showPrompts ? '1' : '0'); } catch { /* private mode */ }
@@ -2564,6 +2570,14 @@ export default function EddyCollection({
                 {/* The prompt, under the picture rather than over it: an overlay would cover the
                     thing you are looking at, and this text is read deliberately, not glanced at.
                     Click to copy -- reusing a prompt is the reason to look at one. */}
+                {/* A row with NO prompt gets a muted line rather than nothing. Blank is
+                    ambiguous -- it reads as "the feature is broken" when the truth is "this
+                    picture was added before prompts were saved". */}
+                {showPrompts && !withPrompt && !(it.prompt || '').trim() && (thumbs[it.id] || it.url) && (
+                  <p className="mt-1 rounded-md bg-black/20 px-2 py-1 text-[0.625rem] italic text-zinc-600">
+                    no prompt saved for this one
+                  </p>
+                )}
                 {showPrompts && !withPrompt && (it.prompt || '').trim() && (
                   <button
                     type="button"
