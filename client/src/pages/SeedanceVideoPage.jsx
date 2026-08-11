@@ -1,21 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { video as videoApi, seedanceOmni as omniApi, gallery as galleryApi, characters as charApi } from '../services/api';
+import { video as videoApi, gallery as galleryApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Select, Slider, Textarea, Toggle, Badge, Spinner, ConfirmDialog } from '../components/UI';
-import { OMNI_MODELS, SEEDANCE_ASPECT_RATIOS, SEEDANCE_DURATION_MIN, SEEDANCE_DURATION_MAX } from '../config/photoModes';
+import { SEEDANCE_MODELS, SEEDANCE_ASPECT_RATIOS, SEEDANCE_DURATION_MIN, SEEDANCE_DURATION_MAX, SEEDANCE_DURATION_DEFAULT } from '../config/photoModes';
 import { pushPending, resolvePending, rejectPending, attachTaskId } from '../lib/generationFeed';
 import { detectAspectRatio } from '../lib/detectAspectRatio';
 import { createPageStore } from '../lib/pageStateStore';
 import { cn } from '../lib/utils';
 
-// This page uses the Omni REFERENCE models, not the image-to-video ones. The difference is the
-// whole point: image-to-video makes the uploaded photo the literal FIRST FRAME and animates out of
-// it; Omni reference just SHOWS the model the character and builds a fresh video of her from the
-// prompt. The user wanted the latter ("just see our model and create a video"), so the source
-// images ride along as reference (images_list), never as frame 0. The sibling Seedance Omni page
-// covers the video-reference case; this one is images-only. Both hit the same /seedance-omni route,
-// the same video history, and the same status poller.
-const MODEL_MAP = Object.fromEntries(OMNI_MODELS.map((m) => [m.id, m]));
+const MODEL_MAP = Object.fromEntries(SEEDANCE_MODELS.map((m) => [m.id, m]));
 // 'auto' snaps to whichever supported ratio is closest to the source image — Seedance has a
 // fixed enum, so there is no true passthrough.
 const ASPECT_RATIO_OPTIONS = [{ value: 'auto', label: 'Auto (match source)' }, ...SEEDANCE_ASPECT_RATIOS.map((r) => ({ value: r, label: r }))];
@@ -29,19 +22,12 @@ function fileToBase64(file) {
   });
 }
 
-// What the panel opens on. These are THIS page's defaults, not the shared SEEDANCE_* ones: every
-// clip made here is a vertical 10-second social post shot on a moving camera, so opening on 5s /
-// auto-ratio / camera-locked meant re-setting all three controls before every single generation.
-// Omni deliberately keeps the shared defaults — its duration is snapped to the reference clip.
-//
-// Still only defaults: each control writes back to _cache below, so a change made for one clip
-// carries to the next within the session, and a reload starts from these again.
 const _cache = {
-  model: 'omni-no-video-fast',   // pinned: the images-only reference variant, this page's whole point
+  model: 'seedance-2-fast',
   prompt: '',
-  duration: 10,
-  aspectRatio: '9:16',
-  lockCamera: false,
+  duration: SEEDANCE_DURATION_DEFAULT,
+  aspectRatio: 'auto',
+  lockCamera: true,
 };
 // The source image is too big for _cache/localStorage — IndexedDB so it survives a reload.
 const store = createPageStore('kyros-seedance-video-state');
@@ -51,9 +37,7 @@ const store = createPageStore('kyros-seedance-video-state');
 const NO_ZOOM_DIRECTIVE = 'Static locked-off camera. No zoom, no push-in, no dolly, no camera movement — the frame stays fixed while only the subject moves.';
 
 export default function SeedanceVideoPage() {
-  // `characters` feeds the character shortcut on the source slot. Defaulted so the dropdown renders
-  // empty rather than throwing if the list has not loaded yet.
-  const { notify, characters = [] } = useApp();
+  const { notify } = useApp();
 
   const [model, setModel] = useState(_cache.model);
   const [prompt, setPrompt] = useState(_cache.prompt);
@@ -61,19 +45,9 @@ export default function SeedanceVideoPage() {
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [lockCamera, setLockCamera] = useState(_cache.lockCamera);
 
-  // Character shortcut for the source image. Deliberately NOT persisted with the rest of the source
-  // state: the image itself is what matters and is already saved, so a restored page shows the photo
-  // without claiming a character is still "selected" after you have since dropped a different image.
-  const [characterId, setCharacterId] = useState('');
-  const [charLoading, setCharLoading] = useState(false);
   const [sourceImage, setSourceImage] = useState(null);
   const [sourcePreview, setSourcePreview] = useState(null);
   const [sourceGalleryId, setSourceGalleryId] = useState(null);
-  // EXTRA source images beyond the first. images_list is an array in Muapi's schema — for Omni
-  // reference EVERY entry is a reference photo of the model (no first frame). More angles = a
-  // stronger likeness. Kept separate from the primary trio above so every existing path (restore,
-  // ratio detection, the feed thumb) is untouched when there is only one image.
-  const [extras, setExtras] = useState([]); // [{ id, dataUrl }]
   // The three source fields only ever move together — a per-field restore guard could mix a
   // saved galleryId into a just-uploaded image, and handleGenerate prefers galleryId, so it
   // would render the wrong picture. This flips the moment anything touches the source, and
@@ -107,7 +81,6 @@ export default function SeedanceVideoPage() {
         setSourceImage(src.image ?? null);
         setSourcePreview(src.preview);
         setSourceGalleryId(src.galleryId ?? null);
-        if (Array.isArray(src.extras)) setExtras(src.extras);
       }
       if (p) setPrompt((cur) => cur || p);
       setRestored(true);
@@ -117,8 +90,8 @@ export default function SeedanceVideoPage() {
 
   // Persist only after the restore has run, or the first empty render would wipe the save.
   useEffect(() => {
-    if (restored) store.set('source', { image: sourceImage, preview: sourcePreview, galleryId: sourceGalleryId, extras });
-  }, [sourceImage, sourcePreview, sourceGalleryId, extras, restored]);
+    if (restored) store.set('source', { image: sourceImage, preview: sourcePreview, galleryId: sourceGalleryId });
+  }, [sourceImage, sourcePreview, sourceGalleryId, restored]);
   useEffect(() => { if (restored) store.set('prompt', prompt); }, [prompt, restored]);
 
   useEffect(() => { _cache.model = model; }, [model]);
@@ -127,7 +100,7 @@ export default function SeedanceVideoPage() {
   useEffect(() => { _cache.aspectRatio = aspectRatio; }, [aspectRatio]);
   useEffect(() => { _cache.lockCamera = lockCamera; }, [lockCamera]);
 
-  const modelInfo = MODEL_MAP[model] || OMNI_MODELS[0];
+  const modelInfo = MODEL_MAP[model] || SEEDANCE_MODELS[0];
   const estimatedCost = duration * modelInfo.pricePerSecond;
 
   const fetchGallery = useCallback(async () => {
@@ -184,11 +157,6 @@ export default function SeedanceVideoPage() {
     return () => clearInterval(iv);
   }, [updateJob, notify]);
 
-  /**
-   * Add a photo to the source set. The FIRST one fills the primary slot; every one after that stacks
-   * as an extra reference rather than replacing it — which is what makes "drop a few more" work
-   * instead of each drop wiping the last. All of them are reference photos of the model.
-   */
   const applyImageFile = async (file) => {
     if (!file) return;
     if (!/^image\/(png|jpeg|jpg|webp)$/i.test(file.type)) {
@@ -197,85 +165,20 @@ export default function SeedanceVideoPage() {
     }
     const dataUrl = await fileToBase64(file);
     sourceTouched.current = true;
-    if (!sourcePreview) {
-      setSourceImage(dataUrl);
-      setSourcePreview(dataUrl);
-      setSourceGalleryId(null);
-    } else {
-      setExtras((prev) => [...prev, { id: `x-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, dataUrl }]);
-    }
-  };
-
-  /** Drop the primary and promote the first extra, so removing image 1 never empties the page. */
-  const removePrimary = () => {
-    sourceTouched.current = true;
-    setExtras((prev) => {
-      const [next, ...rest] = prev;
-      if (next) { setSourceImage(next.dataUrl); setSourcePreview(next.dataUrl); setSourceGalleryId(null); }
-      else { setSourceImage(null); setSourcePreview(null); setSourceGalleryId(null); }
-      return rest;
-    });
-  };
-
-  const removeExtra = (id) => {
-    sourceTouched.current = true;
-    setExtras((prev) => prev.filter((x) => x.id !== id));
+    setSourceImage(dataUrl);
+    setSourcePreview(dataUrl);
+    setSourceGalleryId(null);
   };
 
   const handleImageUpload = async (e) => {
     await applyImageFile(e.target.files?.[0]);
   };
 
-  /**
-   * Pick a Character and load EVERY photo she has into the source set as reference images (all of
-   * them ride along in images_list — none is a first frame). Replaces the current set rather than
-   * appending — picking a character is "use her", not "add her to whatever is already here".
-   */
-  const applyCharacter = async (id) => {
-    setCharacterId(id);
-    if (!id) return;
-    const c = characters.find((x) => x.id === id);
-    const urls = [];
-    // Primaries in index order (the shot she was built from stays first), then each ACTIVE reference.
-    const primaryCount = Math.max(0, Number(c?.primaryImageCount || 0));
-    if (primaryCount > 0) {
-      for (let i = 0; i < primaryCount; i += 1) urls.push(charApi.primaryImageUrl(id, i));
-    } else {
-      urls.push(charApi.imageUrl(id));   // older character with a single un-indexed primary
-    }
-    for (const ref of c?.references || []) {
-      if (ref?.isActive) urls.push(charApi.refImageUrl(id, ref.id));
-    }
-    if (!urls.length) return;
-
-    setCharLoading(true);
-    try {
-      const loaded = [];
-      for (const u of urls) {
-        try {
-          const resp = await fetch(u, { credentials: 'include' });
-          if (!resp.ok) continue;                       // skip the bad one, keep the rest
-          const blob = await resp.blob();
-          loaded.push(await fileToBase64(new File([blob], 'character', { type: blob.type || 'image/png' })));
-        } catch { /* one unreachable photo must not lose the others */ }
-      }
-      if (!loaded.length) { notify('Could not load that character’s photos', 'error'); return; }
-      sourceTouched.current = true;
-      setSourceImage(loaded[0]);
-      setSourcePreview(loaded[0]);
-      setSourceGalleryId(null);
-      setExtras(loaded.slice(1).map((d, i) => ({ id: `x-${Date.now()}-${i}`, dataUrl: d })));
-    } finally {
-      setCharLoading(false);
-    }
-  };
-
   const handleDrop = async (e) => {
     e.preventDefault();
     setDragging(false);
-    // Every dropped file, not just the first — dropping a handful should add a handful.
-    const files = Array.from(e.dataTransfer?.files || []);
-    if (files.length) { for (const f of files) await applyImageFile(f); return; }
+    const file = e.dataTransfer?.files?.[0];
+    if (file) { await applyImageFile(file); return; }
     // Dragging an <img> in from a browser/gallery drops a URL, not a file.
     const url = e.dataTransfer?.getData('text/uri-list') || e.dataTransfer?.getData('text/plain');
     if (url && /^https?:|^data:/.test(url)) {
@@ -285,13 +188,9 @@ export default function SeedanceVideoPage() {
         if (!/^image\//.test(blob.type)) throw new Error('not an image');
         const dataUrl = await fileToBase64(new File([blob], 'dropped', { type: blob.type }));
         sourceTouched.current = true;
-        if (!sourcePreview) {
-          setSourceImage(dataUrl);
-          setSourcePreview(dataUrl);
-          setSourceGalleryId(null);
-        } else {
-          setExtras((prev) => [...prev, { id: `x-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, dataUrl }]);
-        }
+        setSourceImage(dataUrl);
+        setSourcePreview(dataUrl);
+        setSourceGalleryId(null);
       } catch {
         notify('Couldn\'t read that dragged image — try Upload instead', 'error');
       }
@@ -308,13 +207,7 @@ export default function SeedanceVideoPage() {
 
   const handleGenerate = async () => {
     if (!sourceImage && !sourceGalleryId) {
-      notify('Add at least one photo of your model — she is the reference', 'error');
-      return;
-    }
-    // Omni reference REQUIRES a prompt (the i2v endpoint could animate a frame with none). The
-    // prompt is what the model builds; without it the server 400s, so stop here with a clear message.
-    if (!prompt.trim()) {
-      notify('Write a prompt — it describes the video to build with your model', 'error');
+      notify('Select or upload a source image first', 'error');
       return;
     }
 
@@ -357,34 +250,23 @@ export default function SeedanceVideoPage() {
 
     setSubmitting(true);
     try {
+      const body = { model, duration, aspectRatio: ratio };
       // Camera-lock directive leads so the model reads it before any subject motion.
       const promptParts = [];
       if (lockCamera) promptParts.push(NO_ZOOM_DIRECTIVE);
       if (prompt.trim()) promptParts.push(prompt.trim());
       const finalPrompt = promptParts.join(' ');
+      if (finalPrompt) body.prompt = finalPrompt;
 
-      // Omni takes reference images as {base64, mimeType}. Every source here becomes a reference —
-      // none of them is a first frame. Uploads and character photos already carry their bytes; a
-      // gallery pick is only an id, so fetch it to bytes before sending.
-      const toRef = (dataUrl) => {
-        const m = String(dataUrl).match(/^data:([^;]+);base64,(.+)$/);
-        return m ? { base64: m[2], mimeType: m[1] } : { base64: dataUrl, mimeType: 'image/png' };
-      };
-      const images = [];
-      if (sourceImage) {
-        images.push(toRef(sourceImage));
-      } else if (sourceGalleryId) {
-        const resp = await fetch(galleryApi.imageUrl(sourceGalleryId), { credentials: 'include' });
-        if (!resp.ok) throw new Error('Could not load the gallery image');
-        const blob = await resp.blob();
-        images.push(toRef(await fileToBase64(new File([blob], 'source', { type: blob.type || 'image/png' }))));
+      if (sourceGalleryId) {
+        body.galleryId = sourceGalleryId;
+      } else if (sourceImage) {
+        const match = sourceImage.match(/^data:([^;]+);base64,(.+)$/);
+        if (match) { body.image = match[2]; body.imageMimeType = match[1]; }
+        else body.image = sourceImage;
       }
-      for (const x of extras) images.push(toRef(x.dataUrl));
 
-      const body = { model, duration, aspectRatio: ratio, prompt: finalPrompt, images };
-      if (modelInfo.quality) body.quality = 'high';   // only omni-best reads this
-
-      const res = await omniApi.generate(body);
+      const res = await videoApi.generate(body);
       if (res.status === 'failed') throw new Error('Muapi returned an error — try again or pick a different model');
       updateJob(jobId, { status: 'processing', taskId: res.taskId, startedAt: Date.now() });
       // Give the feed the taskId so it can finish the card itself. Renders continue on the
@@ -443,12 +325,7 @@ export default function SeedanceVideoPage() {
                 onDrop={handleDrop}
               >
                 <img src={sourcePreview} alt="Source" className={cn('w-40 h-52 object-cover rounded-xl border bg-zinc-950 transition-colors', dragging ? 'border-rose-500' : 'border-zinc-800/60')} />
-                {/* Only the FIRST image becomes the opening frame, so it is labelled — with several
-                    loaded it is otherwise impossible to tell which one the video starts on. */}
-                {extras.length > 0 && (
-                  <span className="absolute bottom-1 left-1 rounded bg-black/75 px-1.5 py-0.5 text-[0.5625rem] font-bold text-white">1 · reference</span>
-                )}
-                <button onClick={removePrimary}
+                <button onClick={() => { sourceTouched.current = true; setSourceImage(null); setSourcePreview(null); setSourceGalleryId(null); }}
                   className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-zinc-800 border border-zinc-600 text-zinc-400 text-xs flex items-center justify-center hover:text-white cursor-pointer">
                   ×
                 </button>
@@ -468,40 +345,6 @@ export default function SeedanceVideoPage() {
                 <span>{dragging ? 'Drop image' : 'Drag image here or click'}</span>
               </label>
             )}
-
-            {/* Every EXTRA source image, plus an always-present "+" so more can be dropped or picked
-                at any time. Numbered from 2 because the primary above is image 1. */}
-            {sourcePreview && (
-              <div className="flex flex-wrap content-start gap-2">
-                {extras.map((x, i) => (
-                  <div key={x.id} className="relative">
-                    <img src={x.dataUrl} alt="" className="h-24 w-20 rounded-lg border border-zinc-800/60 bg-zinc-950 object-cover" />
-                    <span className="absolute bottom-0.5 left-0.5 rounded bg-black/75 px-1 text-[0.5rem] font-bold text-white">{i + 2}</span>
-                    <button
-                      onClick={() => removeExtra(x.id)}
-                      className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-zinc-600 bg-zinc-800 text-[0.625rem] text-zinc-400 hover:text-white cursor-pointer"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-                <label
-                  className={cn(
-                    'flex h-24 w-20 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed text-[0.625rem] transition-colors',
-                    dragging ? 'border-rose-500 bg-rose-500/[0.06] text-rose-300' : 'border-zinc-800/60 text-zinc-600 hover:border-zinc-600',
-                  )}
-                  onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-                  onDragLeave={() => setDragging(false)}
-                  onDrop={handleDrop}
-                  title="Add another source image"
-                >
-                  <input type="file" accept="image/png,image/jpeg,image/webp" multiple className="hidden"
-                    onChange={async (e) => { for (const f of Array.from(e.target.files || [])) await applyImageFile(f); e.target.value = ''; }} />
-                  <span className="text-lg leading-none">+</span>
-                  <span>Add more</span>
-                </label>
-              </div>
-            )}
             <div className="flex flex-col gap-2 flex-1">
               <div className="flex items-center gap-2">
                 <label className="cursor-pointer">
@@ -517,25 +360,7 @@ export default function SeedanceVideoPage() {
                   {showGallery ? 'Hide Gallery' : 'Pick from Gallery'}
                 </Btn>
               </div>
-              {/* Third way in: pick a Character and her photo lands in the slot directly. Same result
-                  as uploading it by hand, without going and finding the file every time. */}
-              <div className="flex items-center gap-2">
-                <select
-                  value={characterId}
-                  onChange={(e) => applyCharacter(e.target.value)}
-                  disabled={charLoading}
-                  className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:border-rose-500 focus:outline-none disabled:opacity-50"
-                >
-                  <option value="">Or use a character…</option>
-                  {characters.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name || c.id}</option>
-                  ))}
-                </select>
-                {charLoading && <Spinner size={16} />}
-              </div>
-              {/* Every photo here is a REFERENCE the model studies — none becomes a first frame.
-                  More angles of her = a stronger likeness in the generated video. */}
-              <p className="text-xs text-zinc-500">PNG, JPG, WebP. Photos of your model — used as reference, not as the first frame.</p>
+              <p className="text-xs text-zinc-500">PNG, JPG, WebP. This becomes the first frame of the video.</p>
             </div>
           </div>
 
@@ -571,7 +396,7 @@ export default function SeedanceVideoPage() {
         <Card className="p-4 space-y-3">
           <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">Model</h3>
           <div className="grid grid-cols-2 gap-3">
-            {OMNI_MODELS.map((m) => (
+            {SEEDANCE_MODELS.map((m) => (
               <button
                 key={m.id}
                 type="button"

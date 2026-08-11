@@ -1,20 +1,5 @@
 @import "tailwindcss";
 
-/* ── WORKSPACES ───────────────────────────────────────────────────────────────────────────
-   Each browser tab at the top of the app is a WORKSPACE: the same application, same pages,
-   same code, with its own look. Switching sets data-workspace on <html>.
-
-   Each person's UI lives in its OWN file so we can restyle independently without touching each
-   other's tab. Imported last so a workspace can override anything above it.
-
-   How one attribute re-skins the whole app: Tailwind v4 compiles every `bg-rose-500` to
-   `background-color: var(--color-rose-500)`, and the accent runs through `rose-*` in ~660
-   places — so overriding the rose ramp inside a workspace block re-themes all of them at once,
-   without touching a single component. */
-@import "./workspaces/eddy.css";
-@import "./workspaces/ziyad.css";
-@import "./workspaces/max.css";
-
 /* Everything in the app is sized in rem, so the root font size scales the whole interface at
    once — labels, chips, body copy, buttons. Bumping individual classes one at a time was
    never going to catch them all.
@@ -261,7 +246,6 @@ input[type=range].rose-slider::-moz-range-thumb {
   background-position: center bottom;
   background-repeat: no-repeat;
 }
-
 
 /* Muted greys were unreadable against this background — zinc-600 in particular is nearly the
    same value as the panels it sits on. Raising the floor here fixes every hint, caption and

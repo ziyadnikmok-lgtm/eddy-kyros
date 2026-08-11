@@ -16,24 +16,6 @@ const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 3_000;
 
 /** Retry a fetch call on connection errors (timeout, ECONNREFUSED, etc.) */
-/**
- * Out of credits, told apart from every other 400.
- *
- * WaveSpeed reports it as a plain 400 with the reason only in the body, so it reached the client
- * as a generic WAVESPEED_ERROR -- indistinguishable from a bad request, therefore retried four
- * times per image and then attempted on every remaining combo in the batch. Seven identical
- * failures in three seconds; an 81-image batch would be 324 pointless calls (owner's log,
- * 2026-08-10).
- *
- * Narrow on purpose: only "insufficient credit(s)". A blanket 400 rule would also swallow a stale
- * media URL, which genuinely is worth retrying.
- */
-function throwIfOutOfCredits(status, text) {
-  if (status === 400 && /insufficient\s+credit/i.test(text || '')) {
-    throw new AppError('WaveSpeed is out of credits - top up your account to continue', 402, 'INSUFFICIENT_CREDITS');
-  }
-}
-
 async function _fetchWithRetry(url, options, retries = MAX_RETRIES) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -72,18 +54,7 @@ async function uploadFile(filePath) {
   const footer = `\r\n--${boundary}--\r\n`;
   const body = Buffer.concat([Buffer.from(header), fileBuffer, Buffer.from(footer)]);
 
-  /**
-   * _fetchWithRetry, not bare fetch, and wrapped.
-   *
-   * A network-level failure — DNS, TLS, connection reset, laptop asleep — makes fetch itself throw
-   * `TypeError: fetch failed`, which is NOT an HTTP response and so slipped straight past the
-   * `!resp.ok` check below. It surfaced as a bare 500 TYPE_ERROR naming no service and no step, on
-   * a Base run that never touches Seedream (owner's partner, 2026-08-09). Retrying first, then
-   * saying which call died, turns a mystery into something actionable.
-   */
-  let resp;
-  try {
-    resp = await _fetchWithRetry(`${BASE_URL}/media/upload/binary`, {
+  const resp = await fetch(`${BASE_URL}/media/upload/binary`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${key}`,
@@ -91,12 +62,7 @@ async function uploadFile(filePath) {
     },
     body,
     signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
-    });
-  } catch (fetchErr) {
-    const cause = fetchErr?.cause?.code || fetchErr?.cause?.message || fetchErr?.message || 'unknown';
-    log.error('wavespeed_upload_fetch_failed', { cause: String(cause).slice(0, 300) });
-    throw new AppError(`WaveSpeed upload connection failed: ${String(cause).slice(0, 200)}`, 502, 'WAVESPEED_UPLOAD_ERROR');
-  }
+  });
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
@@ -156,19 +122,11 @@ async function createVideoTask(modelId, params) {
 
 async function getTaskStatus(taskId) {
   const key = getApiKey();
-  // Same reasoning as uploadFile: this runs in a poll loop, so one network blip used to kill a
-  // job WaveSpeed had already accepted and was still working on.
-  let resp;
-  try {
-    resp = await _fetchWithRetry(`${BASE_URL}/predictions/${taskId}/result`, {
-      method: 'GET',
-      headers: { Authorization: `Bearer ${key}` },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-  } catch (fetchErr) {
-    const cause = fetchErr?.cause?.code || fetchErr?.cause?.message || fetchErr?.message || 'unknown';
-    throw new AppError(`WaveSpeed status check connection failed: ${String(cause).slice(0, 200)}`, 502, 'WAVESPEED_STATUS_ERROR');
-  }
+  const resp = await fetch(`${BASE_URL}/predictions/${taskId}/result`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${key}` },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
@@ -257,7 +215,6 @@ async function generateImage(prompt, options = {}) {
     const text = await resp.text().catch(() => '');
     if (resp.status === 401) throw new AppError('WaveSpeed auth failed', 401, 'INVALID_API_KEY');
     if (resp.status === 429) throw new AppError('WaveSpeed rate limited', 429, 'RATE_LIMITED');
-    throwIfOutOfCredits(resp.status, text);
     throw new AppError(`WaveSpeed image error (${resp.status}): ${text.slice(0, 300)}`, 502, 'WAVESPEED_ERROR');
   }
 
@@ -325,20 +282,7 @@ async function _downloadImageAsBase64(url, modelId) {
 // ── SeedDream v4.5 edit-sequential ────────────────────────────
 const SEEDDREAM_MODEL_ID = 'bytedance/seedream-v4.5/edit-sequential';
 const SEEDDREAM_POLL_INTERVAL_MS = 1500;
-/**
- * 4 min, not 3.
- *
- * WaveSpeed GENERATED the images and billed for them; the server stopped waiting first and threw
- * the result away, so the app reported 0 generated while the pictures sat finished on WaveSpeed
- * (owner, 2026-08-10). The client already allows 5 min for this route, so the server was the
- * tighter of the two limits for no reason -- it now sits inside the client's budget with a margin
- * rather than below it.
- *
- * Raising this does not make a hung request hang forever: the client's own 5-min ceiling still
- * ends it, and a timed-out prediction id is now logged so the image can be fetched rather than
- * being paid for and lost.
- */
-const SEEDDREAM_MAX_POLL_MS = 240_000;
+const SEEDDREAM_MAX_POLL_MS = 180_000; // 3 min — sequential edit takes longer
 
 /**
  * Edit 1–4 images with SeedDream v4.5, preserving character identity across all.
@@ -406,7 +350,6 @@ async function generateSeedDreamEdit(imageInputs, prompt, opts = {}) {
     log.error('seeddream_api_error', { status: resp.status, body: text.slice(0, 500) });
     if (resp.status === 401) throw new AppError('WaveSpeed auth failed', 401, 'INVALID_API_KEY');
     if (resp.status === 429) throw new AppError('WaveSpeed rate limited', 429, 'RATE_LIMITED');
-    throwIfOutOfCredits(resp.status, text);
     throw new AppError(`SeedDream error (${resp.status}): ${text.slice(0, 300)}`, 502, 'WAVESPEED_ERROR');
   }
 
@@ -426,36 +369,17 @@ async function generateSeedDreamEdit(imageInputs, prompt, opts = {}) {
   return await _pollSeedDreamResult(key, taskId);
 }
 
-/**
- * `maxMs` / `label` default to Seedream's so existing callers are untouched.
- *
- * WHY THEY ARE PARAMETERS: nano-banana-2 shares this poller, and a real run of it reported
- * 182,769 ms of inference alone — against a 180,000 ms deadline. The job had COMPLETED on
- * WaveSpeed and the picture was sitting at its output URL; we gave up four seconds early, told
- * the user "SeedDream edit timed out" on a page that has nothing to do with Seedream, and still
- * paid for the image (owner, 2026-08-08, with the prediction JSON to prove it).
- *
- * The lesson is that a timeout on an already-billed job is a pure loss, so the ceiling belongs
- * near the model's worst case rather than near its average.
- */
-async function _pollSeedDreamResult(key, taskId, { maxMs = SEEDDREAM_MAX_POLL_MS, label = 'SeedDream edit' } = {}) {
-  const deadline = Date.now() + maxMs;
+async function _pollSeedDreamResult(key, taskId) {
+  const deadline = Date.now() + SEEDDREAM_MAX_POLL_MS;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, SEEDDREAM_POLL_INTERVAL_MS));
     const res = await getTaskStatus(taskId);
     if (res.status === 'completed') return await _extractSeedDreamResults(res);
     if (res.status === 'failed') {
-      throw new AppError(`${label} failed: ${res.error || 'unknown'}`, 502, 'WAVESPEED_FAILED');
+      throw new AppError(`SeedDream edit failed: ${res.error || 'unknown'}`, 502, 'WAVESPEED_FAILED');
     }
   }
-  // Name the id: the prediction usually finishes moments later, and its result URL is
-  // https://api.wavespeed.ai/api/v3/predictions/<id>/result — recoverable rather than lost.
-  //
-  // Logged at ERROR with the id on its own field, not only inside the message, so an abandoned
-  // BILLED prediction can be found by grepping the log rather than by reading every line. This is
-  // money already spent: the one thing that must never happen quietly.
-  log.error('wavespeed_timeout_billed', { taskId, label, waitedMs: maxMs });
-  throw new AppError(`${label} timed out after ${Math.round(maxMs / 1000)}s (prediction ${taskId})`, 504, 'WAVESPEED_TIMEOUT');
+  throw new AppError('SeedDream edit timed out', 504, 'WAVESPEED_TIMEOUT');
 }
 
 async function _extractSeedDreamResults(data) {
@@ -566,7 +490,6 @@ async function generateImg2Img(imageBase64, mimeType, prompt, options = {}) {
     log.error('wavespeed_img2img_error', { status: resp.status, body: text.slice(0, 500) });
     if (resp.status === 401) throw new AppError('WaveSpeed auth failed', 401, 'INVALID_API_KEY');
     if (resp.status === 429) throw new AppError('WaveSpeed rate limited', 429, 'RATE_LIMITED');
-    throwIfOutOfCredits(resp.status, text);
     throw new AppError(`WaveSpeed img2img error (${resp.status}): ${text.slice(0, 300)}`, 502, 'WAVESPEED_ERROR');
   }
 
@@ -606,16 +529,6 @@ async function downloadVideo(videoUrl, destDir) {
 // $0.003 per extra image), so switching provider does not change what a run costs.
 const SEEDREAM5_MODEL_ID = 'bytedance/seedream-v5.0-pro/edit';
 
-// Nano Banana 2 edit, on WaveSpeed. Model id and request shape taken from WaveSpeed's own
-// published example for this endpoint (owner supplied it, 2026-08-07) — not guessed.
-// NOTE it takes image URLs, not base64, which is why it reuses the same upload path and
-// content-keyed cache Seedream's edit uses rather than posting bytes.
-const NANO2_MODEL_ID = 'google/nano-banana-2/edit';
-// Nano Banana 2 is SLOW: a measured run spent 182.8s in inference alone, before queue time.
-// Ten minutes is deliberately far above that — the cost of waiting is a spinner, the cost of
-// giving up early is an image that was generated, billed, and thrown away.
-const NANO2_MAX_POLL_MS = 600_000;
-
 // Every combo in a batch re-sends the same character photos, so without this a 30-image run
 // uploads them 30 times — re-encoding each with sharp and pushing it over the wire again.
 // Keyed by content, so identical bytes upload once and every later combo reuses the URL.
@@ -651,100 +564,6 @@ function _rememberUpload(hash, url) {
  * @param {{aspectRatio?: string, resolution?: string}} opts
  * @returns {{ images: Array<{base64Data: string, mimeType: string}>, modelUsed: string }}
  */
-/**
- * Nano Banana 2 edit (WaveSpeed).
- *
- * Same shape as generateSeedream5Edit and deliberately so: identical upload path, identical
- * content-keyed cache, identical poll. The ONLY differences are the endpoint, the two search
- * flags this model accepts, and png output. Sharing the upload cache matters — a Base run and a
- * Seedream run over the same character photos upload them once between them.
- *
- * `enable_web_search` / `enable_image_search` are sent explicitly false. They default on for some
- * WaveSpeed models, and a base photo that quietly pulled in a web image would break the one thing
- * this call exists to guarantee: that the person who comes back is the person in the references.
- */
-async function generateNanoBanana2Edit(imageInputs, prompt, opts = {}) {
-  if (!Array.isArray(imageInputs) || !imageInputs.length) {
-    throw new AppError('At least one source image is required', 400, 'VALIDATION_ERROR');
-  }
-  if (imageInputs.length > 10) throw new AppError('Nano Banana 2 takes at most 10 images', 400, 'VALIDATION_ERROR');
-
-  const sharp = require('sharp');
-  const key = getApiKey();
-  const usedHashes = [];
-
-  const uploadedUrls = await Promise.all(imageInputs.map(async ({ base64 }) => {
-    let raw = base64;
-    const m = raw.match(/^data:[^;]+;base64,(.+)$/);
-    if (m) raw = m[1];
-    const hash = crypto.createHash('sha256').update(raw).digest('hex');
-    usedHashes.push(hash);
-    const cached = _cachedUpload(hash);
-    if (cached) return cached;
-    const pending = (async () => {
-      const jpegBuf = await sharp(Buffer.from(raw, 'base64')).jpeg({ quality: 95 }).toBuffer();
-      const tempPath = path.join(os.tmpdir(), `ws-nb2-${crypto.randomUUID()}.jpg`);
-      try {
-        fs.writeFileSync(tempPath, jpegBuf);
-        return await uploadFile(tempPath);
-      } finally {
-        try { fs.unlinkSync(tempPath); } catch {}
-      }
-    })();
-    _rememberUpload(hash, pending);
-    try {
-      return await pending;
-    } catch (err) {
-      _forgetUploads([hash]);
-      throw err;
-    }
-  }));
-
-  const resolution = String(opts.resolution || '1K').toLowerCase() === '2k' ? '2k' : '1k';
-  const body = {
-    prompt: prompt.trim(),
-    images: uploadedUrls,
-    aspect_ratio: opts.aspectRatio || '1:1',
-    resolution,
-    enable_web_search: false,
-    enable_image_search: false,
-    output_format: 'png',
-  };
-
-  log.info('nano2_edit_start', { imageCount: uploadedUrls.length, promptLen: prompt.length, resolution });
-
-  let resp;
-  try {
-    resp = await _fetchWithRetry(`${BASE_URL}/${NANO2_MODEL_ID}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-  } catch (fetchErr) {
-    const cause = fetchErr?.cause?.message || fetchErr?.cause?.code || 'unknown';
-    throw new AppError(`Nano Banana 2 connection failed: ${String(cause).slice(0, 200)}`, 502, 'WAVESPEED_ERROR');
-  }
-
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '');
-    log.error('nano2_api_error', { status: resp.status, body: text.slice(0, 500) });
-    // Same reasoning as Seedream's: a 4xx here usually means the media URLs went stale, so stop
-    // handing them to later calls.
-    if (resp.status >= 400 && resp.status < 500 && resp.status !== 429) _forgetUploads(usedHashes);
-    if (resp.status === 401) throw new AppError('WaveSpeed auth failed - check your key', 401, 'INVALID_API_KEY');
-    if (resp.status === 429) throw new AppError('WaveSpeed rate limited', 429, 'RATE_LIMITED');
-    throwIfOutOfCredits(resp.status, text);
-    throw new AppError(`Nano Banana 2 error (${resp.status}): ${text.slice(0, 300)}`, 502, 'WAVESPEED_ERROR');
-  }
-
-  const json = await resp.json();
-  const data = json?.data || json;
-  if (data?.status === 'completed') return await _extractSeedDreamResults(data);
-  if (!data?.id) throw new AppError('Nano Banana 2 returned no task ID', 502, 'WAVESPEED_ERROR');
-  return await _pollSeedDreamResult(key, data.id, { maxMs: NANO2_MAX_POLL_MS, label: 'Nano Banana 2' });
-}
-
 async function generateSeedream5Edit(imageInputs, prompt, opts = {}) {
   if (!prompt?.trim()) throw new AppError('A prompt is required', 400, 'VALIDATION_ERROR');
   if (!Array.isArray(imageInputs) || imageInputs.length === 0) {
@@ -820,7 +639,6 @@ async function generateSeedream5Edit(imageInputs, prompt, opts = {}) {
     if (resp.status >= 400 && resp.status < 500 && resp.status !== 429) _forgetUploads(usedHashes);
     if (resp.status === 401) throw new AppError('WaveSpeed auth failed - check your key', 401, 'INVALID_API_KEY');
     if (resp.status === 429) throw new AppError('WaveSpeed rate limited', 429, 'RATE_LIMITED');
-    throwIfOutOfCredits(resp.status, text);
     throw new AppError(`Seedream error (${resp.status}): ${text.slice(0, 300)}`, 502, 'WAVESPEED_ERROR');
   }
 
@@ -841,9 +659,7 @@ module.exports = {
   generateImg2Img,
   generateSeedDreamEdit,
   generateSeedream5Edit,
-  generateNanoBanana2Edit,
   SEEDREAM5_MODEL_ID,
-  NANO2_MODEL_ID,
   MODEL_ENDPOINTS,
   IMAGE_MODEL_ID,
   IMG2IMG_MODEL_ID,

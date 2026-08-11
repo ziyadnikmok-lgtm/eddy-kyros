@@ -101,12 +101,9 @@ export function Select({ label, options = [], className = '', ...props }) {
   );
 }
 
-// `title` is accepted so a switch whose consequence is not obvious from its label can explain
-// itself on hover. It was being passed and silently dropped -- a prop that does nothing looks
-// exactly like a prop that works.
-export function Toggle({ checked, onChange, label, title }) {
+export function Toggle({ checked, onChange, label }) {
   return (
-    <label title={title} className="flex items-center gap-2.5 cursor-pointer select-none text-sm">
+    <label className="flex items-center gap-2.5 cursor-pointer select-none text-sm">
       <button
         type="button"
         role="switch"

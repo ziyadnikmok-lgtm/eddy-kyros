@@ -29,16 +29,12 @@ try {
 
 const IMAGE_MODEL = 'gemini-3-pro-image-preview';
 const VERTEX_IMAGEN_MODEL = process.env.VERTEX_IMAGEN_MODEL || 'imagen-3.0-generate-002';
-// Nano Banana 2. The published Vertex model id is `gemini-3.1-flash-image` with NO `-preview`
-// suffix — the value `gemini-3.1-flash-image-preview` (introduced in the "full sync" commit
-// 6dde1aa5) is not a real model, so every Photo Match / Scene Recreate call 404'd with
-// "Publisher model ... was not found". Verified against Google's Vertex model docs 2026-07-21.
-const IMAGE_MODEL_ALTERNATES = ['gemini-3.1-flash-image'];
+const IMAGE_MODEL_ALTERNATES = ['gemini-3.1-flash-image-preview'];
 const EXPERIMENTAL_IMAGE_MODEL_ALIASES = {
-  'nano-bypass-experimental': 'gemini-3.1-flash-image',
+  'nano-bypass-experimental': 'gemini-3.1-flash-image-preview',
 };
 const ALLOWED_IMAGE_MODELS = [IMAGE_MODEL, ...IMAGE_MODEL_ALTERNATES];
-const MINIMAL_THINKING_IMAGE_MODELS = new Set(['gemini-3.1-flash-image']);
+const MINIMAL_THINKING_IMAGE_MODELS = new Set(['gemini-3.1-flash-image-preview']);
 const TEXT_MODEL = process.env.VERTEX_TEXT_MODEL || 'gemini-2.5-flash';
 
 const SAFETY_SETTINGS = [

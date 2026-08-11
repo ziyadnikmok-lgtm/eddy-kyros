@@ -641,18 +641,30 @@ function ActionMenu({ x, y, item, onAction, onClose }) {
   );
 }
 
-// Headless. The video watch used to live inside GenerationFeedPanel because that panel was
-// mounted on every page, so "always mounted" and "panel visible" were the same thing. They are
-// no longer: Eddy Generate hides the panel in favour of its own inline results, and EddyGenerate
-// deliberately does NOT open its own poller -- it mirrors this one's outcomes via subscribeFeed.
-// Leaving the interval in the panel would mean a video started on Eddy never resolves, and the
-// card spins forever while the server-side reconciler quietly finishes the file (the exact bug
-// the comment below was written to fix). Mounting this separately keeps the watch alive
-// regardless of whether any feed UI is on screen.
-export function GenerationFeedVideoWatcher() {
+export default function GenerationFeedPanel({ mode = 'rail' }) {
+  const workspace = mode === 'workspace';
+  const { navigateTo, notify } = useApp();
+  const [feed, setFeed] = useState([]);
+  const [collapsed, setCollapsed] = useState(false);
+  const [filter, setFilter] = useState('all');
+  const [viewOpen, setViewOpen] = useState(false);
+  const [layoutMode, setLayoutMode] = useState(() => readWorkspacePrefs().layoutMode);
+  const [imageSize, setImageSize] = useState(() => readWorkspacePrefs().imageSize);
+  const [editGrouping, setEditGrouping] = useState(() => readWorkspacePrefs().editGrouping);
+  const [railWidth, setRailWidth] = useState(() => readWorkspacePrefs().railWidth);
+  const [contextMenu, setContextMenu] = useState(null);
+  const [videoPreview, setVideoPreview] = useState(null);
+  const [actionBusyId, setActionBusyId] = useState('');
+  const { openLightbox, LightboxComponent } = useImageLightbox();
+  const viewButtonRef = useRef(null);
+  const viewPanelRef = useRef(null);
+
+  useEffect(() => subscribeFeed(setFeed), []);
+
   // The feed finishes its own video cards. Previously only the page that started a job polled
   // it, so navigating away killed the poller and the card span forever -- while the server-side
   // reconciler still downloaded the file, which is why it appeared in Library and nowhere else.
+  // This panel is always mounted, so the watch survives navigation and reload.
   useEffect(() => {
     const iv = setInterval(async () => {
       const now = Date.now();
@@ -684,33 +696,6 @@ export function GenerationFeedVideoWatcher() {
     }, 5000);
     return () => clearInterval(iv);
   }, []);
-
-  return null;
-}
-
-export default function GenerationFeedPanel({ mode = 'rail' }) {
-  const workspace = mode === 'workspace';
-  const { navigateTo, notify } = useApp();
-  const [feed, setFeed] = useState([]);
-  const [collapsed, setCollapsed] = useState(false);
-  const [filter, setFilter] = useState('all');
-  const [viewOpen, setViewOpen] = useState(false);
-  const [layoutMode, setLayoutMode] = useState(() => readWorkspacePrefs().layoutMode);
-  const [imageSize, setImageSize] = useState(() => readWorkspacePrefs().imageSize);
-  const [editGrouping, setEditGrouping] = useState(() => readWorkspacePrefs().editGrouping);
-  const [railWidth, setRailWidth] = useState(() => readWorkspacePrefs().railWidth);
-  const [contextMenu, setContextMenu] = useState(null);
-  const [videoPreview, setVideoPreview] = useState(null);
-  const [actionBusyId, setActionBusyId] = useState('');
-  const { openLightbox, LightboxComponent } = useImageLightbox();
-  const viewButtonRef = useRef(null);
-  const viewPanelRef = useRef(null);
-
-  useEffect(() => subscribeFeed(setFeed), []);
-
-  // The video watch now lives in GenerationFeedVideoWatcher (above), mounted app-wide by App.jsx
-  // so it keeps running on pages that hide this panel. Do not re-add an interval here: two
-  // pollers would double the request rate against the same status endpoint.
 
   // Not gated on `workspace`: railWidth is a rail-mode setting, and the old guard would have
   // dropped every write in exactly the mode that uses it. Only one panel is mounted at a time,

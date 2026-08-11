@@ -112,30 +112,8 @@ router.post('/bulk-download', async (req, res, next) => {
       throw new AppError('No valid images found', 404, 'NOT_FOUND');
     }
 
-    /**
-     * A ZIP MUST NEVER SHIP RAW GENERATOR METADATA.
-     *
-     * spoof=false used to mean "send the originals untouched", so a bulk download with the
-     * cleaner toggled off produced a zip full of images carrying the prompt and the model name --
-     * while a single download of the SAME image stripped them. The client cannot fix this: it
-     * receives one .zip, and stripMetadata reads images, not archives (owner, 2026-08-10).
-     *
-     * So spoof=false now means CLEAN WITHOUT A CAMERA IDENTITY rather than "do nothing": the
-     * pixels are re-encoded, which drops every tag, and no Make/Model is written back on.
-     * spoof=true is unchanged and still produces a full iPhone signature.
-     */
     const shouldSpoof = spoof !== false && iosSpoofService.isAvailable();
-    const shouldClean = !shouldSpoof && iosSpoofService.isAvailable();
     let outputFiles = files;
-
-    if (shouldClean) {
-      const cleaned = await iosSpoofService.spoofBatch(files.map((f) => f.filePath), { clean: true });
-      outputFiles = files.map((f, i) => {
-        if (!cleaned[i]) return f;
-        cleanups.push(cleaned[i].cleanup);
-        return { filePath: cleaned[i].filePath, filename: cleaned[i].filename };
-      });
-    }
 
     if (shouldSpoof) {
       const spoofed = await iosSpoofService.spoofBatch(files.map((f) => f.filePath));

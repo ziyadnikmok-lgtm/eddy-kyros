@@ -306,16 +306,6 @@ ipcMain.handle('downloads:choose-directory', async (_event, options = {}) => {
   return targetDir;
 });
 
-// Zero-dialog variant: hands back a ready-to-write subfolder under the OS Downloads directory
-// with no file-picker prompt, for one-click "just save it" actions. folderName is sanitized and
-// de-duped exactly like the picker path above.
-ipcMain.handle('downloads:auto-directory', async (_event, options = {}) => {
-  const folderName = sanitizeFileName(options.folderName || `Kyros Studio ${timestampForFolder()}`);
-  const targetDir = ensureUniqueDirectory(path.join(app.getPath('downloads'), folderName));
-  fs.mkdirSync(targetDir, { recursive: true });
-  return targetDir;
-});
-
 ipcMain.handle('downloads:save-file', async (_event, payload = {}) => {
   const { directory, fileName, data } = payload;
   if (!directory || !fileName || data == null) {
@@ -564,13 +554,9 @@ function createWindow() {
   // without being dragged into place every launch.
   //
   // workArea, not bounds: it excludes the taskbar, so the window does not open with its bottom
-  // edge hidden behind it.
-  //
-  // The PRIMARY display, deliberately — not the one under the cursor. Following the cursor put
-  // the window on whichever screen the pointer happened to be resting on at launch, so clicking
-  // a shortcut from the second monitor opened it over there. The main screen is where this is
-  // meant to live; it should land in the same place every time regardless of the mouse.
-  const active = screen.getPrimaryDisplay();
+  // edge hidden behind it. Everything is derived from the display the cursor is on, which is
+  // the one being worked on when a second monitor is attached.
+  const active = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()) || screen.getPrimaryDisplay();
   const { x, y, width: areaW, height: areaH } = active.workArea;
   const halfW = Math.max(1024, Math.floor(areaW / 2));   // never below the minimum width
 
@@ -619,47 +605,6 @@ function createWindow() {
 
 // ── App lifecycle ───────────────────────────────────────────────────────
 
-/**
- * RELOAD THE WINDOW WHEN A NEW BUILD LANDS.
- *
- * Express serves client/dist from disk per request, so a rebuild is live the instant it finishes
- * -- but the already-booted renderer keeps the bundle it started with. That is the whole of "my
- * change did not take effect": on 2026-08-10 the app started at 11:16, a build finished at 11:50,
- * and the new chunk was not fetched until 11:54, when the window was reloaded by hand. Four
- * minutes of chasing a fix that had already shipped, repeated all day.
- *
- * index.html is the right file to watch: Vite rewrites it on every build because the hashed chunk
- * names inside it change. Watching client/src instead would fire on every keystroke.
- *
- * Debounced, because a build rewrites several files in quick succession and each one would
- * otherwise trigger its own reload. reloadIgnoringCache, so a stale HTTP cache entry cannot
- * survive the reload -- exactly the state that had to be cleared by hand today.
- *
- * Dev only. A packaged app's dist never changes underneath it, and a watcher there is a file
- * handle held for nothing.
- */
-function watchBuildForReload() {
-  if (app.isPackaged) return;
-  const indexHtml = path.join(__dirname, '..', 'client', 'dist', 'index.html');
-  if (!fs.existsSync(indexHtml)) return;
-  let timer = null;
-  try {
-    fs.watch(indexHtml, () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          console.log('[electron] new build detected - reloading the window');
-          mainWindow.webContents.reloadIgnoringCache();
-        }
-      }, 400);
-    });
-    console.log('[electron] watching client/dist for rebuilds');
-  } catch (err) {
-    // A missing watcher costs a manual F5; it must never stop the app booting.
-    console.warn('[electron] could not watch the build:', err.message);
-  }
-}
-
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;
   console.log('[electron] app.whenReady');
@@ -671,7 +616,6 @@ app.whenReady().then(async () => {
   // This guarantees the user always sees something immediately
   serverPort = await findFreePort();
   createWindow();
-  watchBuildForReload();
 
   // Start backend in background — loading screen polls for health
   try {
@@ -734,18 +678,6 @@ async function startBackendProcess() {
 
   serverProcess = fork(serverEntry, [], {
     execPath: process.execPath,
-    /**
-     * NO --watch HERE, and this is deliberate.
-     *
-     * Adding it looked right -- routes are require()d once at boot, so a server change needs a
-     * process restart -- but fork() sets up an IPC channel and --watch restarts the child out from
-     * under it, and reloading the window never helps because the window is not the server. The
-     * result: Electron launched, the window opened, and the backend never answered
-     * (2026-08-10, caught in testing before it reached the owner).
-     *
-     * So a server/**.js change still needs a full app restart. tools/restart-kyros.ps1 does it in
-     * one command, and rebuilds the client on the way so the restart cannot serve a stale dist.
-     */
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',

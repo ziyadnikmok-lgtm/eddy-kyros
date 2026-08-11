@@ -2,8 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { library as libraryApi, gallery as galleryApi, video as videoApi } from '../services/api';
 import { stashSourceHandoff } from '../lib/sourceHandoff';
-import { downloadBlob, stripMetadata, stripEnabled } from '../lib/stripMetadata';
-import { cascadeDeleteFromCollections } from '../lib/galleryCascade';
 import { useApp } from '../context/AppContext';
 import { Btn, Badge, Spinner, Empty, ConfirmDialog, Toggle, Modal } from '../components/UI';
 import useImageLightbox from '../components/lightbox/useImageLightbox';
@@ -894,10 +892,6 @@ export default function LibraryPage() {
     try {
       if (deleteTarget.mediaType === 'image') await galleryApi.remove(deleteTarget.originalId);
       else await videoApi.removeHistory(deleteTarget.originalId);
-      // ...and out of Eddy's collections, which hold a URL to this image rather than its bytes.
-      // Without this the picture is gone but the tiles pointing at it stay, rendering as broken
-      // boxes you can still select and still generate from.
-      if (deleteTarget.mediaType === 'image') await cascadeDeleteFromCollections([deleteTarget.originalId]);
 
       setItems((prev) => prev.filter((item) => item.id !== deleteTarget.id));
       setTotals((prev) => ({
@@ -923,34 +917,16 @@ export default function LibraryPage() {
     openLightbox(imagePreviewUrls, index >= 0 ? index : 0);
   }, [imageItems, imagePreviewUrls, openLightbox]);
 
-  /**
-   * Download ONE image.
-   *
-   * A bare `<a download>` does not save in Electron -- it navigates, so the click did nothing
-   * visible and no file arrived (owner, 2026-08-10). VideoLibraryCard.handleDownload in this same
-   * file already said so in a comment and already did it the other way; the image path had simply
-   * never been brought across.
-   *
-   * Fetch the bytes and hand them to downloadBlob, which is also what strips generator metadata
-   * and stamps a fresh capture time -- so a single download now gets the same treatment as a bulk
-   * one instead of quietly shipping EXIF that says which model made it.
-   */
-  const handleImageDownload = useCallback(async (item) => {
-    const spoof = spoofAvailable && spoofEnabled;
-    const url = spoof
+  const handleImageDownload = useCallback((item) => {
+    const anchor = document.createElement('a');
+    anchor.href = spoofAvailable && spoofEnabled
       ? galleryApi.spoofedDownloadUrl(item.originalId)
-      : (item.downloadUrl || `/api/gallery/${item.originalId}/image`);
-    try {
-      const resp = await fetch(url, { credentials: 'include' });
-      if (!resp.ok) throw new Error(`Download failed (${resp.status})`);
-      const blob = await resp.blob();
-      const named = filenameFromContentDisposition(resp.headers.get('content-disposition'));
-      const fallback = item.metadata?.filename || `image-${item.originalId}.png`;
-      await downloadBlob(blob, sanitizeDownloadName(named || fallback));
-    } catch (err) {
-      notify(err?.message || 'Download failed', 'error');
+      : item.downloadUrl;
+    if (!(spoofAvailable && spoofEnabled)) {
+      anchor.download = item.metadata?.filename || `image-${item.originalId}.png`;
     }
-  }, [spoofAvailable, spoofEnabled, notify]);
+    anchor.click();
+  }, [spoofAvailable, spoofEnabled]);
 
   const handleContextAction = useCallback(async (action) => {
     const item = contextMenu?.item;
@@ -1166,35 +1142,8 @@ export default function LibraryPage() {
             }
 
             const contentDispositionName = filenameFromContentDisposition(response.headers.get('content-disposition'));
-            let fileName = sanitizeDownloadName(contentDispositionName || buildBulkDownloadName(item, { spoofEnabled: spoof }));
-            let blob = await response.blob();
-
-            /**
-             * STRIP THE GENERATOR METADATA -- the single-image download always did, this did not.
-             *
-             * A mass download with spoofing OFF fetched the bytes and wrote them straight to disk,
-             * so fifty files landed carrying the EXIF that names the model, and nothing in the
-             * filename said so. One image saved from the same page was clean. That is the worst
-             * shape for this: the unsafe path is the bulk one, and it looked identical to the safe
-             * one (owner, 2026-08-10).
-             *
-             * Skipped when spoofing is on -- the server has already rebuilt that file as an iPhone
-             * photo, complete with the camera EXIF it is supposed to have, and stripping would
-             * throw that away. Skipped for video too: stripMetadata returns it untouched, since a
-             * container rewrite is a different job.
-             */
-            if (!spoof && item.mediaType === 'image' && stripEnabled()) {
-              const res = await stripMetadata(blob);
-              blob = res.blob;
-              if (res.cleaned && !/_metadatacleaned/i.test(fileName)) {
-                const dot = fileName.lastIndexOf('.');
-                fileName = dot > 0
-                  ? `${fileName.slice(0, dot)}_metadatacleaned${fileName.slice(dot)}`
-                  : `${fileName}_metadatacleaned`;
-              }
-            }
-
-            const data = new Uint8Array(await blob.arrayBuffer());
+            const fileName = sanitizeDownloadName(contentDispositionName || buildBulkDownloadName(item, { spoofEnabled: spoof }));
+            const data = new Uint8Array(await response.arrayBuffer());
             await window.electronAPI.saveFileToFolder({ directory, fileName, data });
             savedCount += 1;
           } catch (err) {
@@ -1345,7 +1294,6 @@ export default function LibraryPage() {
       for (const videoItem of videos) {
         await videoApi.removeHistory(videoItem.originalId);
       }
-      if (imageIds.length > 0) await cascadeDeleteFromCollections(imageIds);
       setItems((prev) => prev.filter((item) => !selectedIds.has(item.id)));
       setTotals((prev) => ({
         all: Math.max(0, prev.all - selected.length),
@@ -1431,18 +1379,7 @@ export default function LibraryPage() {
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {/* "iPhone" said which device, not what the switch does. It is a metadata cleaner:
-                every tag the generator wrote is removed and replaced with the ordinary EXIF a phone
-                photo carries -- camera, lens, capture time. Off still strips (see the bulk save),
-                it just does not add the camera back. */}
-            {showSpoofToggle ? (
-              <Toggle
-                checked={spoofEnabled}
-                onChange={setSpoofEnabled}
-                label="Clean metadata"
-                title="Removes the generator metadata and saves as a normal iPhone 17 Pro Max photo with a recent capture time. Off: metadata is still removed, but no camera details are added."
-              />
-            ) : null}
+            {showSpoofToggle ? <Toggle checked={spoofEnabled} onChange={setSpoofEnabled} label="iPhone" /> : null}
             {MEDIA_FILTERS.map((filter) => {
               const count = filter.value === 'all' ? totals.all : filter.value === 'image' ? totals.images : totals.videos;
               return (
@@ -1701,7 +1638,6 @@ export default function LibraryPage() {
                 expanded={expandedVideoId === item.id}
                 onToggle={() => setExpandedVideoId((prev) => prev === item.id ? null : item.id)}
                 onDelete={() => setDeleteTarget(item)}
-                onEdit={() => navigateTo('videoEditor', { filename: item.metadata?.filename })}
                 onDragStart={(event) => handleDragStart(event, item)}
                 onMouseEnter={() => handleItemMouseEnter(item)}
                 onMouseDown={() => handleItemMouseDown(item)}
@@ -1939,34 +1875,9 @@ function ImageLibraryCard({ item, bulkMode, selected, onSelect, onOpen, onFavori
   );
 }
 
-function VideoLibraryCard({ item, bulkMode, selected, onSelect, expanded, onToggle, onDelete, onEdit, onDragStart, onMouseEnter, onMouseDown, notify }) {
+function VideoLibraryCard({ item, bulkMode, selected, onSelect, expanded, onToggle, onDelete, onDragStart, onMouseEnter, onMouseDown, notify }) {
   const hasFile = !!item.previewUrl;
-  // Edit needs the LOCAL mp4 basename (the server resolves it inside the video dir). A remote-only
-  // clip has no local file to edit, so the button only shows when we actually have that filename.
-  const canEdit = hasFile && !!item.metadata?.filename;
   const statusColor = item.status === 'completed' ? 'green' : item.status === 'failed' ? 'red' : 'blue';
-
-  // A bare <a download> does NOT trigger a save in Electron — it just navigates. Download the bytes
-  // via fetch and hand them to downloadBlob (same robust path Video Gallery uses), through the
-  // metadata-stripping /clean route when we have the local filename.
-  const handleDownload = async () => {
-    if (!hasFile) return;
-    try {
-      const filename = item.metadata?.filename;
-      const url = filename ? videoApi.cleanFileUrl(filename) : item.downloadUrl;
-      const resp = await fetch(url, { credentials: 'include' });
-      if (!resp.ok) throw new Error(`Download failed (${resp.status})`);
-      const stripped = resp.headers.get('X-Metadata-Stripped') === 'yes';
-      const base = filename || `video-${item.originalId}.mp4`;
-      const ext = (base.match(/\.[a-z0-9]+$/i) || ['.mp4'])[0];
-      const stem = base.slice(0, base.length - ext.length) || 'video';
-      const blob = await resp.blob();
-      await downloadBlob(blob, `${stem}${filename && stripped ? '_metadatacleaned' : filename ? '_NOT-cleaned' : ''}${ext}`);
-      if (filename && !stripped) notify('Metadata could NOT be removed from this clip — saved as _NOT-cleaned. Do not publish as-is.', 'error');
-    } catch (err) {
-      notify(err?.message || 'Video download failed', 'error');
-    }
-  };
 
   return (
     <div
@@ -2020,8 +1931,7 @@ function VideoLibraryCard({ item, bulkMode, selected, onSelect, expanded, onTogg
         {item.metadata?.error ? <p className="text-[0.625rem] text-red-400">{item.metadata.error}</p> : null}
         {!bulkMode ? (
           <div className="flex gap-2 flex-wrap">
-            {hasFile ? <button type="button" onClick={handleDownload} className="inline-flex items-center justify-center rounded-lg border border-zinc-700/60 bg-zinc-800/80 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-zinc-700/80 hover:border-zinc-600 cursor-pointer">Download</button> : null}
-            {canEdit ? <Btn className="!px-3 !py-1.5 !text-xs" onClick={onEdit}>Edit</Btn> : null}
+            {hasFile ? <a href={item.downloadUrl} download className="inline-flex items-center justify-center rounded-lg border border-zinc-700/60 bg-zinc-800/80 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-zinc-700/80 hover:border-zinc-600">Download</a> : null}
             {hasFile ? <Btn variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={onToggle}>{expanded ? 'Collapse' : 'Expand'}</Btn> : null}
             <Btn variant="danger" className="!px-3 !py-1.5 !text-xs" onClick={onDelete}>Delete</Btn>
           </div>

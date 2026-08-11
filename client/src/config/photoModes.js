@@ -4,7 +4,7 @@ export const DEFAULT_RESOLUTION_TIER = '1K';
 export const EXPERIMENTAL_NANO_BYPASS_MODEL = 'nano-bypass-experimental';
 export const IMAGE_MODEL_OPTIONS = [
   { value: 'gemini-3-pro-image-preview', label: 'Nano Banana Pro (Old)' },
-  { value: 'gemini-3.1-flash-image', label: 'Nano Banana 2 (New)' },
+  { value: 'gemini-3.1-flash-image-preview', label: 'Nano Banana 2 (New)' },
   { value: EXPERIMENTAL_NANO_BYPASS_MODEL, label: 'Nano Bypass (Experimental)' },
 ];
 
@@ -96,10 +96,6 @@ export const SEEDANCE_DURATION_DEFAULT = 5;
 // Seedance 2 Omni Reference (Muapi) — reference videos + images + trained characters.
 // Schema from Muapi's OpenAPI spec; prices from their public pricing page. Not guessed.
 export const OMNI_MODELS = [
-  // imagesOnly = reference photos, NO reference video. Listed FIRST so it's the pinned default on
-  // the images-only Seedance Video page; the video-reference Omni page filters imagesOnly out.
-  // Price UNCONFIRMED (Muapi's pages are JS-gated) — set to the fast rate as a safe estimate.
-  { id: 'omni-no-video-fast', label: 'Omni No-Video Fast', desc: '720p · images-only reference (pinned)', pricePerSecond: 0.21, quality: false, imagesOnly: true },
   { id: 'omni-fast', label: 'Omni Fast', desc: '720p · quickest, best value', pricePerSecond: 0.21, quality: false },
   { id: 'omni-best', label: 'Omni Best', desc: '720p · highest fidelity, quality toggle', pricePerSecond: 0.30, quality: true },
   { id: 'omni-fast-1080p', label: 'Omni Fast 1080p', desc: '1080p · fast', pricePerSecond: 0.4725, quality: false },

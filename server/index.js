@@ -86,11 +86,7 @@ const reelCopyRoute = require('./routes/reelCopy');
 const postCloneRoute = require('./routes/postClone');
 const profileCloneRoute = require('./routes/profileClone');
 const pinterestRoute = require('./routes/pinterest');
-// Search, for the browse tab. Separate file from the single-pin scraper above -- different
-// upstream and a different failure mode, so a change at one end cannot break the other.
-const pinterestFeedRoute = require('./routes/pinterestFeed');
 const instagramFramesRoute = require('./routes/instagramFrames');
-const instagramReelRoute = require('./routes/instagramReel');
 const promptKnowledgeRoute = require('./routes/promptKnowledge');
 const availabilityRoute = require('./routes/availability');
 const templatesRouter = require('./routes/templates');
@@ -103,7 +99,6 @@ const loraPresetsRouter = require('./routes/loraPresets');
 const loraDatasetsRouter = require('./routes/loraDatasets');
 const backgroundsRouter = require('./routes/backgrounds');
 const videoComposeRouter = require('./routes/videoCompose');
-const videoEditRouter = require('./routes/videoEdit');
 const photoMatchRouter = require('./routes/photoMatch');
 const nanoBypassRouter = require('./routes/nanoBypass');
 const outfitSwapRouter = require('./routes/outfitSwap');
@@ -463,11 +458,7 @@ app.use('/api/reel-copy', cloneLimiter, reelCopyRoute);
 app.use('/api/post-clone', cloneLimiter, postCloneRoute);
 app.use('/api/profile-clone', cloneLimiter, profileCloneRoute);
 app.use('/api/pinterest', generateLimiter, pinterestRoute);
-// NOT behind generateLimiter: that budget exists for paid generations, and browsing a grid
-// must not eat it. Pinterest's own rate limit is the real ceiling and is surfaced as 429.
-app.use('/api/pinterest-feed', pinterestFeedRoute);
 app.use('/api/instagram-frames', readLimiter, instagramFramesRoute);
-app.use('/api/instagram-reel', instagramReelRoute);
 app.use('/api/prompt-knowledge', promptKnowledgeRoute);
 app.use('/api/availability', availabilityRoute);
 app.use('/api/templates', templatesRouter);
@@ -480,7 +471,6 @@ app.use('/api/lora-presets', loraPresetsRouter);
 app.use('/api/lora-datasets', generateLimiter, loraDatasetsRouter);
 app.use('/api/backgrounds', backgroundsRouter);
 app.use('/api/video-compose', generateLimiter, videoComposeRouter);
-app.use('/api/video-edit', generateLimiter, videoEditRouter);
 app.use('/api/photo-match', generateLimiter, photoMatchRouter);
 app.use('/api/nano-bypass', generateLimiter, nanoBypassRouter);
 app.use('/api/outfit-swap', generateLimiter, outfitSwapRouter);
@@ -568,74 +558,6 @@ cleanStaleTempFiles();
 // Periodic cleanup every 30 minutes
 const _tempCleanupTimer = setInterval(cleanStaleTempFiles, 30 * 60 * 1000);
 if (_tempCleanupTimer.unref) _tempCleanupTimer.unref();
-
-// M1: the Instagram-reel ingest writes up to ~200MB per run into getTempDir()/instagram-reel/<runId>/
-// and never deletes it; cleanStaleTempFiles() above only unlinks FILES (it `continue`s on
-// directories), so these run subdirs leak unboundedly. Sweep whole stale run DIRS on startup,
-// mirroring instagramFrames.js's cleanupDir (fs.rmSync recursive+force). mtime-based, 24h TTL —
-// a run still in progress (fresh mtime) survives. Best-effort: each rmSync is wrapped so one bad
-// dir can't abort the sweep, and the whole sweep is wrapped so it can never crash startup.
-function cleanStaleReelRunDirs() {
-  const REEL_RUN_TTL_MS = 24 * 60 * 60 * 1000; // 24h — do not delete recent (possibly running) runs
-  try {
-    const { getTempDir } = require('./paths');
-    const reelRoot = path.join(getTempDir(), 'instagram-reel');
-    if (!fs.existsSync(reelRoot)) return;
-    let cleaned = 0;
-    for (const entry of fs.readdirSync(reelRoot)) {
-      const runDir = path.join(reelRoot, entry);
-      try {
-        const stat = fs.statSync(runDir);
-        if (!stat.isDirectory()) continue;
-        if (Date.now() - stat.mtimeMs > REEL_RUN_TTL_MS) {
-          fs.rmSync(runDir, { recursive: true, force: true });
-          cleaned++;
-        }
-      } catch (err) {
-        // One unreadable/locked run must not abort the rest of the sweep.
-        log.warn('reel_run_cleanup_dir_error', { runDir, error: err.message });
-      }
-    }
-    if (cleaned > 0) log.info('reel_run_cleanup', { cleaned });
-  } catch (err) {
-    // Never let cleanup crash startup.
-    log.warn('reel_run_cleanup_error', { error: err.message });
-  }
-}
-cleanStaleReelRunDirs();
-
-// One-time faststart migration: Seedance/Muapi videos were saved with the MP4 `moov` atom at the
-// END of the file (not faststart), so a browser <video preload="metadata"> shows BLACK until the
-// whole file downloads. Re-mux every existing video to faststart (lossless `-c copy` container
-// remux) so already-downloaded clips preview instantly. Runs in the BACKGROUND (setImmediate) so
-// it never blocks server startup; each file is wrapped so one failure can't abort the sweep, and
-// ensureFaststart leaves the original untouched on any error (never an empty/broken video).
-function migrateVideosToFaststart() {
-  setImmediate(async () => {
-    try {
-      const { getUploadsDir } = require('./paths');
-      const { ensureFaststart } = require('./services/videoFaststart');
-      const videosDir = path.join(getUploadsDir(), 'videos');
-      if (!fs.existsSync(videosDir)) return;
-      let fixed = 0;
-      for (const entry of fs.readdirSync(videosDir)) {
-        if (!entry.toLowerCase().endsWith('.mp4')) continue;
-        const filePath = path.join(videosDir, entry);
-        try {
-          if (await ensureFaststart(filePath)) fixed++;
-        } catch (err) {
-          // One bad/locked video must not abort the rest of the migration.
-          log.warn('faststart_migration_file_error', { file: entry, error: err.message });
-        }
-      }
-      if (fixed > 0) log.info('faststart_migration', { fixed });
-    } catch (err) {
-      // Never let the migration crash startup.
-      log.warn('faststart_migration_error', { error: err.message });
-    }
-  });
-}
-migrateVideosToFaststart();
 
 // Chases in-flight Muapi renders to completion regardless of what the UI is doing, and
 // recovers anything left 'processing' by a previous run. Video delivery must not depend on a

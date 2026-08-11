@@ -67,6 +67,7 @@ const EXPRESSIONS = [
   { key: 'seductive', label: 'Seductive', text: 'a sultry, heavy-lidded seductive look straight down the lens, lips slightly parted' },
   { key: 'bite', label: 'Biting lip', text: 'biting her lower lip, heavy-lidded eyes locked on the camera' },
   { key: 'moan', label: 'Moaning', text: 'her mouth open in a soft moan, eyes half-closed, head tilted back, brows drawn together in pleasure' },
+  { key: 'ahegao', label: 'Ahegao', text: 'an ahegao expression — eyes rolled upward, tongue out, cheeks deeply flushed, completely lost in pleasure' },
   { key: 'flushed', label: 'Flushed', text: 'flushed cheeks, breathless parted lips, aroused heavy-lidded eyes' },
   { key: 'innocent', label: 'Innocent', text: 'wide innocent doe eyes and softly parted lips, looking up at the camera' },
   { key: 'smile', label: 'Smiling', text: 'a warm genuine smile with bright, happy eyes' },

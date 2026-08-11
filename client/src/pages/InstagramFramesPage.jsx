@@ -1518,6 +1518,9 @@ export default function InstagramFramesPage() {
             </div>
           </>
         )}
+
+        {/* Frames select toolbar + send buttons (act on SELECTED frames) */}
+        )}
       </div>
 
       {/* ── Right column: extracted frames feed (wide grid) ─────────────── */}

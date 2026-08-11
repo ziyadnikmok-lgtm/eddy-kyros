@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { seedanceOmni as omniApi, video as videoApi, gallery as galleryApi, characters as charApi } from '../services/api';
+import { seedanceOmni as omniApi, video as videoApi, gallery as galleryApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Select, Slider, Textarea, Input, Badge, Spinner } from '../components/UI';
 import {
@@ -146,10 +146,7 @@ const _cache = {
 const store = createPageStore('kyros-seedance-omni-state');
 
 export default function SeedanceOmniPage() {
-  // Aliased to appCharacters: this page ALREADY has its own `characters` state for Omni's trained
-  // characters (omniCharacterStore), which is a different thing entirely. Defaulted so the dropdown
-  // renders empty rather than throwing before the app list has loaded.
-  const { notify, characters: appCharacters = [] } = useApp();
+  const { notify } = useApp();
 
   const [model, setModel] = useState(_cache.model);
   const [prompt, setPrompt] = useState(_cache.prompt);
@@ -159,10 +156,6 @@ export default function SeedanceOmniPage() {
 
   const [videos, setVideos] = useState([]); // [{id, dataUrl, seconds}]
   const [images, setImages] = useState([]); // [{id, dataUrl}]
-  // Character shortcut for Reference Images. Not persisted: it resets after each add so the same
-  // character can be added again, and the IMAGES themselves are what the page already saves.
-  const [characterId, setCharacterId] = useState('');
-  const [charLoading, setCharLoading] = useState(false);
   const [dragging, setDragging] = useState(null);
 
   const [characters, setCharacters] = useState([]);
@@ -309,62 +302,6 @@ export default function SeedanceOmniPage() {
     })));
     setImages((prev) => [...prev, ...added]);
   }, [images.length, notify]);
-
-  /**
-   * Load EVERY photo a Character has straight into Reference Images.
-   *
-   * Omni genuinely takes multiple reference images (createOmniTask uploads each and sends them all
-   * as images_list), which is exactly what the Seedance 2 page cannot do — that model turns ONE
-   * image into the first frame. So here "use a character" means all of her, actually sent.
-   *
-   * APPENDS rather than replaces, and respects the remaining room, so a character can be combined
-   * with images already added by hand instead of wiping them.
-   */
-  const addCharacterImages = useCallback(async (id) => {
-    setCharacterId(id);
-    if (!id) return;
-    const c = appCharacters.find((x) => x.id === id);
-    const urls = [];
-    // Primaries in index order (the shot she was built from stays first), then each ACTIVE reference.
-    const primaryCount = Math.max(0, Number(c?.primaryImageCount || 0));
-    if (primaryCount > 0) {
-      for (let i = 0; i < primaryCount; i += 1) urls.push(charApi.primaryImageUrl(id, i));
-    } else {
-      urls.push(charApi.imageUrl(id));   // older character with a single un-indexed primary
-    }
-    for (const ref of c?.references || []) {
-      if (ref?.isActive) urls.push(charApi.refImageUrl(id, ref.id));
-    }
-
-    const room = OMNI_MAX_IMAGES - images.length;
-    if (room <= 0) { notify(`Maximum ${OMNI_MAX_IMAGES} reference images`, 'error'); return; }
-    const take = urls.slice(0, room);
-    setCharLoading(true);
-    try {
-      const added = [];
-      for (const u of take) {
-        try {
-          const resp = await fetch(u, { credentials: 'include' });
-          if (!resp.ok) continue;                       // skip the bad one, keep the rest
-          const blob = await resp.blob();
-          added.push({
-            id: `i-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            dataUrl: await fileToDataUrl(new File([blob], 'character', { type: blob.type || 'image/png' })),
-          });
-        } catch { /* one unreachable photo must not lose the others */ }
-      }
-      if (!added.length) { notify('Could not load that character’s photos', 'error'); return; }
-      setImages((prev) => [...prev, ...added]);
-      const skipped = urls.length - take.length;
-      notify(
-        `Added ${added.length} photo${added.length === 1 ? '' : 's'}${skipped ? ` — ${skipped} skipped, only ${OMNI_MAX_IMAGES} fit` : ''}`,
-        skipped ? 'error' : 'success',
-      );
-    } finally {
-      setCharLoading(false);
-      setCharacterId('');   // reset so the same character can be added again if there is room
-    }
-  }, [appCharacters, images.length, notify]);
 
   // Ctrl+V → images (videos can't come off the clipboard).
   useEffect(() => {
@@ -615,22 +552,6 @@ export default function SeedanceOmniPage() {
               Reference Images <span className="text-zinc-600 font-normal normal-case">@image1–@image{OMNI_MAX_IMAGES}</span>
             </h3>
             <div className="flex items-center gap-2">
-              {/* Pick a character and ALL her photos are added as real reference images — Omni sends
-                  every one of them (images_list), unlike Seedance 2 which takes a single first frame.
-                  Appends, so it stacks with anything already added by hand. */}
-              <select
-                value={characterId}
-                onChange={(e) => addCharacterImages(e.target.value)}
-                disabled={charLoading || images.length >= OMNI_MAX_IMAGES}
-                title="Add every photo this character has as reference images"
-                className="rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 focus:border-rose-500 focus:outline-none disabled:opacity-50"
-              >
-                <option value="">+ Character…</option>
-                {appCharacters.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name || c.id}</option>
-                ))}
-              </select>
-              {charLoading && <Spinner size={14} />}
               <Badge color="zinc">Ctrl+V</Badge>
               <span className="text-[0.6875rem] text-zinc-600 font-mono tabular-nums">{images.length}/{OMNI_MAX_IMAGES}</span>
             </div>
@@ -799,8 +720,7 @@ export default function SeedanceOmniPage() {
         <Card className="p-4 space-y-3">
           <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">Model</h3>
           <div className="grid [grid-template-columns:repeat(auto-fill,minmax(150px,1fr))] gap-2">
-            {/* Hide imagesOnly models here — this page references a VIDEO, which they reject. */}
-            {OMNI_MODELS.filter((m) => !m.imagesOnly).map((m) => (
+            {OMNI_MODELS.map((m) => (
               <button key={m.id} type="button" onClick={() => setModel(m.id)}
                 className={cn('text-left rounded-xl border p-3 transition-all duration-200 cursor-pointer',
                   model === m.id ? 'border-rose-500 ring-2 ring-rose-500/25 shadow-lg shadow-rose-500/10 bg-rose-500/[0.04]' : 'border-zinc-800/60 hover:border-zinc-600 bg-white/[0.02]')}>

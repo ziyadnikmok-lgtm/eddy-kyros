@@ -14,10 +14,6 @@ import { cn } from '../lib/utils';
  * Everything else is an extra identity reference.
  */
 const DB = 'eddy-character';
-// A character is a person, and every collection that files things per-person should know about her
-// the moment she exists — not the first time something happens to land there (owner, 2026-08-09).
-const BASE_DB = 'eddy-base';
-const LIBRARY_DB = 'eddy-library';
 
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
@@ -38,24 +34,6 @@ async function urlToDataUrl(url) {
 export default function EddyCharacterPage() {
   const { notify } = useApp();
   const store = useMemo(() => createEddyCollection(DB), []);
-  const baseStore = useMemo(() => createEddyCollection(BASE_DB), []);
-  const libraryStore = useMemo(() => createEddyCollection(LIBRARY_DB), []);
-
-  /**
-   * Give a character her folder in Base Library and Eddy Library too.
-   *
-   * ensureFolder is a no-op when the folder already exists, so this is safe to call on every
-   * create and every import — and it means Base can file straight into her name, and anything
-   * sent to the Library has somewhere to go, without either page having to invent the folder
-   * later.
-   */
-  const mirrorFolders = useCallback(async (name) => {
-    const clean = String(name || '').trim();
-    if (!clean) return;
-    // Failure here must never fail the character itself — the folders are a convenience.
-    try { await baseStore.ensureFolder(clean); } catch { /* non-fatal */ }
-    try { await libraryStore.ensureFolder(clean); } catch { /* non-fatal */ }
-  }, [baseStore, libraryStore]);
 
   const [folders, setFolders] = useState([]);
   const [items, setItems] = useState([]);
@@ -110,78 +88,11 @@ export default function EddyCharacterPage() {
 
   // Drop and paste only make sense inside a character — at the list level there is no one to
   // attach them to.
-  /**
-   * Drop a FOLDER onto this page and it becomes a character: the folder's name is hers, its images
-   * become her references.
-   *
-   * dataTransfer.files flattens a directory drop into a bare file list, so the folder name — the
-   * one piece of information that makes this work — is thrown away. webkitGetAsEntry keeps it
-   * (owner, 2026-08-09: "I will drag a folder named lily with images and it gonna add it as
-   * character").
-   *
-   * ensureFolder matches by name, so re-dropping the same folder tops her up rather than creating
-   * a second Lily. Sub-directories are walked into and their images join the same character — a
-   * character is one person, not a tree, so nesting is flattened deliberately rather than
-   * mirrored.
-   */
-  const addDroppedCharacters = useCallback(async (entries) => {
-    const readDir = (reader) => new Promise((res, rej) => reader.readEntries(res, rej));
-    const asFile = (entry) => new Promise((res, rej) => entry.file(res, rej));
-
-    let made = 0;
-    let imgs = 0;
-    for (const entry of entries) {
-      if (!entry.isDirectory) continue;
-      const folder = await store.ensureFolder(entry.name);
-      await mirrorFolders(entry.name);
-      made += 1;
-
-      const collect = async (dir) => {
-        const reader = dir.createReader();
-        // readEntries returns ~100 at a time; a single call silently truncates a big folder.
-        for (;;) {
-          // eslint-disable-next-line no-await-in-loop
-          const batch = await readDir(reader);
-          if (!batch.length) break;
-          for (const child of batch) {
-            if (child.isDirectory) { await collect(child); continue; }
-            // eslint-disable-next-line no-await-in-loop
-            const f = await asFile(child);
-            if (!f.type.startsWith('image/')) continue;
-            // eslint-disable-next-line no-await-in-loop
-            const dataUrl = await fileToDataUrl(f);
-            // eslint-disable-next-line no-await-in-loop
-            await store.addItems([{ dataUrl, name: entry.name }], folder.id);
-            imgs += 1;
-          }
-        }
-      };
-      await collect(entry);
-    }
-    await refresh();
-    notify(
-      made
-        ? `Added ${made} character${made === 1 ? '' : 's'} · ${imgs} image${imgs === 1 ? '' : 's'}`
-        : 'No folders in that drop',
-      made ? 'success' : 'error',
-    );
-  }, [store, mirrorFolders, refresh, notify]);
-
   useEffect(() => {
     if (!openId) return undefined;
     const over = (e) => { e.preventDefault(); if (e.dataTransfer?.types?.includes('Files')) setDragging(true); };
     const leave = (e) => { if (!e.relatedTarget) setDragging(false); };
-    const drop = (e) => {
-      e.preventDefault();
-      setDragging(false);
-      // Directories FIRST: a folder drop also fills dataTransfer.files with its contents
-      // flattened, so checking files first would take the flat path and lose the folder name.
-      const entries = Array.from(e.dataTransfer?.items || [])
-        .map((it) => (it.webkitGetAsEntry ? it.webkitGetAsEntry() : null))
-        .filter(Boolean);
-      if (entries.some((en) => en.isDirectory)) { addDroppedCharacters(entries); return; }
-      if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files, openId);
-    };
+    const drop = (e) => { e.preventDefault(); setDragging(false); if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files, openId); };
     const paste = (e) => {
       const files = [...(e.clipboardData?.items || [])].filter((i) => i.type.startsWith('image/')).map((i) => i.getAsFile()).filter(Boolean);
       if (files.length) { e.preventDefault(); addFiles(files, openId); }
@@ -196,7 +107,7 @@ export default function EddyCharacterPage() {
       window.removeEventListener('drop', drop);
       window.removeEventListener('paste', paste);
     };
-  }, [openId, addFiles, addDroppedCharacters]);
+  }, [openId, addFiles]);
 
   // A role is exclusive within a character: marking a new base or scene clears the old one.
   const setRole = async (folderId, itemId, role) => {
@@ -208,11 +119,9 @@ export default function EddyCharacterPage() {
     await refresh();
   };
 
-
   const createCharacter = async () => {
     if (!newName.trim()) return;
     const f = await store.createFolder(newName);
-    await mirrorFolders(newName);
     setNewName('');
     await refresh();
     setOpenId(f.id);
@@ -250,7 +159,6 @@ export default function EddyCharacterPage() {
       // queue and could miss a folder that is already queued — the exact race that produced
       // two "Grace" folders.
       const folder = await store.ensureFolder(char.name);
-      await mirrorFolders(char.name);
       const stored = await store.addItems(images, folder.id);
       const lost = (images.length - stored.length) + (stored.failed || 0);
       if (lost) notify(`${char.name}: saved ${stored.length} of ${images.length} images`, 'error');
@@ -261,95 +169,6 @@ export default function EddyCharacterPage() {
       notify(err.message || 'Import failed', 'error');
     } finally {
       setImporting('');
-    }
-  };
-
-  /**
-   * Import characters from an exported JSON file.
-   *
-   * The tab could ONLY pull from the server Characters API — there was no way to take a character
-   * someone sent you as a file, which is how they actually get shared (owner, 2026-08-07: Eddy
-   * sent six over Telegram and nothing here could read them).
-   *
-   * Tolerant about the name field on purpose. Our own export writes `folder`, the collection
-   * exporter writes `title`, and Eddy's file uses `character` — three names for one thing, and
-   * rejecting two of them would just push the mismatch onto whoever is sending the file.
-   *
-   * Grouped by name so one file can carry several characters, and `role` is carried through, so a
-   * photo marked BASE stays the base — which is what Base Image Generation reads to decide which
-   * reference leads.
-   */
-  const importFromFile = async (file) => {
-    if (!file) return;
-    setImporting('file');
-    try {
-      const rows = JSON.parse(await file.text());
-      if (!Array.isArray(rows)) throw new Error('That file is not a character export');
-
-      const groups = new Map();
-      for (const r of rows) {
-        const name = String(r?.character || r?.folder || r?.title || '').trim();
-        const img = r?.image || r?.dataUrl || '';
-        if (!name || !String(img).startsWith('data:')) continue;
-        if (!groups.has(name)) groups.set(name, []);
-        groups.get(name).push({ dataUrl: img, name, role: r.role || '' });
-      }
-      if (!groups.size) throw new Error('No characters with images in that file');
-
-      let chars = 0, imgs = 0, lost = 0;
-      for (const [name, images] of groups) {
-        // ensureFolder, not find-then-create — same race that once produced two "Grace" folders.
-        // eslint-disable-next-line no-await-in-loop
-        const folder = await store.ensureFolder(name);
-        // eslint-disable-next-line no-await-in-loop -- same reason as the write below
-        await mirrorFolders(name);
-        // eslint-disable-next-line no-await-in-loop
-        const stored = await store.addItems(images, folder.id);
-        // addItems skips an item whose bytes blew the quota rather than throwing, so a partial
-        // import must be REPORTED — a 21MB reference silently vanishing is worse than a warning.
-        lost += (images.length - stored.length) + (stored.failed || 0);
-        // Re-apply role: addItems only carries the fields it knows about.
-        for (let i = 0; i < stored.length; i += 1) {
-          const role = images[i]?.role;
-          // eslint-disable-next-line no-await-in-loop
-          if (role) await store.updateItem(stored[i].id, { role });
-        }
-        chars += 1; imgs += stored.length;
-      }
-      await refresh();
-      notify(
-        lost ? `Imported ${chars} character${chars === 1 ? '' : 's'}, ${imgs} image${imgs === 1 ? '' : 's'} — ${lost} too large to store`
-             : `Imported ${chars} character${chars === 1 ? '' : 's'}, ${imgs} image${imgs === 1 ? '' : 's'}`,
-        lost ? 'error' : 'success',
-      );
-    } catch (err) {
-      notify(err.message || 'Could not read that file', 'error');
-    } finally {
-      setImporting('');
-    }
-  };
-
-  /** Export every character as the same shape importFromFile reads, so a file round-trips. */
-  const exportAll = async () => {
-    try {
-      const rows = [];
-      for (const f of folders) {
-        for (const it of items.filter((i) => i.folderId === f.id)) {
-          // eslint-disable-next-line no-await-in-loop
-          const dataUrl = thumbs[it.id] || await store.getImage(it.id);
-          if (dataUrl) rows.push({ character: f.name, image: dataUrl, role: it.role || '' });
-        }
-      }
-      if (!rows.length) { notify('Nothing to export', 'error'); return; }
-      const blob = new Blob([JSON.stringify(rows)], { type: 'application/json' });
-      const href = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = href; a.download = 'eddy-character.json';
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(href), 10000);
-      notify(`Exported ${rows.length} image${rows.length === 1 ? '' : 's'}`, 'success');
-    } catch (err) {
-      notify(err.message || 'Export failed', 'error');
     }
   };
 
@@ -435,17 +254,6 @@ export default function EddyCharacterPage() {
           <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm ml-auto" onClick={loadImportable}>
             {importList ? 'Close' : 'Import from Characters'}
           </Btn>
-          {/* Import a character someone SENT you. Reads `character`, `folder` or `title` as the
-              name, so an export from this tab, from the collection exporter, or from a partner's
-              build all work without anyone having to reshape the file first. */}
-          <label className={cn('rounded-lg border border-zinc-600 bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-100 transition',
-            importing === 'file' ? 'opacity-60' : 'cursor-pointer hover:border-zinc-500')}>
-            {importing === 'file' ? 'Importing…' : 'Import file'}
-            <input type="file" accept="application/json,.json" className="hidden"
-              disabled={importing === 'file'}
-              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; importFromFile(f); }} />
-          </label>
-          <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm" onClick={exportAll}>Export all</Btn>
         </div>
 
         {importList && (

@@ -34,10 +34,6 @@ function parseCsv(text) {
 
 const isUrl = (s) => /^https?:\/\//i.test(s.trim());
 
-/** A header cell that names it as the video prompt — the shot's motion, kept apart from the
- *  pose/description prompt beside it. */
-const isVideoPromptHeader = (h) => /video\s*prompt/.test(h);
-
 /**
  * A video sheet lays each row out as repeating (idea, prompt) pairs — "Video Idea",
  * "Video Prompt variation 1", "Video Idea", "Video Prompt variation 2", and so on — with one
@@ -51,19 +47,9 @@ function findVariationPairs(header) {
   const cols = header.map((h) => (h || '').trim().toLowerCase());
   const promptCols = [];
   cols.forEach((h, i) => { if (/prompt/.test(h)) promptCols.push(i); });
-  // A LONE video-prompt column sitting beside a real prompt column is a side field (peeled off
-  // by findVideoPromptCol below), not a variation of its own — otherwise "Prompt" + "Video
-  // Prompt" would read as two prompt variations and split one row into two half-empty cards.
-  // A sheet that is ENTIRELY video-prompt variations ("Video Prompt variation 1", "...2", ...)
-  // has nothing else to pair against, so those stay right here, unchanged from before this
-  // field existed.
-  const videoCols = promptCols.filter((i) => isVideoPromptHeader(cols[i]));
-  const pairCols = (videoCols.length === 1 && promptCols.length > 1)
-    ? promptCols.filter((i) => i !== videoCols[0])
-    : promptCols;
-  if (pairCols.length < 2) return null;   // one prompt column is just a normal sheet
+  if (promptCols.length < 2) return null;   // one prompt column is just a normal sheet
 
-  return pairCols.map((promptAt) => {
+  return promptCols.map((promptAt) => {
     // The idea belongs to the nearest labelled column to the LEFT of its prompt. Falling back
     // to promptAt - 1 covers a sheet whose description header is worded differently.
     let ideaAt = -1;
@@ -73,24 +59,6 @@ function findVariationPairs(header) {
     }
     return { ideaAt, promptAt };
   });
-}
-
-/**
- * The column index carrying the shot's motion, kept apart from the pose prompt beside it — only
- * when there IS a genuine pose/description prompt column for it to sit beside. Returns -1 when
- * there is no such column, or when 2+ columns match: that sheet is entirely video-prompt
- * variations (see findVariationPairs) and those columns stay ordinary variation columns instead.
- */
-function findVideoPromptCol(header) {
-  if (!header) return -1;
-  const cols = header.map((h) => (h || '').trim().toLowerCase());
-  const videoCols = [];
-  let otherPromptCount = 0;
-  cols.forEach((h, i) => {
-    if (isVideoPromptHeader(h)) videoCols.push(i);
-    else if (/prompt/.test(h)) otherPromptCount += 1;
-  });
-  return videoCols.length === 1 && otherPromptCount >= 1 ? videoCols[0] : -1;
 }
 
 /** Description first, then the prompt — reading order matches how the sheet is written. */
@@ -147,31 +115,13 @@ export default function EddySheetImport({ dbName, label = 'poses', onImported })
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState('');
   const [report, setReport] = useState(null);
-  // "Replace" turns an import into a swap: the incoming set lands, the previous items are deleted,
-  // and ★ favorites are carried across by TITLE. Without it, re-importing a corrected sheet meant
-  // deleting by hand first and then re-starring every favourite, because favorites are stored as
-  // item IDs and addItems always mints new ones — so a re-import always arrived unfavorited.
-  const [replace, setReplace] = useState(false);
 
   // A prepared .json file ([{prompt, image}]) skips the network entirely: its pictures are
   // already embedded. This is the reliable path for a sheet whose images are pasted INTO the
   // cells, because those never appear in a CSV export -- only an .xlsx carries them.
-  // Titles are matched case/space-insensitively: the star should survive a title that differs only
-  // by stray whitespace or capitalisation between an export and the file that comes back.
-  const titleKey = (s) => String(s || '').trim().toLowerCase();
-
   const handleJson = async (text) => {
     const data = JSON.parse(text);
     if (!Array.isArray(data)) throw new Error('Expected a JSON array');
-
-    // Snapshot BEFORE anything is added — this is the only moment the old items and the favorites
-    // key still line up. Once the previous items are deleted their ids are gone and a favourite can
-    // no longer be resolved to a title, which is why replace happens AFTER the import, not before.
-    const before = await store.listItems();
-    const favIds = new Set(await store.listFavorites());
-    const favTitles = new Set(
-      before.filter((i) => favIds.has(i.id)).map((i) => titleKey(i.name)).filter(Boolean),
-    );
     // An entry may carry several prompt variations that all belong to one picture, either as
     // {variations:[...]} or {prompts:[...]}. Each becomes its own item, image included.
     const added = data.flatMap((d, i) => {
@@ -204,18 +154,8 @@ export default function EddySheetImport({ dbName, label = 'poses', onImported })
         prompt: (d.title || '').trim()
           ? (d.prompt || '').trim()
           : joinIdeaAndPrompt(d.idea || d.description || '', d.prompt || ''),
-        // Carried straight through, same as title — a pose's video prompt is its own field, not
-        // something to fold into or derive from the pose prompt.
-        videoPrompt: (d.videoPrompt || '').trim(),
-        // An outfit's back-view description and photo, carried through so a set exported with
-        // back views arrives with them. Absent on every pose row and on any older export.
-        backPrompt: (d.backPrompt || '').trim(),
-        backImage: d.backImage || '',
         folder,
         name: (d.title || '').trim() || `import-${i + 1}`,
-        // Carried from the export so a re-import restores the ★ set directly, rather than relying on
-        // the title-match fallback below (which cannot help when the previous items are already gone).
-        favorite: d.favorite === true,
       }];
     }).filter((d) => d.dataUrl || d.prompt);
     if (!added.length) throw new Error('No usable entries in that file');
@@ -238,47 +178,7 @@ export default function EddySheetImport({ dbName, label = 'poses', onImported })
     // Stored items keep the name they were given, so counting pictures means looking back at
     // the input by name rather than at the index (which never holds the bytes).
     const withImage = stored.filter((a) => added.find((x) => x.name === a.name)?.dataUrl).length;
-
-    // Carry the stars across. A freshly stored item is never favorited, so toggling once here can
-    // only ADD the star — it can never silently un-star something that just arrived.
-    // ONE star per title, not one per copy. A set with duplicate titles (42 of them here) would
-    // otherwise turn 12 favourites into 23, because every copy sharing a starred title got starred.
-    // Titles that arrived already marked favourite in the FILE. Merged with the titles that were
-    // favourited in the app before this import, so a star survives whether it came from the export
-    // or was only ever set locally.
-    const fileFavTitles = new Set(
-      added.filter((d) => d.favorite).map((d) => titleKey(d.name)).filter(Boolean),
-    );
-    const wanted = new Set([...favTitles, ...fileFavTitles]);
-    let refavorited = 0;
-    if (wanted.size) {
-      const claimed = new Set();
-      for (const s of stored) {
-        const k = titleKey(s.name);
-        if (wanted.has(k) && !claimed.has(k)) {
-          claimed.add(k);
-          await store.toggleFavorite(s.id);
-          refavorited += 1;
-        }
-      }
-    }
-
-    // Replace LAST, once the new set is safely stored and starred: a crash mid-import then costs
-    // nothing, where deleting first would have destroyed the old set with no replacement in place.
-    let removed = 0;
-    if (replace && before.length) {
-      setProgress(`Removing ${before.length} previous ${label}…`);
-      for (const it of before) {
-        // Drop the OLD id out of the favorites key as it goes. The UI already filters favorites down
-        // to live items so a leftover would be invisible, but without this every replace-import
-        // would silently grow that key by one dead id per favourite, forever.
-        if (favIds.has(it.id)) await store.toggleFavorite(it.id);
-        await store.removeItem(it.id);
-        removed += 1;
-      }
-    }
-
-    return { count: stored.length, withImage, skipped, refavorited, removed };
+    return { count: stored.length, withImage, skipped };
   };
 
   const handleFile = async (file) => {
@@ -301,26 +201,18 @@ export default function EddySheetImport({ dbName, label = 'poses', onImported })
       // A video sheet carries several prompt variations per row, all sharing one image. Each
       // variation becomes its own item so it can be picked independently later.
       const pairs = hasHeader ? findVariationPairs(rows[0]) : null;
-      // A single "Video Prompt" column (as opposed to a whole sheet of them — see
-      // findVideoPromptCol) is a side field on the row's item(s), not another prompt to pick.
-      const videoPromptCol = hasHeader ? findVideoPromptCol(rows[0]) : -1;
 
       const added = [];
       const skipped = [];
       for (let i = 0; i < body.length; i += 1) {
         setProgress(`Row ${i + 1} of ${body.length}`);
         const url = pickImageUrl(body[i]);
-        const videoPrompt = videoPromptCol >= 0 ? (body[i][videoPromptCol] || '').trim() : '';
         // Every variation in this row reuses the row's single image.
         const rowPrompts = pairs
           ? pairs
             .map(({ ideaAt, promptAt }) => joinIdeaAndPrompt(ideaAt >= 0 ? body[i][ideaAt] : '', body[i][promptAt]))
             .filter((t) => t.trim())
-          // pickPrompt scans every cell for the longest text with no idea which column is which —
-          // left alone it would just as happily grab the video-prompt cell as the pose prompt.
-          // Dropping that one cell before scanning is what keeps the two apart.
-          : [pickPrompt(videoPromptCol >= 0 ? body[i].filter((_, ci) => ci !== videoPromptCol) : body[i])]
-            .filter((t) => t.trim());
+          : [pickPrompt(body[i])].filter((t) => t.trim());
         if (!rowPrompts.length && !url) continue;
 
         let dataUrl = '';
@@ -334,7 +226,7 @@ export default function EddySheetImport({ dbName, label = 'poses', onImported })
           }
         }
         if (!rowPrompts.length) {
-          if (dataUrl) added.push({ dataUrl, prompt: '', videoPrompt, name: `sheet-${i + 1}` });
+          if (dataUrl) added.push({ dataUrl, prompt: '', name: `sheet-${i + 1}` });
           continue;
         }
         // Three variations become three items sharing one picture — that is the point of the
@@ -343,7 +235,6 @@ export default function EddySheetImport({ dbName, label = 'poses', onImported })
           added.push({
             dataUrl,
             prompt: text,
-            videoPrompt,
             name: rowPrompts.length > 1 ? `sheet-${i + 1}-v${v + 1}` : `sheet-${i + 1}`,
           });
         });
@@ -371,19 +262,11 @@ export default function EddySheetImport({ dbName, label = 'poses', onImported })
             A prepared .json (images included), or a Sheets CSV export where each row carries an image URL and its prompt.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Replace + keep stars. Opaque and full-size on purpose — this is a destructive option and
-              a 10px translucent hint is not something a user can be expected to notice. */}
-          <label className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${busy ? 'pointer-events-none opacity-50' : ''} ${replace ? 'border-rose-400 bg-rose-500/20 text-rose-200' : 'border-zinc-600 bg-zinc-800 text-zinc-200 hover:border-zinc-500'}`}>
-            <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} className="h-4 w-4 accent-rose-500" />
-            Replace all · keep ★
-          </label>
-          <label className={`inline-flex cursor-pointer items-center rounded-lg border border-white/[0.06] bg-white/[0.04] px-4 py-2 text-sm font-medium text-zinc-300 transition hover:bg-white/[0.07] ${busy ? 'pointer-events-none opacity-50' : ''}`}>
-            {busy ? <><Spinner size={14} /><span className="ml-2">{progress || 'Importing…'}</span></> : 'Choose file'}
-            <input type="file" accept=".csv,.json,text/csv,application/json" className="hidden"
-              onChange={(e) => { handleFile(e.target.files?.[0]); e.target.value = ''; }} />
-          </label>
-        </div>
+        <label className={`inline-flex cursor-pointer items-center rounded-lg border border-white/[0.06] bg-white/[0.04] px-4 py-2 text-sm font-medium text-zinc-300 transition hover:bg-white/[0.07] ${busy ? 'pointer-events-none opacity-50' : ''}`}>
+          {busy ? <><Spinner size={14} /><span className="ml-2">{progress || 'Importing…'}</span></> : 'Choose file'}
+          <input type="file" accept=".csv,.json,text/csv,application/json" className="hidden"
+            onChange={(e) => { handleFile(e.target.files?.[0]); e.target.value = ''; }} />
+        </label>
       </div>
 
       {report && (
@@ -391,8 +274,6 @@ export default function EddySheetImport({ dbName, label = 'poses', onImported })
           <p className="text-zinc-300">
             Imported {report.count} — {report.withImage} with an image, {report.count - report.withImage} prompt-only.
           </p>
-          {report.removed > 0 && <p className="text-zinc-400">Replaced: {report.removed} previous item(s) removed.</p>}
-          {report.refavorited > 0 && <p className="text-rose-300">★ {report.refavorited} favourite(s) carried over by title.</p>}
           {report.skipped.length > 0 && (
             <details className="text-zinc-600">
               <summary className="cursor-pointer text-amber-400/80">{report.skipped.length} image(s) could not be fetched</summary>
