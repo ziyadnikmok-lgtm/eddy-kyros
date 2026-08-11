@@ -675,7 +675,31 @@ catch it mechanically and put that in a check file. Rules currently backed by a 
 | already-swapped dimming stays out of the pose and outfit pickers | `tools/check-already-swapped.js` |
 | this document | `tools/check-claude-md.js` |
 
-### 9. The tooling is not above suspicion
+### 9. PUBLISH THE BRANCH YOU WORKED ON, and verify by TREE (2026-08-11)
+
+**Work happens on `feat/run-pipeline`, not `main`.** Local `main` was 208 commits behind it.
+
+Pushing here is not a normal push: local history carries a hardcoded session secret and a committed
+`_appdata_backup/` with `.env` and the app DB, so `tools/secret_guard.py` refuses it — correctly.
+Both remotes have their own lineage and receive the current TREE as a single commit:
+
+```powershell
+git rev-parse HEAD^{tree}                      # HEAD, never `main` unless you checked
+git commit-tree <tree> -p origin/main -m "..."         # then: git push origin <commit>:main
+git commit-tree <tree> -p friend/share-clean -m "..."  # then: git push friend <commit>:share-clean
+```
+
+`friend/share-clean` is Eddy's. Commit ON TOP of it, never force — his 14 commits stay in the
+history, and his files end up identical to ours, which is what he pulls for.
+
+**Verify by tree hash, not by "it pushed".** `git rev-parse HEAD^{tree}` must equal
+`git rev-parse origin/main^{tree}` and `friend/share-clean^{tree}`. Two syncs went out publishing
+`main`'s stale tree — a tree OLDER than what the remote already had — under commit messages
+describing work they did not contain, and `git diff main origin/main` reported 0 files because it
+compared the same wrong ref twice. A verification that reuses the mistaken assumption verifies
+nothing.
+
+### 10. The tooling is not above suspicion
 
 `share-push.py` had two bugs the same day: it silently dropped files outside a hard-coded directory
 list, and it could not express a deletion at all. `check-tdz-deps.js` reported 6/6 PASS on a file
