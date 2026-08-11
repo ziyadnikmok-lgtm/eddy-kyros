@@ -70,5 +70,35 @@ check('1 photo x 1 character is still 1 job', plan(['p1'], ['grace']).length ===
 check('cost: 3 photos x 2 characters at $0.05 = $0.30',
   (Math.max(1, 3) * Math.max(1, 2) * 0.05).toFixed(2) === '0.30');
 
+// --- how many render at once (owner, 2026-08-11) --------------------------------------------------
+// "Only 4 at a time -- make it whatever WaveSpeed allows." The pool was 4; the REAL ceiling is 6,
+// set by Chromium's sockets-per-host, and measured rather than assumed: 38,105 generation requests
+// in app.log, max concurrent overlap 6, with Eddy configured for 12 lanes throughout.
+check('the 4-lane cap is gone', !g.includes('const MAX_CONCURRENT_JOBS = 4;'));
+check('lanes are set per engine', g.includes('const LANES = { seedream: 12, nano2: 6 };'));
+check('and the pool uses them', g.includes('const lanes = LANES[engine] || LANES.seedream;'));
+check('the pool never spawns more workers than there is work',
+  g.includes('Math.min(lanes, queue.length)'));
+check('the socket ceiling is written down, so nobody raises this expecting more',
+  /Chromium allows 6 sockets per host/.test(g));
+check('and the measurement behind it', /max concurrent overlap \*\*6\*\*/.test(g));
+check('with the way past it named', /submit -> job id -> poll/.test(g));
+check('a Pinterest-sized batch fits', g.includes('const MAX_SOURCES = 50;'));
+
+// A pool of N over M items must run every item exactly once, whatever N is.
+const drain = (items, lanes) => {
+  const q = [...items];
+  const seen = [];
+  const workers = Array.from({ length: Math.min(lanes, q.length) }, () => {
+    while (q.length) seen.push(q.shift());
+    return null;
+  });
+  return { count: workers.length, seen };
+};
+check('12 lanes over 30 jobs runs all 30', drain(Array.from({ length: 30 }, (_, i) => i), 12).seen.length === 30);
+check('and spawns 12 workers, not 30', drain(Array.from({ length: 30 }, (_, i) => i), 12).count === 12);
+check('3 jobs spawn 3 workers, not 12', drain([1, 2, 3], 12).count === 3);
+check('no job is run twice', new Set(drain(Array.from({ length: 30 }, (_, i) => i), 12).seen).size === 30);
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

@@ -34,7 +34,21 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 // request is pretending to come from. Not optional.
 const PWS_HANDLER = 'www/search/[scope].js';
 const TIMEOUT_MS = 12_000;
-const MAX_PAGE_SIZE = 50;
+/**
+ * How many pins one request may ask for.
+ *
+ * Was 50, which silently clamped the client's request for 100 and made "Load more" feel broken --
+ * one click added a handful of usable tiles. Measured against the live endpoint 2026-08-11, same
+ * query, one request each:
+ *
+ *   page_size=25  -> 20 pins     page_size=100 -> 92 pins
+ *   page_size=50  -> 45 pins     page_size=250 -> 237 pins (234 at >=600px)
+ *
+ * So Pinterest honours it and 250 is one request, not five. Kept as a ceiling rather than removed:
+ * the response is parsed and normalised in memory, and an unbounded page_size is a request for an
+ * unbounded response.
+ */
+const MAX_PAGE_SIZE = 250;
 
 /**
  * One Pinterest result -> the shape the client renders, or null.

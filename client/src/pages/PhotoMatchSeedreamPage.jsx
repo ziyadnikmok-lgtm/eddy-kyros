@@ -19,12 +19,29 @@ const RES_OPTIONS = SEEDREAM_RESOLUTIONS.map((r) => ({ value: r, label: r }));
 
 // Each job sends exactly one source photo, so the character gets the rest of Seedream's budget.
 const MAX_CHAR_IMAGES = SEEDREAM_MAX_IMAGES - 1;
-const MAX_SOURCES = 12;
-// Each job holds an HTTP request open for the whole render. Raised 2 -> 4 (owner, 2026-08-09):
-// at ~45s a job that is ~5 requests/minute, and it runs alongside Eddy's 12 lanes against a shared
-// 60/minute server limit. Deliberately a third of Eddy's — this page is the one you use WHILE a big
-// batch is running, so it should take the smaller share of the budget.
-const MAX_CONCURRENT_JOBS = 4;
+// 50, not 12: a Pinterest send arrives as one batch of whatever you ticked, and the old ceiling
+// only ever blocked the manual "add photos" path while the handoff walked straight past it.
+const MAX_SOURCES = 50;
+
+/**
+ * HOW MANY RENDER AT ONCE. Raised 4 -> 12 / 6 (owner asked for "whatever WaveSpeed allows",
+ * 2026-08-11).
+ *
+ * ⚠️ THE REAL CEILING IS 6, AND IT IS NOT OURS TO SET. Each job holds one HTTP request open for the
+ * whole render, and Chromium allows 6 sockets per host over HTTP/1.1 -- everything above that waits
+ * in the browser's network queue, invisible to us. Measured, not assumed: 38,105 generation
+ * requests in app.log, max concurrent overlap **6**, even though Eddy has been configured for 12
+ * lanes all along.
+ *
+ * So these numbers set this page's SHARE of those 6 when something else is running, and let it use
+ * all 6 when it is alone. Going higher buys nothing. The only way past 6 is to stop holding the
+ * request open: submit -> job id -> poll, which turns one 45-second socket into a handful of
+ * millisecond ones. That is a server change, and it is the thing to build when 6 is the wall.
+ *
+ * Matched to Eddy's lanes per engine rather than kept deliberately smaller: the owner runs this
+ * page on its own, and starving it to protect a batch that is not running cost half the throughput.
+ */
+const LANES = { seedream: 12, nano2: 6 };
 const SPEND_KEY = 'kyros.photoMatchSeedream.sessionSpend';
 
 // Seedream enforces an undocumented prompt-length cap ("The text length cannot exceed the
@@ -714,7 +731,8 @@ export default function PhotoMatchSeedreamPage() {
 
     // Simple concurrency pool — each job holds an HTTP request while Muapi renders.
     const queue = [...work];
-    const workers = Array.from({ length: Math.min(MAX_CONCURRENT_JOBS, queue.length) }, async () => {
+    const lanes = LANES[engine] || LANES.seedream;
+    const workers = Array.from({ length: Math.min(lanes, queue.length) }, async () => {
       while (queue.length) {
         const item = queue.shift();
         if (!item) return;

@@ -14,11 +14,16 @@ Read this at the start of every session. Contains everything you need.
 
 ## FIRST COMMANDS (always run at session start)
 
-```bash
-cd /Users/admin/ai-content-studio-saas-main
+```powershell
+cd D:\Kyros\app
 git status --short
 git log --oneline -n 5
 ```
+
+**This machine is WINDOWS.** No bash, no WSL, no `pkill`, no `open`. Anything in this file that
+looks like a Mac command is rot and should be fixed on sight -- `tools/check-claude-md.js` fails for
+exactly that reason. This document was written on a Mac and inherited paths that have never existed
+here; several survived until 2026-08-11, including the `cd` on this very line.
 
 ---
 
@@ -38,19 +43,25 @@ Tech stack:
 
 ## 2) KEY PATHS
 
+Every path in this table is asserted to exist by `tools/check-claude-md.js`. Add a row only if it
+is real: a wrong path here sends the next session somewhere that does not exist, which is how six
+Mac paths survived in this file for months.
+
 | What | Path |
 |------|------|
-| App root | `/Users/admin/ai-content-studio-saas-main` |
+| App root | `D:\Kyros\app` -- a real directory on the D: SSD, NOT a junction. The old Desktop copy is gone; anything pointing at it is stale. |
 | Server | `server/` |
 | Client source | `client/src/` |
 | Client build | `client/dist/` |
-| User data (local) | `~/Library/Application Support/Kyros Studio/` |
+| User data (local) | `%APPDATA%\ai-content-studio` -- junction to `D:\Kyros\userdata` |
 | User data (web) | `server/userdata/{userId}/` |
-| Local launcher | `/Users/admin/Kyros Studio Local.command` |
-| Push notes | `/Users/admin/READ-BEFORE-PUSHING-KYROS.md` |
-| GitHub | `https://github.com/velinus77/ai-content-studio-saas` (branch: `main`) |
+| Restart the app | `tools\restart-kyros.ps1` (builds first) |
+| Checks | `tools/check-*.js` -- run ALL of them before any push |
+| GitHub (ours) | `origin` -> `github.com/velinus77/ai-content-studio-saas`, branch `main` |
+| GitHub (Eddy) | `friend` -> `github.com/ziyadnikmok-lgtm/eddy-kyros`, branch `share-clean` |
 | Live site | `https://kyros-studio.xyz` |
-| App port | `3001` |
+| Local port | `18421` (`PREFERRED_PORT` in `electron/main.js`; +1 if taken) |
+| Production port | `3001` (the Dokploy container's `PORT`, NOT the local app) |
 
 ---
 
@@ -136,8 +147,9 @@ client/src/
 # 2. If client changed — build
 pnpm --dir client run build
 
-# 3. Restart local app (ALWAYS use this — it always works)
-pkill -f "Kyros Studio" 2>/dev/null; pkill -f "electron" 2>/dev/null; sleep 1; open /Applications/kyros.command
+# 3. Restart local app — WINDOWS. (The pkill/open line that used to be here was macOS and
+#    could not have worked on this machine.) The script builds first, then restarts.
+powershell -ExecutionPolicy Bypass -File tools\restart-kyros.ps1
 
 # 4. Test locally
 # 5. Push only when user asks
@@ -147,8 +159,8 @@ pkill -f "Kyros Studio" 2>/dev/null; pkill -f "electron" 2>/dev/null; sleep 1; o
 
 ## 5) SAFE PUSH
 
-```bash
-cd /Users/admin/ai-content-studio-saas-main
+```powershell
+cd D:\Kyros\app
 git pull --rebase origin main
 pnpm --dir client run build
 
@@ -501,6 +513,27 @@ the Library. On-screen verification is the owner's, and it has caught what the c
 
 ---
 
+## HOW TO TAKE AN INSTRUCTION (owner, 2026-08-11)
+
+**Take the idea, then make it better — do not just implement it literally.** The owner asks for a
+result, not a specification. Their words are the goal; the shape is yours to get right.
+
+- Build what was asked, then ask what would make it actually good in use, and do that too. "Add a
+  toggle" became a toggle that defaults sensibly, remembers per collection, hides where it makes no
+  sense, and says something when there is nothing to show.
+- **Fix the thing next to it while you are there** — the adjacent bug you can see is cheaper to fix
+  now than after it is reported.
+- Name the improvement in one line so it can be rejected. Do not silently widen scope.
+- Where their words and their goal disagree, follow the GOAL and say what you did. "Delete all"
+  meant "get these folders out of my way", so the work was merged into the plain folder rather than
+  ~40 generated images being destroyed.
+- Do not ask permission for the obvious better version. Do ask before anything destructive or
+  irreversible.
+- **Never hand back a half-answer.** If part is blocked, finish everything else and say plainly what
+  is left and why.
+
+---
+
 ## DEBUGGING — read before touching a reported bug
 
 Written 2026-08-10, after a day where basic fixes each took five rounds. Every rule below is one
@@ -522,7 +555,8 @@ the new chunk was not fetched until 11:54, when the user reloaded by hand.
 cannot serve a stale dist:
 
 ```
-powershell -ExecutionPolicy Bypass -File toolsestart-kyros.ps1
+powershell -ExecutionPolicy Bypass -File tools
+estart-kyros.ps1
 ```
 
 It refuses to restart if the build fails, so a broken build never replaces a working window. It
@@ -574,7 +608,98 @@ Use the **Write** tool for anything containing an escape, or build it: `NB = chr
 ` in
 a pattern fails on correct code — use `\s+`.
 
-### 6. The tooling is not above suspicion
+### 6. Restarting the app can leave it STOPPED (2026-08-11)
+
+`tools
+estart-kyros.ps1` kills the running instance and relaunches. From an agent's shell there is
+no desktop session, so `Start-Process electron` creates the process and it dies a second later --
+no window, no server, no error, and the instance you just killed does not come back. It happened
+three times in a row before it was noticed.
+
+The script now falls back to `explorer.exe`, which launches into the interactive session. Two traps
+in that fallback: explorer takes NO arguments for its target, so the args go in a one-line `.cmd`;
+and handing it `electron.exe` alone opens Electron's **default demo window**, which looks exactly
+like a successful restart. Always confirm with `/api/health` on 18421, never by "a window appeared".
+
+### 7. What made a picture is recorded on the row -- keep it that way (2026-08-11)
+
+Every Library row written by Eddy carries `basePhotoId / baseId / poseId / outfitId / comboKey /
+charName / price` (see §6 of the previous section -- the `_addItems` ALLOWLIST silently drops
+anything not named there). Four features read it: the duplicate guard, Max Outfit's already-swapped
+dimming, today's spend, and any future "what made this?".
+
+Three rules that are load-bearing:
+
+- **Never dedupe by prompt text.** `buildPrompt` puts no base photo in its text, so two DIFFERENT
+  base photos with the same pose and outfit produce the byte-identical prompt. Prompt-hash dedupe
+  would skip every base after the first in a multi-base run -- the normal way the page is used. It
+  was designed in, refused during implementation, and `tools/check-dup-guard.js` replays the false
+  positive so it is not reintroduced as a "missing feature".
+- **A Regenerate or a retry is NEVER skipped.** Both are explicit asks for an image that does not
+  exist yet. A retry arrives as `only`, which is how they are told apart.
+- **The seed is random** (`wavespeedService` sends `-1`). A skip declines a *different* picture from
+  the same recipe, not a copy. Every message must say **recipe**, and the override must stay one
+  click away.
+
+Prices go through **`priceOne(engine, resolution, perRunImages)`** -- never `seedreamCost()`
+directly. Every other site called seedreamCost regardless of engine, so nano2 (the DEFAULT) quoted
+Seedream's rate in both confirm dialogs and stamped it onto every row. Today's spend sums those
+rows, which is what made a quiet mismatch into a wrong number on screen.
+
+### 8. This file is TESTED. Keep it that way
+
+`tools/check-claude-md.js` (31 assertions) fails when this document stops being true:
+
+- no Mac command or `/Users/` path on a line anyone could copy and run
+- every path in KEY PATHS exists on disk
+- the local port it names equals `PREFERRED_PORT` in `electron/main.js`
+- every `tools/...` script it points at is really there
+- no GitHub / OpenAI / Google token, and no private key, ever gets pasted in
+- the work loop still restarts the Windows way
+
+It was written because this file spent months opening with a `cd` into a Mac home directory that
+has never existed here, calling the local port 3001 when it is 18421, and pointing at a launcher
+that is long gone. Within minutes of the
+check existing it caught a fresh one: the App root row said `D:\Kyrospp` was a junction of a
+Desktop folder that has since been deleted.
+
+**A rule that is only prose is a rule that will be broken.** When you add one here, ask what would
+catch it mechanically and put that in a check file. Rules currently backed by a check:
+
+| Rule | Enforced by |
+|---|---|
+| deps arrays / TDZ | `tools/check-tdz-deps.js` |
+| a new field survives `_addItems` | `tools/check-provenance.js` |
+| no prompt-hash dedupe, no skipping a Regenerate | `tools/check-dup-guard.js` |
+| one price helper per engine, spend total, retry survives a reload | `tools/check-spend-and-retry.js` |
+| already-swapped dimming stays out of the pose and outfit pickers | `tools/check-already-swapped.js` |
+| this document | `tools/check-claude-md.js` |
+
+### 9. PUBLISH THE BRANCH YOU WORKED ON, and verify by TREE (2026-08-11)
+
+**Work happens on `feat/run-pipeline`, not `main`.** Local `main` was 208 commits behind it.
+
+Pushing here is not a normal push: local history carries a hardcoded session secret and a committed
+`_appdata_backup/` with `.env` and the app DB, so `tools/secret_guard.py` refuses it — correctly.
+Both remotes have their own lineage and receive the current TREE as a single commit:
+
+```powershell
+git rev-parse HEAD^{tree}                      # HEAD, never `main` unless you checked
+git commit-tree <tree> -p origin/main -m "..."         # then: git push origin <commit>:main
+git commit-tree <tree> -p friend/share-clean -m "..."  # then: git push friend <commit>:share-clean
+```
+
+`friend/share-clean` is Eddy's. Commit ON TOP of it, never force — his 14 commits stay in the
+history, and his files end up identical to ours, which is what he pulls for.
+
+**Verify by tree hash, not by "it pushed".** `git rev-parse HEAD^{tree}` must equal
+`git rev-parse origin/main^{tree}` and `friend/share-clean^{tree}`. Two syncs went out publishing
+`main`'s stale tree — a tree OLDER than what the remote already had — under commit messages
+describing work they did not contain, and `git diff main origin/main` reported 0 files because it
+compared the same wrong ref twice. A verification that reuses the mistaken assumption verifies
+nothing.
+
+### 10. The tooling is not above suspicion
 
 `share-push.py` had two bugs the same day: it silently dropped files outside a hard-coded directory
 list, and it could not express a deletion at all. `check-tdz-deps.js` reported 6/6 PASS on a file

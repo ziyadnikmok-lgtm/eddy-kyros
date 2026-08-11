@@ -1,11 +1,12 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { video as videoApi, seedanceOmni as omniApi, gallery as galleryApi, characters as charApi } from '../services/api';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { video as videoApi, seedanceOmni as omniApi, gallery as galleryApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Select, Slider, Textarea, Toggle, Badge, Spinner, ConfirmDialog } from '../components/UI';
 import { OMNI_MODELS, SEEDANCE_ASPECT_RATIOS, SEEDANCE_DURATION_MIN, SEEDANCE_DURATION_MAX } from '../config/photoModes';
 import { pushPending, resolvePending, rejectPending, attachTaskId } from '../lib/generationFeed';
 import { detectAspectRatio } from '../lib/detectAspectRatio';
 import { createPageStore } from '../lib/pageStateStore';
+import { createEddyCollection } from '../lib/eddyCollectionStore';
 import { cn } from '../lib/utils';
 
 // This page uses the Omni REFERENCE models, not the image-to-video ones. The difference is the
@@ -50,10 +51,60 @@ const store = createPageStore('kyros-seedance-video-state');
 // against the model's default push-in (there is no separate camera/negative parameter).
 const NO_ZOOM_DIRECTIVE = 'Static locked-off camera. No zoom, no push-in, no dolly, no camera movement — the frame stays fixed while only the subject moves.';
 
+/**
+ * How many of her photos ride along as reference.
+ *
+ * Every one is uploaded to Muapi individually before the job is even submitted, so a folder with
+ * thirty shots would make Generate sit there for a minute. Ten is the cap Seedream's images_list
+ * uses elsewhere in this app, and more angles past that buy very little likeness.
+ */
+const CHAR_REF_MAX = 10;
+
 export default function SeedanceVideoPage() {
-  // `characters` feeds the character shortcut on the source slot. Defaulted so the dropdown renders
-  // empty rather than throwing if the list has not loaded yet.
-  const { notify, characters = [] } = useApp();
+  const { notify } = useApp();
+
+  /**
+   * HER PHOTOS COME FROM EDDY, not from the server's character list.
+   *
+   * This page used the old SaaS `characters` API — a separate registry that the owner does not
+   * maintain and that has nothing in it, so the dropdown was either empty or offered someone who no
+   * longer exists (owner, 2026-08-11). Eddy's character collection is where the models actually
+   * live: one FOLDER per character, her photos inside it, exactly as Photo Match reads them.
+   *
+   * It is also faster: the photos are already local, so picking her is an IndexedDB read instead of
+   * one authenticated fetch per image.
+   */
+  const charStore = useMemo(() => createEddyCollection('eddy-character'), []);
+  const [chars, setChars] = useState([]);          // folders in eddy-character = the characters
+  const [charItems, setCharItems] = useState([]);  // her photos
+  const [charThumbs, setCharThumbs] = useState({});
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [f, i] = await Promise.all([charStore.listFolders(), charStore.listItems()]);
+        const map = {};
+        await Promise.all(i.map(async (it) => { map[it.id] = it.url || await charStore.getImage(it.id); }));
+        if (!alive) return;
+        setChars(f); setCharItems(i); setCharThumbs(map);
+      } catch { /* an unreadable collection shows the empty state, not a broken page */ }
+    })();
+    return () => { alive = false; };
+  }, [charStore]);
+
+  /**
+   * Her photos, BASE FIRST.
+   *
+   * The leading image is what the model treats as the primary subject, so the face she was built
+   * from has to lead. Same ranking Photo Match uses — base, then body, then everything else oldest
+   * first — so a character behaves identically on both pages.
+   */
+  const refsForCharacter = useCallback((id) => {
+    if (!id) return [];
+    const mine = charItems.filter((i) => i.folderId === id);
+    const rank = (i) => (i.role === 'base' ? 0 : i.role === 'body' ? 1 : 2);
+    return [...mine].sort((a, b) => rank(a) - rank(b) || (a.createdAt || 0) - (b.createdAt || 0));
+  }, [charItems]);
 
   const [model, setModel] = useState(_cache.model);
   const [prompt, setPrompt] = useState(_cache.prompt);
@@ -227,44 +278,38 @@ export default function SeedanceVideoPage() {
   };
 
   /**
-   * Pick a Character and load EVERY photo she has into the source set as reference images (all of
-   * them ride along in images_list — none is a first frame). Replaces the current set rather than
-   * appending — picking a character is "use her", not "add her to whatever is already here".
+   * Pick a character from EDDY and load her photos into the source set as references (all of them
+   * ride along in images_list — none is a first frame). Replaces the current set rather than
+   * appending: picking a character is "use her", not "add her to whatever is already here".
+   *
+   * Clicking the one already picked UNPICKS her, because the alternative is a select you cannot
+   * back out of without uploading something else.
    */
   const applyCharacter = async (id) => {
+    if (!id || id === characterId) { setCharacterId(''); return; }
     setCharacterId(id);
-    if (!id) return;
-    const c = characters.find((x) => x.id === id);
-    const urls = [];
-    // Primaries in index order (the shot she was built from stays first), then each ACTIVE reference.
-    const primaryCount = Math.max(0, Number(c?.primaryImageCount || 0));
-    if (primaryCount > 0) {
-      for (let i = 0; i < primaryCount; i += 1) urls.push(charApi.primaryImageUrl(id, i));
-    } else {
-      urls.push(charApi.imageUrl(id));   // older character with a single un-indexed primary
-    }
-    for (const ref of c?.references || []) {
-      if (ref?.isActive) urls.push(charApi.refImageUrl(id, ref.id));
-    }
-    if (!urls.length) return;
+    const mine = refsForCharacter(id);
+    if (!mine.length) { notify('That character has no photos yet — add some on the Eddy · Character tab', 'error'); return; }
 
     setCharLoading(true);
     try {
       const loaded = [];
-      for (const u of urls) {
-        try {
-          const resp = await fetch(u, { credentials: 'include' });
-          if (!resp.ok) continue;                       // skip the bad one, keep the rest
-          const blob = await resp.blob();
-          loaded.push(await fileToBase64(new File([blob], 'character', { type: blob.type || 'image/png' })));
-        } catch { /* one unreachable photo must not lose the others */ }
+      for (const it of mine.slice(0, CHAR_REF_MAX)) {
+        // Already in memory for the tiles; getImage is the fallback for anything not thumbed yet.
+        // eslint-disable-next-line no-await-in-loop -- reads from IndexedDB, not the network
+        const dataUrl = charThumbs[it.id] || await charStore.getImage(it.id);
+        if (dataUrl) loaded.push(dataUrl);
       }
-      if (!loaded.length) { notify('Could not load that character’s photos', 'error'); return; }
+      if (!loaded.length) { notify('Could not read that character’s photos', 'error'); return; }
       sourceTouched.current = true;
       setSourceImage(loaded[0]);
       setSourcePreview(loaded[0]);
       setSourceGalleryId(null);
       setExtras(loaded.slice(1).map((d, i) => ({ id: `x-${Date.now()}-${i}`, dataUrl: d })));
+      const name = chars.find((c) => c.id === id)?.name || 'Character';
+      notify(mine.length > CHAR_REF_MAX
+        ? `${name}: ${loaded.length} of ${mine.length} photos loaded (${CHAR_REF_MAX} is the cap)`
+        : `${name}: ${loaded.length} photo${loaded.length === 1 ? '' : 's'} loaded as reference`, 'success');
     } finally {
       setCharLoading(false);
     }
@@ -502,8 +547,11 @@ export default function SeedanceVideoPage() {
                 </label>
               </div>
             )}
-            <div className="flex flex-col gap-2 flex-1">
-              <div className="flex items-center gap-2">
+            {/* min-w-0: a flex child refuses to shrink below its content by default, so with several
+                extras loaded this column was pushed past the card edge and "Pick from Gallery" was
+                cut in half. */}
+            <div className="flex min-w-0 flex-1 flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <label className="cursor-pointer">
                   <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleImageUpload} />
                   <span className="inline-block">
@@ -517,26 +565,58 @@ export default function SeedanceVideoPage() {
                   {showGallery ? 'Hide Gallery' : 'Pick from Gallery'}
                 </Btn>
               </div>
-              {/* Third way in: pick a Character and her photo lands in the slot directly. Same result
-                  as uploading it by hand, without going and finding the file every time. */}
-              <div className="flex items-center gap-2">
-                <select
-                  value={characterId}
-                  onChange={(e) => applyCharacter(e.target.value)}
-                  disabled={charLoading}
-                  className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:border-rose-500 focus:outline-none disabled:opacity-50"
-                >
-                  <option value="">Or use a character…</option>
-                  {characters.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name || c.id}</option>
-                  ))}
-                </select>
-                {charLoading && <Spinner size={16} />}
-              </div>
               {/* Every photo here is a REFERENCE the model studies — none becomes a first frame.
                   More angles of her = a stronger likeness in the generated video. */}
               <p className="text-xs text-zinc-500">PNG, JPG, WebP. Photos of your model — used as reference, not as the first frame.</p>
             </div>
+          </div>
+
+          {/* Third way in: pick a character from EDDY and her photos land in the slot directly.
+              Shown as her face rather than a name in a dropdown -- you pick a model by looking at
+              her, and the old select gave no way to tell two blondes apart.
+
+              Its OWN full-width row, not a third column beside the thumbnails: squeezed in there it
+              ran off the edge of the card as soon as a couple of extras were loaded, and the tiles
+              only WRAP because they have the width to. */}
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span className="text-[0.625rem] font-semibold uppercase tracking-wider text-zinc-500">
+                Or use a character from Eddy
+              </span>
+              {charLoading && <Spinner size={12} />}
+            </div>
+            {chars.length === 0 ? (
+              <p className="text-xs text-zinc-600">
+                No characters yet — make one on the <span className="text-zinc-400">Eddy · Character</span> tab.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {chars.map((c) => {
+                  const mine = refsForCharacter(c.id);
+                  const lead = mine[0];
+                  const on = characterId === c.id;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => applyCharacter(c.id)}
+                      disabled={charLoading}
+                      title={`${c.name || 'Unnamed'} — ${mine.length} photo${mine.length === 1 ? '' : 's'}${on ? ' (click to unpick)' : ''}`}
+                      className={cn('w-20 shrink-0 overflow-hidden rounded-lg border-2 transition cursor-pointer disabled:opacity-50',
+                        on ? 'border-rose-500' : 'border-transparent hover:border-zinc-600')}
+                    >
+                      {lead && charThumbs[lead.id]
+                        ? <img src={charThumbs[lead.id]} alt="" loading="lazy" className="aspect-[3/4] w-full object-cover bg-zinc-950" />
+                        : <span className="flex aspect-[3/4] w-full items-center justify-center bg-white/[0.03] text-[0.5rem] text-zinc-600">No photo</span>}
+                      <span className="block truncate px-1 py-0.5 text-[0.5625rem] text-zinc-400">{c.name || 'Unnamed'}</span>
+                      {/* The count is the useful number here: it is how many reference photos
+                          the model will actually get. */}
+                      <span className="block px-1 pb-0.5 text-[0.5rem] text-zinc-600">{mine.length} ref{mine.length === 1 ? '' : 's'}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {showGallery && (

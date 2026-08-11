@@ -20,6 +20,7 @@ import { createEddyCollection } from '../lib/eddyCollectionStore';
 import { createPageStore } from '../lib/pageStateStore';
 // isPosePromptBroken is deliberately no longer imported here: the broken-prompt notice was demoted
 // out of the generate flow and now lives only on the Pose tab, where it can be acted on.
+import { comboKey, buildSeenKeys, splitBySeen, spendToday } from '../lib/provenance';
 import { poseSentence, readPoseView, readPoseExpression } from '../lib/poseText';
 import { runPool } from '../lib/runPool';
 import { cn } from '../lib/utils';
@@ -62,6 +63,17 @@ const NANO2_CLIENT_TIMEOUT_MS = 11 * 60_000;
 // endpoint: 1k $0.07, 2k $0.105 (2K is the standard rate x1.5). Both search flags are sent false
 // by the service, so neither surcharge applies.
 const NANO2_COST = { '1K': 0.07, '2K': 0.105 };
+/**
+ * What ONE image costs, on whichever engine is running.
+ *
+ * One helper rather than a seedreamCost() call at each site: the button read the engine and every
+ * other site did not, so a Nano Banana 2 run — the DEFAULT engine — quoted Seedream's rate in its
+ * confirm dialog and stamped it onto every Library row. Today's spend total sums those rows, which
+ * is what turned a quiet mismatch into a wrong number on screen.
+ */
+const priceOne = (engine, resolution, perRunImages) => (engine === 'nano2'
+  ? (NANO2_COST[resolution] ?? NANO2_COST['1K'])
+  : seedreamCost(resolution, Math.max(1, perRunImages)));
 // How many times one image is attempted on Nano Banana 2 before it falls back to Seedream 5.0
 // Pro. Four, because the failure this exists for is the content guard, which samples: a refusal
 // is not a verdict on the prompt, it is one roll. Terminal errors (no key, bad request) skip the
@@ -1742,8 +1754,12 @@ function ImageSlot({ title, hint, value, onChange, dbName, libraryStore, pickerD
  * sibling of the tile button inside a relative wrapper, never nested inside it: a <button> inside a
  * <button> is invalid HTML and the inner click would not fire reliably. stopPropagation keeps a star
  * click from also toggling the pick.
+ *
+ * doneIds is OPTIONAL — a Set of ids this collection has already been used as a source for. Passed
+ * only by Max Outfit's "Photos to dress" slot. Tiles in it are DIMMED and tagged, never filtered
+ * out: wanting a second take on a photo already dressed is normal, so it stays one click away.
  */
-function PickerGrid({ items, thumbs, selected, favIds, onToggle, onToggleFavorite, empty }) {
+function PickerGrid({ items, thumbs, selected, favIds, onToggle, onToggleFavorite, empty, doneIds }) {
   if (!items.length) return <p className="py-6 text-center text-xs text-zinc-600">{empty}</p>;
   return (
     // data-picker-grid: the hook a workspace CSS file uses to set its own columns / height.
@@ -1754,7 +1770,10 @@ function PickerGrid({ items, thumbs, selected, favIds, onToggle, onToggleFavorit
           <div key={it.id} className="relative">
             <button onClick={() => onToggle(it.id)}
               className={cn('relative block aspect-square w-full overflow-hidden rounded-lg border transition cursor-pointer',
-                on ? 'border-rose-500 ring-2 ring-rose-500/40' : 'border-zinc-800/60 hover:border-zinc-600')}>
+                on ? 'border-rose-500 ring-2 ring-rose-500/40' : 'border-zinc-800/60 hover:border-zinc-600',
+                // Dimmed only while UNPICKED: once ticked it is part of this run and must look
+                // like every other pick. Hover restores it so the picture can still be seen.
+                doneIds?.has(it.id) && !on ? 'opacity-40 hover:opacity-100' : '')}>
               {thumbs[it.id] ? (
                 <img src={thumbs[it.id]} alt="" className="h-full w-full object-cover bg-zinc-950" loading="lazy" />
               ) : (
@@ -1764,6 +1783,10 @@ function PickerGrid({ items, thumbs, selected, favIds, onToggle, onToggleFavorit
                 </span>
               )}
               {on && <span className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-[0.625rem] font-bold text-white">✓</span>}
+              {/* Bottom LEFT: the favorite star owns bottom right. */}
+              {doneIds?.has(it.id) && (
+                <span className="absolute bottom-0.5 left-0.5 rounded bg-black/80 px-1 text-[0.5rem] font-semibold uppercase tracking-wider text-zinc-300">done</span>
+              )}
               {/* Hover reveals the card's prompt. KEPT deliberately: several poses look nearly
                   identical as thumbnails (the Riding set, the Feet set) and the prompt text is the
                   only thing that tells them apart from the picker — more so now that every pose
@@ -3440,6 +3463,44 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   const [instruction, setInstruction] = useState(_cache.instruction);
 
   /**
+   * Skip recipes already generated. Remembered, because whoever wants variations wants them
+   * repeatedly and whoever does not never wants to think about it again.
+   */
+  const [skipDupes, setSkipDupes] = useState(() => {
+    try { return localStorage.getItem('kyros.skipDupes') !== '0'; } catch { return true; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('kyros.skipDupes', skipDupes ? '1' : '0'); } catch { /* private mode */ }
+  }, [skipDupes]);
+
+  /**
+   * A prompt sent over from the Library's "Use in Generate".
+   *
+   * Read from sessionStorage on mount rather than relying on the event alone: this page is
+   * lazy-loaded, so an event dispatched before its chunk mounts fires into the void -- the same
+   * failure that made the Pinterest handoff silently drop everything (2026-08-10). The event is
+   * still listened for, so a page that is ALREADY open updates without a navigation.
+   *
+   * It fills the instruction box rather than generating. Reusing a prompt is a starting point you
+   * then edit, and spending money on someone's click in another tab would be indefensible.
+   */
+  useEffect(() => {
+    const take = (text) => {
+      const t = String(text || '').trim();
+      if (!t) return;
+      setInstruction(t);
+      notify('Prompt loaded — edit it and press Generate', 'success');
+    };
+    try {
+      const pending = window.sessionStorage.getItem('kyros.reusePrompt');
+      if (pending) { window.sessionStorage.removeItem('kyros.reusePrompt'); take(pending); }
+    } catch { /* private mode */ }
+    const onReuse = (e) => take(e?.detail?.prompt);
+    window.addEventListener('kyros:reuse-prompt', onReuse);
+    return () => window.removeEventListener('kyros:reuse-prompt', onReuse);
+  }, [notify]);
+
+  /**
    * A new base photo starts a new shoot, so the instruction clears with it.
    *
    * The instruction is the one field written FOR a particular picture — "much bigger bust",
@@ -3587,7 +3648,31 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   // On a 60-image run that is the difference between re-running 8 combos and re-running all 60 at
   // full price. Each entry keeps the combo itself, so a retry reproduces exactly that pose/outfit
   // pair rather than asking you to find it again by eye (owner, 2026-08-06).
+  /**
+   * KEPT ACROSS A RELOAD.
+   *
+   * This was React state alone, so reloading lost both the Retry bar and any record of what had
+   * not generated -- the only way to notice was counting images. Stored in the same page store the
+   * rest of this page uses, so there is no second database to keep in step.
+   *
+   * Restored ONCE on mount, and only when there is something to restore: an empty saved list must
+   * not overwrite failures this session has already collected. Clearing is deliberate -- the Clear
+   * button and a successful retry both write through, so a dismissed bar stays dismissed.
+   */
   const [failedCombos, setFailedCombos] = useState([]);
+  const failedRestored = useRef(false);
+  useEffect(() => {
+    (async () => {
+      const saved = await stateStore.get('failedCombos', []);
+      failedRestored.current = true;
+      if (Array.isArray(saved) && saved.length) setFailedCombos((cur) => (cur.length ? cur : saved));
+    })();
+  }, []);
+  useEffect(() => {
+    // Never before the restore has run, or the initial empty state erases the saved list first.
+    if (!failedRestored.current) return;
+    stateStore.set('failedCombos', failedCombos);
+  }, [failedCombos]);
   const [results, setResults] = useState([]);
 
   // Tiles currently mounted. Grows by RESULTS_PAGE on demand — nothing is discarded, it just is
@@ -4424,6 +4509,23 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   useEffect(() => { basePhotosRef.current = { thumbs: baseThumbs, pairs: basePhotoPairs }; }, [baseThumbs, basePhotoPairs]);
 
   /**
+   * Sources this app has already dressed.
+   *
+   * Point Max Outfit at a folder, swap forty, come back tomorrow and nothing said which were done —
+   * you had to re-pick by memory and pay for the overlap. Read from the Library's own provenance
+   * (Task 2 writes baseId / basePhotoId onto every result), so it cannot drift out of step the way
+   * a second ledger would.
+   */
+  const swappedSourceIds = useMemo(() => {
+    const out = new Set();
+    for (const r of libItems) {
+      if (r.basePhotoId) out.add(r.basePhotoId);
+      if (r.baseId) out.add(r.baseId);
+    }
+    return out;
+  }, [libItems]);
+
+  /**
    * What the ticked base photos resolved to, so the pairing is visible BEFORE money is spent.
    *
    * A base photo whose folder has no matching character is the case worth surfacing: it still
@@ -4677,10 +4779,18 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   const overCap = perRunImages > SEEDREAM_MAX_IMAGES;
   // Priced per ENGINE. Showing Seedream's rate while Nano Banana 2 runs would misstate the bill on
   // the one control where spend is agreed.
-  const perImagePrice = engine === 'nano2'
-    ? (NANO2_COST[resolution] ?? NANO2_COST['1K'])
-    : seedreamCost(resolution, Math.max(1, perRunImages));
+  const perImagePrice = priceOne(engine, resolution, perRunImages);
   const totalCost = combos.length * perImagePrice;
+  /**
+   * WHAT TODAY HAS COST, across every run and every tab of this page.
+   *
+   * Per-run cost was the only number on screen, so the WaveSpeed credit wall arrived with no
+   * warning it was close (2026-08-10). Summed from the Library's own rows -- derived, not counted
+   * in memory -- so it survives a reload, counts what other batches spent, and cannot drift out of
+   * step with what was actually made. Rows written before price was stored contribute nothing,
+   * which makes the figure a floor rather than a guess.
+   */
+  const spentToday = useMemo(() => spendToday(libItems), [libItems]);
 
   // Shows the real assembled prompt for the first combo, so what lands at Seedream is never a
   // mystery. Built with the same buildPrompt the run loop uses -- a separate "preview" version
@@ -4933,7 +5043,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       ratio = aspectRatio;
     }
     const videoRatio = runCtx ? runCtx.videoRatio : toVideoAspectRatio(ratio);
-    const perImageCost = runCtx ? runCtx.perImageCost : seedreamCost(resolution, Math.max(1, perRunImages));
+    const perImageCost = runCtx ? runCtx.perImageCost : priceOne(engine, resolution, perRunImages);
     let libFolderId = runCtx ? runCtx.libFolderId : null;
     let filedUnder = '';
     /**
@@ -5383,8 +5493,35 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
          * poseView is stamped so Max Outfit can match a back shot to a back outfit exactly rather
          * than inferring it from the prompt text.
          */
+        /**
+         * PROVENANCE, written at the only moment everything is known.
+         *
+         * The result object is transient and a folder name is lossy -- "Grace 3" does not say
+         * which pose or outfit made the picture. Recording it here is what lets the duplicate
+         * guard skip a recipe already generated, and Max Outfit mark a source already swapped.
+         */
+        const rowComboKey = comboKey({
+          basePhotoId: combo?.basePhotoId,
+          baseId: combo?.baseId,
+          poseId: combo?.poseId,
+          outfitId: combo?.outfitId,
+          engine,
+          resolution,
+        });
         const filed = await libraryStore.addItems(
-          [{ url: galleryApi.imageUrl(first.galleryId), prompt, poseView, name: `eddy-${Date.now()}` }],
+          [{
+            url: galleryApi.imageUrl(first.galleryId),
+            prompt,
+            poseView,
+            name: `eddy-${Date.now()}`,
+            basePhotoId: combo?.basePhotoId || null,
+            baseId: combo?.baseId || null,
+            poseId: combo?.poseId || null,
+            outfitId: combo?.outfitId || null,
+            comboKey: rowComboKey,
+            charName: filedUnder || '',
+            price: perImageCost,
+          }],
           libFolderId,
         );
         // addItems reports per-item failures instead of throwing: a quota failure SKIPS the row and
@@ -5424,7 +5561,43 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   // failed" replays exactly the combos that threw, at the price of those combos alone, without
   // touching what is currently picked in the pickers.
   const run = useCallback(async (only) => {
-    const batch = Array.isArray(only) && only.length ? only : combos;
+    /**
+     * SKIP RECIPES ALREADY GENERATED.
+     *
+     * The seed is random (wavespeedService sends -1), so this declines a DIFFERENT picture from a
+     * recipe already used — not a byte-identical one. That is the intended trade: the waste being
+     * stopped is re-ticking the same base, pose and outfit across sessions, and "Make them anyway"
+     * is always one click away.
+     *
+     * Regenerate and a retry are explicit asks for an image that does not exist yet, so neither is
+     * ever deduped. A retry arrives as `only`, which is exactly how they are told apart.
+     *
+     * ONLY comboKey is matched — no prompt fallback, deliberately. The spec wanted the 627 rows
+     * that predate comboKey to dedupe by prompt hash, but buildPrompt carries no base photo in its
+     * text: two different base photos with the same pose and outfit produce the IDENTICAL prompt
+     * string, so a multi-base run — the normal way this page is used — would have skipped every
+     * base after the first and looked like a broken generate. Failing to make something asked for
+     * is worse than making a second copy. Old rows therefore do not dedupe; everything generated
+     * from here on does. check-dup-guard.js replays that false positive so it stays refused.
+     */
+    const isRetry = Array.isArray(only) && only.length > 0;
+    let batch = isRetry ? only : combos;
+    let skippedCount = 0;
+    if (skipDupes && !isRetry && batch.length) {
+      try {
+        const seen = buildSeenKeys(await libraryStore.listItems());
+        const { fresh, skipped } = splitBySeen(batch, seen, { engine, resolution });
+        skippedCount = skipped.length;
+        if (skippedCount && !fresh.length) {
+          notify('Every one of those recipes has been generated already — nothing new to make. Use Regenerate on a tile, or tick "Make them anyway".', 'info');
+          return;
+        }
+        if (skippedCount) batch = fresh;
+      } catch {
+        // A guard that cannot read the Library must not block a run the owner asked for.
+        skippedCount = 0;
+      }
+    }
     // Same question the Generate button asks (see the gate above it) rather than a stale copy that
     // only knew about the single slot. A resumed batch brings its own sources on each combo.
     const batchHasOwnMain = batch.every((c) => c?.baseId || c?.basePhotoId);
@@ -5438,7 +5611,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // multiplying two selections and is easy to arrive at without meaning to. The panel cap is
     // stated too: images past it are still generated and BILLED, they just stop being listed here.
     if (batch.length > CONFIRM_ABOVE) {
-      const each = seedreamCost(resolution, Math.max(1, perRunImages));
+      const each = priceOne(engine, resolution, perRunImages);
       const lines = [
         `${batch.length.toLocaleString()} images — about $${(batch.length * each).toFixed(2)}.`,
         `${pickedOutfits.length || 1} outfit${(pickedOutfits.length || 1) === 1 ? '' : 's'} x ${pickedPoses.length || 1} pose${(pickedPoses.length || 1) === 1 ? '' : 's'}.`,
@@ -5485,6 +5658,12 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // must survive this one starting.
     cancelRef.current = false;
     setCancelling(false);
+    // Said after the confirm gate, so it reports a run that is actually starting. The saving is
+    // named because a silently smaller batch reads as images going missing.
+    if (skippedCount) {
+      const saved = (skippedCount * perImagePrice).toFixed(2);
+      notify(`${skippedCount} already generated from this recipe — skipped. Saved $${saved}. Use Regenerate on a tile to make another anyway, or tick "Make them anyway".`, 'info');
+    }
     setInFlight((n) => n + 1);
     setQueued((n) => n + batch.length);
     warnedProvider.current = false;
@@ -5497,7 +5676,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // Regenerate across a mixed selection correctly. It is stored PER RESULT rather than read
     // from the live controls because a selection can span batches generated at different
     // resolutions, and each image re-rolls at the price of the batch that made it.
-    const perImageCost = seedreamCost(resolution, Math.max(1, perRunImages));
+    const perImageCost = priceOne(engine, resolution, perRunImages);
 
     // Results file themselves under the character's name — Grace's go to "Grace", Gwen's to
     // "Gwen". Resolved once per run so a 25-image batch doesn't hunt for it 25 times.
@@ -5696,7 +5875,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // is an unmemoized array literal today, so it rebuilds run() every render — listed anyway so
     // memoizing it later can't silently turn charPayload into a stale (previous-face) closure.
     // mode and maxNano are read when the queue record is written and when the folder is resolved.
-  }, [baseImage, overCap, perRunImages, aspectRatio, combos, sourceImages, resolution, nsfw, characterName, mode, maxNano, maxOutfit, pickedBases, pickedBasePhotos, missingOutfitKinds, libraryStore, notify, generateCombo, engine, pickedOutfits, pickedPoses]);
+  }, [baseImage, overCap, perRunImages, aspectRatio, combos, sourceImages, resolution, nsfw, characterName, mode, maxNano, maxOutfit, pickedBases, pickedBasePhotos, missingOutfitKinds, libraryStore, notify, generateCombo, engine, pickedOutfits, pickedPoses, skipDupes, perImagePrice]);
 
   // Assigned AFTER run() exists — `run` is a const, so touching it any earlier is a temporal dead
   // zone error that takes the whole page down. Same stabilisation generateComboRef uses: the resume
@@ -5783,7 +5962,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
        * Declining CLEARS the record rather than leaving it to ask again on every visit. "No" means
        * no, not "later".
        */
-      const each = seedreamCost(resolution, Math.max(1, perRunImages));
+      const each = priceOne(engine, resolution, perRunImages);
       const ok = window.confirm(
         `A run was interrupted with ${queued.length} image${queued.length === 1 ? '' : 's'} left.
 
@@ -6672,6 +6851,9 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
                 onToggle={toggle(setPicked)}
                 onToggleFavorite={(id) => togglePickFavorite(slot.store, id)}
                 empty={slot.empty}
+                // Only Max Outfit's sources: a pose or an outfit is MEANT to be used again and
+                // again, so marking those "done" would be noise on every tile in the grid.
+                doneIds={slot.key === 'base' ? swappedSourceIds : null}
               />
             )}
           </Card>
@@ -7070,6 +7252,24 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             </span>
           </div>
         )}
+        {/* The override. Skipping is right by default, but the seed is random — another take on a
+            recipe already used is a legitimate thing to want, and this is where it is asked for.
+            Shown as a warning line when off so a bigger-than-expected bill has its reason on
+            screen rather than in a checkbox nobody re-reads. */}
+        {!skipDupes && (
+          <p className="text-center text-[0.625rem] text-amber-300/80">
+            Duplicate skipping is off — every ticked combination will generate.
+          </p>
+        )}
+        <label className="flex cursor-pointer items-center justify-center gap-1.5 text-[0.625rem] text-zinc-500">
+          <input
+            type="checkbox"
+            checked={!skipDupes}
+            onChange={(e) => setSkipDupes(!e.target.checked)}
+            className="cursor-pointer accent-rose-500"
+          />
+          Make them anyway (do not skip recipes already generated)
+        </label>
         <Btn className="w-full" disabled={(maxOutfit ? !pickedBases.length : (!baseImage && !pickedBasePhotos.length)) || overCap || missingOutfitKinds.length > 0} onClick={() => run()}>
           {/* NO DOLLAR FIGURE ON GEMINI, deliberately. seedreamCost prices Muapi's published
               Seedream rates; this repo has no ground truth for Gemini/Vertex image cost, and the
@@ -7077,6 +7277,12 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
               is honest; a guessed one is not. */}
           Generate {combos.length} image{combos.length === 1 ? '' : 's'} · ${totalCost.toFixed(3)}
         </Btn>
+        {spentToday > 0 && (
+          <p className="text-center text-[0.625rem] text-zinc-600">
+            today <span className="font-mono text-zinc-400">${spentToday.toFixed(2)}</span>
+            {' · '}this run <span className="font-mono text-zinc-400">${totalCost.toFixed(2)}</span>
+          </p>
+        )}
         {inFlight > 0 && (
           <div className="space-y-1.5">
             <p className="text-center text-xs text-zinc-500">

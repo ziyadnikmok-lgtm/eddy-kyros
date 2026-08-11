@@ -38,9 +38,57 @@ const DESTINATIONS = [
  */
 const MIN_LONG_EDGE = 600;
 
-// 100 a page. 25 meant scrolling for a handful of usable shots, and Pinterest serves a page
-// this size in the same single request (owner, 2026-08-10).
-const PAGE_SIZE = 100;
+/**
+ * 250 a page -- what Pinterest actually serves in ONE request.
+ *
+ * This asked for 100 and the server clamped it to 50, so "Load more" added a handful of tiles and
+ * felt broken (owner, 2026-08-11). Measured live, same query, one request each: 25 -> 20 pins,
+ * 50 -> 45, 100 -> 92, 250 -> 237. The cost of a bigger page is one JSON parse, not more requests.
+ */
+const PAGE_SIZE = 250;
+
+/**
+ * "Load more" keeps paging until it has added THIS many new, visible tiles.
+ *
+ * One page is not one screenful: video and story pins are dropped, pins under 600px are filtered
+ * out, and Pinterest repeats pins across pages -- so a page of 237 can land as 40 new tiles. One
+ * click should feel like a lot more content, so it fetches again until it is, or until the pins run
+ * out or Pinterest rate-limits. Bounded by MORE_MAX_PAGES so a query with nothing left cannot spin.
+ */
+const MORE_TARGET = 120;
+const MORE_MAX_PAGES = 4;
+
+/** Tailwind's breakpoints, mirrored so the masonry can bucket by hand -- see `columns` below. */
+function colsForWidth(w) {
+  if (w >= 1280) return 5;
+  if (w >= 1024) return 4;
+  if (w >= 640) return 3;
+  return 2;
+}
+
+/**
+ * Fetch one pin through the proxy, waiting out a rate limit rather than treating it as a dead URL.
+ *
+ * Three tries, backing off 1s / 2s / 4s, honouring Retry-After when the server sends one. Only 429
+ * is retried: a 403 or a 404 will still be a 403 or a 404 in four seconds, and retrying those would
+ * turn one dead pin into a stall.
+ */
+async function fetchPinWithRetry(url, tries = 3) {
+  let last = null;
+  for (let i = 0; i < tries; i += 1) {
+    // eslint-disable-next-line no-await-in-loop -- a retry is sequential by definition
+    const resp = await fetch(url, { credentials: 'include' });
+    if (resp.status !== 429) return resp;
+    last = resp;
+    const retryAfter = Number(resp.headers.get('retry-after'));
+    const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+      ? Math.min(retryAfter * 1000, 10_000)
+      : 1000 * (2 ** i);
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => { setTimeout(r, waitMs); });
+  }
+  return last;
+}
 
 export default function PinterestFeedPage() {
   const { notify, navigateTo } = useApp();
@@ -84,7 +132,9 @@ export default function PinterestFeedPage() {
   useEffect(() => { if (restored) store.set('picked', picked); }, [picked, restored]);
   useEffect(() => { if (restored) store.set('query', query); }, [query, restored]);
   // Capped: the grid can run to hundreds and the point is to resume a session, not to archive it.
-  useEffect(() => { if (restored) store.set('pins', pins.slice(0, 200)); }, [pins, restored]);
+  // 1000, not 200: one Load more can now add ~230, and a cap below a single page threw away the
+  // session it exists to restore.
+  useEffect(() => { if (restored) store.set('pins', pins.slice(0, 1000)); }, [pins, restored]);
   useEffect(() => { if (restored) store.set('seen', [...seen].slice(-2000)); }, [seen, restored]);
 
   // --- the rate-limit countdown ------------------------------------------------------------------
@@ -100,16 +150,44 @@ export default function PinterestFeedPage() {
     setLoading(true);
     setError('');
     try {
-      const r = await pinterestFeed.search({ query: q, bookmark: more ? bookmark : '', safe, pageSize: PAGE_SIZE });
-      setPins((prev) => {
-        const next = more ? [...prev, ...r.pins] : r.pins;
-        // Pinterest returns the same pin across pages often enough to matter; a duplicate tile is
-        // a tile you can tick twice and pay for twice.
-        const byId = new Map(next.map((p) => [p.id, p]));
-        return [...byId.values()];
-      });
-      setBookmark(r.bookmark);
-      if (!more && !r.pins.length) setError('No pins for that search');
+      /**
+       * ONE CLICK, AS MANY PAGES AS IT TAKES.
+       *
+       * A page is not a screenful once video pins, sub-600px pins and cross-page repeats are gone,
+       * so "Load more" used to add a handful. It now keeps fetching until MORE_TARGET new visible
+       * tiles have landed, the bookmark runs out, or Pinterest rate-limits (which throws out of the
+       * loop and is reported as a countdown, exactly as a single-page failure was).
+       *
+       * `known` is seeded from the pins already on screen, so what it counts is tiles the user will
+       * actually SEE -- not raw results, most of which can be duplicates.
+       */
+      let mark = more ? bookmark : '';
+      let added = 0;
+      let lastEmpty = false;
+      for (let page = 0; page < (more ? MORE_MAX_PAGES : 1); page += 1) {
+        // eslint-disable-next-line no-await-in-loop -- each page needs the previous page's bookmark
+        const r = await pinterestFeed.search({ query: q, bookmark: mark, safe, pageSize: PAGE_SIZE });
+        let fresh = 0;
+        setPins((prev) => {
+          const base = (more || page > 0) ? prev : [];
+          // Pinterest returns the same pin across pages often enough to matter; a duplicate tile is
+          // a tile you can tick twice and pay for twice. A Map keyed by id also PRESERVES the
+          // position of everything already there -- a pin must not move because a later page
+          // repeated it.
+          const have = new Set(base.map((p) => p.id));
+          const incoming = r.pins.filter((p) => !have.has(p.id));
+          fresh = incoming.filter((p) => Math.max(p.w, p.h) >= MIN_LONG_EDGE).length;
+          return [...base, ...incoming];
+        });
+        added += fresh;
+        mark = r.bookmark;
+        lastEmpty = !r.pins.length;
+        setBookmark(r.bookmark);
+        if (!mark || lastEmpty || added >= MORE_TARGET) break;
+      }
+      if (more) {
+        notify(added ? `${added} more` : 'Nothing new on that page — Pinterest is repeating itself', added ? 'success' : 'info');
+      } else if (lastEmpty) setError('No pins for that search');
     } catch (err) {
       const msg = err?.message || 'Search failed';
       // A rate limit pauses paging with a countdown. Anything else is stated as-is — the server
@@ -123,12 +201,43 @@ export default function PinterestFeedPage() {
     } finally {
       setLoading(false);
     }
-  }, [bookmark, safe]);
+  }, [bookmark, safe, notify]);
 
   const visible = useMemo(() => (
     minRes ? pins.filter((p) => Math.max(p.w, p.h) >= MIN_LONG_EDGE) : pins
   ), [pins, minRes]);
   const hiddenCount = pins.length - visible.length;
+
+  /**
+   * MASONRY THAT DOES NOT RESHUFFLE.
+   *
+   * This was CSS `column-count`, which balances the whole flow every time content changes -- so
+   * "Load more" threw every tile into a new position and the shot you were about to tick moved
+   * somewhere else (owner, 2026-08-11). CSS columns cannot be told not to do that.
+   *
+   * Bucketing by hand instead: each pin goes to the shortest column so far, measured in aspect
+   * ratio (a tile is rendered full-width, so h/w IS its relative height). The assignment depends
+   * only on the pins BEFORE it, so appending can never move one that is already placed. Changing
+   * the window width re-lays everything out, which is the one case where movement is expected.
+   */
+  const [cols, setCols] = useState(() => colsForWidth(typeof window === 'undefined' ? 1280 : window.innerWidth));
+  useEffect(() => {
+    const onResize = () => setCols(colsForWidth(window.innerWidth));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const columns = useMemo(() => {
+    const buckets = Array.from({ length: cols }, () => []);
+    const heights = new Array(cols).fill(0);
+    for (const p of visible) {
+      let k = 0;
+      for (let i = 1; i < cols; i += 1) if (heights[i] < heights[k]) k = i;
+      buckets[k].push(p);
+      // A pin with no dimensions gets a middling 4:5, so one bad row cannot collapse a column.
+      heights[k] += (p.w > 0 && p.h > 0) ? p.h / p.w : 1.25;
+    }
+    return buckets;
+  }, [visible, cols]);
 
   const toggle = useCallback((id) => {
     setPicked((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
@@ -143,6 +252,15 @@ export default function PinterestFeedPage() {
    *
    * One pin that will not download is reported and SKIPPED; the rest still go. Abandoning a
    * selection of twenty over one dead URL is the failure worth avoiding.
+   *
+   * A 429 IS NOT A DEAD URL. Ticking 20 and receiving 11 was this: the grid's own thumbnails go
+   * through the same proxy, they had already spent the minute's budget, and every download that
+   * came back 429 was counted as "could not be downloaded" and dropped (owner, 2026-08-11). The
+   * limiter has been fixed at the mount, and this retries a 429 anyway -- a rate limit is a WAIT,
+   * and the pin the user ticked is not optional.
+   *
+   * Whatever still fails STAYS TICKED, so Send can simply be pressed again. Clearing the selection
+   * on a partial send is what made the loss invisible.
    */
   const send = useCallback(async () => {
     const chosen = pins.filter((p) => picked.includes(p.id));
@@ -155,7 +273,7 @@ export default function PinterestFeedPage() {
       try {
         // eslint-disable-next-line no-await-in-loop -- sequential on purpose: twenty parallel
         // proxy fetches is exactly the burst that earns a rate limit.
-        const resp = await fetch(pinterestFeed.proxyUrl(p.orig), { credentials: 'include' });
+        const resp = await fetchPinWithRetry(pinterestFeed.proxyUrl(p.orig));
         if (!resp.ok) throw new Error(String(resp.status));
         // eslint-disable-next-line no-await-in-loop
         const blob = await resp.blob();
@@ -199,13 +317,16 @@ export default function PinterestFeedPage() {
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent(target.event, { detail: { items: itemsPayload } }));
     }, 300);
-    setSeen((cur) => new Set([...cur, ...chosen.map((p) => p.orig)]));
-    setPicked([]);
+    // Only what actually went is marked as imported, and only what went is unticked -- a pin that
+    // failed stays selected so pressing Send again retries exactly those.
+    const sentIds = new Set(chosen.filter((p) => !failed.includes(p.id)).map((p) => p.id));
+    setSeen((cur) => new Set([...cur, ...chosen.filter((p) => sentIds.has(p.id)).map((p) => p.orig)]));
+    setPicked((cur) => cur.filter((id) => !sentIds.has(id)));
     notify(
       failed.length
-        ? `Sent ${images.length} to ${target.label} — ${failed.length} could not be downloaded`
+        ? `Sent ${images.length} of ${chosen.length} — ${failed.length} still selected, press Send again to retry`
         : `Sent ${images.length} to ${target.label}`,
-      failed.length ? 'info' : 'success',
+      failed.length ? 'error' : 'success',
     );
   }, [pins, picked, dest, notify, navigateTo, replaceTarget]);
 
@@ -277,11 +398,14 @@ export default function PinterestFeedPage() {
         </Card>
       )}
 
-      {/* MASONRY via CSS columns: the real Pinterest layout, and it needs no measurement pass, so
-          it cannot jank on a fast scroll the way a JS-positioned grid does. */}
+      {/* One flex column per bucket. Not CSS columns: those re-balance on every append and moved
+          every tile out from under the cursor. Not a measured JS grid either -- nothing is
+          positioned absolutely, so there is no measurement pass to jank on a fast scroll. */}
       {visible.length > 0 && (
-        <div className="[column-count:2] sm:[column-count:3] lg:[column-count:4] xl:[column-count:5] [column-gap:0.75rem]">
-          {visible.map((p) => {
+        <div className="flex gap-3 items-start">
+          {columns.map((bucket, ci) => (
+          <div key={ci} className="flex-1 min-w-0">
+          {bucket.map((p) => {
             const already = seen.has(p.orig);
             const on = picked.includes(p.id);
             return (
@@ -314,6 +438,8 @@ export default function PinterestFeedPage() {
               </button>
             );
           })}
+          </div>
+          ))}
         </div>
       )}
 

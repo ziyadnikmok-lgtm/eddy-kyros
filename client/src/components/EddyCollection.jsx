@@ -248,11 +248,36 @@ export default function EddyCollection({
    * Remembered per collection, so turning it on in Base Library does not switch it on in Pose.
    */
   const [showPrompts, setShowPrompts] = useState(() => {
-    try { return localStorage.getItem(`eddy.showPrompts.${dbName}`) === '1'; } catch { return false; }
+    // ON by default, like the Gallery page. Off-by-default meant the prompt was there and looked
+    // missing -- you had to know a toggle existed to find out (owner, 2026-08-11). The stored
+    // value still wins once it has been set either way.
+    /**
+     * A NEW KEY, deliberately.
+     *
+     * The first version defaulted to OFF, and its write-back effect stamped '0' into storage on
+     * the very first mount -- before anyone had touched the toggle. Flipping the default to ON
+     * therefore changed nothing: the stale '0' won, and the owner still saw no prompts after the
+     * fix (2026-08-11). Versioning the key retires that value instead of trying to guess whether
+     * a stored '0' was a real choice or an artefact.
+     */
+    try {
+      const v = localStorage.getItem(`eddy.showPrompts.v2.${dbName}`);
+      return v === null ? true : v === '1';
+    } catch { return true; }
   });
   useEffect(() => {
-    try { localStorage.setItem(`eddy.showPrompts.${dbName}`, showPrompts ? '1' : '0'); } catch { /* private mode */ }
+    try { localStorage.setItem(`eddy.showPrompts.v2.${dbName}`, showPrompts ? '1' : '0'); } catch { /* private mode */ }
   }, [showPrompts, dbName]);
+
+  /**
+   * Which prompts are expanded, and the text being searched for.
+   *
+   * A prompt here runs to a couple of thousand characters, so three clamped lines are a teaser, not
+   * a read. And a 627-image library is unsearchable by eye -- the prompt is the only thing that
+   * distinguishes two pictures of the same woman in the same room.
+   */
+  const [openPrompts, setOpenPrompts] = useState(() => new Set());
+  const [promptQuery, setPromptQuery] = useState('');
 
   const [imgH, setImgH] = useState(() => {
     const v = parseInt(localStorage.getItem('eddy.grid.imgH') || '', 10);
@@ -308,8 +333,19 @@ export default function EddyCollection({
         // empty, which is the first thing you check after making subfolders.
         ? (() => { const ids = subtreeIds(activeFolder); return items.filter((i) => ids.has(i.folderId)); })()
         : items);
-    return oldestFirst ? [...base].sort((a, b) => a.createdAt - b.createdAt) : base;
-  }, [items, activeFolder, favOnly, favIds, oldestFirst, subtreeIds]);
+    /**
+     * Text search over the PROMPT, applied here rather than at render.
+     *
+     * `visible` is what Select all, the counts, Download and Save all act on, so filtering here
+     * means "select all" means "all of these" -- filtering only the rendered grid would have those
+     * buttons quietly act on hidden items too.
+     */
+    const q = promptQuery.trim().toLowerCase();
+    const searched = q
+      ? base.filter((i) => `${i.prompt || ''} ${i.name || ''}`.toLowerCase().includes(q))
+      : base;
+    return oldestFirst ? [...searched].sort((a, b) => a.createdAt - b.createdAt) : searched;
+  }, [items, activeFolder, favOnly, favIds, oldestFirst, subtreeIds, promptQuery]);
 
   // field: which index column the result is written to. Outfits write their normal front
   // description to 'prompt' (the default) and their back-view crop's description to
@@ -2371,6 +2407,24 @@ export default function EddyCollection({
               {showPrompts ? '✓ Prompts' : 'Show prompts'}
             </button>
           )}
+          {/* SEARCH THE PROMPTS. In a folder of near-identical shots the prompt is the only thing
+              that tells two apart, and scrolling 627 of them is not a search. Filters `visible`,
+              so Select all and the counts mean what is on screen. */}
+          {items.some((i) => (i.prompt || '').trim()) && (
+            <span className="flex items-center gap-1">
+              <input
+                value={promptQuery}
+                onChange={(e) => setPromptQuery(e.target.value)}
+                placeholder="Search prompts…"
+                className="w-36 rounded-full border border-white/[0.07] bg-white/[0.02] px-2.5 py-1 text-[0.625rem] text-zinc-300 placeholder:text-zinc-600 focus:border-rose-500/50 focus:outline-none"
+              />
+              {promptQuery && (
+                <button type="button" onClick={() => setPromptQuery('')}
+                  title="Clear the search"
+                  className="text-[0.625rem] text-zinc-500 hover:text-zinc-200 cursor-pointer">×</button>
+              )}
+            </span>
+          )}
           {newestBatch.length > 0 && newestBatch.length < visible.length && (
             <button
               onClick={() => setSelected(newestBatch)}
@@ -2584,19 +2638,69 @@ export default function EddyCollection({
                 {/* The prompt, under the picture rather than over it: an overlay would cover the
                     thing you are looking at, and this text is read deliberately, not glanced at.
                     Click to copy -- reusing a prompt is the reason to look at one. */}
+                {/* A row with NO prompt gets a muted line rather than nothing. Blank is
+                    ambiguous -- it reads as "the feature is broken" when the truth is "this
+                    picture was added before prompts were saved". */}
+                {showPrompts && !withPrompt && !(it.prompt || '').trim() && (thumbs[it.id] || it.url) && (
+                  <p className="mt-1 rounded-md bg-black/20 px-2 py-1 text-[0.625rem] italic text-zinc-600">
+                    no prompt saved for this one
+                  </p>
+                )}
                 {showPrompts && !withPrompt && (it.prompt || '').trim() && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigator.clipboard?.writeText(it.prompt.trim());
-                      notify('Prompt copied', 'success');
-                    }}
-                    title="Click to copy"
-                    className="mt-1 block w-full rounded-md bg-black/40 px-2 py-1.5 text-left text-[0.625rem] leading-snug text-zinc-400 transition hover:bg-black/60 hover:text-zinc-200 cursor-pointer"
-                  >
-                    <span className="line-clamp-3">{it.prompt.trim()}</span>
-                  </button>
+                  <div className="mt-1 rounded-md bg-black/40 px-2 py-1.5">
+                    {/* Clamped to three lines until asked. A Kyros prompt runs to a couple of
+                        thousand characters, so showing it all by default would bury the pictures --
+                        but three lines is a teaser, not a read, so expanding has to be one click. */}
+                    <p
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenPrompts((cur) => {
+                          const next = new Set(cur);
+                          if (next.has(it.id)) next.delete(it.id); else next.add(it.id);
+                          return next;
+                        });
+                      }}
+                      title={openPrompts.has(it.id) ? 'Click to collapse' : 'Click to read it all'}
+                      className={cn('cursor-pointer text-[0.625rem] leading-snug text-zinc-400 transition hover:text-zinc-200',
+                        openPrompts.has(it.id) ? 'max-h-64 overflow-y-auto' : 'line-clamp-3')}
+                    >
+                      {it.prompt.trim()}
+                    </p>
+                    <span className="mt-1 flex items-center gap-2">
+                      <button type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigator.clipboard?.writeText(it.prompt.trim());
+                          notify('Prompt copied', 'success');
+                        }}
+                        className="text-[0.5625rem] font-semibold uppercase tracking-wider text-zinc-500 hover:text-zinc-200 cursor-pointer">
+                        Copy
+                      </button>
+                      {/* REUSE IT. Seeing a result you like and wanting another is the whole reason
+                          to read a prompt, and retyping it by hand was the only way. Lands in the
+                          Generate tab's instruction box. */}
+                      <button type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          try { window.sessionStorage.setItem('kyros.reusePrompt', it.prompt.trim()); } catch { /* private mode */ }
+                          window.dispatchEvent(new CustomEvent('kyros:reuse-prompt', { detail: { prompt: it.prompt.trim() } }));
+                          notify('Prompt sent to Generate', 'success');
+                        }}
+                        className="text-[0.5625rem] font-semibold uppercase tracking-wider text-rose-400/80 hover:text-rose-300 cursor-pointer">
+                        Use in Generate
+                      </button>
+                      {/* Find every other picture made from the same idea. */}
+                      <button type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPromptQuery(it.prompt.trim().split(/\s+/).slice(0, 4).join(' '));
+                        }}
+                        title="Find other images with a similar prompt"
+                        className="text-[0.5625rem] font-semibold uppercase tracking-wider text-zinc-500 hover:text-zinc-200 cursor-pointer">
+                        Similar
+                      </button>
+                    </span>
+                  </div>
                 )}
                 <button onClick={() => removeItem(it.id)} title="Delete"
                   className="absolute right-1 top-1 h-6 w-6 rounded-full bg-black/70 text-xs text-zinc-300 hover:text-red-400 cursor-pointer">×</button>

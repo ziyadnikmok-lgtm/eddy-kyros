@@ -58,3 +58,6 @@ userdata/
 
 # Local backup of AppData — contains real secrets and encrypted API keys.
 _appdata_backup/
+
+# Leftover from a git filter-branch. Not source, and it is thousands of files.
+.git-rewrite/

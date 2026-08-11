@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { seedanceOmni as omniApi, video as videoApi, gallery as galleryApi, characters as charApi } from '../services/api';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { seedanceOmni as omniApi, video as videoApi, gallery as galleryApi } from '../services/api';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Select, Slider, Textarea, Input, Badge, Spinner } from '../components/UI';
 import {
@@ -10,6 +10,7 @@ import {
 import { pushPending, resolvePending, rejectPending, attachTaskId, failPending } from '../lib/generationFeed';
 import { loadOmniCharacters, saveOmniCharacter, removeOmniCharacter } from '../lib/omniCharacterStore';
 import { createPageStore } from '../lib/pageStateStore';
+import { createEddyCollection } from '../lib/eddyCollectionStore';
 import { cn } from '../lib/utils';
 
 const MODEL_MAP = Object.fromEntries(OMNI_MODELS.map((m) => [m.id, m]));
@@ -146,10 +147,41 @@ const _cache = {
 const store = createPageStore('kyros-seedance-omni-state');
 
 export default function SeedanceOmniPage() {
-  // Aliased to appCharacters: this page ALREADY has its own `characters` state for Omni's trained
-  // characters (omniCharacterStore), which is a different thing entirely. Defaulted so the dropdown
-  // renders empty rather than throwing before the app list has loaded.
-  const { notify, characters: appCharacters = [] } = useApp();
+  const { notify } = useApp();
+
+  /**
+   * HER PHOTOS COME FROM EDDY, not from the server's character list (owner, 2026-08-11).
+   *
+   * NOTE the name clash this page already had: `characters` below is Omni's TRAINED characters
+   * (omniCharacterStore) — a Muapi feature, completely unrelated. These are Eddy's, so they are
+   * named for what they are and cannot be confused with them.
+   */
+  const charStore = useMemo(() => createEddyCollection('eddy-character'), []);
+  const [eddyChars, setEddyChars] = useState([]);        // folders in eddy-character
+  const [eddyCharItems, setEddyCharItems] = useState([]);
+  const [eddyCharThumbs, setEddyCharThumbs] = useState({});
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [f, i] = await Promise.all([charStore.listFolders(), charStore.listItems()]);
+        const map = {};
+        await Promise.all(i.map(async (it) => { map[it.id] = it.url || await charStore.getImage(it.id); }));
+        if (!alive) return;
+        setEddyChars(f); setEddyCharItems(i); setEddyCharThumbs(map);
+      } catch { /* an unreadable collection shows an empty picker, not a broken page */ }
+    })();
+    return () => { alive = false; };
+  }, [charStore]);
+
+  // Base face first — the leading reference is the one the model treats as the primary subject.
+  // Same ranking Photo Match and the Seedance Video tab use, so she behaves the same everywhere.
+  const refsForCharacter = useCallback((id) => {
+    if (!id) return [];
+    const mine = eddyCharItems.filter((i) => i.folderId === id);
+    const rank = (i) => (i.role === 'base' ? 0 : i.role === 'body' ? 1 : 2);
+    return [...mine].sort((a, b) => rank(a) - rank(b) || (a.createdAt || 0) - (b.createdAt || 0));
+  }, [eddyCharItems]);
 
   const [model, setModel] = useState(_cache.model);
   const [prompt, setPrompt] = useState(_cache.prompt);
@@ -323,39 +355,24 @@ export default function SeedanceOmniPage() {
   const addCharacterImages = useCallback(async (id) => {
     setCharacterId(id);
     if (!id) return;
-    const c = appCharacters.find((x) => x.id === id);
-    const urls = [];
-    // Primaries in index order (the shot she was built from stays first), then each ACTIVE reference.
-    const primaryCount = Math.max(0, Number(c?.primaryImageCount || 0));
-    if (primaryCount > 0) {
-      for (let i = 0; i < primaryCount; i += 1) urls.push(charApi.primaryImageUrl(id, i));
-    } else {
-      urls.push(charApi.imageUrl(id));   // older character with a single un-indexed primary
-    }
-    for (const ref of c?.references || []) {
-      if (ref?.isActive) urls.push(charApi.refImageUrl(id, ref.id));
-    }
+    const mine = refsForCharacter(id);
+    if (!mine.length) { notify('That character has no photos yet — add some on the Eddy · Character tab', 'error'); return; }
 
     const room = OMNI_MAX_IMAGES - images.length;
     if (room <= 0) { notify(`Maximum ${OMNI_MAX_IMAGES} reference images`, 'error'); return; }
-    const take = urls.slice(0, room);
+    const take = mine.slice(0, room);
     setCharLoading(true);
     try {
       const added = [];
-      for (const u of take) {
-        try {
-          const resp = await fetch(u, { credentials: 'include' });
-          if (!resp.ok) continue;                       // skip the bad one, keep the rest
-          const blob = await resp.blob();
-          added.push({
-            id: `i-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            dataUrl: await fileToDataUrl(new File([blob], 'character', { type: blob.type || 'image/png' })),
-          });
-        } catch { /* one unreachable photo must not lose the others */ }
+      for (const it of take) {
+        // Already in memory for the picker; getImage is the fallback for anything not thumbed yet.
+        // eslint-disable-next-line no-await-in-loop -- reads from IndexedDB, not the network
+        const dataUrl = eddyCharThumbs[it.id] || await charStore.getImage(it.id);
+        if (dataUrl) added.push({ id: `i-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, dataUrl });
       }
-      if (!added.length) { notify('Could not load that character’s photos', 'error'); return; }
+      if (!added.length) { notify('Could not read that character’s photos', 'error'); return; }
       setImages((prev) => [...prev, ...added]);
-      const skipped = urls.length - take.length;
+      const skipped = mine.length - take.length;
       notify(
         `Added ${added.length} photo${added.length === 1 ? '' : 's'}${skipped ? ` — ${skipped} skipped, only ${OMNI_MAX_IMAGES} fit` : ''}`,
         skipped ? 'error' : 'success',
@@ -364,7 +381,7 @@ export default function SeedanceOmniPage() {
       setCharLoading(false);
       setCharacterId('');   // reset so the same character can be added again if there is room
     }
-  }, [appCharacters, images.length, notify]);
+  }, [refsForCharacter, eddyCharThumbs, charStore, images.length, notify]);
 
   // Ctrl+V → images (videos can't come off the clipboard).
   useEffect(() => {
@@ -626,9 +643,12 @@ export default function SeedanceOmniPage() {
                 className="rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 focus:border-rose-500 focus:outline-none disabled:opacity-50"
               >
                 <option value="">+ Character…</option>
-                {appCharacters.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name || c.id}</option>
-                ))}
+                {/* The photo count is in the label: it is how many reference slots she will take,
+                    and this select is next to the x/OMNI_MAX_IMAGES counter it eats into. */}
+                {eddyChars.map((c) => {
+                  const n = refsForCharacter(c.id).length;
+                  return <option key={c.id} value={c.id}>{c.name || 'Unnamed'} ({n})</option>;
+                })}
               </select>
               {charLoading && <Spinner size={14} />}
               <Badge color="zinc">Ctrl+V</Badge>

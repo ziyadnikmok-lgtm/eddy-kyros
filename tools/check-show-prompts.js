@@ -25,11 +25,17 @@ check('the reason is recorded', /could not reproduce its own picture/.test(base)
 // --- the toggle -----------------------------------------------------------------------------------
 check('there is a per-collection showPrompts state', col.includes('const [showPrompts, setShowPrompts] = useState('));
 check('it is remembered per collection, not globally',
-  col.includes('localStorage.getItem(`eddy.showPrompts.${dbName}`)')
-  && col.includes('localStorage.setItem(`eddy.showPrompts.${dbName}`'));
+  // v2: the key was versioned to retire a '0' that the first version's default had written
+  // before anyone touched the toggle.
+  col.includes('eddy.showPrompts.v2.${dbName}')
+  && (col.match(/eddy\.showPrompts\.v2\./g) || []).length === 2);
 check('the button is rendered', col.includes("{showPrompts ? '✓ Prompts' : 'Show prompts'}"));
-check('it is off by default — a grid of pictures stays a grid until asked otherwise',
-  /localStorage\.getItem\(`eddy\.showPrompts\.\$\{dbName\}`\) === '1'/.test(col));
+// ON by default now (owner, 2026-08-11): off-by-default meant the prompt was saved and looked
+// missing -- you had to know a toggle existed to find out.
+check('it is ON by default, like the Gallery', col.includes("return v === null ? true : v === '1';"));
+check('but a stored choice still wins', col.includes('const v = localStorage.getItem('));
+check('a row with no prompt says so rather than rendering nothing',
+  col.includes('no prompt saved for this one'));
 check('it is hidden on a withPrompt collection, where the text is already the point',
   col.includes('{!withPrompt && items.some((i) => (i.prompt || \'\').trim()) && ('));
 check('and hidden when nothing in the collection HAS a prompt',
@@ -40,7 +46,10 @@ check('the prompt renders under the picture, not over it', col.includes('{showPr
 check('it is clickable to copy — reuse is the reason to read one', /navigator\.clipboard\?\.writeText\(it\.prompt\.trim\(\)\)/.test(col));
 check('the click does not also open the lightbox', /e\.stopPropagation\(\);\s*\n\s*navigator\.clipboard/.test(col));
 check('long prompts are clamped rather than pushing the grid apart', /line-clamp-3/.test(col));
-check('a card with no prompt renders nothing extra', col.includes("(it.prompt || '').trim() && ("));
+// No longer "nothing extra": a blank card was ambiguous — it read as the feature being broken
+// when the truth was that the picture predates prompts being saved. It now says which.
+check('a card with no prompt says so explicitly',
+  col.includes("!(it.prompt || '').trim() && (thumbs[it.id] || it.url) && ("));
 
 // --- withPrompt is untouched ------------------------------------------------------------------------------
 check('withPrompt still drives the prompt-list layout', /withPrompt \? 'object-contain' : 'aspect-\[3\/4\] object-cover'/.test(col));

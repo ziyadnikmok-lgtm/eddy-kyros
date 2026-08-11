@@ -80,7 +80,7 @@ check('null bookmark, not empty string, so the client can test it plainly',
 
 // --- images must go through the proxy ----------------------------------------------------------------------
 check('the grid loads thumbs through the proxy', /src=\{pinterestFeed\.proxyUrl\(p\.thumb\)\}/.test(page));
-check('the send fetches originals through it too', /fetch\(pinterestFeed\.proxyUrl\(p\.orig\)/.test(page));
+check('the send fetches originals through it too', page.includes('fetchPinWithRetry(pinterestFeed.proxyUrl(p.orig))'));
 check('the reason is written down — i.pinimg refuses a browser Origin',
   /refuses a request carrying a browser Origin/.test(page));
 
@@ -102,12 +102,15 @@ check('downloads are sequential — twenty parallel fetches is what earns a rate
 // --- selection survives navigation -------------------------------------------------------------------------
 check('the selection persists', /store\.set\('picked', picked\)/.test(page));
 check('and is restored', /store\.get\('picked', \[\]\)/.test(page));
-check('the pin cache is capped rather than growing forever', /store\.set\('pins', pins\.slice\(0, 200\)\)/.test(page));
+check('the pin cache is capped rather than growing forever — at more than one page (was 200)', /store\.set\('pins', pins\.slice\(0, 1000\)\)/.test(page));
 
 // --- dedupe --------------------------------------------------------------------------------------------------
-check('imported pins are remembered by origin URL', /setSeen\(\(cur\) => new Set\(\[\.\.\.cur, \.\.\.chosen\.map\(\(p\) => p\.orig\)\]\)\)/.test(page));
+check('imported pins are remembered by origin URL — and only the ones that ARRIVED',
+  page.includes('setSeen((cur) => new Set([...cur, ...chosen.filter((p) => sentIds.has(p.id)).map((p) => p.orig)]));'));
 check('an already-imported pin is dimmed, not hidden — still pickable', /already && !on \? 'opacity-40' : ''/.test(page));
-check('duplicate ids across pages are collapsed', /const byId = new Map\(next\.map\(\(p\) => \[p\.id, p\]\)\)/.test(page));
+check('duplicate ids across pages are collapsed — and a repeat never MOVES the tile it repeats',
+  page.includes('const have = new Set(base.map((p) => p.id));')
+  && page.includes('const incoming = r.pins.filter((p) => !have.has(p.id));'));
 
 // --- registration: the step that silently breaks a new page ---------------------------------------------------
 check('the id is in VALID_PAGE_IDS, or the tab falls back to eddy', /'pinterestFeed'/.test(ctx));
@@ -145,7 +148,7 @@ check('and the old `images` key is gone', !/detail: \{ images \}/.test(page));
 check('the reason is recorded', /fired into the void before its chunk had mounted/.test(page));
 
 // --- 100 a page ---------------------------------------------------------------------------------
-check('a page is 100, not 25', /const PAGE_SIZE = 100;/.test(page));
+check('a page is 250 — what Pinterest actually serves', /const PAGE_SIZE = 250;/.test(page));
 check('the search sends it', /pageSize: PAGE_SIZE/.test(page));
 check('Load more still pages by bookmark', /search\(query, true\)/.test(page));
 
@@ -174,6 +177,110 @@ const B = [{ dataUrl: 'b' }, { dataUrl: 'c' }];
 check('replace discards what was there', merge(A, B, 'replace').length === 2);
 check('add keeps both and dedups the overlap', merge(A, B, 'add').map((x) => x.dataUrl).join() === 'a,b,c');
 check('add into an empty list just loads', merge([], B, 'add').length === 2);
+
+// --- paging: one click, a lot more content (owner, 2026-08-11) ------------------------------------
+// Measured live that day, same query, one request each: page_size 25 -> 20 pins, 50 -> 45,
+// 100 -> 92, 250 -> 237. The server was clamping to 50, so "Load more" added a handful.
+check('the server lets a page be big', src.includes('const MAX_PAGE_SIZE = 250;'));
+check('and the measurement that justifies it is written down', /page_size=250 -> 237 pins/.test(src));
+check('the client asks for a full page', page.includes('const PAGE_SIZE = 250;'));
+check('Load more keeps paging until it has added a lot', page.includes('const MORE_TARGET = 120;'));
+check('but cannot spin forever on a query with nothing left', page.includes('const MORE_MAX_PAGES = 4;'));
+check('it counts tiles that will be SEEN, not raw results',
+  page.includes('fresh = incoming.filter((p) => Math.max(p.w, p.h) >= MIN_LONG_EDGE).length;'));
+check('it stops when the bookmark runs out', page.includes('if (!mark || lastEmpty || added >= MORE_TARGET) break;'));
+check('a first search is still ONE page, not four', page.includes('page < (more ? MORE_MAX_PAGES : 1)'));
+check('and it says how many arrived, so an empty page is not silence', page.includes("Pinterest is repeating itself"));
+check('the session cap is bigger than one page', page.includes("store.set('pins', pins.slice(0, 1000))"));
+
+// --- the grid must not move under the cursor -------------------------------------------------------
+// The prose explaining the bug is allowed to name it; what must be gone is the CLASS.
+check('the CSS column-count class is GONE — it re-balanced every tile on append',
+  !page.includes('[column-count:'));
+check('pins are bucketed into columns by hand', page.includes('const columns = useMemo(('));
+check('shortest column wins, measured by aspect ratio',
+  page.includes('heights[k] += (p.w > 0 && p.h > 0) ? p.h / p.w : 1.25;'));
+check('the column count follows the window', page.includes('function colsForWidth(w)'));
+check('and is recomputed on resize', page.includes("window.addEventListener('resize', onResize)"));
+check('the reason is recorded', /appending can never move one that is already placed/.test(page));
+
+// --- replay: appending must not move anything ---------------------------------------------------------
+const bucket = (items, cols) => {
+  const out = Array.from({ length: cols }, () => []);
+  const h = new Array(cols).fill(0);
+  for (const p of items) {
+    let k = 0;
+    for (let i = 1; i < cols; i += 1) if (h[i] < h[k]) k = i;
+    out[k].push(p);
+    h[k] += (p.w > 0 && p.h > 0) ? p.h / p.w : 1.25;
+  }
+  return out;
+};
+const where = (buckets, id) => {
+  for (let c = 0; c < buckets.length; c += 1) {
+    const i = buckets[c].findIndex((p) => p.id === id);
+    if (i > -1) return `${c}:${i}`;
+  }
+  return null;
+};
+const mk = (n, from = 0) => Array.from({ length: n }, (_, i) => ({ id: `p${from + i}`, w: 800, h: 900 + ((i * 137) % 700) }));
+const first = mk(40);
+const before = bucket(first, 4);
+const after = bucket([...first, ...mk(60, 40)], 4);
+check('every pin from the first page is in the SAME place after loading more',
+  first.every((p) => where(before, p.id) === where(after, p.id)));
+check('and the new ones really did arrive',
+  after.flat().length === 100 && before.flat().length === 40);
+check('a pin with no dimensions cannot collapse a column',
+  bucket([{ id: 'x', w: 0, h: 0 }], 2).flat().length === 1);
+check('one column still works', bucket(mk(5), 1)[0].length === 5);
+
+// --- 20 ticked, 11 arrived (owner, 2026-08-11) ------------------------------------------------------
+// Cause: the browse grid renders one PROXIED thumbnail per tile, and the whole /api/pinterest
+// router sat behind the 60/min GENERATION limiter. Measured in app.log: one minute served 71 x 200
+// then 114 x 429. The send's own downloads then hit the exhausted bucket, came back 429, and were
+// counted as "could not be downloaded" and dropped. Three layers, all asserted here.
+const idx = fs.readFileSync(path.join(ROOT, 'server/index.js'), 'utf8');
+const pin = fs.readFileSync(path.join(ROOT, 'server/routes/pinterest.js'), 'utf8');
+
+check('the proxy no longer sits behind the generation limiter',
+  !idx.includes("app.use('/api/pinterest', generateLimiter, pinterestRoute);"));
+check('a GET of the proxy takes the READ budget',
+  idx.includes("req.method === 'GET' && req.path === '/proxy'") && idx.includes('readLimiter(req, res, next)'));
+check('while the POST scrape endpoints keep the generation limiter',
+  idx.includes('generateLimiter(req, res, next)'));
+check('the measurement is recorded at the mount', idx.includes('71 x 200') && idx.includes('114 x 429'));
+check('proxied images are cacheable, so a re-render is not a re-fetch',
+  pin.includes("res.setHeader('Cache-Control', 'private, max-age=86400, immutable');"));
+
+check('a 429 on a download is retried, not counted as a dead pin',
+  page.includes('async function fetchPinWithRetry(url, tries = 3)'));
+check('it honours Retry-After when the server sends one', page.includes("resp.headers.get('retry-after')"));
+check('and only retries 429 — a 404 will still be a 404 in four seconds',
+  page.includes('if (resp.status !== 429) return resp;'));
+check('the send uses it', page.includes('await fetchPinWithRetry(pinterestFeed.proxyUrl(p.orig))'));
+check('a pin that failed STAYS TICKED so Send retries exactly those',
+  page.includes('setPicked((cur) => cur.filter((id) => !sentIds.has(id)));'));
+check('only what actually arrived is marked as imported', page.includes('const sentIds = new Set('));
+check('and a partial send is an ERROR, not a cheerful info toast',
+  page.includes('press Send again to retry') && page.includes("failed.length ? 'error' : 'success'"));
+
+// --- replay: a partial send must not lose the selection ------------------------------------------------
+const ticked = ['a', 'b', 'c', 'd', 'e'];
+const failedIds = ['c', 'e'];
+const sent = new Set(ticked.filter((id) => !failedIds.includes(id)));
+const stillTicked = ticked.filter((id) => !sent.has(id));
+check('the three that went are unticked', sent.size === 3);
+check('the two that failed are still selected', stillTicked.join(',') === 'c,e');
+check('nothing is both sent and still selected', stillTicked.every((id) => !sent.has(id)));
+
+// backoff: 1s, 2s, 4s, and a Retry-After wins but is capped
+const waitFor = (i, retryAfter) => (Number.isFinite(retryAfter) && retryAfter > 0
+  ? Math.min(retryAfter * 1000, 10_000) : 1000 * (2 ** i));
+check('the first wait is a second', waitFor(0, NaN) === 1000);
+check('it doubles', waitFor(1, NaN) === 2000 && waitFor(2, NaN) === 4000);
+check("Retry-After wins when it is given", waitFor(0, 3) === 3000);
+check('but cannot park the app for a minute', waitFor(0, 120) === 10_000);
 
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

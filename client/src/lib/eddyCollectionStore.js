@@ -234,7 +234,17 @@ export function createEddyCollection(dbName) {
         // poseView travels the same way, and for the same reason the note above describes: this is an
           // ALLOWLIST, so a field absent from it is dropped without a word. Max Outfit reads it to match
           // a back shot to a back outfit, and without this line every row would arrive unclassified.
+          // PROVENANCE: what made this picture. A field absent from this allowlist is dropped
+          // with no error -- see the note above, which is how poseView was nearly lost. comboKey
+          // is what the duplicate guard matches on; price is what the spend total sums.
           added.push({ id, srcIndex: idx, name: it.name || 'image', prompt: it.prompt || '', videoPrompt: it.videoPrompt || '', poseView: it.poseView || '', url: it.url || '',
+          ...(it.basePhotoId ? { basePhotoId: it.basePhotoId } : {}),
+          ...(it.baseId ? { baseId: it.baseId } : {}),
+          ...(it.poseId ? { poseId: it.poseId } : {}),
+          ...(it.outfitId ? { outfitId: it.outfitId } : {}),
+          ...(it.comboKey ? { comboKey: it.comboKey } : {}),
+          ...(it.charName ? { charName: it.charName } : {}),
+          ...(Number.isFinite(it.price) ? { price: it.price } : {}),
           ...(it.backPrompt ? { backPrompt: it.backPrompt } : {}),
           ...(it.original ? { blurred: true } : {}),
           folderId: folderId || null, createdAt: t0 + added.length });

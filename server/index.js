@@ -462,7 +462,24 @@ app.use('/api/reel', generateLimiter, reelRoute);
 app.use('/api/reel-copy', cloneLimiter, reelCopyRoute);
 app.use('/api/post-clone', cloneLimiter, postCloneRoute);
 app.use('/api/profile-clone', cloneLimiter, profileCloneRoute);
-app.use('/api/pinterest', generateLimiter, pinterestRoute);
+/**
+ * THE IMAGE PROXY IS NOT A GENERATION.
+ *
+ * This whole router sat behind generateLimiter (60/min) -- including `GET /proxy`, which streams
+ * one Pinterest thumbnail. The browse grid renders a proxied <img> per tile, so a page of pins
+ * spends the entire generation budget on pictures: measured 2026-08-10, one minute served 71 x 200
+ * then 114 x 429. The user then ticked 20 pins, and their downloads hit the exhausted bucket and
+ * were skipped as "could not be downloaded" -- 20 sent, 11 arrived. Pinterest was never the
+ * problem; we rate-limited ourselves.
+ *
+ * GET /proxy takes the read budget (300/min) like every other read. The POST scrape endpoints,
+ * which drive a third-party downloader, keep the generation limiter.
+ */
+app.use('/api/pinterest', (req, res, next) => (
+  req.method === 'GET' && req.path === '/proxy'
+    ? readLimiter(req, res, next)
+    : generateLimiter(req, res, next)
+), pinterestRoute);
 // NOT behind generateLimiter: that budget exists for paid generations, and browsing a grid
 // must not eat it. Pinterest's own rate limit is the real ceiling and is surfaced as 429.
 app.use('/api/pinterest-feed', pinterestFeedRoute);
