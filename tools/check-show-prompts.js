@@ -25,8 +25,10 @@ check('the reason is recorded', /could not reproduce its own picture/.test(base)
 // --- the toggle -----------------------------------------------------------------------------------
 check('there is a per-collection showPrompts state', col.includes('const [showPrompts, setShowPrompts] = useState('));
 check('it is remembered per collection, not globally',
-  col.includes('localStorage.getItem(`eddy.showPrompts.${dbName}`)')
-  && col.includes('localStorage.setItem(`eddy.showPrompts.${dbName}`'));
+  // v2: the key was versioned to retire a '0' that the first version's default had written
+  // before anyone touched the toggle.
+  col.includes('eddy.showPrompts.v2.${dbName}')
+  && (col.match(/eddy\.showPrompts\.v2\./g) || []).length === 2);
 check('the button is rendered', col.includes("{showPrompts ? '✓ Prompts' : 'Show prompts'}"));
 // ON by default now (owner, 2026-08-11): off-by-default meant the prompt was saved and looked
 // missing -- you had to know a toggle existed to find out.
