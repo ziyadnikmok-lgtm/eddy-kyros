@@ -11,6 +11,7 @@
  * pin's own description feeds a fresh search instead — the closest honest equivalent.
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { pinterestFeed } from '../services/api';
 import { createPageStore } from '../lib/pageStateStore';
 import { stashSourceHandoff } from '../lib/sourceHandoff';
@@ -784,9 +785,19 @@ export default function PinterestFeedPage() {
       )}
 
       {/* STICKY, bottom right: the feed is scrolled while picking, and a button at the top of the
-          page would be off screen exactly when it is wanted. */}
-      {picked.length > 0 && (
-        <div className="fixed bottom-6 right-6 z-30">
+          page would be off screen exactly when it is wanted.
+
+          PORTALLED to <body>, and it has to be. `position: fixed` anchors to the nearest ancestor
+          carrying a transform, filter or backdrop-filter — NOT the viewport — and the app shell
+          wraps every page in `backdrop-blur-2xl` (App.jsx). Without the portal this button rendered
+          correctly and was positioned against the scrolled grid instead of the window, so it sat
+          far below the fold: you tick a pin, the badge says "1 selected", and the button is simply
+          not where it says it is (owner, 2026-08-12 — "why dont i see it").
+
+          Exactly the bug EddyCollection's large view hit and solved the same way; see the note on
+          its createPortal call. */}
+      {picked.length > 0 && createPortal(
+        <div className="fixed bottom-6 right-6 z-[120]">
           <Btn onClick={tuneToSelection} disabled={tuning} className="shadow-xl">
             {tuning ? <Spinner size={14} /> : null}
             Refresh feed · {seeds.length} pick{seeds.length === 1 ? '' : 's'}
@@ -794,7 +805,8 @@ export default function PinterestFeedPage() {
               <span className="ml-1 text-[0.625rem] opacity-75">of your {picked.length}</span>
             )}
           </Btn>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
