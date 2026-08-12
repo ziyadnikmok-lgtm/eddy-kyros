@@ -39,24 +39,47 @@ const DESTINATIONS = [
 const MIN_LONG_EDGE = 600;
 
 /**
- * 250 a page -- what Pinterest actually serves in ONE request.
+ * THE FIRST SCREEN IS A DIFFERENT PROBLEM FROM THE REST.
  *
- * This asked for 100 and the server clamped it to 50, so "Load more" added a handful of tiles and
- * felt broken (owner, 2026-08-11). Measured live, same query, one request each: 25 -> 20 pins,
- * 50 -> 45, 100 -> 92, 250 -> 237. The cost of a bigger page is one JSON parse, not more requests.
+ * Measured against the live endpoint (2026-08-11), one request each:
+ *
+ *   page_size=25  -> 1.4s            page_size=100 -> 2.7s  (91 pins, 0.7MB)
+ *   page_size=50  -> 2.8s            page_size=250 -> 6-8.5s (241 pins, 1.9MB)
+ *
+ * 250 was tried first and it is the reason search felt slow: seven seconds of an empty grid. 100
+ * comes back in under three and is already more than a screenful, so that is what the first request
+ * asks for.
+ *
+ * PAGE_SIZE is what continuation pages ask for, and it is mostly theatre: a bookmarked page comes
+ * back with ~25 pins no matter what is requested. Left at 250 because asking costs nothing and
+ * Pinterest may raise it.
  */
+const FIRST_PAGE = 100;
 const PAGE_SIZE = 250;
 
 /**
- * "Load more" keeps paging until it has added THIS many new, visible tiles.
+ * How far the grid fills itself AFTER the first page, without being asked.
  *
- * One page is not one screenful: video and story pins are dropped, pins under 600px are filtered
- * out, and Pinterest repeats pins across pages -- so a page of 237 can land as 40 new tiles. One
- * click should feel like a lot more content, so it fetches again until it is, or until the pins run
- * out or Pinterest rate-limits. Bounded by MORE_MAX_PAGES so a query with nothing left cannot spin.
+ * ~25 pins per continuation page at ~1s each, so this is roughly six seconds of background work
+ * that the owner never waits on -- they are already picking from page one. "Load more" then means
+ * "I have been through three hundred pins", not "give me a usable screenful".
  */
-const MORE_TARGET = 120;
-const MORE_MAX_PAGES = 4;
+const BACKFILL_TARGET = 240;
+const BACKFILL_MAX_PAGES = 10;
+
+/**
+ * The identity of the PICTURE, not of the pin.
+ *
+ * A pinimg path carries the file's content hash (/236x/ab/cd/ef/<32 hex>.jpg), so the same image
+ * repinned by five people -- five different pin ids -- collapses to one key. Falls back to the whole
+ * URL if the shape ever changes, which dedupes exact repeats and nothing else: a wrong key that
+ * matched too much would silently hide pins.
+ */
+function imageKey(url) {
+  const s = String(url || '');
+  const m = /\/([0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{32})\./.exec(s);
+  return m ? m[1] : s;
+}
 
 /** Tailwind's breakpoints, mirrored so the masonry can bucket by hand -- see `columns` below. */
 function colsForWidth(w) {
@@ -73,6 +96,26 @@ function colsForWidth(w) {
  * is retried: a 403 or a 404 will still be a 403 or a 404 in four seconds, and retrying those would
  * turn one dead pin into a stall.
  */
+/**
+ * Does this data URL actually decode to a picture?
+ *
+ * Some pins arrived in Photo Match as solid BLACK tiles (owner, 2026-08-11). A download can come
+ * back 200 and still not be an image -- an error page, a truncated stream, a zero-byte body -- and
+ * FileReader will happily turn any of those into a data URL that renders as nothing. The only
+ * honest test is to decode it, so that is what this does: a real decode, with real dimensions.
+ *
+ * Cheap enough to run per pin (the bytes are already in memory) and it converts a silent black
+ * square into a named failure that stays ticked and can be retried.
+ */
+function decodesAsImage(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img.naturalWidth > 0 && img.naturalHeight > 0);
+    img.onerror = () => resolve(false);
+    img.src = dataUrl;
+  });
+}
+
 async function fetchPinWithRetry(url, tries = 3) {
   let last = null;
   for (let i = 0; i < tries; i += 1) {
@@ -95,16 +138,38 @@ export default function PinterestFeedPage() {
 
   const [query, setQuery] = useState('');
   const [pins, setPins] = useState([]);
+  // Read inside the search callback to decide whether a failed page is worth an error banner. A ref
+  // rather than the state value so the callback is not rebuilt on every page that lands.
+  const pinsRef = useRef([]);
   const [bookmark, setBookmark] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [cooldown, setCooldown] = useState(0);
-  const [picked, setPicked] = useState([]);
+  /**
+   * THE PICKS THEMSELVES, not their ids.
+   *
+   * This held ids and looked them up in `pins` at send time -- and a new search REPLACES `pins`, so
+   * everything ticked before that search stopped existing and was silently dropped from the send:
+   * search a, tick five, search b, tick five, send -> five arrive (owner, 2026-08-11). The ids were
+   * still in the list; the pictures they named were gone.
+   *
+   * Holding the pin objects makes a selection independent of what the grid happens to be showing,
+   * which is what "pick from several searches, then send" needs. A pin is a handful of strings, so
+   * three hundred of them cost nothing.
+   */
+  const [picked, setPicked] = useState([]);       // [{ id, thumb, orig, w, h, alt, domain }]
+  const pickedIds = useMemo(() => new Set(picked.map((p) => p.id)), [picked]);
   const [minRes, setMinRes] = useState(true);
   const [safe, setSafe] = useState(true);
   const [dest, setDest] = useState(DESTINATIONS[0].id);
   const [restored, setRestored] = useState(false);
   const [sending, setSending] = useState(false);
+  // The background top-up: shown as a quiet line, never as a blocking spinner, because the grid is
+  // usable the whole time it runs.
+  const [backfilling, setBackfilling] = useState(false);
+  // Cancels a backfill when a newer search starts, so the previous query's pages cannot land in the
+  // new query's grid.
+  const runIdRef = useRef(0);
   // Replace what is already in the destination, or add to it. Remembered, because whichever
   // one you want you tend to want repeatedly.
   const [replaceTarget, setReplaceTarget] = useState(() => {
@@ -124,12 +189,22 @@ export default function PinterestFeedPage() {
       ]);
       setQuery(q || '');
       setPins(Array.isArray(p) ? p : []);
-      setPicked(Array.isArray(sel) ? sel : []);
+      /**
+       * Old sessions stored ids. Resolve them against the pins that were stored alongside; any that
+       * cannot be resolved are dropped rather than kept as a ghost that cannot be sent.
+       */
+      const savedPins = Array.isArray(p) ? p : [];
+      const asObjects = (Array.isArray(sel) ? sel : [])
+        .map((x) => (typeof x === 'string' ? savedPins.find((pp) => pp.id === x) : x))
+        .filter(Boolean);
+      setPicked(asObjects);
       setSeen(new Set(Array.isArray(sn) ? sn : []));
       setRestored(true);
     })();
   }, []);
-  useEffect(() => { if (restored) store.set('picked', picked); }, [picked, restored]);
+  useEffect(() => { pinsRef.current = pins; }, [pins]);
+  // Capped for the same reason as the grid: this is a working selection, not an archive.
+  useEffect(() => { if (restored) store.set('picked', picked.slice(0, 300)); }, [picked, restored]);
   useEffect(() => { if (restored) store.set('query', query); }, [query, restored]);
   // Capped: the grid can run to hundreds and the point is to resume a session, not to archive it.
   // 1000, not 200: one Load more can now add ~230, and a cap below a single page threw away the
@@ -144,64 +219,106 @@ export default function PinterestFeedPage() {
     return () => clearTimeout(t);
   }, [cooldown]);
 
+  /**
+   * Merge a page in, dropping anything already on screen. Returns how many NEW VISIBLE tiles landed.
+   *
+   * Deduped on the pin id AND on the image itself. Pinterest hands the same picture out under
+   * different pin ids when several people have pinned it, and those are the duplicates that reach
+   * the eye -- two identical tiles you can tick twice and pay for twice. `imageKey` reads the
+   * content hash out of the pinimg path, so the same file matches whatever it is called.
+   *
+   * Appends only, never reorders: a repeat must not move the tile it repeats.
+   */
+  const mergePins = useCallback((incoming, { replace = false } = {}) => {
+    let fresh = 0;
+    setPins((prev) => {
+      const base = replace ? [] : prev;
+      const haveIds = new Set(base.map((p) => p.id));
+      const haveImages = new Set(base.map((p) => imageKey(p.orig)));
+      const add = [];
+      for (const p of incoming || []) {
+        const k = imageKey(p.orig);
+        if (haveIds.has(p.id) || haveImages.has(k)) continue;
+        haveIds.add(p.id); haveImages.add(k);
+        add.push(p);
+        if (Math.max(p.w, p.h) >= MIN_LONG_EDGE) fresh += 1;
+      }
+      return add.length ? [...base, ...add] : base;
+    });
+    return fresh;
+  }, []);
+
+  /**
+   * SEARCH, THEN KEEP FILLING IN THE BACKGROUND.
+   *
+   * Measured against the live endpoint (2026-08-11), and the numbers decide the whole shape:
+   *
+   *   page_size=25  -> 1.4s     page_size=100 -> 2.7s (91 pins)
+   *   page_size=50  -> 2.8s     page_size=250 -> 6-8.5s (241 pins, 1.9MB of JSON)
+   *
+   * And a CONTINUATION page ignores page_size entirely: every bookmarked page comes back with
+   * ~25 pins whatever is asked for. So one big request cannot be the answer to "more content" --
+   * it is only ever the answer to the FIRST screen, and it costs seven seconds of staring at
+   * nothing to get it.
+   *
+   * So: ask for 100 first (results in under three seconds), then walk the bookmarks in the
+   * background, appending each page as it arrives. The grid fills itself up to BACKFILL_TARGET
+   * while the owner is already looking at it, and "Load more" becomes the thing you press when you
+   * have exhausted three hundred pins rather than the thing you press to get a usable screenful.
+   *
+   * runIdRef cancels a backfill the moment another search starts -- otherwise the previous query's
+   * pages keep landing in the new query's grid.
+   */
   const search = useCallback(async (term, more = false) => {
     const q = String(term || '').trim();
     if (!q) return;
+    const runId = runIdRef.current + 1;
+    runIdRef.current = runId;
     setLoading(true);
     setError('');
     try {
-      /**
-       * ONE CLICK, AS MANY PAGES AS IT TAKES.
-       *
-       * A page is not a screenful once video pins, sub-600px pins and cross-page repeats are gone,
-       * so "Load more" used to add a handful. It now keeps fetching until MORE_TARGET new visible
-       * tiles have landed, the bookmark runs out, or Pinterest rate-limits (which throws out of the
-       * loop and is reported as a countdown, exactly as a single-page failure was).
-       *
-       * `known` is seeded from the pins already on screen, so what it counts is tiles the user will
-       * actually SEE -- not raw results, most of which can be duplicates.
-       */
-      let mark = more ? bookmark : '';
-      let added = 0;
-      let lastEmpty = false;
-      for (let page = 0; page < (more ? MORE_MAX_PAGES : 1); page += 1) {
+      const first = await pinterestFeed.search({
+        query: q, bookmark: more ? bookmark : '', safe, pageSize: more ? PAGE_SIZE : FIRST_PAGE,
+      });
+      const added = mergePins(first.pins, { replace: !more });
+      setBookmark(first.bookmark);
+      if (!more && !first.pins.length) { setError('No pins for that search'); return; }
+      if (more) notify(added ? `${added} more` : 'Nothing new on that page — Pinterest is repeating itself', added ? 'success' : 'info');
+
+      // The rest arrives on its own. Not awaited: the first page is already on screen and the
+      // owner can pick from it while this runs.
+      setLoading(false);
+      let mark = first.bookmark;
+      let got = added;
+      for (let page = 0; page < BACKFILL_MAX_PAGES && mark && got < BACKFILL_TARGET; page += 1) {
+        if (runIdRef.current !== runId) return;        // a newer search owns the grid now
+        setBackfilling(true);
         // eslint-disable-next-line no-await-in-loop -- each page needs the previous page's bookmark
         const r = await pinterestFeed.search({ query: q, bookmark: mark, safe, pageSize: PAGE_SIZE });
-        let fresh = 0;
-        setPins((prev) => {
-          const base = (more || page > 0) ? prev : [];
-          // Pinterest returns the same pin across pages often enough to matter; a duplicate tile is
-          // a tile you can tick twice and pay for twice. A Map keyed by id also PRESERVES the
-          // position of everything already there -- a pin must not move because a later page
-          // repeated it.
-          const have = new Set(base.map((p) => p.id));
-          const incoming = r.pins.filter((p) => !have.has(p.id));
-          fresh = incoming.filter((p) => Math.max(p.w, p.h) >= MIN_LONG_EDGE).length;
-          return [...base, ...incoming];
-        });
-        added += fresh;
+        if (runIdRef.current !== runId) return;
+        got += mergePins(r.pins);
         mark = r.bookmark;
-        lastEmpty = !r.pins.length;
         setBookmark(r.bookmark);
-        if (!mark || lastEmpty || added >= MORE_TARGET) break;
+        if (!r.pins.length) break;
       }
-      if (more) {
-        notify(added ? `${added} more` : 'Nothing new on that page — Pinterest is repeating itself', added ? 'success' : 'info');
-      } else if (lastEmpty) setError('No pins for that search');
     } catch (err) {
+      if (runIdRef.current !== runId) return;
       const msg = err?.message || 'Search failed';
       // A rate limit pauses paging with a countdown. Anything else is stated as-is — the server
-      // distinguishes "unreachable", "blocked" and "shape changed", and each needs a different
-      // reaction from the user.
+      // distinguishes "unreachable", "blocked", "shape changed" and a transient 5xx, and each needs
+      // a different reaction. A backfill page that fails is NOT worth an error banner over results
+      // that are already on screen, so it only speaks up when the grid is empty.
       if (/rate-limiting/i.test(msg)) {
         const secs = Number((msg.match(/wait (\d+)s/) || [])[1]) || 30;
         setCooldown(secs);
+        setError(msg);
+      } else if (!pinsRef.current.length) {
+        setError(msg);
       }
-      setError(msg);
     } finally {
-      setLoading(false);
+      if (runIdRef.current === runId) { setLoading(false); setBackfilling(false); }
     }
-  }, [bookmark, safe, notify]);
+  }, [bookmark, safe, notify, mergePins]);
 
   const visible = useMemo(() => (
     minRes ? pins.filter((p) => Math.max(p.w, p.h) >= MIN_LONG_EDGE) : pins
@@ -239,8 +356,10 @@ export default function PinterestFeedPage() {
     return buckets;
   }, [visible, cols]);
 
-  const toggle = useCallback((id) => {
-    setPicked((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  const toggle = useCallback((pin) => {
+    setPicked((cur) => (cur.some((p) => p.id === pin.id)
+      ? cur.filter((p) => p.id !== pin.id)
+      : [...cur, pin]));
   }, []);
 
   /**
@@ -263,7 +382,9 @@ export default function PinterestFeedPage() {
    * on a partial send is what made the loss invisible.
    */
   const send = useCallback(async () => {
-    const chosen = pins.filter((p) => picked.includes(p.id));
+    // Straight from the selection -- NOT filtered against the grid, which only ever shows the last
+    // search and is the whole reason picks from earlier searches used to vanish.
+    const chosen = picked;
     if (!chosen.length) { notify('Tick at least one pin first', 'error'); return; }
     const target = DESTINATIONS.find((d) => d.id === dest);
     setSending(true);
@@ -277,6 +398,9 @@ export default function PinterestFeedPage() {
         if (!resp.ok) throw new Error(String(resp.status));
         // eslint-disable-next-line no-await-in-loop
         const blob = await resp.blob();
+        // A 200 is not proof of a picture. An error page or a truncated stream is a perfectly
+        // valid blob, and it becomes a black tile three tabs later.
+        if (!/^image\//.test(blob.type || '') || blob.size < 1024) throw new Error(`not an image (${blob.type || 'no type'}, ${blob.size}B)`);
         // eslint-disable-next-line no-await-in-loop
         const dataUrl = await new Promise((res, rej) => {
           const fr = new FileReader();
@@ -284,6 +408,8 @@ export default function PinterestFeedPage() {
           fr.onerror = rej;
           fr.readAsDataURL(blob);
         });
+        // eslint-disable-next-line no-await-in-loop
+        if (!await decodesAsImage(dataUrl)) throw new Error('downloaded bytes do not decode');
         images.push({ dataUrl, name: `pinterest-${p.id}.jpg` });
       } catch {
         failed.push(p.id);
@@ -321,14 +447,14 @@ export default function PinterestFeedPage() {
     // failed stays selected so pressing Send again retries exactly those.
     const sentIds = new Set(chosen.filter((p) => !failed.includes(p.id)).map((p) => p.id));
     setSeen((cur) => new Set([...cur, ...chosen.filter((p) => sentIds.has(p.id)).map((p) => p.orig)]));
-    setPicked((cur) => cur.filter((id) => !sentIds.has(id)));
+    setPicked((cur) => cur.filter((p) => !sentIds.has(p.id)));
     notify(
       failed.length
         ? `Sent ${images.length} of ${chosen.length} — ${failed.length} still selected, press Send again to retry`
         : `Sent ${images.length} to ${target.label}`,
       failed.length ? 'error' : 'success',
     );
-  }, [pins, picked, dest, notify, navigateTo, replaceTarget]);
+  }, [picked, dest, notify, navigateTo, replaceTarget]);
 
   const inputRef = useRef(null);
 
@@ -363,6 +489,14 @@ export default function PinterestFeedPage() {
             Safe search
           </label>
           {pins.length > 0 && <span className="text-zinc-600">{visible.length} shown</span>}
+          {/* The grid keeps filling on its own after the first page. Said quietly, beside the
+              count, because it is not something to wait for -- everything on screen is pickable
+              while it runs. */}
+          {backfilling && (
+            <span className="flex items-center gap-1 text-zinc-600">
+              <Spinner size={10} /> finding more…
+            </span>
+          )}
         </div>
 
         {/* Named, never an empty grid. The server distinguishes unreachable / blocked / shape-changed
@@ -395,6 +529,27 @@ export default function PinterestFeedPage() {
           </label>
           <button onClick={() => setPicked([])}
             className="text-xs text-zinc-500 underline hover:text-zinc-300 cursor-pointer">Clear</button>
+
+          {/* THE WHOLE SELECTION, including picks whose search is long gone.
+              A selection that spans three searches is invisible in the grid -- the grid only ever
+              shows the last one -- so without this strip you cannot tell what will be sent, or
+              unpick something you chose two searches ago. Numbered in send order, click to remove. */}
+          <div className="flex w-full flex-wrap gap-1.5 border-t border-white/[0.06] pt-2">
+            {picked.map((p, i) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => toggle(p)}
+                title={`Remove — ${p.alt || p.domain || 'pin'}`}
+                className="group relative h-14 w-11 shrink-0 overflow-hidden rounded border border-white/[0.08] cursor-pointer"
+              >
+                <img src={p.thumb} alt="" loading="lazy" referrerPolicy="no-referrer"
+                  className="h-full w-full object-cover bg-zinc-900" />
+                <span className="absolute left-0 top-0 bg-black/70 px-1 text-[0.5rem] font-bold text-white">{i + 1}</span>
+                <span className="absolute inset-0 hidden items-center justify-center bg-black/60 text-xs text-white group-hover:flex">×</span>
+              </button>
+            ))}
+          </div>
         </Card>
       )}
 
@@ -407,22 +562,46 @@ export default function PinterestFeedPage() {
           <div key={ci} className="flex-1 min-w-0">
           {bucket.map((p) => {
             const already = seen.has(p.orig);
-            const on = picked.includes(p.id);
+            const on = pickedIds.has(p.id);
             return (
               <button
                 key={p.id}
                 type="button"
-                onClick={() => toggle(p.id)}
+                onClick={() => toggle(p)}
                 title={`${p.w}×${p.h}${already ? ' · already imported' : ''}${p.alt ? ` · ${p.alt}` : ''}`}
                 className={cn('group relative mb-3 block w-full break-inside-avoid overflow-hidden rounded-xl border-2 transition cursor-pointer',
                   on ? 'border-rose-500' : 'border-transparent hover:border-zinc-600',
                   // Dimmed, not hidden: it is still pickable, you just should not need to.
                   already && !on ? 'opacity-40' : '')}
               >
-                <img src={pinterestFeed.proxyUrl(p.thumb)} alt="" loading="lazy" className="w-full bg-zinc-900" />
+                {/* STRAIGHT FROM PINTEREST'S CDN, not through our proxy.
+                    Every tile used to be a round trip through the Node server, which then fetched
+                    the same file from pinimg -- and it is what spent the rate-limit budget that the
+                    real downloads needed (20 pins ticked, 11 delivered). Measured: i.pinimg.com
+                    answers an image request in 17-27ms and sends
+                    `cache-control: immutable, max-age=31536000`, so a revisited search is instant.
+                    An <img> tag is not a CORS request, so nothing blocks it -- which is exactly why
+                    the SEND still goes through the proxy: fetch() sends an Origin and pinimg
+                    returns no access-control-allow-origin, so the bytes cannot be read directly.
+                    onError falls back to the proxy, so if Pinterest ever blocks hotlinking the grid
+                    degrades to slow instead of empty. */}
+                <img
+                  src={p.thumb}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    const el = e.currentTarget;
+                    if (el.dataset.viaProxy) return;      // already tried; leave the broken tile
+                    el.dataset.viaProxy = '1';
+                    el.src = pinterestFeed.proxyUrl(p.thumb);
+                  }}
+                  className="w-full bg-zinc-900"
+                />
                 {on && (
                   <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-md bg-rose-500 text-xs font-bold text-white">
-                    {picked.indexOf(p.id) + 1}
+                    {picked.findIndex((x) => x.id === p.id) + 1}
                   </span>
                 )}
                 {already && (

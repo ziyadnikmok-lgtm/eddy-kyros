@@ -79,7 +79,13 @@ check('null bookmark, not empty string, so the client can test it plainly',
   /bookmark: body\?\.resource_response\?\.bookmark \|\| null/.test(src));
 
 // --- images must go through the proxy ----------------------------------------------------------------------
-check('the grid loads thumbs through the proxy', /src=\{pinterestFeed\.proxyUrl\(p\.thumb\)\}/.test(page));
+check('the grid loads thumbs STRAIGHT from pinimg — not through our server',
+  page.includes('src={p.thumb}') && page.includes('referrerPolicy="no-referrer"'));
+check('with a proxy fallback, so a hotlink block degrades instead of emptying the grid',
+  page.includes("el.src = pinterestFeed.proxyUrl(p.thumb);") && page.includes('if (el.dataset.viaProxy) return;'));
+check('and the measurement behind it', page.includes('17-27ms'));
+check('the SEND still uses the proxy — fetch() sends an Origin and pinimg allows no CORS',
+  page.includes('access-control-allow-origin'));
 check('the send fetches originals through it too', page.includes('fetchPinWithRetry(pinterestFeed.proxyUrl(p.orig))'));
 check('the reason is written down — i.pinimg refuses a browser Origin',
   /refuses a request carrying a browser Origin/.test(page));
@@ -100,7 +106,7 @@ check('downloads are sequential — twenty parallel fetches is what earns a rate
   /sequential on purpose: twenty parallel/.test(page));
 
 // --- selection survives navigation -------------------------------------------------------------------------
-check('the selection persists', /store\.set\('picked', picked\)/.test(page));
+check('the selection persists', page.includes("store.set('picked', picked.slice(0, 300))"));
 check('and is restored', /store\.get\('picked', \[\]\)/.test(page));
 check('the pin cache is capped rather than growing forever — at more than one page (was 200)', /store\.set\('pins', pins\.slice\(0, 1000\)\)/.test(page));
 
@@ -108,9 +114,12 @@ check('the pin cache is capped rather than growing forever — at more than one 
 check('imported pins are remembered by origin URL — and only the ones that ARRIVED',
   page.includes('setSeen((cur) => new Set([...cur, ...chosen.filter((p) => sentIds.has(p.id)).map((p) => p.orig)]));'));
 check('an already-imported pin is dimmed, not hidden — still pickable', /already && !on \? 'opacity-40' : ''/.test(page));
-check('duplicate ids across pages are collapsed — and a repeat never MOVES the tile it repeats',
-  page.includes('const have = new Set(base.map((p) => p.id));')
-  && page.includes('const incoming = r.pins.filter((p) => !have.has(p.id));'));
+check('duplicates are dropped by pin id AND by the picture itself',
+  page.includes('const haveIds = new Set(base.map((p) => p.id));')
+  && page.includes('const haveImages = new Set(base.map((p) => imageKey(p.orig)));'));
+check('the image key is the pinimg content hash', page.includes('function imageKey(url)'));
+check('and a repeat never MOVES the tile it repeats — appends only',
+  page.includes('return add.length ? [...base, ...add] : base;'));
 
 // --- registration: the step that silently breaks a new page ---------------------------------------------------
 check('the id is in VALID_PAGE_IDS, or the tab falls back to eddy', /'pinterestFeed'/.test(ctx));
@@ -184,12 +193,23 @@ check('add into an empty list just loads', merge([], B, 'add').length === 2);
 check('the server lets a page be big', src.includes('const MAX_PAGE_SIZE = 250;'));
 check('and the measurement that justifies it is written down', /page_size=250 -> 237 pins/.test(src));
 check('the client asks for a full page', page.includes('const PAGE_SIZE = 250;'));
-check('Load more keeps paging until it has added a lot', page.includes('const MORE_TARGET = 120;'));
-check('but cannot spin forever on a query with nothing left', page.includes('const MORE_MAX_PAGES = 4;'));
+check('the grid keeps filling itself after the first page', page.includes('const BACKFILL_TARGET = 240;'));
+check('but cannot spin forever on a query with nothing left', page.includes('const BACKFILL_MAX_PAGES = 10;'));
 check('it counts tiles that will be SEEN, not raw results',
-  page.includes('fresh = incoming.filter((p) => Math.max(p.w, p.h) >= MIN_LONG_EDGE).length;'));
-check('it stops when the bookmark runs out', page.includes('if (!mark || lastEmpty || added >= MORE_TARGET) break;'));
-check('a first search is still ONE page, not four', page.includes('page < (more ? MORE_MAX_PAGES : 1)'));
+  page.includes('if (Math.max(p.w, p.h) >= MIN_LONG_EDGE) fresh += 1;'));
+check('it stops when the bookmark runs out', page.includes('mark && got < BACKFILL_TARGET'));
+check('a newer search cancels the backfill, so old pages cannot land in a new grid',
+  page.includes('if (runIdRef.current !== runId) return;'));
+check('the first page is the small fast one', page.includes('const FIRST_PAGE = 100;'));
+check('and the timings that chose it are recorded', page.includes('page_size=250 -> 6-8.5s'));
+check('the spinner is released before the backfill runs — the grid is usable while it fills',
+  page.includes('// The rest arrives on its own. Not awaited'));
+check('a failed backfill page does not replace results already on screen with an error',
+  page.includes('} else if (!pinsRef.current.length) {'));
+check('a transient 5xx is retried once before the banner — the owner hit a 500 mid-session',
+  src.includes('if (resp.status >= 500)') && src.includes('pinterest_search_5xx_retry'));
+check('but a 429 is NOT retried there — it is a countdown, not a blip',
+  /429 is NOT retried here/.test(src));
 check('and it says how many arrived, so an empty page is not silence', page.includes("Pinterest is repeating itself"));
 check('the session cap is bigger than one page', page.includes("store.set('pins', pins.slice(0, 1000))"));
 
@@ -260,7 +280,7 @@ check('and only retries 429 — a 404 will still be a 404 in four seconds',
   page.includes('if (resp.status !== 429) return resp;'));
 check('the send uses it', page.includes('await fetchPinWithRetry(pinterestFeed.proxyUrl(p.orig))'));
 check('a pin that failed STAYS TICKED so Send retries exactly those',
-  page.includes('setPicked((cur) => cur.filter((id) => !sentIds.has(id)));'));
+  page.includes('setPicked((cur) => cur.filter((p) => !sentIds.has(p.id)));'));
 check('only what actually arrived is marked as imported', page.includes('const sentIds = new Set('));
 check('and a partial send is an ERROR, not a cheerful info toast',
   page.includes('press Send again to retry') && page.includes("failed.length ? 'error' : 'success'"));
@@ -281,6 +301,76 @@ check('the first wait is a second', waitFor(0, NaN) === 1000);
 check('it doubles', waitFor(1, NaN) === 2000 && waitFor(2, NaN) === 4000);
 check("Retry-After wins when it is given", waitFor(0, 3) === 3000);
 check('but cannot park the app for a minute', waitFor(0, 120) === 10_000);
+
+// --- replay: the same picture under two pin ids ----------------------------------------------------
+const imageKey = (url) => {
+  const m = /\/([0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{32})\./.exec(String(url || ''));
+  return m ? m[1] : String(url || '');
+};
+const IMG_A = 'https://i.pinimg.com/originals/b7/41/f7/b741f71afe2f16605b78a821970dd121.jpg';
+const IMG_A236 = 'https://i.pinimg.com/236x/b7/41/f7/b741f71afe2f16605b78a821970dd121.jpg';
+const IMG_B = 'https://i.pinimg.com/originals/00/11/22/ffffffffffffffffffffffffffffffff.jpg';
+check('the same file at two sizes is one key', imageKey(IMG_A) === imageKey(IMG_A236));
+check('two different files are two keys', imageKey(IMG_A) !== imageKey(IMG_B));
+check('a URL with no hash falls back to itself, matching only exact repeats',
+  imageKey('https://example.com/x.jpg') === 'https://example.com/x.jpg');
+check('an empty url does not throw', imageKey(null) === '');
+
+const mergeTwo = (base, incoming) => {
+  const ids = new Set(base.map((p) => p.id));
+  const imgs = new Set(base.map((p) => imageKey(p.orig)));
+  const add = [];
+  for (const p of incoming) {
+    const k = imageKey(p.orig);
+    if (ids.has(p.id) || imgs.has(k)) continue;
+    ids.add(p.id); imgs.add(k); add.push(p);
+  }
+  return [...base, ...add];
+};
+const start = [{ id: '1', orig: IMG_A }];
+check('the same picture repinned under a NEW id is dropped',
+  mergeTwo(start, [{ id: '999', orig: IMG_A }]).length === 1);
+check('the same id is dropped', mergeTwo(start, [{ id: '1', orig: IMG_B }]).length === 1);
+check('a genuinely new picture is kept', mergeTwo(start, [{ id: '2', orig: IMG_B }]).length === 2);
+check('duplicates WITHIN one page are collapsed too',
+  mergeTwo([], [{ id: '1', orig: IMG_A }, { id: '2', orig: IMG_A }, { id: '3', orig: IMG_B }]).length === 2);
+check('the original stays first — a repeat must not reorder the grid',
+  mergeTwo(start, [{ id: '2', orig: IMG_B }])[0].id === '1');
+
+// --- a selection spans SEARCHES (owner, 2026-08-11) --------------------------------------------------
+// "Search a, tick five, search b, tick five, send" delivered five. The selection held ids and the
+// send looked them up in `pins` -- which a new search REPLACES -- so every pick from an earlier
+// search named a picture that no longer existed and was dropped without a word.
+check('the selection holds the PINS, not their ids', page.includes('const [picked, setPicked] = useState([]);       // [{ id, thumb, orig, w, h, alt, domain }]'));
+check('the send reads the selection directly, never the grid', page.includes('const chosen = picked;'));
+check('and the reason is recorded', /is the whole reason picks from earlier searches used to vanish/.test(page));
+check('tiles read membership from a Set built off the picks', page.includes('const pickedIds = useMemo(() => new Set(picked.map((p) => p.id)), [picked]);'));
+check('toggling passes the whole pin', page.includes('onClick={() => toggle(p)}'));
+check('an old saved list of ids is migrated rather than dropped on the floor',
+  page.includes("typeof x === 'string' ? savedPins.find((pp) => pp.id === x) : x"));
+check('every pick is visible, including ones whose search is gone', /THE WHOLE SELECTION, including picks whose search is long gone/.test(page));
+
+// --- black tiles in Photo Match ------------------------------------------------------------------------
+check('a download must decode as a real image before it is sent', page.includes('function decodesAsImage(dataUrl)'));
+check('and the decode is actually awaited', page.includes("if (!await decodesAsImage(dataUrl)) throw new Error('downloaded bytes do not decode');"));
+check('a non-image or truncated body is refused before that',
+  page.includes('.test(blob.type') && page.includes('blob.size < 1024'));
+check('the reason is recorded', /it becomes a black tile three tabs later/.test(page));
+
+// --- replay: picking across searches -----------------------------------------------------------------------
+const pinA = { id: 'a1', orig: 'https://i.pinimg.com/originals/aa/bb/cc/11111111111111111111111111111111.jpg' };
+const pinB = { id: 'b1', orig: 'https://i.pinimg.com/originals/dd/ee/ff/22222222222222222222222222222222.jpg' };
+const toggleP = (cur, pin) => (cur.some((p) => p.id === pin.id) ? cur.filter((p) => p.id !== pin.id) : [...cur, pin]);
+let sel = [];
+sel = toggleP(sel, pinA);          // search one
+// a new search replaces the grid entirely
+let grid = [pinB];
+sel = toggleP(sel, pinB);          // search two
+check('both picks survive a search that replaced the grid', sel.length === 2);
+check('the send would carry the pin from the FIRST search', sel.some((p) => p.id === 'a1'));
+check('and it is not found by filtering the grid — the old bug', grid.filter((p) => sel.some((s2) => s2.id === p.id)).length === 1);
+check('ticking the same pin twice removes it', toggleP(sel, pinA).length === 1);
+check('order is pick order, so the numbered badges mean something', sel[0].id === 'a1' && sel[1].id === 'b1');
 
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

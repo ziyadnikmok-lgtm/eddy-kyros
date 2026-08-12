@@ -112,22 +112,38 @@ router.post('/search', async (req, res, next) => {
     + `?source_url=${encodeURIComponent(sourceUrl)}`
     + `&data=${encodeURIComponent(JSON.stringify({ options, context: {} }))}`;
 
+  /**
+   * ONE RETRY ON A 5xx.
+   *
+   * The owner hit "Pinterest refused the search (500)" mid-session on a query that worked before
+   * and worked again immediately after -- five identical requests in a row at page_size 250 all
+   * returned 200 when it was tested. A 500 here is Pinterest having a moment, not a verdict on the
+   * request, and it is worth one retry before an error banner replaces a grid of results.
+   *
+   * 429 is NOT retried here: it carries a Retry-After measured in tens of seconds, and the client
+   * already turns it into a visible countdown.
+   */
+  const attempt = () => axios.get(url, {
+    timeout: TIMEOUT_MS,
+    validateStatus: () => true,
+    headers: {
+      'User-Agent': UA,
+      Accept: 'application/json, text/javascript, */*, q=0.01',
+      'X-Requested-With': 'XMLHttpRequest',
+      'X-Pinterest-PWS-Handler': PWS_HANDLER,
+      Referer: `${PIN_BASE}${sourceUrl}`,
+    },
+  });
+
   let resp;
   try {
-    resp = await axios.get(url, {
-      timeout: TIMEOUT_MS,
-      // Handled below rather than thrown, so a 429 can be reported AS a rate limit.
-      validateStatus: () => true,
-      headers: {
-        'User-Agent': UA,
-        Accept: 'application/json, text/javascript, */*, q=0.01',
-        'X-Requested-With': 'XMLHttpRequest',
-        'X-Pinterest-PWS-Handler': PWS_HANDLER,
-        Referer: `${PIN_BASE}${sourceUrl}`,
-      },
-    });
+    resp = await attempt();
+    if (resp.status >= 500) {
+      log.error('pinterest_search_5xx_retry', { status: resp.status });
+      await new Promise((r) => { setTimeout(r, 700); });
+      resp = await attempt();
+    }
   } catch (err) {
-    // A timeout or a DNS failure is not "no results" -- say which it was.
     log.error('pinterest_search_unreachable', { message: String(err?.message || '').slice(0, 200) });
     throw new AppError('Could not reach Pinterest — check your connection and try again', 502, 'PINTEREST_UNREACHABLE');
   }
