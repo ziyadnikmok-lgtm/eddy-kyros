@@ -61,7 +61,7 @@ const SPEND_KEY = 'kyros.photoMatchSeedream.sessionSpend';
 // spelled out twice.
 const SEEDREAM_PROMPT_BUDGET = 3000;
 
-function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRecreate, varyBackground, allowExpressionChange, allowHairChange, allowBodyChange, allowLightingChange, faceless, wantsNude, addGenericNudeLine, sourceFaceBlurred }) {
+export function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRecreate, varyBackground, allowExpressionChange, allowHairChange, allowBodyChange, allowLightingChange, faceless, wantsNude, addGenericNudeLine, sourceFaceBlurred }) {
   const who = characterName || 'the character';
   const n = Math.max(1, refCount);
   const refs = n > 1 ? `images 1-${n}` : 'image 1';
@@ -72,7 +72,7 @@ function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRec
   // When faceless, the face is intentionally hidden — don't ask the model to match it here (the
   // final lock handles the faceless case), but skin/hair/body still come from the refs.
   const identity = [
-    faceless ? 'skin tone' : 'face, skin tone, makeup (keep bold/dark lips)',
+    faceless ? 'skin tone' : 'face, skin tone, her makeup',
     allowHairChange ? null : 'hair',
     allowBodyChange ? null : 'body/figure/chest',
   ].filter(Boolean).join(', ');
@@ -106,6 +106,31 @@ function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRec
   if (!exactRecreate && varyBackground) parts.push(`Shift the lighting and mood slightly — same place, a different moment.`);
   if (addGenericNudeLine) parts.push(NUDE_LINE);
   if (masterPrompt?.trim()) parts.push(`${who}: ${masterPrompt.trim()}`);
+
+  /**
+   * THE FOUR RULES PORTED BACK FROM THE GEMINI ROUTE (owner, 2026-08-11: "it copies the face of the
+   * source photo and adds makeup").
+   *
+   * The Seedream prompt was cut to fit ByteDance's length cap and these went with the trim. Each one
+   * is load-bearing and each maps to a symptom that was actually seen:
+   *
+   *  - NO BLENDING. Without it the model AVERAGES the two faces, which is precisely what "it copies
+   *    the source face" looks like -- not a straight copy, a blend that drifts away from her.
+   *  - FORBIDDEN, itemised. "Scene only" is a description; a list of the parts that may not travel
+   *    is an instruction.
+   *  - MAKEUP FROM THE REFS. The old line said `makeup (keep bold/dark lips)` -- an unconditional
+   *    order to paint on dark lipstick whether or not she wears any. That WAS the "adds makeup"
+   *    bug: we were asking for it. Makeup now comes from her references, and the only thing said
+   *    about bold shades is that they must not be softened away IF she is wearing them.
+   *  - TATTOOS. The stand-in's ink transfers otherwise; Gemini's route has carried this rule for
+   *    months.
+   */
+  if (!faceless) {
+    parts.push(`MAKEUP: exactly as ${who} wears it in ${refs} — same lips, eyes, lashes, brows. If ${refs} show a bold or dark lip, keep it; do NOT soften or naturalise it. Do NOT add makeup she is not wearing, and never take her makeup from ${src}.`);
+  }
+  parts.push(`FORBIDDEN from ${src}: its face, facial structure, eyes, nose, mouth, jaw, hair colour, skin tone${allowBodyChange ? '' : ', body shape'}, and any tattoo, ink or skin marking. ${who} has only the tattoos visible in ${refs}.`);
+  parts.push(`NO BLENDING: do not mix, merge or average ${who}'s face with the person in ${src}. The output face is 100% ${refs}, not a midpoint between the two.`);
+
   parts.push(`Photorealistic — real pores, hair strands, fabric, slight asymmetry; no plastic or CGI look.`);
 
   // #3 — the hardest locks go LAST. Seedream weights the tail of the prompt most heavily (the
@@ -117,7 +142,7 @@ function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRec
     parts.push(`FINAL — HIGHEST PRIORITY, overrides everything above: her face is intentionally OUT of the shot — cropped above the shoulders, turned away, or hidden by hair/hand/angle so no recognisable face is visible. Do NOT invent or show a face. Her body, hair, skin and proportions still come from ${refs}${allowBodyChange ? '' : ' at their true size — never averaged or shrunk toward ' + src}.`);
   } else {
     const finalLock = [
-      `FINAL — HIGHEST PRIORITY, overrides everything above: the face, skin and hair in the output MUST be recognisably ${refs}. ${src}'s face is an anonymous stand-in — discard it completely; if in any doubt, copy ${refs}.`,
+      `FINAL — HIGHEST PRIORITY, overrides everything above: the face, skin and hair in the output MUST be recognisably ${refs}. ${src}'s face is an anonymous stand-in — discard it completely; if in any doubt, copy ${refs}. Sacrifice ${src}'s likeness entirely to keep hers.`,
       // Body/chest: pinned to the refs UNLESS a size chip is driving it (then the chip, appended
       // after this whole prompt, wins and re-pinning here would fight it).
       allowBodyChange
