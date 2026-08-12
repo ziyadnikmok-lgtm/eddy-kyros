@@ -96,6 +96,26 @@ function colsForWidth(w) {
  * is retried: a 403 or a 404 will still be a 403 or a 404 in four seconds, and retrying those would
  * turn one dead pin into a stall.
  */
+/**
+ * Does this data URL actually decode to a picture?
+ *
+ * Some pins arrived in Photo Match as solid BLACK tiles (owner, 2026-08-11). A download can come
+ * back 200 and still not be an image -- an error page, a truncated stream, a zero-byte body -- and
+ * FileReader will happily turn any of those into a data URL that renders as nothing. The only
+ * honest test is to decode it, so that is what this does: a real decode, with real dimensions.
+ *
+ * Cheap enough to run per pin (the bytes are already in memory) and it converts a silent black
+ * square into a named failure that stays ticked and can be retried.
+ */
+function decodesAsImage(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img.naturalWidth > 0 && img.naturalHeight > 0);
+    img.onerror = () => resolve(false);
+    img.src = dataUrl;
+  });
+}
+
 async function fetchPinWithRetry(url, tries = 3) {
   let last = null;
   for (let i = 0; i < tries; i += 1) {
@@ -125,7 +145,20 @@ export default function PinterestFeedPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [cooldown, setCooldown] = useState(0);
-  const [picked, setPicked] = useState([]);
+  /**
+   * THE PICKS THEMSELVES, not their ids.
+   *
+   * This held ids and looked them up in `pins` at send time -- and a new search REPLACES `pins`, so
+   * everything ticked before that search stopped existing and was silently dropped from the send:
+   * search a, tick five, search b, tick five, send -> five arrive (owner, 2026-08-11). The ids were
+   * still in the list; the pictures they named were gone.
+   *
+   * Holding the pin objects makes a selection independent of what the grid happens to be showing,
+   * which is what "pick from several searches, then send" needs. A pin is a handful of strings, so
+   * three hundred of them cost nothing.
+   */
+  const [picked, setPicked] = useState([]);       // [{ id, thumb, orig, w, h, alt, domain }]
+  const pickedIds = useMemo(() => new Set(picked.map((p) => p.id)), [picked]);
   const [minRes, setMinRes] = useState(true);
   const [safe, setSafe] = useState(true);
   const [dest, setDest] = useState(DESTINATIONS[0].id);
@@ -156,13 +189,22 @@ export default function PinterestFeedPage() {
       ]);
       setQuery(q || '');
       setPins(Array.isArray(p) ? p : []);
-      setPicked(Array.isArray(sel) ? sel : []);
+      /**
+       * Old sessions stored ids. Resolve them against the pins that were stored alongside; any that
+       * cannot be resolved are dropped rather than kept as a ghost that cannot be sent.
+       */
+      const savedPins = Array.isArray(p) ? p : [];
+      const asObjects = (Array.isArray(sel) ? sel : [])
+        .map((x) => (typeof x === 'string' ? savedPins.find((pp) => pp.id === x) : x))
+        .filter(Boolean);
+      setPicked(asObjects);
       setSeen(new Set(Array.isArray(sn) ? sn : []));
       setRestored(true);
     })();
   }, []);
   useEffect(() => { pinsRef.current = pins; }, [pins]);
-  useEffect(() => { if (restored) store.set('picked', picked); }, [picked, restored]);
+  // Capped for the same reason as the grid: this is a working selection, not an archive.
+  useEffect(() => { if (restored) store.set('picked', picked.slice(0, 300)); }, [picked, restored]);
   useEffect(() => { if (restored) store.set('query', query); }, [query, restored]);
   // Capped: the grid can run to hundreds and the point is to resume a session, not to archive it.
   // 1000, not 200: one Load more can now add ~230, and a cap below a single page threw away the
@@ -314,8 +356,10 @@ export default function PinterestFeedPage() {
     return buckets;
   }, [visible, cols]);
 
-  const toggle = useCallback((id) => {
-    setPicked((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  const toggle = useCallback((pin) => {
+    setPicked((cur) => (cur.some((p) => p.id === pin.id)
+      ? cur.filter((p) => p.id !== pin.id)
+      : [...cur, pin]));
   }, []);
 
   /**
@@ -338,7 +382,9 @@ export default function PinterestFeedPage() {
    * on a partial send is what made the loss invisible.
    */
   const send = useCallback(async () => {
-    const chosen = pins.filter((p) => picked.includes(p.id));
+    // Straight from the selection -- NOT filtered against the grid, which only ever shows the last
+    // search and is the whole reason picks from earlier searches used to vanish.
+    const chosen = picked;
     if (!chosen.length) { notify('Tick at least one pin first', 'error'); return; }
     const target = DESTINATIONS.find((d) => d.id === dest);
     setSending(true);
@@ -352,6 +398,9 @@ export default function PinterestFeedPage() {
         if (!resp.ok) throw new Error(String(resp.status));
         // eslint-disable-next-line no-await-in-loop
         const blob = await resp.blob();
+        // A 200 is not proof of a picture. An error page or a truncated stream is a perfectly
+        // valid blob, and it becomes a black tile three tabs later.
+        if (!/^image\//.test(blob.type || '') || blob.size < 1024) throw new Error(`not an image (${blob.type || 'no type'}, ${blob.size}B)`);
         // eslint-disable-next-line no-await-in-loop
         const dataUrl = await new Promise((res, rej) => {
           const fr = new FileReader();
@@ -359,6 +408,8 @@ export default function PinterestFeedPage() {
           fr.onerror = rej;
           fr.readAsDataURL(blob);
         });
+        // eslint-disable-next-line no-await-in-loop
+        if (!await decodesAsImage(dataUrl)) throw new Error('downloaded bytes do not decode');
         images.push({ dataUrl, name: `pinterest-${p.id}.jpg` });
       } catch {
         failed.push(p.id);
@@ -396,14 +447,14 @@ export default function PinterestFeedPage() {
     // failed stays selected so pressing Send again retries exactly those.
     const sentIds = new Set(chosen.filter((p) => !failed.includes(p.id)).map((p) => p.id));
     setSeen((cur) => new Set([...cur, ...chosen.filter((p) => sentIds.has(p.id)).map((p) => p.orig)]));
-    setPicked((cur) => cur.filter((id) => !sentIds.has(id)));
+    setPicked((cur) => cur.filter((p) => !sentIds.has(p.id)));
     notify(
       failed.length
         ? `Sent ${images.length} of ${chosen.length} — ${failed.length} still selected, press Send again to retry`
         : `Sent ${images.length} to ${target.label}`,
       failed.length ? 'error' : 'success',
     );
-  }, [pins, picked, dest, notify, navigateTo, replaceTarget]);
+  }, [picked, dest, notify, navigateTo, replaceTarget]);
 
   const inputRef = useRef(null);
 
@@ -478,6 +529,27 @@ export default function PinterestFeedPage() {
           </label>
           <button onClick={() => setPicked([])}
             className="text-xs text-zinc-500 underline hover:text-zinc-300 cursor-pointer">Clear</button>
+
+          {/* THE WHOLE SELECTION, including picks whose search is long gone.
+              A selection that spans three searches is invisible in the grid -- the grid only ever
+              shows the last one -- so without this strip you cannot tell what will be sent, or
+              unpick something you chose two searches ago. Numbered in send order, click to remove. */}
+          <div className="flex w-full flex-wrap gap-1.5 border-t border-white/[0.06] pt-2">
+            {picked.map((p, i) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => toggle(p)}
+                title={`Remove — ${p.alt || p.domain || 'pin'}`}
+                className="group relative h-14 w-11 shrink-0 overflow-hidden rounded border border-white/[0.08] cursor-pointer"
+              >
+                <img src={p.thumb} alt="" loading="lazy" referrerPolicy="no-referrer"
+                  className="h-full w-full object-cover bg-zinc-900" />
+                <span className="absolute left-0 top-0 bg-black/70 px-1 text-[0.5rem] font-bold text-white">{i + 1}</span>
+                <span className="absolute inset-0 hidden items-center justify-center bg-black/60 text-xs text-white group-hover:flex">×</span>
+              </button>
+            ))}
+          </div>
         </Card>
       )}
 
@@ -490,12 +562,12 @@ export default function PinterestFeedPage() {
           <div key={ci} className="flex-1 min-w-0">
           {bucket.map((p) => {
             const already = seen.has(p.orig);
-            const on = picked.includes(p.id);
+            const on = pickedIds.has(p.id);
             return (
               <button
                 key={p.id}
                 type="button"
-                onClick={() => toggle(p.id)}
+                onClick={() => toggle(p)}
                 title={`${p.w}×${p.h}${already ? ' · already imported' : ''}${p.alt ? ` · ${p.alt}` : ''}`}
                 className={cn('group relative mb-3 block w-full break-inside-avoid overflow-hidden rounded-xl border-2 transition cursor-pointer',
                   on ? 'border-rose-500' : 'border-transparent hover:border-zinc-600',
@@ -529,7 +601,7 @@ export default function PinterestFeedPage() {
                 />
                 {on && (
                   <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-md bg-rose-500 text-xs font-bold text-white">
-                    {picked.indexOf(p.id) + 1}
+                    {picked.findIndex((x) => x.id === p.id) + 1}
                   </span>
                 )}
                 {already && (

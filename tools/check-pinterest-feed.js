@@ -106,7 +106,7 @@ check('downloads are sequential — twenty parallel fetches is what earns a rate
   /sequential on purpose: twenty parallel/.test(page));
 
 // --- selection survives navigation -------------------------------------------------------------------------
-check('the selection persists', /store\.set\('picked', picked\)/.test(page));
+check('the selection persists', page.includes("store.set('picked', picked.slice(0, 300))"));
 check('and is restored', /store\.get\('picked', \[\]\)/.test(page));
 check('the pin cache is capped rather than growing forever — at more than one page (was 200)', /store\.set\('pins', pins\.slice\(0, 1000\)\)/.test(page));
 
@@ -280,7 +280,7 @@ check('and only retries 429 — a 404 will still be a 404 in four seconds',
   page.includes('if (resp.status !== 429) return resp;'));
 check('the send uses it', page.includes('await fetchPinWithRetry(pinterestFeed.proxyUrl(p.orig))'));
 check('a pin that failed STAYS TICKED so Send retries exactly those',
-  page.includes('setPicked((cur) => cur.filter((id) => !sentIds.has(id)));'));
+  page.includes('setPicked((cur) => cur.filter((p) => !sentIds.has(p.id)));'));
 check('only what actually arrived is marked as imported', page.includes('const sentIds = new Set('));
 check('and a partial send is an ERROR, not a cheerful info toast',
   page.includes('press Send again to retry') && page.includes("failed.length ? 'error' : 'success'"));
@@ -336,6 +336,41 @@ check('duplicates WITHIN one page are collapsed too',
   mergeTwo([], [{ id: '1', orig: IMG_A }, { id: '2', orig: IMG_A }, { id: '3', orig: IMG_B }]).length === 2);
 check('the original stays first — a repeat must not reorder the grid',
   mergeTwo(start, [{ id: '2', orig: IMG_B }])[0].id === '1');
+
+// --- a selection spans SEARCHES (owner, 2026-08-11) --------------------------------------------------
+// "Search a, tick five, search b, tick five, send" delivered five. The selection held ids and the
+// send looked them up in `pins` -- which a new search REPLACES -- so every pick from an earlier
+// search named a picture that no longer existed and was dropped without a word.
+check('the selection holds the PINS, not their ids', page.includes('const [picked, setPicked] = useState([]);       // [{ id, thumb, orig, w, h, alt, domain }]'));
+check('the send reads the selection directly, never the grid', page.includes('const chosen = picked;'));
+check('and the reason is recorded', /is the whole reason picks from earlier searches used to vanish/.test(page));
+check('tiles read membership from a Set built off the picks', page.includes('const pickedIds = useMemo(() => new Set(picked.map((p) => p.id)), [picked]);'));
+check('toggling passes the whole pin', page.includes('onClick={() => toggle(p)}'));
+check('an old saved list of ids is migrated rather than dropped on the floor',
+  page.includes("typeof x === 'string' ? savedPins.find((pp) => pp.id === x) : x"));
+check('every pick is visible, including ones whose search is gone', /THE WHOLE SELECTION, including picks whose search is long gone/.test(page));
+
+// --- black tiles in Photo Match ------------------------------------------------------------------------
+check('a download must decode as a real image before it is sent', page.includes('function decodesAsImage(dataUrl)'));
+check('and the decode is actually awaited', page.includes("if (!await decodesAsImage(dataUrl)) throw new Error('downloaded bytes do not decode');"));
+check('a non-image or truncated body is refused before that',
+  page.includes('.test(blob.type') && page.includes('blob.size < 1024'));
+check('the reason is recorded', /it becomes a black tile three tabs later/.test(page));
+
+// --- replay: picking across searches -----------------------------------------------------------------------
+const pinA = { id: 'a1', orig: 'https://i.pinimg.com/originals/aa/bb/cc/11111111111111111111111111111111.jpg' };
+const pinB = { id: 'b1', orig: 'https://i.pinimg.com/originals/dd/ee/ff/22222222222222222222222222222222.jpg' };
+const toggleP = (cur, pin) => (cur.some((p) => p.id === pin.id) ? cur.filter((p) => p.id !== pin.id) : [...cur, pin]);
+let sel = [];
+sel = toggleP(sel, pinA);          // search one
+// a new search replaces the grid entirely
+let grid = [pinB];
+sel = toggleP(sel, pinB);          // search two
+check('both picks survive a search that replaced the grid', sel.length === 2);
+check('the send would carry the pin from the FIRST search', sel.some((p) => p.id === 'a1'));
+check('and it is not found by filtering the grid — the old bug', grid.filter((p) => sel.some((s2) => s2.id === p.id)).length === 1);
+check('ticking the same pin twice removes it', toggleP(sel, pinA).length === 1);
+check('order is pick order, so the numbered badges mean something', sel[0].id === 'a1' && sel[1].id === 'b1');
 
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
