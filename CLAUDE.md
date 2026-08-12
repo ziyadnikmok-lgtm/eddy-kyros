@@ -147,13 +147,35 @@ client/src/
 # 2. If client changed — build
 pnpm --dir client run build
 
-# 3. Restart local app — WINDOWS. (The pkill/open line that used to be here was macOS and
-#    could not have worked on this machine.) The script builds first, then restarts.
+# 3. Restart the local app. The script builds first, then restarts.
+#    WINDOWS (the owner's machine):
 powershell -ExecutionPolicy Bypass -File tools\restart-kyros.ps1
+#    macOS / Linux (a collaborator's machine — there is no .ps1 equivalent yet):
+#      npm start        # from the repo root, after `npm install`
 
 # 4. Test locally
 # 5. Push only when user asks
 ```
+
+---
+
+## 4b) WORKING ON A DIFFERENT LAPTOP (a collaborator's checkout)
+
+This repo is shared and pulled onto other machines. What does NOT travel with it:
+
+- **Native modules.** `better-sqlite3` is compiled against one Node/Electron ABI. A fresh checkout
+  needs `npm install` (and Electron needs its own rebuild); the symptom otherwise is
+  `NODE_MODULE_VERSION 143 ... requires 137` the moment the server starts.
+- **API keys.** `.env` is not tracked, by design. Each machine needs its own WaveSpeed / Muapi /
+  Gemini keys, set in the app's own Settings — never in a file copied between people.
+- **The collections.** Base, Character, Outfit, Pose and Library live in that machine's IndexedDB.
+  A fresh checkout opens with empty tabs — that is correct, not a bug, and it is why the Seedance
+  and Photo Match character pickers show nothing until that laptop has its own characters.
+- **`client/dist` IS committed**, so the app runs without building first. Anything changed under
+  `client/src` still needs a build before it shows up.
+
+What DOES travel: every `tools/check-*.js` suite. They derive the repo root from their own location,
+so `node tools/check-<name>.js` works from any directory on any machine — run them before pushing.
 
 ---
 

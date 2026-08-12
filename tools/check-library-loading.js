@@ -5,7 +5,10 @@
 // grid shows a hundred and twenty. That is why the tab took so long to open and why tiles came up
 // black — the browser was handed more base64 than it could decode at once (owner, 2026-08-11).
 const fs = require('fs');
-const col = fs.readFileSync('D:/Kyros/app/client/src/components/EddyCollection.jsx', 'utf8');
+const path = require('path');
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
+const col = fs.readFileSync(path.join(ROOT, 'client/src/components/EddyCollection.jsx'), 'utf8');
 
 let pass = 0, fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };

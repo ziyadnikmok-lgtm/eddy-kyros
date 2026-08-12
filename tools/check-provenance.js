@@ -6,7 +6,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = 'D:/Kyros/app';
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
 
 // The module is ESM; read and evaluate the pure functions rather than importing.
 const srcText = fs.readFileSync(path.join(ROOT, 'client/src/lib/provenance.js'), 'utf8');

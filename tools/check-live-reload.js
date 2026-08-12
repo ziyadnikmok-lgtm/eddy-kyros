@@ -11,7 +11,10 @@
 //   SERVER   — routes are require()d once at boot, so a route file change needs a process restart.
 //              Reloading the window can never help: the window is not the server.
 const fs = require('fs');
-const main = fs.readFileSync('D:/Kyros/app/electron/main.js', 'utf8');
+const path = require('path');
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
+const main = fs.readFileSync(path.join(ROOT, 'electron/main.js'), 'utf8');
 
 let pass = 0, fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };

@@ -10,7 +10,10 @@
 //      fills it (its sources ride on each combo) and a multi-base run does not either — so those
 //      tabs returned on the first line of the effect and never resumed at all.
 const fs = require('fs');
-const g = fs.readFileSync('D:/Kyros/app/client/src/pages/EddyGeneratePage.jsx', 'utf8');
+const path = require('path');
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
+const g = fs.readFileSync(path.join(ROOT, 'client/src/pages/EddyGeneratePage.jsx'), 'utf8');
 
 // The resume effect's dependency array, isolated so the check below reads THAT list and not
 // some other hook's.

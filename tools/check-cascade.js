@@ -3,9 +3,12 @@
 // before the under-delete one: missing a row leaves a broken tile, but deleting the wrong row
 // destroys a curated pose or outfit that was never asked about.
 const fs = require('fs');
+const path = require('path');
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
 const rd = (f) => fs.readFileSync(f, 'utf8').split(String.fromCharCode(13) + String.fromCharCode(10)).join(String.fromCharCode(10));
-const casc = rd('D:/Kyros/app/client/src/lib/galleryCascade.js');
-const lib = rd('D:/Kyros/app/client/src/pages/LibraryPage.jsx');
+const casc = rd(path.join(ROOT, 'client/src/lib/galleryCascade.js'));
+const lib = rd(path.join(ROOT, 'client/src/pages/LibraryPage.jsx'));
 
 let pass = 0, fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };

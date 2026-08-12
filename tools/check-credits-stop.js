@@ -9,8 +9,11 @@
 // then the same on every remaining combo. An 81-image batch is 324 pointless calls to be told 324
 // times that the account cannot pay. Falling back to Seedream cannot help either: same account.
 const fs = require('fs');
-const svc = fs.readFileSync('D:/Kyros/app/server/services/wavespeedService.js', 'utf8');
-const g = fs.readFileSync('D:/Kyros/app/client/src/pages/EddyGeneratePage.jsx', 'utf8');
+const path = require('path');
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
+const svc = fs.readFileSync(path.join(ROOT, 'server/services/wavespeedService.js'), 'utf8');
+const g = fs.readFileSync(path.join(ROOT, 'client/src/pages/EddyGeneratePage.jsx'), 'utf8');
 
 let pass = 0, fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };

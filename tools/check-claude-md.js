@@ -12,14 +12,18 @@
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = 'D:/Kyros/app';
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
 const doc = fs.readFileSync(path.join(ROOT, 'CLAUDE.md'), 'utf8');
 
 let pass = 0, fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };
 
-// --- 1. no command from an operating system this machine is not ------------------------------------
-// Windows only: no bash, no WSL. A Mac command here is not a typo, it is an instruction that fails.
+// --- 1. no command from an operating system THIS machine is not ------------------------------------
+// The rule is "a command the reader cannot run is a lie", and who the reader is depends on the
+// laptop. This repo is shared -- the owner is on Windows, a collaborator may not be -- so the ban
+// list is chosen by platform rather than hardcoded, and the doc is expected to carry both forms.
+const IS_WINDOWS = process.platform === 'win32';
 const MAC_ONLY = [
   ['/Users/', 'a Mac home path'],
   ['~/Library/', 'a Mac Application Support path'],
@@ -62,10 +66,22 @@ for (const row of section.split('\n').filter((l) => /^\|\s*[^|]+\|\s*`/.test(l))
 }
 check('the KEY PATHS section was located', section.length > 0);
 check('the KEY PATHS table was actually found and parsed', paths.length >= 6);
+let skipped = 0;
 for (const p of paths) {
+  /**
+   * A path can only be checked on the machine it belongs to.
+   *
+   * A Windows path (C:\..., %APPDATA%) cannot exist on a collaborator's Mac, and asserting it there
+   * would turn a green suite red on a machine where nothing is wrong -- which is worse than not
+   * checking, because a suite people learn to ignore protects nothing. Counted and reported, never
+   * silently passed.
+   */
+  const windowsy = /^[A-Za-z]:/.test(p) || p.includes('%APPDATA%');
+  if (windowsy && !IS_WINDOWS) { skipped += 1; continue; }
   const abs = path.isAbsolute(p) || /^[A-Za-z]:/.test(p) ? p : path.join(ROOT, p);
   check(`KEY PATHS: ${p} exists`, fs.existsSync(abs));
 }
+if (skipped) console.log(`  --   ${skipped} machine-specific path(s) not checked on ${process.platform}`);
 
 // --- 3. the port it names is the port the app uses ------------------------------------------------------
 const main = fs.readFileSync(path.join(ROOT, 'electron/main.js'), 'utf8');

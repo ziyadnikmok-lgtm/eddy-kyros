@@ -7,8 +7,11 @@
 //      thing: it turns a collection INTO a prompt list and changes the card layout. Base Library
 //      is a picture grid and should stay one.
 const fs = require('fs');
-const col = fs.readFileSync('D:/Kyros/app/client/src/components/EddyCollection.jsx', 'utf8');
-const base = fs.readFileSync('D:/Kyros/app/client/src/pages/EddyBasePage.jsx', 'utf8');
+const path = require('path');
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
+const col = fs.readFileSync(path.join(ROOT, 'client/src/components/EddyCollection.jsx'), 'utf8');
+const base = fs.readFileSync(path.join(ROOT, 'client/src/pages/EddyBasePage.jsx'), 'utf8');
 
 let pass = 0, fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };

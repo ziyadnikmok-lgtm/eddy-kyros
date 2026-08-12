@@ -8,12 +8,15 @@
 // no-use-before-define flags 16 harmless cases too (a const arrow called by a handler that runs
 // after mount), so this checks the precise shape instead: hook deps only.
 const fs = require('fs');
+const path = require('path');
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
 const FILES = [
-  'D:/Kyros/app/client/src/pages/EddyGeneratePage.jsx',
-  'D:/Kyros/app/client/src/components/EddyCollection.jsx',
-  'D:/Kyros/app/client/src/pages/PhotoMatchSeedreamPage.jsx',
-  'D:/Kyros/app/client/src/pages/EddyBasePage.jsx',
-  'D:/Kyros/app/client/src/pages/EddyTabs.jsx',
+  path.join(ROOT, 'client/src/pages/EddyGeneratePage.jsx'),
+  path.join(ROOT, 'client/src/components/EddyCollection.jsx'),
+  path.join(ROOT, 'client/src/pages/PhotoMatchSeedreamPage.jsx'),
+  path.join(ROOT, 'client/src/pages/EddyBasePage.jsx'),
+  path.join(ROOT, 'client/src/pages/EddyTabs.jsx'),
 ];
 
 let pass = 0, fail = 0;

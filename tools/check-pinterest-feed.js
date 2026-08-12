@@ -11,7 +11,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = 'D:/Kyros/app';
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
 const route = require(path.join(ROOT, 'server/routes/pinterestFeed.js'));
 const page = fs.readFileSync(path.join(ROOT, 'client/src/pages/PinterestFeedPage.jsx'), 'utf8');
 const src = fs.readFileSync(path.join(ROOT, 'server/routes/pinterestFeed.js'), 'utf8');

@@ -4,7 +4,10 @@
 // picture. Skipping is therefore a judgement call, and the cases that must never be skipped are a
 // Regenerate and a retry: both are explicit asks for an image that does not exist yet.
 const fs = require('fs');
-const gen = fs.readFileSync('D:/Kyros/app/client/src/pages/EddyGeneratePage.jsx', 'utf8');
+const path = require('path');
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
+const gen = fs.readFileSync(path.join(ROOT, 'client/src/pages/EddyGeneratePage.jsx'), 'utf8');
 
 let pass = 0, fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };
@@ -64,7 +67,7 @@ check('nothing is lost between the two lists',
   decide(false, planned, seen).fresh.length + decide(false, planned, seen).skipped.length === planned.length);
 
 // --- the multi-base case, against the real key builder ----------------------------------------------
-const srcText = fs.readFileSync('D:/Kyros/app/client/src/lib/provenance.js', 'utf8');
+const srcText = fs.readFileSync(path.join(ROOT, 'client/src/lib/provenance.js'), 'utf8');
 // eslint-disable-next-line no-new-func
 const { comboKey, buildSeenKeys, splitBySeen } =
   new Function(`${srcText.replace(/^export /gm, '')}; return { comboKey, buildSeenKeys, splitBySeen };`)();
