@@ -6,13 +6,20 @@
  * resource for a page of pins. Different upstream, different shape, different failure mode —
  * keeping them apart means a change at one end cannot break the other.
  *
- * VERIFIED BEFORE BEING WRITTEN, against the live endpoint:
+ * VERIFIED AGAINST THE LIVE ENDPOINT:
  *   BaseSearchResource      -> 200, results, bookmark for paging
+ *   RelatedPinFeedResource  -> 200 with { pin }   <-- see the CORRECTION below
  *   RelatedModulesResource  -> 404
- *   RelatedPinFeedResource  -> 404
  *   BoardFeedResource       -> 400
- * So this file offers search and nothing else. Guessing at resource names would produce features
- * that work today and die silently later.
+ *
+ * CORRECTION, 2026-08-12. This header said RelatedPinFeedResource returned 404 and the tab was
+ * built on that belief for months. It does not: it was being called with `pin_id`, and the
+ * parameter is `pin`. With `{ pin }`, a `/pin/<id>/` referer and the `www/pin/[id].js` handler it
+ * returns 200 — 100 related pins in 1.9s, three seeds in parallel in 2.5s. That is Pinterest's own
+ * related-pins algorithm, and it is what POST /related below serves.
+ *
+ * The lesson is kept because it is the expensive kind: a wrong parameter name and a 404 look
+ * exactly like a feature that does not exist.
  *
  * No cookies and no API key. Public search does not need them; they would only reach a user's own
  * private boards.
@@ -79,7 +86,7 @@ function normalisePin(raw) {
     w,
     h,
     // Alt text is the only description most pins carry, and it is what the "search this pin"
-    // action reuses — the closest thing available to related-pins, which does not work.
+    // action reuses.
     alt: String(raw.grid_title || raw.description || raw.alt_text || '').trim().slice(0, 200),
     domain: String(raw.domain || '').slice(0, 80),
   };
@@ -187,6 +194,95 @@ router.post('/search', async (req, res, next) => {
     // What was dropped and why, so a page that looks short is explained rather than suspicious.
     dropped: results.length - pins.length,
   });
+});
+
+/**
+ * How many pins one Refresh may be tuned to.
+ *
+ * Capped here as well as in the UI: the UI cap is a courtesy, this one is the guarantee. Eight
+ * simultaneous requests is already a burst at a service that rate-limits.
+ */
+const MAX_SEEDS = 8;
+
+/**
+ * POST /api/pinterest-feed/related
+ * body: { pins: [id, ...], pageSize?, bookmarks?: { [id]: bookmark } }
+ *  -> { sets: [{ pin, pins: [...], bookmark }], failed: [id, ...] }
+ *
+ * Pinterest's own "more like this", one call per seed, in parallel.
+ *
+ * THE PARAMETER IS `pin`. `pin_id` returns 404, and that single mistake is why this repo recorded
+ * RelatedPinFeedResource as broken when the tab was built. Measured live 2026-08-12: page_size 100
+ * returns 100 pins in 1.9s, and three seeds in parallel took 2.5s for 140 usable tiles. The overlap
+ * between two seeds' sets was 1 of 48, which is what makes mixing worth doing rather than just
+ * returning the same pins several times.
+ *
+ * A seed that fails is reported by id and skipped; the others still return. Losing a whole Refresh
+ * because one pin went private is the failure worth avoiding.
+ */
+router.post('/related', async (req, res) => {
+  const seeds = (Array.isArray(req.body?.pins) ? req.body.pins : [])
+    .map((p) => String(p || '').trim())
+    .filter(Boolean)
+    .slice(0, MAX_SEEDS);
+  const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(req.body?.pageSize) || 100));
+  const bookmarks = req.body?.bookmarks && typeof req.body.bookmarks === 'object' ? req.body.bookmarks : {};
+
+  if (!seeds.length) throw new AppError('At least one pin is required', 400, 'VALIDATION_ERROR');
+
+  const failed = [];
+  const sets = await Promise.all(seeds.map(async (id) => {
+    const sourceUrl = `/pin/${id}/`;
+    const options = {
+      pin: id,
+      page_size: pageSize,
+      bookmarks: bookmarks[id] ? [bookmarks[id]] : [],
+    };
+    const url = `${PIN_BASE}/resource/RelatedPinFeedResource/get/`
+      + `?source_url=${encodeURIComponent(sourceUrl)}`
+      + `&data=${encodeURIComponent(JSON.stringify({ options, context: {} }))}`;
+    try {
+      const r = await axios.get(url, {
+        timeout: TIMEOUT_MS,
+        validateStatus: () => true,
+        headers: {
+          'User-Agent': UA,
+          Accept: 'application/json, text/javascript, */*, q=0.01',
+          'X-Requested-With': 'XMLHttpRequest',
+          'X-Pinterest-PWS-Handler': 'www/pin/[id].js',
+          Referer: `${PIN_BASE}${sourceUrl}`,
+        },
+      });
+      if (r.status !== 200) {
+        log.error('pinterest_related_status', { status: r.status, pin: id });
+        failed.push(id);
+        return { pin: id, pins: [], bookmark: null };
+      }
+      const body = typeof r.data === 'string' ? safeJson(r.data) : r.data;
+      const data = body?.resource_response?.data;
+      const results = Array.isArray(data) ? data : (data?.results || []);
+      if (!Array.isArray(results)) {
+        log.error('pinterest_related_shape', { pin: id });
+        failed.push(id);
+        return { pin: id, pins: [], bookmark: null };
+      }
+      return {
+        pin: id,
+        pins: results.map(normalisePin).filter(Boolean),
+        bookmark: body?.resource_response?.bookmark || null,
+      };
+    } catch (err) {
+      log.error('pinterest_related_unreachable', { pin: id, message: String(err?.message || '').slice(0, 200) });
+      failed.push(id);
+      return { pin: id, pins: [], bookmark: null };
+    }
+  }));
+
+  // Every seed failing is a real failure, not an empty feed — say so with a code the client can read.
+  if (failed.length === seeds.length) {
+    throw new AppError('Pinterest returned nothing related to those pins', 502, 'PINTEREST_RELATED_FAILED');
+  }
+  res.json({ sets, failed });
 });
 
 function safeJson(text) {

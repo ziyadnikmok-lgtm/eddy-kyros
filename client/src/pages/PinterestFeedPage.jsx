@@ -14,6 +14,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { pinterestFeed } from '../services/api';
 import { createPageStore } from '../lib/pageStateStore';
 import { stashSourceHandoff } from '../lib/sourceHandoff';
+import { interleave, topSeeds } from '../lib/pinterestMix';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Spinner, Badge } from '../components/UI';
 import { cn } from '../lib/utils';
@@ -133,6 +134,47 @@ async function fetchPinWithRetry(url, tries = 3) {
   return last;
 }
 
+/**
+ * One tile's picture, loaded only when it is nearly on screen.
+ *
+ * The grid rendered every image at once, so the browser held hundreds of live images and the
+ * pictures could not keep up with a scroll — grey boxes that filled in a moment later (owner,
+ * 2026-08-12). Native loading="lazy" was already on and did not fix it: it defers the FETCH but
+ * still creates every element, and its margin is the browser's choice, not ours.
+ *
+ * Two things make this work. Pinterest sends each pin's real width and height, so the tile can
+ * reserve exactly the right box before the picture exists — nothing shifts when it lands. And a
+ * 150% rootMargin starts the load a screen and a half early, so it is ready by the time it is
+ * reached rather than starting when it arrives.
+ */
+function PinTile({ pin, children }) {
+  const ref = useRef(null);
+  const [near, setNear] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || near) return undefined;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        setNear(true);
+        io.disconnect();          // one shot: a picture already loaded never needs watching again
+      }
+    }, { rootMargin: '150% 0px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [near]);
+
+  return (
+    <div
+      ref={ref}
+      // The pin's own proportions, so the column has its final height before the picture arrives.
+      style={{ aspectRatio: (pin.w > 0 && pin.h > 0) ? `${pin.w} / ${pin.h}` : '3 / 4' }}
+      className="w-full bg-zinc-900"
+    >
+      {near ? children : null}
+    </div>
+  );
+}
+
 export default function PinterestFeedPage() {
   const { notify, navigateTo } = useApp();
 
@@ -159,6 +201,10 @@ export default function PinterestFeedPage() {
    */
   const [picked, setPicked] = useState([]);       // [{ id, thumb, orig, w, h, alt, domain }]
   const pickedIds = useMemo(() => new Set(picked.map((p) => p.id)), [picked]);
+  // Capped at 8, most recent first-ticked-out. Declared here, above every callback that reads it:
+  // a dependency array is evaluated during render, and naming a const declared further down is the
+  // temporal-dead-zone error that has blanked pages in this repo four times.
+  const seeds = useMemo(() => topSeeds(picked), [picked]);
   const [minRes, setMinRes] = useState(true);
   const [safe, setSafe] = useState(true);
   const [dest, setDest] = useState(DESTINATIONS[0].id);
@@ -170,6 +216,19 @@ export default function PinterestFeedPage() {
   // Cancels a backfill when a newer search starts, so the previous query's pages cannot land in the
   // new query's grid.
   const runIdRef = useRef(0);
+
+  /**
+   * WHAT THE FEED IS TUNED TO.
+   *
+   * `seeds` is what a Refresh would use right now — the ticked pins, capped. `tunedTo` is what the
+   * feed on screen was actually built from, which is NOT the same list: a send unticks what it
+   * sent, and the owner asked that the feed keep its taste afterwards. `tunedTo` is what the
+   * "Tuned to" row shows, and what tells Load more to page the related feeds instead of the query.
+   */
+  const [tunedTo, setTunedTo] = useState([]);
+  const [tuning, setTuning] = useState(false);
+  // Each seed pages on its own bookmark, so they are kept per pin id rather than as one cursor.
+  const relatedMarksRef = useRef({});
   // Replace what is already in the destination, or add to it. Remembered, because whichever
   // one you want you tend to want repeatedly.
   const [replaceTarget, setReplaceTarget] = useState(() => {
@@ -276,6 +335,9 @@ export default function PinterestFeedPage() {
     runIdRef.current = runId;
     setLoading(true);
     setError('');
+    // A typed search is the way out of a tuned feed — it replaces the grid, so the tuning it was
+    // built from no longer describes what is on screen.
+    if (!more) { setTunedTo([]); relatedMarksRef.current = {}; }
     try {
       const first = await pinterestFeed.search({
         query: q, bookmark: more ? bookmark : '', safe, pageSize: more ? PAGE_SIZE : FIRST_PAGE,
@@ -319,6 +381,68 @@ export default function PinterestFeedPage() {
       if (runIdRef.current === runId) { setLoading(false); setBackfilling(false); }
     }
   }, [bookmark, safe, notify, mergePins]);
+
+  /**
+   * REFRESH — rebuild the feed from the pins that are ticked.
+   *
+   * One call, which fans out to one Pinterest request per seed in parallel; measured at 2.5s for
+   * three seeds and ~140 usable tiles. The grid is REPLACED rather than appended to: the point is
+   * "show me this instead", and nothing is lost because the selection holds pin objects.
+   *
+   * Shares runIdRef with search(), so a Refresh and a search can never both be writing into the
+   * grid — whichever started last owns it.
+   */
+  const tuneToSelection = useCallback(async () => {
+    if (!seeds.length) return;
+    const runId = runIdRef.current + 1;
+    runIdRef.current = runId;
+    setTuning(true);
+    setError('');
+    try {
+      const r = await pinterestFeed.related({ pins: seeds.map((p) => p.id), pageSize: 100 });
+      if (runIdRef.current !== runId) return;
+      const sets = Array.isArray(r.sets) ? r.sets : [];
+      const added = mergePins(interleave(sets.map((s) => s.pins)), { replace: true });
+      relatedMarksRef.current = Object.fromEntries(sets.filter((s) => s.bookmark).map((s) => [s.pin, s.bookmark]));
+      setTunedTo(seeds);
+      setBookmark(null);          // the text query's cursor no longer applies
+      const failed = Array.isArray(r.failed) ? r.failed.length : 0;
+      notify(failed
+        ? `${added} tiles from ${seeds.length - failed} of ${seeds.length} picks — ${failed} could not be read`
+        : `${added} tiles from ${seeds.length} pick${seeds.length === 1 ? '' : 's'}`,
+      failed ? 'info' : 'success');
+    } catch (err) {
+      if (runIdRef.current !== runId) return;
+      setError(err?.message || 'Could not tune the feed');
+    } finally {
+      if (runIdRef.current === runId) setTuning(false);
+    }
+  }, [seeds, mergePins, notify]);
+
+  /**
+   * Load more, for a tuned feed: page every seed once and interleave again, so the feed keeps its
+   * balance as it grows rather than drifting toward whichever seed has the deepest tail.
+   */
+  const loadMoreRelated = useCallback(async () => {
+    const ids = tunedTo.map((p) => p.id).filter((id) => relatedMarksRef.current[id]);
+    if (!ids.length) { notify('No more from those pins', 'info'); return; }
+    const runId = runIdRef.current + 1;
+    runIdRef.current = runId;
+    setTuning(true);
+    try {
+      const r = await pinterestFeed.related({ pins: ids, pageSize: 100, bookmarks: relatedMarksRef.current });
+      if (runIdRef.current !== runId) return;
+      const sets = Array.isArray(r.sets) ? r.sets : [];
+      const added = mergePins(interleave(sets.map((s) => s.pins)));
+      for (const s of sets) relatedMarksRef.current[s.pin] = s.bookmark || null;
+      notify(added ? `${added} more` : 'Nothing new from those pins', added ? 'success' : 'info');
+    } catch (err) {
+      if (runIdRef.current !== runId) return;
+      setError(err?.message || 'Could not load more');
+    } finally {
+      if (runIdRef.current === runId) setTuning(false);
+    }
+  }, [tunedTo, mergePins, notify]);
 
   const visible = useMemo(() => (
     minRes ? pins.filter((p) => Math.max(p.w, p.h) >= MIN_LONG_EDGE) : pins
@@ -553,6 +677,27 @@ export default function PinterestFeedPage() {
         </Card>
       )}
 
+      {/* WHAT THE FEED IS BUILT FROM. Shown separately from the selection because a send unticks
+          what it sent while the tuning survives — without this row those pins would be invisible
+          and the feed would look like it had drifted on its own. */}
+      {tunedTo.length > 0 && (
+        <Card className="flex flex-wrap items-center gap-2 p-3">
+          <Badge color="green">Tuned to {tunedTo.length} pin{tunedTo.length === 1 ? '' : 's'}</Badge>
+          <div className="flex flex-wrap gap-1.5">
+            {tunedTo.map((p) => (
+              <img key={p.id} src={p.thumb} alt="" loading="lazy" referrerPolicy="no-referrer"
+                className="h-10 w-8 rounded border border-white/[0.08] object-cover bg-zinc-900" />
+            ))}
+          </div>
+          <button
+            onClick={() => { setTunedTo([]); relatedMarksRef.current = {}; }}
+            className="text-xs text-zinc-500 underline hover:text-zinc-300 cursor-pointer"
+          >
+            Clear tuning
+          </button>
+        </Card>
+      )}
+
       {/* One flex column per bucket. Not CSS columns: those re-balance on every append and moved
           every tile out from under the cursor. Not a measured JS grid either -- nothing is
           positioned absolutely, so there is no measurement pass to jank on a fast scroll. */}
@@ -585,20 +730,22 @@ export default function PinterestFeedPage() {
                     returns no access-control-allow-origin, so the bytes cannot be read directly.
                     onError falls back to the proxy, so if Pinterest ever blocks hotlinking the grid
                     degrades to slow instead of empty. */}
-                <img
-                  src={p.thumb}
-                  alt=""
-                  loading="lazy"
-                  decoding="async"
-                  referrerPolicy="no-referrer"
-                  onError={(e) => {
-                    const el = e.currentTarget;
-                    if (el.dataset.viaProxy) return;      // already tried; leave the broken tile
-                    el.dataset.viaProxy = '1';
-                    el.src = pinterestFeed.proxyUrl(p.thumb);
-                  }}
-                  className="w-full bg-zinc-900"
-                />
+                <PinTile pin={p}>
+                  <img
+                    src={p.thumb}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      const el = e.currentTarget;
+                      if (el.dataset.viaProxy) return;      // already tried; leave the broken tile
+                      el.dataset.viaProxy = '1';
+                      el.src = pinterestFeed.proxyUrl(p.thumb);
+                    }}
+                    className="h-full w-full object-cover bg-zinc-900"
+                  />
+                </PinTile>
                 {on && (
                   <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-md bg-rose-500 text-xs font-bold text-white">
                     {picked.findIndex((x) => x.id === p.id) + 1}
@@ -622,8 +769,8 @@ export default function PinterestFeedPage() {
         </div>
       )}
 
-      {bookmark && visible.length > 0 && (
-        <Btn variant="secondary" className="w-full" onClick={() => search(query, true)}
+      {(bookmark || tunedTo.length > 0) && visible.length > 0 && (
+        <Btn variant="secondary" className="w-full" onClick={() => { if (tunedTo.length) { loadMoreRelated(); return; } search(query, true); }}
           disabled={loading || cooldown > 0}>
           {loading ? <Spinner size={14} /> : null}
           {cooldown > 0 ? `Rate-limited — ${cooldown}s` : 'Load more'}
@@ -634,6 +781,20 @@ export default function PinterestFeedPage() {
         <p className="py-16 text-center text-sm text-zinc-600">
           Search Pinterest, tick the shots you want, and send them straight into Photo Match.
         </p>
+      )}
+
+      {/* STICKY, bottom right: the feed is scrolled while picking, and a button at the top of the
+          page would be off screen exactly when it is wanted. */}
+      {picked.length > 0 && (
+        <div className="fixed bottom-6 right-6 z-30">
+          <Btn onClick={tuneToSelection} disabled={tuning} className="shadow-xl">
+            {tuning ? <Spinner size={14} /> : null}
+            Refresh feed · {seeds.length} pick{seeds.length === 1 ? '' : 's'}
+            {picked.length > seeds.length && (
+              <span className="ml-1 text-[0.625rem] opacity-75">of your {picked.length}</span>
+            )}
+          </Btn>
+        </div>
       )}
     </div>
   );
