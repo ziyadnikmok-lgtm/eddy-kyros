@@ -452,6 +452,9 @@ export const photoMatch = {
 export const pinterestFeed = {
   // Search, for the browse tab. Separate from the single-pin scraper below.
   search: (body) => request('/pinterest-feed/search', { method: 'POST', body }),
+  // Pinterest's own "more like this", one call per ticked pin. See routes/pinterestFeed.js — the
+  // seed parameter is `pin`, not `pin_id`.
+  related: (body) => request('/pinterest-feed/related', { method: 'POST', body }),
   // i.pinimg.com refuses a request carrying a browser Origin, so EVERY pin image -- thumbnail and
   // full size -- has to come through the proxy. This route already existed for the old page.
   proxyUrl: (u) => `/api/pinterest/proxy?url=${encodeURIComponent(u)}`,
