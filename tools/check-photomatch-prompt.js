@@ -90,5 +90,23 @@ check('and the source index moves with them', /image 5 = scene only/.test(multi)
 check('the identity lock is in the last third of the prompt', p.lastIndexOf('FINAL — HIGHEST PRIORITY') > p.length * 0.6);
 check('the no-blend rule sits near it', p.lastIndexOf('NO BLENDING') > p.length * 0.5);
 
+// --- where the results are filed (owner, 2026-08-12) ------------------------------------------------
+// "Let me choose between normal library and base library before I press generate." The two are
+// separate IndexedDB collections behind the tabs of the same name.
+check('both destinations are offered', src.includes("{ value: 'eddy-library', label: 'Library' }")
+  && src.includes("{ value: 'eddy-base', label: 'Base Library' }"));
+check('the picker is in the Settings box, before Generate', src.includes('label="Send results to"'));
+check('the choice is remembered between runs', src.includes("localStorage.getItem('kyros.photoMatch.dest')"));
+check('and defaults to Library, where every previous match went', src.includes(": 'eddy-library';"));
+check('an unknown saved value falls back rather than filing nowhere',
+  src.includes('DESTINATIONS.some((d) => d.value === saved)'));
+check('the result is filed into the CHOSEN store, not always the Library',
+  src.includes('await destStore.ensureFolder(') && src.includes('await destStore.addItems(['));
+check('her folder is made in that same collection', !src.includes('libraryStore.ensureFolder'));
+check('the storage-full message names where it failed to file', src.includes('but not in ${destLabel}'));
+check('and the handler still recognises that message',
+  src.includes("includes('is in the gallery but not in ')"));
+check('the page says where the next run will land', src.includes('Files into'));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

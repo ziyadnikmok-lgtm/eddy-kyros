@@ -17,6 +17,18 @@ import ManualBlurModal from '../components/ManualBlurModal';
 const ASPECT_OPTIONS = [{ value: 'auto', label: 'Auto (match source)' }, ...SEEDREAM_ASPECT_RATIOS.map((r) => ({ value: r, label: r }))];
 const RES_OPTIONS = SEEDREAM_RESOLUTIONS.map((r) => ({ value: r, label: r }));
 
+/**
+ * Where a finished match is filed.
+ *
+ * The two collections behind the tabs of the same name: Library is `eddy-library`, Base Library is
+ * `eddy-base`. Chosen BEFORE generating rather than moved afterwards, because a batch of thirty
+ * that lands in the wrong tab is thirty drags.
+ */
+const DESTINATIONS = [
+  { value: 'eddy-library', label: 'Library' },
+  { value: 'eddy-base', label: 'Base Library' },
+];
+
 // Each job sends exactly one source photo, so the character gets the rest of Seedream's budget.
 const MAX_CHAR_IMAGES = SEEDREAM_MAX_IMAGES - 1;
 // 50, not 12: a Pinterest send arrives as one batch of whatever you ticked, and the old ceiling
@@ -289,7 +301,25 @@ export default function PhotoMatchSeedreamPage() {
   // Eddy's Library is where EVERYTHING generated goes. The owner uses Eddy and this page and
   // nothing else, so a Photo Match result that only reached the server gallery was a result they
   // had to go somewhere else to find (owner, 2026-08-09).
+  /**
+   * The destination, remembered — whoever files into Base Library tends to do it for a run of work,
+   * not once. Defaults to Library, which is where every previous match went.
+   */
+  const [destDb, setDestDb] = useState(() => {
+    try {
+      const saved = localStorage.getItem('kyros.photoMatch.dest');
+      return DESTINATIONS.some((d) => d.value === saved) ? saved : 'eddy-library';
+    } catch { return 'eddy-library'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('kyros.photoMatch.dest', destDb); } catch { /* private mode */ }
+  }, [destDb]);
+  // Both handles are created once and kept: createEddyCollection caches per database, so asking for
+  // the same name twice returns the same instance and the same write queue.
   const libraryStore = useMemo(() => createEddyCollection('eddy-library'), []);
+  const baseStore = useMemo(() => createEddyCollection('eddy-base'), []);
+  const destStore = destDb === 'eddy-base' ? baseStore : libraryStore;
+  const destLabel = DESTINATIONS.find((d) => d.value === destDb)?.label || 'Library';
   const [chars, setChars] = useState([]);        // folders in eddy-character
   const [charItems, setCharItems] = useState([]);
   const [charThumbs, setCharThumbs] = useState({});
@@ -624,21 +654,23 @@ export default function PhotoMatchSeedreamPage() {
        */
       if (first.galleryId) {
         const who = charName.trim();
-        const dest = (await libraryStore.ensureFolder(who || 'Photo Match'))?.id || null;
-        const filed = await libraryStore.addItems([{
+        // Whichever collection was chosen before the run. Her folder is created in THAT collection —
+        // the two are separate databases, so a "Grace" folder in one says nothing about the other.
+        const dest = (await destStore.ensureFolder(who || 'Photo Match'))?.id || null;
+        const filed = await destStore.addItems([{
           url: galleryApi.imageUrl(first.galleryId),
           prompt: `Photo Match - ${who || 'no character'}`,
           name: `photomatch-${Date.now()}`,
         }], dest);
         // addItems reports a storage failure by RETURNING an empty array rather than throwing.
         if (!Array.isArray(filed) || filed.length === 0) {
-          throw new Error('Browser storage is full - the picture is in the gallery but not in Eddy Library');
+          throw new Error(`Browser storage is full - the picture is in the gallery but not in ${destLabel}`);
         }
       }
     } catch (err) {
       // A FILING miss is not a failed match: the picture exists, is billed, and is on the feed.
       // Marking the job failed would tell the owner to re-run something that already succeeded.
-      if (String(err?.message || '').includes('not in Eddy Library')) {
+      if (String(err?.message || '').includes('is in the gallery but not in ')) {
         notify(err.message, 'error');
         return;
       }
@@ -1055,6 +1087,13 @@ export default function PhotoMatchSeedreamPage() {
             <Select label="Aspect Ratio" options={ASPECT_OPTIONS} value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} />
             <Select label="Resolution" options={RES_OPTIONS} value={resolution} onChange={(e) => setResolution(e.target.value)} />
           </div>
+          {/* WHERE THE RESULTS GO. Set before Generate, because moving a batch of thirty after the
+              fact is thirty drags. Remembered between runs. */}
+          <Select label="Send results to" options={DESTINATIONS} value={destDb} onChange={(e) => setDestDb(e.target.value)} />
+          <p className="text-[0.6875rem] text-zinc-500">
+            Files into <span className="text-zinc-300">{destLabel}</span>
+            {charName.trim() ? <> &rarr; <span className="text-zinc-300">{charName.trim()}</span></> : ' → Photo Match'}
+          </p>
           {/* ENGINE. Both models sit behind the same WaveSpeed key and the same route, so this
               changes one field in the request and the price quoted above it -- nothing else. */}
           <div className="mb-2 flex gap-2 rounded-xl border border-white/[0.07] bg-white/[0.02] p-1">
