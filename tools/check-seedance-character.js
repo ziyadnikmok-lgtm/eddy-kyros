@@ -5,10 +5,13 @@
 // Eddy's character collection is where the models actually live: one FOLDER per character, her
 // photos inside it, which is what Photo Match has always read.
 const fs = require('fs');
+const path = require('path');
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
 
-const vid = fs.readFileSync('D:/Kyros/app/client/src/pages/SeedanceVideoPage.jsx', 'utf8');
-const omni = fs.readFileSync('D:/Kyros/app/client/src/pages/SeedanceOmniPage.jsx', 'utf8');
-const pm = fs.readFileSync('D:/Kyros/app/client/src/pages/PhotoMatchSeedreamPage.jsx', 'utf8');
+const vid = fs.readFileSync(path.join(ROOT, 'client/src/pages/SeedanceVideoPage.jsx'), 'utf8').replace(/\r\n/g, '\n');
+const omni = fs.readFileSync(path.join(ROOT, 'client/src/pages/SeedanceOmniPage.jsx'), 'utf8').replace(/\r\n/g, '\n');
+const pm = fs.readFileSync(path.join(ROOT, 'client/src/pages/PhotoMatchSeedreamPage.jsx'), 'utf8').replace(/\r\n/g, '\n');
 
 let pass = 0, fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };

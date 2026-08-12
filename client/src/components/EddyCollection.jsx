@@ -145,6 +145,70 @@ export default function EddyCollection({
   // Outfits only: the back-view crop alongside the front one in `thumbs`, keyed the same way.
   // '' means no back image saved yet — the generate page falls back to the front crop for those.
   const [backThumbs, setBackThumbs] = useState({});
+
+  /**
+   * The image loader: what is on screen, then everything else.
+   *
+   * `wantRef` is the ids the grid is rendering right now, refreshed by an effect below. The pump
+   * reads it before every batch, so scrolling changes what loads NEXT rather than waiting behind a
+   * queue built when the page opened.
+   *
+   * `thumbsRef` mirrors the state because the pump runs across many awaits and cannot read a stale
+   * closure to decide what is already loaded. `runRef` cancels a pump when the collection is
+   * refreshed or switched, so two pumps cannot interleave into one map.
+   */
+  const thumbsRef = useRef({});
+  const wantRef = useRef([]);
+  const pumpRunRef = useRef(0);
+  const [imagesPending, setImagesPending] = useState(0);
+  useEffect(() => { thumbsRef.current = thumbs; }, [thumbs]);
+
+  const pumpImages = useCallback(async (allItems, alsoBack) => {
+    const run = pumpRunRef.current + 1;
+    pumpRunRef.current = run;
+    // Anything already in the cache stays: switching folders must not re-read what it just read.
+    // But a picture whose ITEM is gone (deleted, moved to another collection) is dropped, or a long
+    // session of deletions would hold every one of them in memory forever.
+    const live = new Set(allItems.map((i) => i.id));
+    const stale = Object.keys(thumbsRef.current).filter((id) => !live.has(id));
+    if (stale.length) {
+      const kept = { ...thumbsRef.current };
+      for (const id of stale) delete kept[id];
+      thumbsRef.current = kept;
+      setThumbs(kept);
+    }
+    const remaining = new Set([...live].filter((id) => !(id in thumbsRef.current)));
+    setImagesPending(remaining.size);
+    const BATCH = 8;
+    while (remaining.size) {
+      if (pumpRunRef.current !== run) return;
+      // On screen first. wantRef is re-read every batch, so a scroll re-prioritises immediately.
+      const onScreen = wantRef.current.filter((id) => remaining.has(id));
+      const batch = (onScreen.length ? onScreen : [...remaining]).slice(0, BATCH);
+      // eslint-disable-next-line no-await-in-loop -- batching IS the point; all at once is the bug
+      const pairs = await Promise.all(batch.map(async (id) => [id, await store.getImage(id)]));
+      if (pumpRunRef.current !== run) return;
+      for (const [id] of pairs) remaining.delete(id);
+      const patch = Object.fromEntries(pairs);
+      thumbsRef.current = { ...thumbsRef.current, ...patch };
+      setThumbs((t) => ({ ...t, ...patch }));
+      setImagesPending(remaining.size);
+      // Hand the frame back so the tiles that just arrived actually paint.
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => { setTimeout(r, 0); });
+    }
+    // Outfit back-crops are a second, smaller pass — nothing renders them until the front is there.
+    if (alsoBack) {
+      const backMap = {};
+      for (const it of allItems) {
+        if (pumpRunRef.current !== run) return;
+        // eslint-disable-next-line no-await-in-loop
+        backMap[it.id] = await store.getBackImage(it.id);
+      }
+      if (pumpRunRef.current !== run) return;
+      setBackThumbs(backMap);
+    }
+  }, [store]);
   // The favorited item ids, read from the store's small `favorites` key — NOT from item.favorite.
   // A Set so the per-card star fill, the "★ Favorite (N)" count and the favOnly filter all derive
   // from one source that a big-index rewrite can never clobber. Loaded in refresh() below.
@@ -293,18 +357,22 @@ export default function EddyCollection({
     // Favorites come from their own tiny key, re-read on every refresh so the stars and the count
     // reflect the store right after a toggle and after a reload.
     setFavIds(new Set(favs));
-    // Thumbnails are fetched per id rather than held in the index, so adding one photo never
-    // rewrites the whole collection.
-    const map = {};
-    await Promise.all(i.map(async (it) => { map[it.id] = await store.getImage(it.id); }));
-    setThumbs(map);
-    if (describeKind === 'outfit') {
-      const backMap = {};
-      await Promise.all(i.map(async (it) => { backMap[it.id] = await store.getBackImage(it.id); }));
-      setBackThumbs(backMap);
-    }
+    /**
+     * THE PICTURES ARRIVE AFTER THE GRID, ON-SCREEN ONES FIRST.
+     *
+     * This used to `await Promise.all(...)` every image in the collection before the page rendered
+     * anything -- six hundred full-size data URLs read out of IndexedDB, held in one state object,
+     * while the grid shows a hundred and twenty. That is the wait, and the black tiles are the
+     * browser being handed more base64 than it can decode at once (owner, 2026-08-11).
+     *
+     * The grid now paints immediately and `pumpImages` fills it in small batches, always taking
+     * what is ON SCREEN next (see wantRef). Scrolling to page two pulls page two's pictures ahead
+     * of the rest. Nothing else had to change: every sweep and bulk action still reads `thumbs`,
+     * it just fills in over a second or two instead of blocking the first paint.
+     */
     setLoading(false);
-  }, [store, describeKind]);
+    pumpImages(i, describeKind === 'outfit');
+  }, [store, describeKind, pumpImages]);
 
   useEffect(() => { refresh(); }, [refresh, refreshKey]);
 
@@ -346,6 +414,18 @@ export default function EddyCollection({
       : base;
     return oldestFirst ? [...searched].sort((a, b) => a.createdAt - b.createdAt) : searched;
   }, [items, activeFolder, favOnly, favIds, oldestFirst, subtreeIds, promptQuery]);
+
+  /**
+   * What the grid is rendering RIGHT NOW, handed to the image pump as its priority list.
+   *
+   * A ref, not state: this changes on every scroll-to-load and folder switch, and the pump reads it
+   * between batches. Making it state would rebuild the pump instead of steering it.
+   *
+   * BELOW `visible`, not above it. A dependency array is evaluated during RENDER, so naming a const
+   * declared further down the file is a temporal-dead-zone ReferenceError that blanks the whole
+   * page -- the fourth time that shape has come up in this repo. check-tdz-deps.js catches it.
+   */
+  useEffect(() => { wantRef.current = visible.slice(0, shown).map((i) => i.id); }, [visible, shown]);
 
   // field: which index column the result is written to. Outfits write their normal front
   // description to 'prompt' (the default) and their back-view crop's description to
@@ -2537,6 +2617,12 @@ export default function EddyCollection({
           <Btn variant="ghost" className="!rounded-lg !py-1 !px-3 !text-xs" onClick={() => setSelected([])}>Cancel</Btn>
           <button onClick={() => setSelected(visible.map((i) => i.id))}
             className="ml-auto text-xs text-zinc-500 hover:text-white cursor-pointer">Select all shown</button>
+          {/* The pictures stream in after the grid. Said out loud because a sweep or a bulk
+              download run in the first second would otherwise see fewer images than the collection
+              holds, and there would be nothing on screen explaining why. */}
+          {imagesPending > 0 && (
+            <span className="text-xs text-zinc-600">loading {imagesPending} picture{imagesPending === 1 ? '' : 's'}…</span>
+          )}
         </div>
       )}
 

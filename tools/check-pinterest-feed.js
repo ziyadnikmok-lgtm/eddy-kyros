@@ -11,14 +11,15 @@
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = 'D:/Kyros/app';
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
 const route = require(path.join(ROOT, 'server/routes/pinterestFeed.js'));
-const page = fs.readFileSync(path.join(ROOT, 'client/src/pages/PinterestFeedPage.jsx'), 'utf8');
-const src = fs.readFileSync(path.join(ROOT, 'server/routes/pinterestFeed.js'), 'utf8');
-const app = fs.readFileSync(path.join(ROOT, 'client/src/App.jsx'), 'utf8');
-const ctx = fs.readFileSync(path.join(ROOT, 'client/src/context/AppContext.jsx'), 'utf8');
-const index = fs.readFileSync(path.join(ROOT, 'server/index.js'), 'utf8');
-const fixture = JSON.parse(fs.readFileSync(path.join(ROOT, 'tools/fixtures-pinterest.json'), 'utf8'));
+const page = fs.readFileSync(path.join(ROOT, 'client/src/pages/PinterestFeedPage.jsx'), 'utf8').replace(/\r\n/g, '\n');
+const src = fs.readFileSync(path.join(ROOT, 'server/routes/pinterestFeed.js'), 'utf8').replace(/\r\n/g, '\n');
+const app = fs.readFileSync(path.join(ROOT, 'client/src/App.jsx'), 'utf8').replace(/\r\n/g, '\n');
+const ctx = fs.readFileSync(path.join(ROOT, 'client/src/context/AppContext.jsx'), 'utf8').replace(/\r\n/g, '\n');
+const index = fs.readFileSync(path.join(ROOT, 'server/index.js'), 'utf8').replace(/\r\n/g, '\n');
+const fixture = JSON.parse(fs.readFileSync(path.join(ROOT, 'tools/fixtures-pinterest.json'), 'utf8').replace(/\r\n/g, '\n'));
 
 let pass = 0, fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };
@@ -164,7 +165,7 @@ check('Load more still pages by bookmark', /search\(query, true\)/.test(page));
 // --- replace or add -------------------------------------------------------------------------------
 check('the toggle exists and is remembered', /localStorage\.getItem\('kyros\.pinterest\.replaceTarget'\)/.test(page));
 check('the intent travels with the stash', /kyros\.pendingSourceMode\.\$\{target\.id\}/.test(page));
-const pm = fs.readFileSync(path.join(ROOT, 'client/src/pages/PhotoMatchSeedreamPage.jsx'), 'utf8');
+const pm = fs.readFileSync(path.join(ROOT, 'client/src/pages/PhotoMatchSeedreamPage.jsx'), 'utf8').replace(/\r\n/g, '\n');
 check('Photo Match reads that intent', /kyros\.pendingSourceMode\.photoMatchSeedream/.test(pm));
 check('and clears it, so it cannot leak into the next handoff', /removeItem\('kyros\.pendingSourceMode\.photoMatchSeedream'\)/.test(pm));
 check('ABSENT means ADD -- losing work is the worse mistake', /let mode = 'add';/.test(pm));
@@ -172,7 +173,7 @@ check('adding dedups on the image itself', /const have = new Set\(prev\.map\(\(x
 check('replacing into an EMPTY list is the same as adding', /if \(mode === 'replace' \|\| !prev\.length\) return incoming;/.test(pm));
 
 // --- no generation feed on a page that generates nothing ---------------------------------------------
-const appSrc = fs.readFileSync(path.join(ROOT, 'client/src/App.jsx'), 'utf8');
+const appSrc = fs.readFileSync(path.join(ROOT, 'client/src/App.jsx'), 'utf8').replace(/\r\n/g, '\n');
 check('Pinterest is in FEED_HIDDEN_PAGES', /const FEED_HIDDEN_PAGES = new Set\(\[[\s\S]{0,400}'pinterestFeed',/.test(appSrc));
 
 // replay the replace/add rule
@@ -260,8 +261,8 @@ check('one column still works', bucket(mk(5), 1)[0].length === 5);
 // router sat behind the 60/min GENERATION limiter. Measured in app.log: one minute served 71 x 200
 // then 114 x 429. The send's own downloads then hit the exhausted bucket, came back 429, and were
 // counted as "could not be downloaded" and dropped. Three layers, all asserted here.
-const idx = fs.readFileSync(path.join(ROOT, 'server/index.js'), 'utf8');
-const pin = fs.readFileSync(path.join(ROOT, 'server/routes/pinterest.js'), 'utf8');
+const idx = fs.readFileSync(path.join(ROOT, 'server/index.js'), 'utf8').replace(/\r\n/g, '\n');
+const pin = fs.readFileSync(path.join(ROOT, 'server/routes/pinterest.js'), 'utf8').replace(/\r\n/g, '\n');
 
 check('the proxy no longer sits behind the generation limiter',
   !idx.includes("app.use('/api/pinterest', generateLimiter, pinterestRoute);"));

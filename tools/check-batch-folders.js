@@ -10,7 +10,10 @@
 // functions are executed against a deliberately SLOW fake store, where a race WOULD happen if the
 // code permitted one. Grepping for the fix could not tell the difference.
 const fs = require('fs');
-const g = fs.readFileSync('D:/Kyros/app/client/src/pages/EddyGeneratePage.jsx', 'utf8');
+const path = require('path');
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
+const g = fs.readFileSync(path.join(ROOT, 'client/src/pages/EddyGeneratePage.jsx'), 'utf8').replace(/\r\n/g, '\n');
 const nextSrc = /function nextBatchName\(folders, base\) \{([\s\S]*?)\n\}/.exec(g)[1];
 const mkSrc = /function makeBatchFolders\(libraryStore, fallbackId\) \{([\s\S]*?)\n\}/.exec(g)[1];
 const nextBatchName = new Function('folders', 'base', nextSrc);

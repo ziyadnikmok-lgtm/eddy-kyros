@@ -14,9 +14,12 @@
 // And the failure that hid both: a save loop that swallowed every error and then reported
 // "Saved 0 images ✨" — which reads as done.
 const fs = require('fs');
+const path = require('path');
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
 
-const strip = fs.readFileSync('D:/Kyros/app/client/src/lib/stripMetadata.js', 'utf8');
-const col = fs.readFileSync('D:/Kyros/app/client/src/components/EddyCollection.jsx', 'utf8');
+const strip = fs.readFileSync(path.join(ROOT, 'client/src/lib/stripMetadata.js'), 'utf8').replace(/\r\n/g, '\n');
+const col = fs.readFileSync(path.join(ROOT, 'client/src/components/EddyCollection.jsx'), 'utf8').replace(/\r\n/g, '\n');
 
 let pass = 0, fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };

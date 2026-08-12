@@ -8,7 +8,10 @@
 // so the close-up adds nothing it does not already have. The other tabs still send it, because
 // there image 1 is a base photo and the close-up is what holds her identity through a pose change.
 const fs = require('fs');
-const g = fs.readFileSync('D:/Kyros/app/client/src/pages/EddyGeneratePage.jsx', 'utf8');
+const path = require('path');
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
+const g = fs.readFileSync(path.join(ROOT, 'client/src/pages/EddyGeneratePage.jsx'), 'utf8').replace(/\r\n/g, '\n');
 
 let pass = 0, fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };

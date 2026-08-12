@@ -4,7 +4,10 @@
 // never cumulatively. And failedCombos lived in React state alone, so a reload lost both the Retry
 // bar and any record of what had not generated; the only way to notice was counting images.
 const fs = require('fs');
-const gen = fs.readFileSync('D:/Kyros/app/client/src/pages/EddyGeneratePage.jsx', 'utf8');
+const path = require('path');
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
+const gen = fs.readFileSync(path.join(ROOT, 'client/src/pages/EddyGeneratePage.jsx'), 'utf8').replace(/\r\n/g, '\n');
 
 let pass = 0, fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };
@@ -40,7 +43,7 @@ check('a successful retry clears its entry', gen.includes('prev.filter((f) => f.
 check('the reason is recorded', /the only way to notice was counting images/.test(gen));
 
 // --- replay the sum -------------------------------------------------------------------------------
-const srcText = fs.readFileSync('D:/Kyros/app/client/src/lib/provenance.js', 'utf8');
+const srcText = fs.readFileSync(path.join(ROOT, 'client/src/lib/provenance.js'), 'utf8').replace(/\r\n/g, '\n');
 // eslint-disable-next-line no-new-func
 const { spendToday } = new Function(`${srcText.replace(/^export /gm, '')}; return { spendToday };`)();
 const DAY = 86400000;

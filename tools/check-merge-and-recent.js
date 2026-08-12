@@ -8,7 +8,10 @@
 // losing them -- the Library lists by folder, so an orphan is visible under "All" and nowhere
 // else. So the move happens first and is VERIFIED before any folder is removed.
 const fs = require('fs');
-const col = fs.readFileSync('D:/Kyros/app/client/src/components/EddyCollection.jsx', 'utf8');
+const path = require('path');
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
+const col = fs.readFileSync(path.join(ROOT, 'client/src/components/EddyCollection.jsx'), 'utf8').replace(/\r\n/g, '\n');
 
 let pass = 0, fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };

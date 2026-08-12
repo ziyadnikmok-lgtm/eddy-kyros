@@ -12,7 +12,8 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-const ROOT = 'D:/Kyros/app';
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
 const sharp = require(path.join(ROOT, 'node_modules/sharp'));
 const svc = require(path.join(ROOT, 'server/services/iosSpoofService.js'));
 
@@ -86,11 +87,11 @@ const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } el
   check('it is smaller than the spoofed one, because no EXIF block is added', cleanBuf.length < buf.length);
   cleanOut.cleanup();
 
-  const gal = fs.readFileSync('D:/Kyros/app/server/routes/gallery.js', 'utf8');
+  const gal = fs.readFileSync(path.join(ROOT, 'server/routes/gallery.js'), 'utf8').replace(/\r\n/g, '\n');
   check('the bulk zip cleans when spoofing is off', gal.includes('const shouldClean = !shouldSpoof && iosSpoofService.isAvailable();'));
   check('it calls spoofBatch in clean mode', gal.includes("spoofBatch(files.map((f) => f.filePath), { clean: true })"));
   check('the reason is recorded', /stripMetadata reads images, not archives/.test(gal));
-  const svcSrc = fs.readFileSync('D:/Kyros/app/server/services/iosSpoofService.js', 'utf8');
+  const svcSrc = fs.readFileSync(path.join(ROOT, 'server/services/iosSpoofService.js'), 'utf8').replace(/\r\n/g, '\n');
   check('spoofBatch forwards its options', svcSrc.includes('await spoofImage(inputPath, opts)'));
 
   // Removed LAST: the clean-mode check above reads the same source file.

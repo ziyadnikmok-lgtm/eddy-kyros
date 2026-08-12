@@ -6,10 +6,11 @@
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = 'D:/Kyros/app';
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
 
 // The module is ESM; read and evaluate the pure functions rather than importing.
-const srcText = fs.readFileSync(path.join(ROOT, 'client/src/lib/provenance.js'), 'utf8');
+const srcText = fs.readFileSync(path.join(ROOT, 'client/src/lib/provenance.js'), 'utf8').replace(/\r\n/g, '\n');
 const body = srcText.replace(/^export /gm, '');
 // eslint-disable-next-line no-new-func
 const mod = new Function(`${body}; return { comboKey, promptKey, buildSeenKeys, splitBySeen, spendToday };`)();
@@ -95,13 +96,13 @@ check('a null library is zero', spendToday(null, now) === 0);
 // --- the allowlist trap ---------------------------------------------------------------------
 // A field missing from _addItems is dropped with no error. This is the one assertion that catches
 // it, and it is the reason poseView was nearly lost.
-const store = fs.readFileSync(path.join(ROOT, 'client/src/lib/eddyCollectionStore.js'), 'utf8');
+const store = fs.readFileSync(path.join(ROOT, 'client/src/lib/eddyCollectionStore.js'), 'utf8').replace(/\r\n/g, '\n');
 for (const f of ['basePhotoId', 'baseId', 'poseId', 'outfitId', 'comboKey', 'charName', 'price']) {
   check(`the allowlist keeps ${f}`, store.includes(`it.${f}`));
 }
 
 // --- the write actually carries provenance --------------------------------------------------
-const gen = fs.readFileSync(path.join(ROOT, 'client/src/pages/EddyGeneratePage.jsx'), 'utf8');
+const gen = fs.readFileSync(path.join(ROOT, 'client/src/pages/EddyGeneratePage.jsx'), 'utf8').replace(/\r\n/g, '\n');
 check('the Library write records the combo key', gen.includes('comboKey: rowComboKey'));
 check('and the ids behind it',
   gen.includes('basePhotoId: combo?.basePhotoId || null')

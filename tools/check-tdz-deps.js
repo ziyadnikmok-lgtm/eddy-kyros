@@ -8,12 +8,15 @@
 // no-use-before-define flags 16 harmless cases too (a const arrow called by a handler that runs
 // after mount), so this checks the precise shape instead: hook deps only.
 const fs = require('fs');
+const path = require('path');
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
 const FILES = [
-  'D:/Kyros/app/client/src/pages/EddyGeneratePage.jsx',
-  'D:/Kyros/app/client/src/components/EddyCollection.jsx',
-  'D:/Kyros/app/client/src/pages/PhotoMatchSeedreamPage.jsx',
-  'D:/Kyros/app/client/src/pages/EddyBasePage.jsx',
-  'D:/Kyros/app/client/src/pages/EddyTabs.jsx',
+  path.join(ROOT, 'client/src/pages/EddyGeneratePage.jsx'),
+  path.join(ROOT, 'client/src/components/EddyCollection.jsx'),
+  path.join(ROOT, 'client/src/pages/PhotoMatchSeedreamPage.jsx'),
+  path.join(ROOT, 'client/src/pages/EddyBasePage.jsx'),
+  path.join(ROOT, 'client/src/pages/EddyTabs.jsx'),
 ];
 
 let pass = 0, fail = 0;
@@ -93,7 +96,7 @@ check('the scanner catches the crash it was written for',
   caught.length === 1 && caught[0].name === 'combos');
 
 for (const f of FILES) {
-  const bad = scan(fs.readFileSync(f, 'utf8'));
+  const bad = scan(fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n'));
   const short = f.split('/').pop();
   if (bad.length) for (const b of bad) console.log(`        ${short}: deps at line ${b.line} name "${b.name}", declared at ${b.declLine}`);
   check(`${short}: no hook reads a const declared later`, bad.length === 0);

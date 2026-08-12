@@ -1,8 +1,11 @@
 // Multi-select base photos, each auto-paired with its own character close-up.
 const fs = require('fs');
-const rd = (f) => fs.readFileSync(f, 'utf8').split(String.fromCharCode(13) + String.fromCharCode(10)).join(String.fromCharCode(10));
-const gen = rd('D:/Kyros/app/client/src/pages/EddyGeneratePage.jsx');
-const charPage = rd('D:/Kyros/app/client/src/pages/EddyCharacterPage.jsx');
+const path = require('path');
+// The repo root, derived — this suite has to run on whichever machine has the repo.
+const ROOT = path.join(__dirname, '..');
+const rd = (f) => fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n').split(String.fromCharCode(13) + String.fromCharCode(10)).join(String.fromCharCode(10));
+const gen = rd(path.join(ROOT, 'client/src/pages/EddyGeneratePage.jsx'));
+const charPage = rd(path.join(ROOT, 'client/src/pages/EddyCharacterPage.jsx'));
 
 let pass = 0, fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };
