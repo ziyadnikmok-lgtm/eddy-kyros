@@ -271,5 +271,19 @@ check('a tile from this run has its row found by url instead', pm.includes("(awa
 check('the server copy is deliberately left alone', /The server copy is left alone/.test(pm));
 check('and the tile says whose it is', pm.includes("{job.charName ? `${job.charName} · ` : ''}"));
 
+// --- the two Photo Match tabs are told apart by name (owner, 2026-08-13) --------------------------
+// Two tabs called "Photo Match" — one Seedream, one Gemini — cost real time twice in one night: a
+// bug report and a fix landed on different pages.
+check('the Seedream tab is Photo Match SD', app.includes("{ id: 'photoMatchSeedream', label: 'Photo Match SD' }"));
+check('the Gemini one says which it is', app.includes("{ id: 'photoMatch', label: 'Photo Match (old · Gemini)' }"));
+check('no two nav items share the label "Photo Match"', (() => {
+  const labels = [...app.matchAll(/label: '([^']*Photo Match[^']*)'/g)].map((m) => m[1]);
+  return labels.length === new Set(labels).size;
+})());
+check('the reason is recorded beside the rename', /cost real time twice on 2026-08-13/.test(app));
+// The FOLDER pictures are filed into is deliberately unchanged: renaming it would split every
+// existing Photo Match folder in two.
+check('the filing folder name is untouched', pm.includes("ensureFolder(who || 'Photo Match')"));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
