@@ -285,5 +285,29 @@ check('the reason is recorded beside the rename', /cost real time twice on 2026-
 // existing Photo Match folder in two.
 check('the filing folder name is untouched', pm.includes("ensureFolder(who || 'Photo Match')"));
 
+// --- the two columns must be SIBLINGS, not nested (owner, 2026-08-13) -------------------------------
+// The results column was opened inside the setup column, so every result rendered in the left
+// 560px strip while the right two thirds of the window sat empty. Every brace was balanced and
+// eslint was clean — balance cannot tell nesting apart, only DEPTH can. So this walks the tags.
+(() => {
+  const lines = pm.split(String.fromCharCode(10));
+  const start = lines.findIndex((l, i) => l.trim() === 'return (' && i > 900);
+  let depth = 0;
+  const at = {};
+  for (let n = start; n < lines.length; n += 1) {
+    const marks = lines[n].match(/<div|<\/div>/g) || [];
+    for (const m of marks) {
+      depth += m === '</div>' ? -1 : 1;
+      if (lines[n].includes('lg:flex-row')) at.root = depth;
+      else if (lines[n].includes('lg:w-[560px]')) at.setup = depth;
+      else if (lines[n].includes('min-w-0 flex-1 space-y-3')) at.results = depth;
+    }
+  }
+  check('the shell root is the outermost element', at.root === 1);
+  check('the setup column sits inside it', at.setup === 2);
+  check('the RESULTS column is a sibling of the setup column, not a child', at.results === 2);
+  check('and every tag closes', depth === 0);
+})();
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

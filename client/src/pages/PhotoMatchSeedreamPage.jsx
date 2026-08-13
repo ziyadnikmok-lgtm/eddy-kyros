@@ -1423,9 +1423,16 @@ export default function PhotoMatchSeedreamPage() {
         </Btn>
 
       </div>
+      </div>
 
       {/* THE RESULTS COLUMN. Always present, so the panel has a home before the first run rather
-          than appearing from nowhere — the empty state says what will fill it. */}
+          than appearing from nowhere — the empty state says what will fill it.
+
+          A SIBLING of the setup column, not a child. It was nested inside it — the close above was
+          added in the wrong place and shut an inner space-y-4 wrapper instead of the column — so
+          the results rendered in the left 560px strip while the right two thirds of the window sat
+          empty (owner, 2026-08-13). A brace count says "balanced" either way; only the DEPTH says
+          which of the two it is. */}
       <div className="min-w-0 flex-1 space-y-3 lg:min-h-0 lg:overflow-y-auto lg:pl-1">
         {jobs.length === 0 && (
           <div className="flex h-full min-h-[240px] flex-col items-center justify-center rounded-2xl border border-white/[0.06] bg-white/[0.02] p-8 text-center">
@@ -1571,7 +1578,6 @@ export default function PhotoMatchSeedreamPage() {
           />
         )}
       </div>
-    </div>
     </div>
   );
 }
