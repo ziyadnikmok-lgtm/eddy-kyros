@@ -6206,13 +6206,26 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
 
   const [libFolders, setLibFolders] = useState([]);
   const [filingTo, setFilingTo] = useState(false);
+  /**
+   * WHICH collection the picker is filing into.
+   *
+   * Library (`eddy-library`) or Base Library (`eddy-base`) — the two tabs of the same name. A
+   * finished picture is sometimes a result and sometimes the base for the next round, and which one
+   * it is cannot be known until it exists (owner, 2026-08-13).
+   */
+  const [filingDb, setFilingDb] = useState('eddy-library');
+  const baseLibStore = useMemo(() => createEddyCollection('eddy-base'), []);
+  const filingStore = filingDb === 'eddy-base' ? baseLibStore : libraryStore;
+  const filingLabel = filingDb === 'eddy-base' ? 'Base Library' : 'Library';
 
   // The Library's folders, for the "file these into…" picker. Re-read when the picker opens so a
   // folder created in the Library tab since this page mounted is offered.
-  const openFilePicker = useCallback(async () => {
-    try { setLibFolders(await libraryStore.listFolders()); } catch { setLibFolders([]); }
+  const openFilePicker = useCallback(async (db = 'eddy-library') => {
+    const store = db === 'eddy-base' ? baseLibStore : libraryStore;
+    setFilingDb(db);
+    try { setLibFolders(await store.listFolders()); } catch { setLibFolders([]); }
     setFilingTo(true);
-  }, [libraryStore]);
+  }, [libraryStore, baseLibStore]);
 
   /**
    * File results into a Library folder and clear them out of the results panel.
@@ -6230,16 +6243,37 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     const targets = (list || []).filter((r) => r.galleryId);
     if (!targets.length) { notify('Nothing to file — these have no saved image yet', 'error'); return; }
     let moved = 0, added = 0;
+    const toBase = filingDb === 'eddy-base';
     try {
-      const existing = await libraryStore.listItems();
+      const existing = await filingStore.listItems();
       const byUrl = new Map(existing.filter((i) => i.url).map((i) => [i.url, i]));
+      /**
+       * ACROSS collections it is still a MOVE.
+       *
+       * Every result was already filed into the Library at generation time, so adding it to Base
+       * Library and leaving that row behind would put one picture in two tabs — and the reason to
+       * send a picture to Base Library is that it is a base photo now, not a result. So the Library
+       * row is dropped once the Base row exists, in that order: if the add fails, nothing is lost.
+       *
+       * The picture itself is untouched — it lives in the server gallery, which is what both
+       * collections point at.
+       */
+      const libRows = toBase ? new Map((await libraryStore.listItems()).filter((i) => i.url).map((i) => [i.url, i])) : null;
       for (const r of targets) {
         const url = galleryApi.imageUrl(r.galleryId);
         const hit = byUrl.get(url);
         // eslint-disable-next-line no-await-in-loop -- serialized store, and these are small writes
-        if (hit) { await libraryStore.updateItem(hit.id, { folderId }); moved += 1; }
-        // eslint-disable-next-line no-await-in-loop
-        else { await libraryStore.addItems([{ url, prompt: r.prompt || '', name: `eddy-${r.uid}` }], folderId); added += 1; }
+        if (hit) { await filingStore.updateItem(hit.id, { folderId }); moved += 1; }
+        else {
+          // eslint-disable-next-line no-await-in-loop
+          await filingStore.addItems([{ url, prompt: r.prompt || '', name: `eddy-${r.uid}` }], folderId);
+          added += 1;
+        }
+        if (toBase) {
+          const stale = libRows.get(url);
+          // eslint-disable-next-line no-await-in-loop
+          if (stale) await libraryStore.removeItem(stale.id);
+        }
       }
     } catch (err) {
       notify(err?.message || 'Could not file those', 'error');
@@ -6248,8 +6282,8 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     removeUidsRef.current?.(targets.map((r) => r.uid));
     setSelectedUids(new Set());
     setFilingTo(false);
-    notify(`${moved + added} sent to the Library${added ? ` (${added} newly added)` : ''}`, 'success');
-  }, [libraryStore, notify]);
+    notify(`${moved + added} sent to ${filingLabel}${added ? ` (${added} newly added)` : ''}`, 'success');
+  }, [filingStore, filingDb, filingLabel, libraryStore, notify]);
 
   const removeUids = useCallback((uids) => {
     // Only ever keyed by uid. A result's videoPrompt, regenerate closure and submitVideo closure
@@ -7387,13 +7421,27 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
                   and clears them out of this panel. A MOVE, not a copy: see fileToLibrary. */}
               <button
                 type="button"
-                onClick={openFilePicker}
+                onClick={() => openFilePicker('eddy-library')}
                 disabled={anyBusy || !results.length}
                 title="Move these into a Library folder and clear them from here"
                 className={cn(HDR_BTN, GATE_FOCUS,
                   anyBusy || !results.length ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:border-zinc-400 hover:text-zinc-200')}
               >
                 Send {selectedResults.length || results.length} to Library
+              </button>
+              {/* THE SECOND DESTINATION. Two buttons rather than a dropdown beside one: the choice
+                  is made once per batch and a dropdown would cost a click every time to say the
+                  thing you already decided. A finished picture is sometimes the next base photo,
+                  and which it is is only knowable once you can see it (owner, 2026-08-13). */}
+              <button
+                type="button"
+                onClick={() => openFilePicker('eddy-base')}
+                disabled={anyBusy || !results.length}
+                title="Move these into a Base Library folder — they become base photos, and leave the Library"
+                className={cn(HDR_BTN, GATE_FOCUS,
+                  anyBusy || !results.length ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:border-emerald-400 hover:text-emerald-300')}
+              >
+                Send {selectedResults.length || results.length} to Base
               </button>
               {/* RELOAD IMAGES — re-requests every tile's picture. Not a page refresh: the results
                   column, the selection and the pending queue all survive, which a browser reload
@@ -7739,9 +7787,12 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           onClick={(e) => { if (e.target === e.currentTarget) setFilingTo(false); }}>
           <div className={cn('w-full max-w-sm space-y-2 rounded-2xl border p-4', GATE_HAIRLINE, GATE_PANEL)}>
             <h3 className="text-sm font-semibold text-zinc-200">
-              Send {selectedResults.length || results.length} image{(selectedResults.length || results.length) === 1 ? '' : 's'} to…
+              Send {selectedResults.length || results.length} image{(selectedResults.length || results.length) === 1 ? '' : 's'} to {filingLabel}…
             </h3>
-            <p className={cn('text-xs', GATE_MUTED)}>They move into the Library and leave this panel. The pictures are not deleted.</p>
+            <p className={cn('text-xs', GATE_MUTED)}>
+              They move into {filingLabel} and leave this panel. The pictures are not deleted.
+              {filingDb === 'eddy-base' && ' Their Library entry is removed, so each picture lives in one place.'}
+            </p>
             <div className="max-h-64 space-y-1 overflow-y-auto">
               {libFolders.map((f) => (
                 <button key={f.id} type="button"
@@ -7755,10 +7806,10 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             <div className="flex gap-2 pt-1">
               <Btn variant="secondary" className="flex-1 !py-1.5 !text-xs"
                 onClick={async () => {
-                  const name = (window.prompt('New Library folder name:') || '').trim();
+                  const name = (window.prompt(`New ${filingLabel} folder name:`) || '').trim();
                   if (!name) return;
                   try {
-                    const f = await libraryStore.ensureFolder(name);
+                    const f = await filingStore.ensureFolder(name);
                     await fileToLibrary(f.id, selectedResults.length ? selectedResults : results);
                   } catch (err) { notify(err?.message || 'Could not make that folder', 'error'); }
                 }}>

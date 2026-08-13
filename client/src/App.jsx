@@ -236,7 +236,10 @@ const NAV_SECTIONS = [
       { id: 'seedreamGenerate', label: 'Generate' },
       { id: 'seedreamEdit', label: 'Seedream 5 Pro' },
       { id: 'outfitSwapSeedream', label: 'Outfit Swap' },
-      { id: 'photoMatchSeedream', label: 'Photo Match' },
+      // "Photo Match SD" — SD for Seedream. Two tabs called Photo Match, one Seedream and one
+      // Gemini, cost real time twice on 2026-08-13: a bug report and a fix landed on different
+      // pages. The name says which is which (owner).
+      { id: 'photoMatchSeedream', label: 'Photo Match SD' },
       { id: 'sceneRecreateSeedream', label: 'Scene Recreate' },
       { id: 'poseRemixSeedream', label: 'Pose Remix' },
     ],
@@ -273,7 +276,7 @@ const NAV_SECTIONS = [
     engine: 'gemini',
     label: 'Gemini',
     items: [
-      { id: 'photoMatch', label: 'Photo Match' },
+      { id: 'photoMatch', label: 'Photo Match (old · Gemini)' },
       { id: 'outfitSwap', label: 'Outfit Swap' },
       { id: 'scene', label: 'Scene Recreate' },
       { id: 'postClone', label: 'Post Clone' },
@@ -308,6 +311,10 @@ const FEED_HIDDEN_PAGES = new Set([
   // results beside a search grid is noise, and it costs the grid a third of the window
   // (owner, 2026-08-10).
   'pinterestFeed',
+  // Photo Match grew the same inline results column Eddy has — tick, send to Library or Base
+  // Library. Showing the shared feed too would put every result on screen twice, and the feed was
+  // occupying the space the results column needs (owner, 2026-08-13).
+  'photoMatchSeedream',
   // Eddy Generate grew its own inline results area (select tiles, shared instruction,
   // Regenerate, Generate video). Showing the shared feed too put every result on screen twice.
   // Both ids route to EddyGeneratePage, so both must be listed or the panel returns via /eddy.
@@ -360,6 +367,10 @@ const SELF_SCROLL_PAGES = new Set([
   // Both ids route to EddyGeneratePage — same reason both are in FEED_HIDDEN_PAGES.
   'eddyGenerate',
   'eddy',
+  // Photo Match now uses Eddy's two-column shell: setup left, results right, each scrolling on its
+  // own. Without this the page scrolls as one document and watching a match land scrolls the form
+  // away — which is the whole reason Eddy stopped doing that.
+  'photoMatchSeedream',
   // Mirrors EddyGeneratePage's two-column shell (fixed left setup column, flex-1 right results
   // column, both independently scrollable) — same layout, same need for a bounded height.
   'instagramReel',
@@ -425,7 +436,7 @@ const PAGE_DESCRIPTIONS = {
   seedreamEdit: "Muapi Seedream 5.0 Pro Edit — ByteDance's flagship image editor, up to 10 reference images",
   seedreamGenerate: "Pick your character, type a prompt — Seedream 5.0 Pro generates a new photo of her.",
   outfitSwapSeedream: 'Put the outfit from image 2 onto the person in image 1 — via Seedream 5.0 Pro (no Gemini)',
-  photoMatchSeedream: 'Paste any photo — match background & pose with your character, via Seedream 5.0 Pro (no Gemini)',
+  photoMatchSeedream: 'Photo Match SD — paste any photo and rebuild it with your character, on Seedream 5.0 Pro or Nano Banana 2',
   pinterestFeed: 'Search Pinterest, tick the shots you want, send them straight into Photo Match',
   sceneRecreateSeedream: 'Put your character in a scene and remix it — new background, outfit, lighting — via Seedream 5.0 Pro',
   poseRemixSeedream: 'Repose your character into any pose — sexy, flirty, sexual, or read from a reference — via Seedream 5.0 Pro',

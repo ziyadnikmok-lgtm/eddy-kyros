@@ -43,7 +43,12 @@ check('and that limit is written down, not silent', /a silently-missing master p
 check('every photo runs once per character',
   g.includes('const work = perChar.flatMap((who) => sources.map((src) => ({ src, who })));'));
 check('job ids carry the character, or three results collide into one tile',
-  g.includes('id: `${src.id}::${who.id}`'));
+  g.includes('`${src.id}::${who.id}::${runStamp}`'));
+// The run stamp arrived 2026-08-13, when the panel became a persistent queue: the id was stable
+// across runs, so re-running the same photo for the same character produced a second tile carrying
+// the FIRST tile's id.
+check('and the RUN, so a re-run does not collide with its own earlier tile',
+  g.includes('const runStamp = Date.now().toString(36);'));
 check('the reason is recorded', /would see whichever finished last rather than all three/.test(g));
 
 // --- a character with no usable photo ------------------------------------------------------------------
@@ -59,7 +64,11 @@ check('the cost line spells out the multiplication', /\{characterIds\.length > 1
 
 // --- the UI says whose is whose --------------------------------------------------------------------------
 check('result tiles carry the character name', g.includes('{job.charName && <span'));
-check('the name is only set when it is ambiguous', g.includes("charName: perChar.length > 1 ? who.name : '',"));
+// CHANGED 2026-08-13: the name is now recorded on EVERY job, not only an ambiguous one. It stopped
+// being a label and became the thing that decides which folder the picture is filed under when it
+// is sent to a library — and a blank there sent Chloe's results into Grace's folder.
+check('every job records whose it is', g.includes("charName: who.name || '',"));
+check('and the reason it is no longer conditional', /it decides which folder the picture is filed under/.test(g));
 check('the ref-count badge is replaced when several are ticked, not left lying',
   g.includes('? <Badge color="green">{characterIds.length} characters</Badge>'));
 

@@ -8,7 +8,7 @@ const path = require('path');
 // The repo root, derived — this suite has to run on whichever machine has the repo.
 const ROOT = path.join(__dirname, '..');
 
-const srcText = fs.readFileSync(path.join(ROOT, 'client/src/lib/pinterestMix.js'), 'utf8');
+const srcText = fs.readFileSync(path.join(ROOT, 'client/src/lib/pinterestMix.js'), 'utf8').replace(/\r\n/g, '\n');
 // eslint-disable-next-line no-new-func
 const { interleave, topSeeds } = new Function(
   `${srcText.replace(/^export /gm, '')}; return { interleave, topSeeds };`,
@@ -45,7 +45,7 @@ check('null is handled', topSeeds(null).length === 0);
 // --- the route ------------------------------------------------------------------------------------
 // Measured live 2026-08-12: { pin } returns 200 with 100 pins in 1.9s; { pin_id } returns 404. The
 // repo believed related-pins did not work for months because of that one parameter name.
-const route = fs.readFileSync(path.join(ROOT, 'server/routes/pinterestFeed.js'), 'utf8');
+const route = fs.readFileSync(path.join(ROOT, 'server/routes/pinterestFeed.js'), 'utf8').replace(/\r\n/g, '\n');
 check('there is a related route', route.includes("router.post('/related'"));
 check('it uses RelatedPinFeedResource', route.includes('RelatedPinFeedResource'));
 check('the seed parameter is `pin` — `pin_id` 404s', route.includes('pin: id') && !route.includes('pin_id:'));
@@ -63,11 +63,11 @@ check('each seed returns its own bookmark, so the feed can page', route.includes
 check('the reason the parameter matters is recorded', /`pin_id` returns 404/.test(route));
 check('and the header no longer says related-pins is broken', !/RelatedPinFeedResource  -> 404/.test(route));
 
-const api = fs.readFileSync(path.join(ROOT, 'client/src/services/api.js'), 'utf8');
+const api = fs.readFileSync(path.join(ROOT, 'client/src/services/api.js'), 'utf8').replace(/\r\n/g, '\n');
 check('the client can call it', api.includes("related: (body) => request('/pinterest-feed/related'"));
 
 // --- the page wiring ----------------------------------------------------------------------------
-const page = fs.readFileSync(path.join(ROOT, 'client/src/pages/PinterestFeedPage.jsx'), 'utf8');
+const page = fs.readFileSync(path.join(ROOT, 'client/src/pages/PinterestFeedPage.jsx'), 'utf8').replace(/\r\n/g, '\n');
 check('the mixing rule is imported, not re-implemented in the page',
   page.includes("import { interleave, topSeeds } from '../lib/pinterestMix';"));
 check('there is a sticky Refresh', page.includes('Refresh feed'));

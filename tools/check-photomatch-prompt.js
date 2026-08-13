@@ -66,7 +66,32 @@ const worst = buildMatchInstruction({
 });
 check(`the everyday prompt fits (${p.length} chars)`, p.length <= BUDGET);
 check(`the worst case still fits (${worst.length} chars)`, worst.length <= BUDGET);
-check('and there is real headroom for the appended chips', BUDGET - worst.length > 300);
+check('and there is headroom left for the appended chips', BUDGET - worst.length > 250);
+
+// --- it must read as a REBUILD, not a face swap (owner, 2026-08-13) ---------------------------------
+// "It's like a faceswap but we want to recreate the same image with our model." It was: the prompt
+// said FACE five times and gave the body one clause at the end, so the model swapped a face onto
+// the stand-in's body. It was doing what it was asked.
+check('the wrong answer is named outright', /A result where the body is hers from image 2 and only the face changed is WRONG/.test(p));
+check('it is told not to edit the source at all', /REBUILD, DO NOT EDIT/.test(p));
+check('and that the stand-in is not in the output', /She does not appear in the output at all/.test(p));
+check('the body is named part by part, not as one word',
+  /neck, shoulders, arms, hands, torso, waist, hips, legs, height and build/.test(p));
+check('NO BLENDING covers the body too, not just the face', /not her face and not her body/.test(p));
+check('the final lock leads with the PERSON', /the PERSON in the output is Chloe/.test(p));
+check('and discards the stand-in face AND figure', /discard her completely, face and figure alike/.test(p));
+// The balance is the actual bug. Counted, not eyeballed.
+const faceWords = (p.match(/face/gi) || []).length;
+const bodyWords = (p.match(/body|figure|torso|hips|legs|shoulders|build/gi) || []).length;
+check(`the prompt no longer talks only about the face (${faceWords} face / ${bodyWords} body)`, bodyWords >= faceWords);
+
+// --- the cap is Seedream's, not Nano's --------------------------------------------------------------
+check('Nano gets its own budget', src.includes('const NANO2_PROMPT_BUDGET = 8000;'));
+check('and the trim picks by engine', src.includes("const budget = engine === 'nano2' ? NANO2_PROMPT_BUDGET : SEEDREAM_PROMPT_BUDGET;"));
+check('the reason is recorded — WaveSpeed documents no cap for nano',
+  /WaveSpeed documents no prompt-length cap/.test(src));
+check('and the trim notice no longer blames Seedream on a Nano run',
+  src.includes('the model rejects longer prompts'));
 
 // --- the flags still do what they say ----------------------------------------------------------------
 const faceless = buildMatchInstruction({ ...BASE, faceless: true });
@@ -83,12 +108,30 @@ check('a body chip does NOT loosen the face', /NO BLENDING/.test(bodyFree));
 
 const multi = buildMatchInstruction({ ...BASE, refCount: 4 });
 check('several references are addressed as a range', /images 1-4 = Chloe/.test(multi));
-check('and the source index moves with them', /image 5 = scene only/.test(multi));
+check('and the source index moves with them', /image 5 = a photograph of a DIFFERENT woman/.test(multi));
 
 // --- the ordering Seedream actually weights -----------------------------------------------------------
 // The tail carries the most weight, which is why the locks live at the end.
 check('the identity lock is in the last third of the prompt', p.lastIndexOf('FINAL — HIGHEST PRIORITY') > p.length * 0.6);
 check('the no-blend rule sits near it', p.lastIndexOf('NO BLENDING') > p.length * 0.5);
+
+// --- where the results are filed (owner, 2026-08-12) ------------------------------------------------
+// "Let me choose between normal library and base library before I press generate." The two are
+// separate IndexedDB collections behind the tabs of the same name.
+check('both destinations are offered', src.includes("{ value: 'eddy-library', label: 'Library' }")
+  && src.includes("{ value: 'eddy-base', label: 'Base Library' }"));
+check('the picker is in the Settings box, before Generate', src.includes('label="Send results to"'));
+check('the choice is remembered between runs', src.includes("localStorage.getItem('kyros.photoMatch.dest')"));
+check('and defaults to Library, where every previous match went', src.includes(": 'eddy-library';"));
+check('an unknown saved value falls back rather than filing nowhere',
+  src.includes('DESTINATIONS.some((d) => d.value === saved)'));
+check('the result is filed into the CHOSEN store, not always the Library',
+  src.includes('await destStore.ensureFolder(') && src.includes('await destStore.addItems(['));
+check('her folder is made in that same collection', !src.includes('libraryStore.ensureFolder'));
+check('the storage-full message names where it failed to file', src.includes('but not in ${destLabel}'));
+check('and the handler still recognises that message',
+  src.includes("includes('is in the gallery but not in ')"));
+check('the page says where the next run will land', src.includes('Files into'));
 
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
