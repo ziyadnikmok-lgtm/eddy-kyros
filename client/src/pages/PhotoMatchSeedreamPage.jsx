@@ -930,7 +930,16 @@ export default function PhotoMatchSeedreamPage() {
   }, [actionable, baseStore, libraryStore, charName, notify]);
 
   return (
-    <div className="space-y-6 animate-in">
+    /**
+     * TWO COLUMNS, the same shell Eddy Generate uses: setup left, results right.
+     *
+     * It was one scrolling document with the results in a card at the bottom, so watching a match
+     * land meant scrolling the form away — and next to Eddy it simply looked like a different app
+     * (owner, 2026-08-13: "the one of Eddy is different to the one of Photo Match"). `main` stops
+     * scrolling for this page (SELF_SCROLL_PAGES in App.jsx) and each column scrolls on its own.
+     */
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto animate-in lg:flex-row lg:gap-5 lg:overflow-hidden">
+      <div className="w-full shrink-0 space-y-6 lg:w-[560px] lg:min-h-0 lg:overflow-y-auto lg:pr-2">
       <div className="flex items-center justify-end">
         <div className="text-right">
           <div className="text-[0.625rem] uppercase tracking-wider text-zinc-600 font-bold">Session spend</div>
@@ -1240,7 +1249,17 @@ export default function PhotoMatchSeedreamPage() {
             : `Photo Match${runCount > 1 ? ` · ${runCount} images` : ''} · $${totalCost.toFixed(3)}`}
         </Btn>
 
-        {/* Results */}
+      </div>
+
+      {/* THE RESULTS COLUMN. Always present, so the panel has a home before the first run rather
+          than appearing from nowhere — the empty state says what will fill it. */}
+      <div className="min-w-0 flex-1 space-y-3 lg:min-h-0 lg:overflow-y-auto lg:pl-1">
+        {jobs.length === 0 && (
+          <div className="flex h-full min-h-[240px] flex-col items-center justify-center rounded-2xl border border-white/[0.06] bg-white/[0.02] p-8 text-center">
+            <p className="text-sm font-semibold text-zinc-400">No matches yet</p>
+            <p className="mt-1 text-xs text-zinc-600">Run one and the results land here — tick any of them to send to Library or Base Library.</p>
+          </div>
+        )}
         {jobs.length > 0 && (
           <Card className="p-4 space-y-3">
             <div className="flex items-center justify-between">
@@ -1334,15 +1353,16 @@ export default function PhotoMatchSeedreamPage() {
             </div>
           </Card>
         )}
-      </div>
 
-      {manualBlurId && sources.some((s) => s.id === manualBlurId) && (
-        <ManualBlurModal
-          src={sources.find((s) => s.id === manualBlurId).dataUrl}
-          onApply={(newDataUrl) => applyManualBlur(manualBlurId, newDataUrl)}
-          onClose={() => setManualBlurId(null)}
-        />
-      )}
+        {manualBlurId && sources.some((s) => s.id === manualBlurId) && (
+          <ManualBlurModal
+            src={sources.find((s) => s.id === manualBlurId).dataUrl}
+            onApply={(newDataUrl) => applyManualBlur(manualBlurId, newDataUrl)}
+            onClose={() => setManualBlurId(null)}
+          />
+        )}
+      </div>
+    </div>
     </div>
   );
 }

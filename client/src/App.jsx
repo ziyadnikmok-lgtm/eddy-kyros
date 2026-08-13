@@ -308,6 +308,10 @@ const FEED_HIDDEN_PAGES = new Set([
   // results beside a search grid is noise, and it costs the grid a third of the window
   // (owner, 2026-08-10).
   'pinterestFeed',
+  // Photo Match grew the same inline results column Eddy has — tick, send to Library or Base
+  // Library. Showing the shared feed too would put every result on screen twice, and the feed was
+  // occupying the space the results column needs (owner, 2026-08-13).
+  'photoMatchSeedream',
   // Eddy Generate grew its own inline results area (select tiles, shared instruction,
   // Regenerate, Generate video). Showing the shared feed too put every result on screen twice.
   // Both ids route to EddyGeneratePage, so both must be listed or the panel returns via /eddy.
@@ -360,6 +364,10 @@ const SELF_SCROLL_PAGES = new Set([
   // Both ids route to EddyGeneratePage — same reason both are in FEED_HIDDEN_PAGES.
   'eddyGenerate',
   'eddy',
+  // Photo Match now uses Eddy's two-column shell: setup left, results right, each scrolling on its
+  // own. Without this the page scrolls as one document and watching a match land scrolls the form
+  // away — which is the whole reason Eddy stopped doing that.
+  'photoMatchSeedream',
   // Mirrors EddyGeneratePage's two-column shell (fixed left setup column, flex-1 right results
   // column, both independently scrollable) — same layout, same need for a bounded height.
   'instagramReel',

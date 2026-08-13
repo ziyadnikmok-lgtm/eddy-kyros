@@ -172,5 +172,31 @@ check('first press moves it to Base', sendTo('eddy-base') === 'moved' && baseRow
 check('second press is a no-op, not a duplicate', sendTo('eddy-base') === 'already' && baseRows.size === 1);
 check('and it can be sent back', sendTo('eddy-library') === 'moved' && libRows.has('g1') && !baseRows.has('g1'));
 
+// --- Photo Match now wears Eddy's shell (owner, 2026-08-13) --------------------------------------------
+// "The one of Eddy is different to the one of Photo Match." It was: Eddy puts results in a
+// right-hand column with its own toolbar and hides the shared feed; Photo Match had a card at the
+// bottom of one scrolling document, with the feed taking the right third.
+const app = fs.readFileSync(path.join(ROOT, 'client/src/App.jsx'), 'utf8');
+check('the shared feed is hidden on Photo Match, as it is on Eddy', (() => {
+  const i = app.indexOf('const FEED_HIDDEN_PAGES');
+  const j = app.indexOf('])', i);
+  return app.slice(i, j).includes("'photoMatchSeedream'");
+})());
+check('and the page scrolls its own columns, as Eddy does', (() => {
+  const i = app.indexOf('const SELF_SCROLL_PAGES');
+  const j = app.indexOf('])', i);
+  return app.slice(i, j).includes("'photoMatchSeedream'");
+})());
+check('both reasons are recorded beside the entries',
+  /Photo Match grew the same inline results column Eddy has/.test(app)
+  && /Photo Match now uses Eddy's two-column shell/.test(app));
+
+check('the page opens the same flex shell Eddy uses',
+  pm.includes('flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto animate-in lg:flex-row'));
+check('the setup column scrolls on its own', pm.includes('lg:min-h-0 lg:overflow-y-auto lg:pr-2'));
+check('so does the results column', pm.includes('min-w-0 flex-1 space-y-3 lg:min-h-0 lg:overflow-y-auto'));
+check('the results column exists BEFORE the first run, with an empty state',
+  pm.includes('No matches yet') && pm.includes('tick any of them to send to Library or Base Library'));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
