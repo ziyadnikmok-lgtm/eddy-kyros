@@ -228,8 +228,10 @@ check('one photo with no folder -> no name',
   deriveName(['a', 'b'], (id) => (id === 'a' ? 'Natalie' : ''), BUCKETS) === '');
 check('sources sitting in the Max Nano bucket -> no name, not "Max Nano"',
   deriveName(['a'], () => 'Max Nano', BUCKETS) === '');
+// The parameter is `store`, not `libraryStore`: the helper takes whichever collection the run was
+// pointed at before Generate, which is the point of the pre-run destination.
 check('and the filing function sends a named run to her folder',
-  /if \(who\) return \(await libraryStore\.ensureFolder\(who\)\)\?\.id/.test(gen));
+  /if \(who\) return \(await store\.ensureFolder\(who\)\)\?\.id/.test(gen));
 
 // --- ENGINE + CHIPS ON MAX OUTFIT (owner, 2026-08-10, from screenshots) ------------------------
 check('the engine switch is hidden on Max Outfit, which is pinned to Seedream',

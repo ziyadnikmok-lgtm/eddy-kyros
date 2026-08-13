@@ -15,9 +15,22 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const g = fs.readFileSync(path.join(ROOT, 'client/src/pages/EddyGeneratePage.jsx'), 'utf8').replace(/\r\n/g, '\n');
 const nextSrc = /function nextBatchName\(folders, base\) \{([\s\S]*?)\n\}/.exec(g)[1];
-const mkSrc = /function makeBatchFolders\(libraryStore, fallbackId\) \{([\s\S]*?)\n\}/.exec(g)[1];
+/**
+ * The first parameter is captured, not hard-coded.
+ *
+ * It was written as a literal `libraryStore`, so renaming it to `store` in the page (90452dc5,
+ * "choose Library or Base Library before Generate" — the store is no longer always the Library)
+ * made this regex miss. The failure is not a red assertion either: .exec() returns null and the
+ * [1] throws TypeError, so the check CRASHES and reports nothing about the thing it guards.
+ *
+ * Reading the name out and passing that same name to new Function keeps the two in step, so a
+ * future rename cannot silently disarm this file again.
+ */
+const mkMatch = /function makeBatchFolders\((\w+), fallbackId\) \{([\s\S]*?)\n\}/.exec(g);
+if (!mkMatch) throw new Error('makeBatchFolders(<store>, fallbackId) not found in EddyGeneratePage.jsx');
+const [, storeParam, mkSrc] = mkMatch;
 const nextBatchName = new Function('folders', 'base', nextSrc);
-const makeBatchFolders = new Function('libraryStore', 'fallbackId', 'nextBatchName', mkSrc + '\n//# ')
+const makeBatchFolders = new Function(storeParam, 'fallbackId', 'nextBatchName', mkSrc + '\n//# ')
   ;
 let p = 0, f = 0;
 const ck = (n, ok) => { if (ok) { p += 1; console.log('  OK   ' + n); } else { f += 1; console.log('  FAIL ' + n); } };
@@ -78,8 +91,12 @@ function fakeStore() {
   // landed in Mia (2026-08-10).
   ck('Eddy gets a plain per-character resolver, not null',
     /const batchFolderFor = numberBatches \? preAlloc : plainFolders;/.test(g));
+  // The STORE IDENTIFIER is \w+, not a literal. Pinning it to `libraryStore` made this fail the
+  // moment the destination became a choice and the variable became `genStore` (90452dc5) — the
+  // caching it is guarding was untouched and correct. What matters here is the pending-map shape,
+  // so match that and let the store be called whatever it is called.
   ck('the plain resolver caches its promise, like the numbered one',
-    /if \(!pending\.has\(who\)\) \{[\s\S]{0,200}libraryStore\.ensureFolder\(who\)/.test(g));
+    /if \(!pending\.has\(who\)\) \{[\s\S]{0,200}\w+\.ensureFolder\(who\)/.test(g));
   ck('a combo with no name falls back to the run folder', /if \(!who\) return Promise\.resolve\(libFolderId\);/.test(g));
   ck('a failed ensureFolder falls back rather than throwing', /catch \{ return libFolderId; \}/.test(g));
   ck('the symptom is recorded', /Grace images landed in Mia/.test(g));
