@@ -138,8 +138,8 @@ check('with a select-all that flips to clear', pm.includes("pickedJobs.size === 
 check('both destinations are one click', pm.includes("moveResultsTo('eddy-library')") && pm.includes("moveResultsTo('eddy-base')"));
 check('with nothing ticked it acts on everything filed',
   pm.includes('(pickedJobs.size ? filedJobs.filter((j) => pickedJobs.has(j.id)) : filedJobs)'));
-check('only a FILED picture is offered — an unsaved one cannot be moved',
-  pm.includes('doneJobs.filter((j) => j.galleryId)'));
+check('only a picture that EXISTS on the server is offered — an unsaved one cannot be moved',
+  pm.includes('doneJobs.filter((j) => urlOfJob(j))'));
 check('each tile says which library it is in right now', pm.includes("in {job.filedDb === 'eddy-base' ? 'Base Library' : 'Library'}"));
 
 check('the move writes the destination BEFORE dropping the source', (() => {
@@ -206,16 +206,16 @@ check('Photo Match has its own results store, like Eddy', pm.includes("createPag
 check('separate from the form store, so clearing one cannot clear the other',
   pm.includes("createPageStore('kyros-photo-match-seedream-state')"));
 check('only light fields are persisted — never the base64', pm.includes('function liteJob(j)') && !pm.includes('base64Data: j'));
-check('the picture is redrawn from the saved server copy', pm.includes('galleryApi.imageUrl(job.galleryId)'));
+check('the picture is redrawn from the saved server copy', pm.includes('galleryApi.imageUrl(j.galleryId)'));
 check('the source side of the slider is kept as a SMALL jpeg', pm.includes("c.toDataURL('image/jpeg', 0.7)"));
 check('and that shrink cannot break a run if it fails', pm.includes('img.onerror = () => resolve(null);'));
 check('the queue is restored on open', pm.includes("await resultsStore.get('queue', [])"));
 check('and never written before the read comes back — the classic order bug',
   pm.includes('if (!jobsRestored) return;'));
-check('a restored row with no galleryId is dropped, not shown as an empty tile',
-  pm.includes('saved.filter((j) => j.galleryId)'));
+check('a restored row with no picture is dropped, not shown as an empty tile',
+  pm.includes('saved.filter((j) => urlOfJob(j))'));
 check('a run in progress is not persisted — it belongs to a session that is over',
-  pm.includes("jobs.filter((j) => j.status === 'done' && j.galleryId).map(liteJob)"));
+  pm.includes("jobs.filter((j) => j.status === 'done' && urlOfJob(j)).map(liteJob)"));
 check('a restored tile with no source thumb shows the result alone, not a broken slider',
   pm.includes('(job.result ? job.thumb : job.thumbSmall) ? ('));
 check('each tile can be removed — which is what "until I delete" means', pm.includes('Take this off the panel'));
@@ -236,6 +236,40 @@ check('the heavy fields are gone', !('result' in saved[0]) && !('thumb' in saved
 check('what is kept is tiny', JSON.stringify(saved[0]).length < 200);
 check('and it still knows where it was filed', saved[0].filedDb === 'eddy-library');
 check('a restored row can still be redrawn', !!saved[0].galleryId);
+
+// --- the panel shows what was already made (owner, 2026-08-13) ------------------------------------
+// "Show some image I already generated, with photo match, so I can select them too or delete."
+// Every Photo Match result has been filed into a library since long before the panel existed, so
+// the panel reads those back rather than starting empty and pretending the work never happened.
+check('previous matches are read back out of BOTH libraries',
+  pm.includes('libraryStore.listItems(), baseStore.listItems()'));
+check('a Photo Match row is recognised by name OR prompt — early rows lacked the prefix',
+  pm.includes("String(r.name || '').startsWith('photomatch-')") && pm.includes("String(r.prompt || '').startsWith('Photo Match')"));
+check('newest first', pm.includes('(b2.r.createdAt || 0) - (a2.r.createdAt || 0)'));
+check('and capped — this is a working panel, not an archive', pm.includes('.slice(0, 60)'));
+check('the Library tab is named as the archive instead', /the Library tab is the archive/.test(pm));
+check('a picture already on the panel is not added twice', pm.includes('const seen = new Set(prev.map((j) => urlOfJob(j)));'));
+check('an unreadable collection means an emptier panel, not a broken page',
+  /an unreadable collection just means an emptier panel/.test(pm));
+check('the tile remembers which library row it came from', pm.includes('libRowId: r.id'));
+check('and which collection', pm.includes('filedDb: db'));
+
+// --- one answer to "what is this tile's picture" ------------------------------------------------------
+check('there is a single helper', pm.includes('function urlOfJob(j)'));
+check('it covers a tile from this run and one from a library',
+  pm.includes('return j.url || (j.galleryId ? galleryApi.imageUrl(j.galleryId)'));
+check('the selection uses it', pm.includes('doneJobs.filter((j) => urlOfJob(j))'));
+check('the move uses it', pm.includes('const url = urlOfJob(job);'));
+check('and so does what gets persisted', pm.includes("jobs.filter((j) => j.status === 'done' && urlOfJob(j))"));
+
+// --- Remove and Delete are different things -----------------------------------------------------------
+check('Delete exists and is separate from Remove', pm.includes('const deleteJobRow = useCallback('));
+check('it is confirmed, because only one of the two is undoable',
+  pm.includes('Delete this picture from ${label}? It stays in the gallery.'));
+check('it removes the row from the collection the tile came from', pm.includes('await store.removeItem(rowId)'));
+check('a tile from this run has its row found by url instead', pm.includes("(await store.listItems()).find((i) => i.url === url)?.id"));
+check('the server copy is deliberately left alone', /The server copy is left alone/.test(pm));
+check('and the tile says whose it is', pm.includes("{job.charName ? `${job.charName} · ` : ''}"));
 
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

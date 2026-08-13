@@ -102,12 +102,27 @@ const NANO2_PROMPT_BUDGET = 8000;
  */
 const resultsStore = createPageStore('photomatch-results-v1');
 
+/**
+ * The picture behind a tile, wherever the tile came from.
+ *
+ * A tile from THIS run knows its galleryId; one loaded back out of a library knows its url. Both
+ * are the same server file, so everything downstream — the slider, the move, the dedupe — asks
+ * here rather than checking which kind it is.
+ */
+function urlOfJob(j) {
+  return j.url || (j.galleryId ? galleryApi.imageUrl(j.galleryId) : '');
+}
+
 /** The persisted shape of one finished match. Anything not named here is deliberately dropped. */
 function liteJob(j) {
   return {
     id: j.id,
     status: j.status === 'done' ? 'done' : j.status,
     galleryId: j.galleryId || null,
+    url: j.url || '',
+    // Where this picture lives in a collection, when it was read back out of one — so Delete can
+    // remove the row it actually came from rather than guessing.
+    libRowId: j.libRowId || null,
     mimeType: j.result?.mimeType || j.mimeType || 'image/png',
     charName: j.charName || '',
     filedDb: j.filedDb || 'eddy-library',
@@ -928,17 +943,61 @@ export default function PhotoMatchSeedreamPage() {
       if (Array.isArray(saved) && saved.length) {
         // A row with no galleryId cannot be redrawn or sent anywhere, so it is dropped rather than
         // restored as a tile with nothing behind it.
-        setJobs((prev) => (prev.length ? prev : saved.filter((j) => j.galleryId)));
+        setJobs((prev) => (prev.length ? prev : saved.filter((j) => urlOfJob(j))));
       }
+      /**
+       * WHAT WAS ALREADY MADE, before this panel existed.
+       *
+       * Every Photo Match result has been filed into a library since long before the panel did —
+       * as `photomatch-<n>` under her name. So the panel reads those back rather than starting
+       * empty and pretending the work never happened (owner, 2026-08-13: "show some image I
+       * already generated, so I can select them too or delete").
+       *
+       * Newest 60. This is a working panel, not an archive — the Library tab is the archive, and it
+       * has the folders and the filters for it.
+       */
+      try {
+        const [libRows, baseRows, libFolders, baseFolders] = await Promise.all([
+          libraryStore.listItems(), baseStore.listItems(),
+          libraryStore.listFolders(), baseStore.listFolders(),
+        ]);
+        if (!alive) return;
+        const folderName = (list, id) => list.find((f) => f.id === id)?.name || '';
+        const mine = [
+          ...libRows.map((r) => ({ r, db: 'eddy-library', folder: folderName(libFolders, r.folderId) })),
+          ...baseRows.map((r) => ({ r, db: 'eddy-base', folder: folderName(baseFolders, r.folderId) })),
+        ]
+          // A Photo Match row is named by the run that made it. Checked on BOTH the name and the
+          // prompt, because early rows were written before the name carried the prefix.
+          .filter(({ r }) => r.url && (String(r.name || '').startsWith('photomatch-') || String(r.prompt || '').startsWith('Photo Match')))
+          .sort((a2, b2) => (b2.r.createdAt || 0) - (a2.r.createdAt || 0))
+          .slice(0, 60);
+        setJobs((prev) => {
+          const seen = new Set(prev.map((j) => urlOfJob(j)));
+          const extra = mine
+            .filter(({ r }) => !seen.has(r.url))
+            .map(({ r, db, folder }) => ({
+              id: `lib-${db}-${r.id}`,
+              status: 'done',
+              url: r.url,
+              galleryId: null,
+              libRowId: r.id,
+              filedDb: db,
+              charName: folder || r.charName || '',
+              fromLibrary: true,
+            }));
+          return [...prev, ...extra];
+        });
+      } catch { /* an unreadable collection just means an emptier panel, not a broken page */ }
       setJobsRestored(true);
     })();
     return () => { alive = false; };
-  }, []);
+  }, [libraryStore, baseStore]);
   useEffect(() => {
     if (!jobsRestored) return;
     // Only finished, filed pictures are worth keeping: a queued or running job belongs to a run
     // that no longer exists once the page is closed.
-    resultsStore.set('queue', jobs.filter((j) => j.status === 'done' && j.galleryId).map(liteJob));
+    resultsStore.set('queue', jobs.filter((j) => j.status === 'done' && urlOfJob(j)).map(liteJob));
   }, [jobs, jobsRestored]);
 
   const [pickedJobs, setPickedJobs] = useState(() => new Set());
@@ -949,12 +1008,42 @@ export default function PhotoMatchSeedreamPage() {
       return next;
     });
   }, []);
-  const filedJobs = useMemo(() => doneJobs.filter((j) => j.galleryId), [doneJobs]);
+  const filedJobs = useMemo(() => doneJobs.filter((j) => urlOfJob(j)), [doneJobs]);
   const actionable = useMemo(
     () => (pickedJobs.size ? filedJobs.filter((j) => pickedJobs.has(j.id)) : filedJobs),
     [filedJobs, pickedJobs],
   );
   const [movingTo, setMovingTo] = useState('');
+
+  /**
+   * DELETE — take the picture out of the library it is in.
+   *
+   * Distinct from Remove, which only clears the tile. Confirmed, because the two sit next to each
+   * other and only one of them is undoable by re-running the panel.
+   *
+   * The row id is known for a tile read back out of a collection; for one from this run it is found
+   * by url, which is the same key the move uses. The server copy is left alone — the gallery is the
+   * place a picture is actually deleted from, and this is not that page.
+   */
+  const deleteJobRow = useCallback(async (job) => {
+    const label = job.filedDb === 'eddy-base' ? 'Base Library' : 'Library';
+    // eslint-disable-next-line no-alert -- one destructive action, one plain question
+    if (!window.confirm(`Delete this picture from ${label}? It stays in the gallery.`)) return;
+    const store = job.filedDb === 'eddy-base' ? baseStore : libraryStore;
+    try {
+      let rowId = job.libRowId;
+      if (!rowId) {
+        const url = urlOfJob(job);
+        rowId = (await store.listItems()).find((i) => i.url === url)?.id || null;
+      }
+      if (rowId) await store.removeItem(rowId);
+      setJobs((prev) => prev.filter((x) => x.id !== job.id));
+      setPickedJobs((cur) => { const n = new Set(cur); n.delete(job.id); return n; });
+      notify(rowId ? `Deleted from ${label}` : 'Taken off the panel — it was not in that library', rowId ? 'success' : 'info');
+    } catch (err) {
+      notify(err?.message || 'Could not delete that', 'error');
+    }
+  }, [baseStore, libraryStore, notify]);
 
   /**
    * Move finished pictures between the two libraries, after the fact.
@@ -978,7 +1067,7 @@ export default function PhotoMatchSeedreamPage() {
       const destFolder = (await target.ensureFolder(who || 'Photo Match'))?.id || null;
       const targetRows = new Map((await target.listItems()).filter((i) => i.url).map((i) => [i.url, i]));
       for (const job of list) {
-        const url = galleryApi.imageUrl(job.galleryId);
+        const url = urlOfJob(job);
         if (targetRows.has(url)) { already += 1; continue; }
         const sourceStore = job.filedDb === 'eddy-base' ? baseStore : libraryStore;
         try {
@@ -1409,7 +1498,7 @@ export default function PhotoMatchSeedreamPage() {
                     {job.status === 'done' && <span className="text-[0.625rem] text-zinc-600 font-mono">${costPerJob.toFixed(3)}</span>}
                   </div>
 
-                  {job.status === 'done' && (job.result || job.galleryId) ? (
+                  {job.status === 'done' && (job.result || urlOfJob(job)) ? (
                     /**
                      * After a reload there is no base64 — the bytes were never persisted. The
                      * picture comes back from the server copy via galleryId, and the slider's
@@ -1421,13 +1510,13 @@ export default function PhotoMatchSeedreamPage() {
                         originalSrc={job.result ? job.thumb : job.thumbSmall}
                         processedSrc={job.result
                           ? `data:${job.result.mimeType};base64,${job.result.base64Data}`
-                          : galleryApi.imageUrl(job.galleryId)}
+                          : urlOfJob(job)}
                         originalLabel="SOURCE"
                         processedLabel="MATCHED"
                         className="rounded-lg overflow-hidden border border-zinc-800/60"
                       />
                     ) : (
-                      <img src={galleryApi.imageUrl(job.galleryId)} alt="" loading="lazy"
+                      <img src={urlOfJob(job)} alt="" loading="lazy"
                         className="w-full rounded-lg border border-zinc-800/60 bg-zinc-950 object-contain" />
                     )
                   ) : (
@@ -1440,20 +1529,32 @@ export default function PhotoMatchSeedreamPage() {
                   {job.status === 'failed' && <p className="text-[0.625rem] text-red-400 leading-snug">{job.error}</p>}
                   {/* Where this one currently lives, so "send to Base" has a visible before and
                       after rather than being an action with no feedback. */}
-                  {job.status === 'done' && job.galleryId && (
+                  {job.status === 'done' && urlOfJob(job) && (
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-[0.5625rem] uppercase tracking-wider text-zinc-600">
-                        in {job.filedDb === 'eddy-base' ? 'Base Library' : 'Library'}
+                        {job.charName ? `${job.charName} · ` : ''}in {job.filedDb === 'eddy-base' ? 'Base Library' : 'Library'}
                       </p>
-                      {/* REMOVE takes it off this panel only. The picture stays in the gallery and
-                          in whichever library it was filed into — this is the queue's exit, not a
-                          delete. Same meaning as Eddy's Remove. */}
-                      <button type="button"
-                        onClick={() => { setJobs((prev) => prev.filter((x) => x.id !== job.id)); setPickedJobs((cur) => { const n = new Set(cur); n.delete(job.id); return n; }); }}
-                        title="Take this off the panel — the picture stays in the gallery and the library"
-                        className="text-[0.625rem] text-zinc-500 underline hover:text-red-300 cursor-pointer">
-                        Remove
-                      </button>
+                      <span className="flex items-center gap-2">
+                        {/* REMOVE takes it off this panel only. The picture stays in the gallery and
+                            in whichever library it was filed into — this is the queue's exit, not a
+                            delete. Same meaning as Eddy's Remove. */}
+                        <button type="button"
+                          onClick={() => { setJobs((prev) => prev.filter((x) => x.id !== job.id)); setPickedJobs((cur) => { const n = new Set(cur); n.delete(job.id); return n; }); }}
+                          title="Take this off the panel — the picture stays in the gallery and the library"
+                          className="text-[0.625rem] text-zinc-500 underline hover:text-zinc-300 cursor-pointer">
+                          Remove
+                        </button>
+                        {/* DELETE is the real one: it takes the row out of the library it is in, so
+                            the picture stops appearing in that tab. Separated from Remove and
+                            confirmed, because the two words are one letter apart in meaning and a
+                            long way apart in consequence. */}
+                        <button type="button"
+                          onClick={() => deleteJobRow(job)}
+                          title={`Delete from ${job.filedDb === 'eddy-base' ? 'Base Library' : 'Library'} — this one removes the picture from that tab`}
+                          className="text-[0.625rem] text-red-400/80 underline hover:text-red-300 cursor-pointer">
+                          Delete
+                        </button>
+                      </span>
                     </div>
                   )}
                 </div>
