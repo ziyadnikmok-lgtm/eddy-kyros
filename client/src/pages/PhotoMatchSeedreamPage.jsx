@@ -73,6 +73,20 @@ const SPEND_KEY = 'kyros.photoMatchSeedream.sessionSpend';
 // spelled out twice.
 const SEEDREAM_PROMPT_BUDGET = 3000;
 
+/**
+ * NANO BANANA 2 DOES NOT HAVE SEEDREAM'S CAP.
+ *
+ * The 3,000 above exists because ByteDance 422s on a long prompt — "The text length cannot exceed
+ * the maximum limit", which kills the whole batch before an image exists. It was being applied to
+ * BOTH engines, so a Nano run got a prompt amputated for a limitation Nano does not have:
+ * wavespeedService.js says outright that WaveSpeed documents no prompt-length cap for
+ * `google/nano-banana-2/edit`.
+ *
+ * 8,000 is a safety rail, not a measured ceiling — nothing has been observed failing. It exists so
+ * a runaway prompt cannot be sent unbounded; the real prompt is a third of it.
+ */
+const NANO2_PROMPT_BUDGET = 8000;
+
 export function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRecreate, varyBackground, allowExpressionChange, allowHairChange, allowBodyChange, allowLightingChange, faceless, wantsNude, addGenericNudeLine, sourceFaceBlurred }) {
   const who = characterName || 'the character';
   const n = Math.max(1, refCount);
@@ -83,10 +97,18 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
   // that attribute (hair/body) doesn't fight the base prompt. Hair/body default ON = from refs.
   // When faceless, the face is intentionally hidden — don't ask the model to match it here (the
   // final lock handles the faceless case), but skin/hair/body still come from the refs.
+  /**
+   * THE WHOLE PERSON, named part by part.
+   *
+   * This read "face, skin tone, makeup, hair, body/figure/chest" and the prompt around it said
+   * FACE five more times — so the model did what it was asked and swapped a face onto the
+   * stand-in's body (owner, 2026-08-13: "it's like a faceswap but we want to recreate the same
+   * image with our model"). A body is not one word at the end of a list about a face.
+   */
   const identity = [
-    faceless ? 'skin tone' : 'face, skin tone, her makeup',
+    faceless ? 'skin tone' : 'face, head shape, jaw, skin tone, her makeup',
     allowHairChange ? null : 'hair',
-    allowBodyChange ? null : 'body/figure/chest',
+    allowBodyChange ? null : 'neck, shoulders, arms, hands, torso, waist, hips, legs, height and build',
   ].filter(Boolean).join(', ');
 
   // Scene comes from the source. Outfit only when dressed; expression only when no Mood preset
@@ -102,9 +124,17 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
 
   const parts = [
     // Roles by image index, stated up front and hard.
-    `${refs} = ${who} = the ONLY face/body source. ${src} = scene only — NEVER an identity reference.`,
+    `${refs} = ${who} = the ONLY source for the person. ${src} = a photograph of a DIFFERENT woman, used ONLY for its scene — NEVER an identity reference.`,
+    /**
+     * REBUILD, NOT EDIT — and it has to be said before anything else.
+     *
+     * The failure this exists to stop: the output keeps the stand-in's body and wears ${who}'s
+     * face. Naming the wrong answer works better on these models than adding another word about
+     * the right one, so the wrong answer is named.
+     */
+    `REBUILD, DO NOT EDIT: do not modify ${src} and do not paste a face onto the woman in it. She does not appear in the output at all. Produce a NEW photograph of ${who} that reproduces ${src}'s scene. A result where the body is hers from ${src} and only the face changed is WRONG.`,
     exactRecreate
-      ? `Reproduce ${src} exactly — same background, pose, props, framing, lighting${wantsNude ? '' : ', outfit'} — changing only the person to ${who}${wantsNude ? ', and remove her clothing as instructed below' : ''}.`
+      ? `Reproduce ${src} exactly — same background, pose, props, framing, lighting${wantsNude ? '' : ', outfit'} — but the person in it is rebuilt entirely as ${who}${wantsNude ? ', and remove her clothing as instructed below' : ''}.`
       : `A new photo of ${who} in ${src}'s scene, not a retouch of ${src}.`,
     `From ${refs}, match exactly: ${identity}. Where ${src} disagrees, ${refs} win.`,
     `From ${src}: ${scene}.`,
@@ -141,7 +171,7 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
     parts.push(`MAKEUP: exactly as ${who} wears it in ${refs} — same lips, eyes, lashes, brows. If ${refs} show a bold or dark lip, keep it; do NOT soften or naturalise it. Do NOT add makeup she is not wearing, and never take her makeup from ${src}.`);
   }
   parts.push(`FORBIDDEN from ${src}: its face, facial structure, eyes, nose, mouth, jaw, hair colour, skin tone${allowBodyChange ? '' : ', body shape'}, and any tattoo, ink or skin marking. ${who} has only the tattoos visible in ${refs}.`);
-  parts.push(`NO BLENDING: do not mix, merge or average ${who}'s face with the person in ${src}. The output face is 100% ${refs}, not a midpoint between the two.`);
+  parts.push(`NO BLENDING: do not mix, merge or average ${who} with the person in ${src} — not her face and not her body. Every part of the person in the output is 100% ${refs}, not a midpoint between the two women.`);
 
   parts.push(`Photorealistic — real pores, hair strands, fabric, slight asymmetry; no plastic or CGI look.`);
 
@@ -154,7 +184,7 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
     parts.push(`FINAL — HIGHEST PRIORITY, overrides everything above: her face is intentionally OUT of the shot — cropped above the shoulders, turned away, or hidden by hair/hand/angle so no recognisable face is visible. Do NOT invent or show a face. Her body, hair, skin and proportions still come from ${refs}${allowBodyChange ? '' : ' at their true size — never averaged or shrunk toward ' + src}.`);
   } else {
     const finalLock = [
-      `FINAL — HIGHEST PRIORITY, overrides everything above: the face, skin and hair in the output MUST be recognisably ${refs}. ${src}'s face is an anonymous stand-in — discard it completely; if in any doubt, copy ${refs}. Sacrifice ${src}'s likeness entirely to keep hers.`,
+      `FINAL — HIGHEST PRIORITY, overrides everything above: the PERSON in the output is ${who} from ${refs} — her face, her hair, her skin and her whole body. The woman in ${src} is an anonymous stand-in: discard her completely, face and figure alike, and if in any doubt copy ${refs}. Sacrifice ${src}'s likeness entirely to keep hers.`,
       // Body/chest: pinned to the refs UNLESS a size chip is driving it (then the chip, appended
       // after this whole prompt, wins and re-pinning here would fight it).
       allowBodyChange
@@ -753,10 +783,13 @@ export default function PhotoMatchSeedreamPage() {
         allowLightingChange,
       });
       let out = extra.trim() ? `${base}\n\n${extra.trim()}` : base;
-      if (out.length > SEEDREAM_PROMPT_BUDGET) {
+      // Per engine: Seedream's cap is real and fatal, Nano's does not exist. Trimming a Nano prompt
+      // to Seedream's limit threw away chips for nothing.
+      const budget = engine === 'nano2' ? NANO2_PROMPT_BUDGET : SEEDREAM_PROMPT_BUDGET;
+      if (out.length > budget) {
         // Seedream 422s on an over-long prompt and the whole batch dies. The base instruction
         // is what makes identity work, so the extra text is what gives.
-        out = out.slice(0, SEEDREAM_PROMPT_BUDGET);
+        out = out.slice(0, budget);
         trimmed = true;
       }
       return out;
@@ -777,7 +810,7 @@ export default function PhotoMatchSeedreamPage() {
      * would see whichever finished last rather than all three.
      */
     const work = perChar.flatMap((who) => sources.map((src) => ({ src, who })));
-    if (trimmed) notify(`Instructions trimmed to ${SEEDREAM_PROMPT_BUDGET} characters — Seedream rejects longer prompts`, 'error');
+    if (trimmed) notify(`Instructions trimmed to ${engine === 'nano2' ? NANO2_PROMPT_BUDGET : SEEDREAM_PROMPT_BUDGET} characters — the model rejects longer prompts`, 'error');
 
     setRunning(true);
     setJobs(work.map(({ src, who }) => ({

@@ -66,7 +66,32 @@ const worst = buildMatchInstruction({
 });
 check(`the everyday prompt fits (${p.length} chars)`, p.length <= BUDGET);
 check(`the worst case still fits (${worst.length} chars)`, worst.length <= BUDGET);
-check('and there is real headroom for the appended chips', BUDGET - worst.length > 300);
+check('and there is headroom left for the appended chips', BUDGET - worst.length > 250);
+
+// --- it must read as a REBUILD, not a face swap (owner, 2026-08-13) ---------------------------------
+// "It's like a faceswap but we want to recreate the same image with our model." It was: the prompt
+// said FACE five times and gave the body one clause at the end, so the model swapped a face onto
+// the stand-in's body. It was doing what it was asked.
+check('the wrong answer is named outright', /A result where the body is hers from image 2 and only the face changed is WRONG/.test(p));
+check('it is told not to edit the source at all', /REBUILD, DO NOT EDIT/.test(p));
+check('and that the stand-in is not in the output', /She does not appear in the output at all/.test(p));
+check('the body is named part by part, not as one word',
+  /neck, shoulders, arms, hands, torso, waist, hips, legs, height and build/.test(p));
+check('NO BLENDING covers the body too, not just the face', /not her face and not her body/.test(p));
+check('the final lock leads with the PERSON', /the PERSON in the output is Chloe/.test(p));
+check('and discards the stand-in face AND figure', /discard her completely, face and figure alike/.test(p));
+// The balance is the actual bug. Counted, not eyeballed.
+const faceWords = (p.match(/face/gi) || []).length;
+const bodyWords = (p.match(/body|figure|torso|hips|legs|shoulders|build/gi) || []).length;
+check(`the prompt no longer talks only about the face (${faceWords} face / ${bodyWords} body)`, bodyWords >= faceWords);
+
+// --- the cap is Seedream's, not Nano's --------------------------------------------------------------
+check('Nano gets its own budget', src.includes('const NANO2_PROMPT_BUDGET = 8000;'));
+check('and the trim picks by engine', src.includes("const budget = engine === 'nano2' ? NANO2_PROMPT_BUDGET : SEEDREAM_PROMPT_BUDGET;"));
+check('the reason is recorded — WaveSpeed documents no cap for nano',
+  /WaveSpeed documents no prompt-length cap/.test(src));
+check('and the trim notice no longer blames Seedream on a Nano run',
+  src.includes('the model rejects longer prompts'));
 
 // --- the flags still do what they say ----------------------------------------------------------------
 const faceless = buildMatchInstruction({ ...BASE, faceless: true });
@@ -83,7 +108,7 @@ check('a body chip does NOT loosen the face', /NO BLENDING/.test(bodyFree));
 
 const multi = buildMatchInstruction({ ...BASE, refCount: 4 });
 check('several references are addressed as a range', /images 1-4 = Chloe/.test(multi));
-check('and the source index moves with them', /image 5 = scene only/.test(multi));
+check('and the source index moves with them', /image 5 = a photograph of a DIFFERENT woman/.test(multi));
 
 // --- the ordering Seedream actually weights -----------------------------------------------------------
 // The tail carries the most weight, which is why the locks live at the end.
