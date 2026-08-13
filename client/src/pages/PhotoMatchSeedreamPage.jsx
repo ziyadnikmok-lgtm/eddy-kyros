@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { seedream as seedreamApi, gallery as galleryApi } from '../services/api';
 import { createEddyCollection } from '../lib/eddyCollectionStore';
 import { useApp } from '../context/AppContext';
@@ -120,6 +121,11 @@ function liteJob(j) {
     status: j.status === 'done' ? 'done' : j.status,
     galleryId: j.galleryId || null,
     url: j.url || '',
+    doneAt: j.doneAt || 0,
+    engine: j.engine || '',
+    resolution: j.resolution || '',
+    mode: j.mode || '',
+    faceless: !!j.faceless,
     // Where this picture lives in a collection, when it was read back out of one — so Delete can
     // remove the row it actually came from rather than guessing.
     libRowId: j.libRowId || null,
@@ -742,7 +748,21 @@ export default function PhotoMatchSeedreamPage() {
       // before the tile flips to done so the persisted row is complete the first time it is written.
       const thumbSmall = await shrinkForStorage(source.dataUrl);
       setJobs((prev) => prev.map((j) => (j.id === jobId
-        ? { ...j, status: 'done', result: first, galleryId: first.galleryId || null, filedDb: destDb, thumbSmall }
+        ? {
+          ...j,
+          status: 'done',
+          result: first,
+          galleryId: first.galleryId || null,
+          filedDb: destDb,
+          thumbSmall,
+          // WHEN and HOW, so "the last 30" and "the last hour" mean something after a reload, and
+          // so a tile can say what made it rather than leaving you to remember.
+          doneAt: Date.now(),
+          engine,
+          resolution,
+          mode: exactRecreate ? 'exact' : 'scene',
+          faceless,
+        }
         : j)));
       setSessionSpend((s) => s + costPerJob);
 
@@ -984,6 +1004,7 @@ export default function PhotoMatchSeedreamPage() {
               libRowId: r.id,
               filedDb: db,
               charName: folder || r.charName || '',
+              doneAt: r.createdAt || 0,
               fromLibrary: true,
             }));
           return [...prev, ...extra];
@@ -1014,6 +1035,79 @@ export default function PhotoMatchSeedreamPage() {
     [filedJobs, pickedJobs],
   );
   const [movingTo, setMovingTo] = useState('');
+
+  /**
+   * SMART SELECTING — by count and by age, the same two questions the Library answers.
+   *
+   * "The last 30" and "everything from the last hour" are how a batch is actually thought about;
+   * ticking thirty tiles by hand is not (owner, 2026-08-13). Newest first, and both act on what is
+   * SENDABLE, so a count never silently includes a tile that cannot move.
+   */
+  const [pickCount, setPickCount] = useState(30);
+  const newestFirst = useMemo(
+    () => [...filedJobs].sort((a2, b2) => (b2.doneAt || 0) - (a2.doneAt || 0)),
+    [filedJobs],
+  );
+  const selectNewest = useCallback((n) => {
+    setPickedJobs(new Set(newestFirst.slice(0, Math.max(1, n)).map((j) => j.id)));
+  }, [newestFirst]);
+  const selectSince = useCallback((ms) => {
+    const cut = Date.now() - ms;
+    const hits = newestFirst.filter((j) => (j.doneAt || 0) >= cut);
+    // A row with no timestamp — an old library import — is not silently swept in by an age filter.
+    setPickedJobs(new Set(hits.map((j) => j.id)));
+    if (!hits.length) notify('Nothing in that window', 'info');
+  }, [newestFirst, notify]);
+  const countSince = useCallback((ms) => {
+    const cut = Date.now() - ms;
+    return filedJobs.filter((j) => (j.doneAt || 0) >= cut).length;
+  }, [filedJobs]);
+
+  /**
+   * The before/after slider is OFF by default and remembered.
+   *
+   * Comparing is a deliberate act — most of the time the result is the only half worth looking at,
+   * and a slider on every tile means every tile is showing half a picture of someone else.
+   */
+  /**
+   * THE LARGE VIEW — click the picture to open it, Esc or the backdrop to close, arrows to step.
+   *
+   * The same lightbox the Library has had for months, and for the same reason: a 240px tile is
+   * enough to pick from and not enough to judge. Clicking the PICTURE opens it; clicking anywhere
+   * else on the tile ticks it, so selecting and looking are different gestures rather than one
+   * ambiguous one (owner, 2026-08-13).
+   */
+  const [lightboxId, setLightboxId] = useState('');
+  const lightboxList = useMemo(() => jobs.filter((j) => j.status === 'done' && (j.result || urlOfJob(j))), [jobs]);
+  const stepLightbox = useCallback((delta) => {
+    setLightboxId((cur) => {
+      const i = lightboxList.findIndex((j) => j.id === cur);
+      if (i < 0) return cur;
+      const next = lightboxList[i + delta];
+      return next ? next.id : cur;
+    });
+  }, [lightboxList]);
+  useEffect(() => {
+    if (!lightboxId) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setLightboxId('');
+      else if (e.key === 'ArrowLeft') stepLightbox(-1);
+      else if (e.key === 'ArrowRight') stepLightbox(1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightboxId, stepLightbox]);
+  // A tile that leaves the panel must not leave the overlay open on nothing.
+  useEffect(() => {
+    if (lightboxId && !lightboxList.some((j) => j.id === lightboxId)) setLightboxId('');
+  }, [lightboxId, lightboxList]);
+
+  const [showCompare, setShowCompare] = useState(() => {
+    try { return localStorage.getItem('kyros.photoMatch.compare') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('kyros.photoMatch.compare', showCompare ? '1' : '0'); } catch { /* private mode */ }
+  }, [showCompare]);
 
   /**
    * DELETE — take the picture out of the library it is in.
@@ -1063,12 +1157,29 @@ export default function PhotoMatchSeedreamPage() {
     let moved = 0, already = 0;
     let failure = '';
     try {
-      const who = charName.trim();
-      const destFolder = (await target.ensureFolder(who || 'Photo Match'))?.id || null;
+      /**
+       * EACH PICTURE UNDER ITS OWN WOMAN — not under whoever is selected right now.
+       *
+       * This read the page's current charName for every job in the batch, so a panel holding
+       * Grace's and Chloe's results (which it does the moment two characters are ticked, and it
+       * survives a reload) filed the whole lot into whichever name happened to be selected. The job
+       * knows whose it is; that is what decides the folder. The page's selection is only a fallback
+       * for an old row that never recorded one (owner, 2026-08-13).
+       *
+       * One ensureFolder per NAME, not per picture.
+       */
+      const folderIdFor = new Map();
       const targetRows = new Map((await target.listItems()).filter((i) => i.url).map((i) => [i.url, i]));
       for (const job of list) {
         const url = urlOfJob(job);
         if (targetRows.has(url)) { already += 1; continue; }
+        const who = (job.charName || charName || '').trim();
+        const folderKey = who || 'Photo Match';
+        if (!folderIdFor.has(folderKey)) {
+          // eslint-disable-next-line no-await-in-loop
+          folderIdFor.set(folderKey, (await target.ensureFolder(folderKey))?.id || null);
+        }
+        const destFolder = folderIdFor.get(folderKey);
         const sourceStore = job.filedDb === 'eddy-base' ? baseStore : libraryStore;
         try {
           // eslint-disable-next-line no-await-in-loop
@@ -1464,6 +1575,36 @@ export default function PhotoMatchSeedreamPage() {
                   className="text-[0.6875rem] text-zinc-400 underline hover:text-zinc-200 cursor-pointer">
                   {pickedJobs.size === filedJobs.length ? 'Clear selection' : `Select all ${filedJobs.length}`}
                 </button>
+
+                {/* SMART SELECTING. By count — type any number — and by age, newest first. */}
+                <span className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min="1"
+                    value={pickCount}
+                    onChange={(e) => setPickCount(Math.max(1, Number(e.target.value) || 1))}
+                    className="w-14 rounded border border-white/[0.08] bg-black/30 px-1.5 py-0.5 text-[0.6875rem] text-zinc-200 outline-none"
+                  />
+                  <button type="button" onClick={() => selectNewest(pickCount)}
+                    className="rounded-full border border-white/[0.08] px-2 py-0.5 text-[0.625rem] text-zinc-300 hover:border-zinc-500 cursor-pointer">
+                    newest
+                  </button>
+                </span>
+                <button type="button" onClick={() => selectSince(60 * 60 * 1000)}
+                  className="rounded-full border border-white/[0.08] px-2 py-0.5 text-[0.625rem] text-zinc-300 hover:border-zinc-500 cursor-pointer">
+                  Last hour ({countSince(60 * 60 * 1000)})
+                </button>
+                <button type="button" onClick={() => selectSince(24 * 60 * 60 * 1000)}
+                  className="rounded-full border border-white/[0.08] px-2 py-0.5 text-[0.625rem] text-zinc-300 hover:border-zinc-500 cursor-pointer">
+                  Last 24h ({countSince(24 * 60 * 60 * 1000)})
+                </button>
+
+                {/* The comparison, off by default — see the note on showCompare. */}
+                <label className="flex cursor-pointer items-center gap-1 text-[0.625rem] text-zinc-400">
+                  <input type="checkbox" checked={showCompare} onChange={(e) => setShowCompare(e.target.checked)}
+                    className="cursor-pointer accent-rose-500" />
+                  Before / after
+                </label>
                 <span className="ml-auto flex flex-wrap gap-2">
                   <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs"
                     disabled={!!movingTo}
@@ -1481,12 +1622,17 @@ export default function PhotoMatchSeedreamPage() {
 
             <div className="grid [grid-template-columns:repeat(auto-fill,minmax(240px,1fr))] gap-3">
               {jobs.map((job) => (
-                <div key={job.id} className={cn('rounded-xl border bg-white/[0.02] p-2.5 space-y-2',
-                  pickedJobs.has(job.id) ? 'border-rose-500' : 'border-zinc-800/60')}>
+                <div key={job.id}
+                  // The tile body is the SELECT target; the picture below stops the click so it can
+                  // open the large view instead. Two gestures, no ambiguity.
+                  onClick={() => { if (job.status === 'done' && urlOfJob(job)) toggleJob(job.id); }}
+                  className={cn('rounded-xl border bg-white/[0.02] p-2.5 space-y-2 cursor-pointer',
+                    pickedJobs.has(job.id) ? 'border-rose-500' : 'border-zinc-800/60')}>
                   <div className="flex items-center justify-between gap-2">
                     {/* Only a FILED picture can be sent anywhere, so only those get a tick. */}
                     {job.status === 'done' && job.galleryId && (
                       <input type="checkbox" checked={pickedJobs.has(job.id)} onChange={() => toggleJob(job.id)}
+                        onClick={(e) => e.stopPropagation()}
                         title="Tick to send just these"
                         className="cursor-pointer accent-rose-500" />
                     )}
@@ -1512,7 +1658,7 @@ export default function PhotoMatchSeedreamPage() {
                      * SOURCE side from the small JPEG kept beside it. A restored tile with no
                      * source thumb shows the result alone rather than a broken slider.
                      */
-                    (job.result ? job.thumb : job.thumbSmall) ? (
+                    showCompare && (job.result ? job.thumb : job.thumbSmall) ? (
                       <CompareSlider
                         originalSrc={job.result ? job.thumb : job.thumbSmall}
                         processedSrc={job.result
@@ -1523,8 +1669,11 @@ export default function PhotoMatchSeedreamPage() {
                         className="rounded-lg overflow-hidden border border-zinc-800/60"
                       />
                     ) : (
-                      <img src={urlOfJob(job)} alt="" loading="lazy"
-                        className="w-full rounded-lg border border-zinc-800/60 bg-zinc-950 object-contain" />
+                      <img src={job.result ? `data:${job.result.mimeType};base64,${job.result.base64Data}` : urlOfJob(job)}
+                        alt="" loading="lazy"
+                        onClick={(e) => { e.stopPropagation(); setLightboxId(job.id); }}
+                        title="Click to see it full size"
+                        className="w-full cursor-zoom-in rounded-lg border border-zinc-800/60 bg-zinc-950 object-contain" />
                     )
                   ) : (
                     <div className="relative">
@@ -1540,13 +1689,19 @@ export default function PhotoMatchSeedreamPage() {
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-[0.5625rem] uppercase tracking-wider text-zinc-600">
                         {job.charName ? `${job.charName} · ` : ''}in {job.filedDb === 'eddy-base' ? 'Base Library' : 'Library'}
+                        {/* WHAT MADE IT. Two engines, two modes and a faceless switch produce very
+                            different pictures, and a week later the tile is the only record. */}
+                        {job.engine && ` · ${job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}`}
+                        {job.resolution && ` ${job.resolution}`}
+                        {job.mode === 'exact' && ' · exact'}
+                        {job.faceless && ' · faceless'}
                       </p>
                       <span className="flex items-center gap-2">
                         {/* REMOVE takes it off this panel only. The picture stays in the gallery and
                             in whichever library it was filed into — this is the queue's exit, not a
                             delete. Same meaning as Eddy's Remove. */}
                         <button type="button"
-                          onClick={() => { setJobs((prev) => prev.filter((x) => x.id !== job.id)); setPickedJobs((cur) => { const n = new Set(cur); n.delete(job.id); return n; }); }}
+                          onClick={(e) => { e.stopPropagation(); setJobs((prev) => prev.filter((x) => x.id !== job.id)); setPickedJobs((cur) => { const n = new Set(cur); n.delete(job.id); return n; }); }}
                           title="Take this off the panel — the picture stays in the gallery and the library"
                           className="text-[0.625rem] text-zinc-500 underline hover:text-zinc-300 cursor-pointer">
                           Remove
@@ -1556,7 +1711,7 @@ export default function PhotoMatchSeedreamPage() {
                             confirmed, because the two words are one letter apart in meaning and a
                             long way apart in consequence. */}
                         <button type="button"
-                          onClick={() => deleteJobRow(job)}
+                          onClick={(e) => { e.stopPropagation(); deleteJobRow(job); }}
                           title={`Delete from ${job.filedDb === 'eddy-base' ? 'Base Library' : 'Library'} — this one removes the picture from that tab`}
                           className="text-[0.625rem] text-red-400/80 underline hover:text-red-300 cursor-pointer">
                           Delete
@@ -1570,7 +1725,48 @@ export default function PhotoMatchSeedreamPage() {
           </Card>
         )}
 
-        {manualBlurId && sources.some((s) => s.id === manualBlurId) && (
+        {/* THE LARGE VIEW. Portalled to <body> like the Library's: `position: fixed` anchors to the
+          nearest ancestor with a transform or backdrop-filter rather than the viewport, and this
+          page sits inside one — without the portal the overlay opens somewhere down the column and
+          has to be scrolled to. */}
+      {lightboxId && (() => {
+        const job = lightboxList.find((j) => j.id === lightboxId);
+        if (!job) return null;
+        const src = job.result ? `data:${job.result.mimeType};base64,${job.result.base64Data}` : urlOfJob(job);
+        const i = lightboxList.findIndex((j) => j.id === lightboxId);
+        return createPortal(
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
+            // Backdrop only: a click that started on the picture must not close it when the pointer
+            // drifts off, which makes a large view feel broken.
+            onClick={(e) => { if (e.target === e.currentTarget) setLightboxId(''); }}
+          >
+            <img src={src} alt="" draggable={false} onClick={(e) => e.stopPropagation()}
+              className="max-h-full max-w-full select-none rounded-xl object-contain" />
+
+            <div className="absolute left-4 top-4 rounded-lg bg-black/70 px-3 py-1.5 text-xs text-zinc-300">
+              {job.charName || 'Photo Match'}
+              {job.engine && <span className="text-zinc-500"> · {job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}</span>}
+              {job.resolution && <span className="text-zinc-500"> {job.resolution}</span>}
+              <span className="text-zinc-500"> · {i + 1} of {lightboxList.length}</span>
+            </div>
+
+            <button type="button" onClick={() => setLightboxId('')} aria-label="Close"
+              className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 text-lg text-white hover:bg-white/20 cursor-pointer">×</button>
+            {i > 0 && (
+              <button type="button" onClick={() => stepLightbox(-1)} aria-label="Previous"
+                className="absolute left-4 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-xl text-white hover:bg-white/20 cursor-pointer">‹</button>
+            )}
+            {i < lightboxList.length - 1 && (
+              <button type="button" onClick={() => stepLightbox(1)} aria-label="Next"
+                className="absolute right-4 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-xl text-white hover:bg-white/20 cursor-pointer">›</button>
+            )}
+          </div>,
+          document.body,
+        );
+      })()}
+
+      {manualBlurId && sources.some((s) => s.id === manualBlurId) && (
           <ManualBlurModal
             src={sources.find((s) => s.id === manualBlurId).dataUrl}
             onApply={(newDataUrl) => applyManualBlur(manualBlurId, newDataUrl)}

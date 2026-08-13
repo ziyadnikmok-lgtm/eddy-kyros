@@ -309,5 +309,90 @@ check('the filing folder name is untouched', pm.includes("ensureFolder(who || 'P
   check('and every tag closes', depth === 0);
 })();
 
+// --- each picture files under ITS OWN woman (owner, 2026-08-13) -------------------------------------
+// The move read the page's current charName for every job in the batch. A panel holding Grace's and
+// Chloe's results — which it does the moment two characters are ticked, and which survives a reload
+// — filed the whole lot into whichever name happened to be selected.
+check('the folder comes from the JOB, not the page', pm.includes("const who = (job.charName || charName || '').trim();"));
+check('the page selection is only a fallback for a row that never recorded one',
+  /The page's selection is only a fallback/.test(pm));
+check('one ensureFolder per name, not per picture', pm.includes('if (!folderIdFor.has(folderKey)) {'));
+check('and the row carries that name too', pm.includes('...(who ? { charName: who } : {}),'));
+
+// --- replay: a mixed batch must split by name -----------------------------------------------------------
+const batch = [
+  { id: 'a', charName: 'Grace' }, { id: 'b', charName: 'Chloe' },
+  { id: 'c', charName: 'Grace' }, { id: 'd', charName: '' },
+];
+const pageChar = 'Grace';
+const folders = new Map();
+let ensureCalls = 0;
+for (const j of batch) {
+  const who = (j.charName || pageChar || '').trim();
+  const key = who || 'Photo Match';
+  if (!folders.has(key)) { folders.set(key, []); ensureCalls += 1; }
+  folders.get(key).push(j.id);
+}
+check("Grace's own two land in Grace", folders.get('Grace').includes('a') && folders.get('Grace').includes('c'));
+check("Chloe's goes to Chloe, NOT to the selected character", folders.get('Chloe').join(',') === 'b');
+check('a job that never recorded a name falls back to the page selection',
+  folders.get('Grace').includes('d') && !folders.has('Photo Match'));
+check('the folder was ensured once per NAME, not once per picture', ensureCalls === 2);
+
+// --- smart selecting ---------------------------------------------------------------------------------------
+check('any count can be typed', pm.includes('const [pickCount, setPickCount] = useState(30);'));
+check('newest first', pm.includes('(b2.doneAt || 0) - (a2.doneAt || 0)'));
+check('there is a select-newest', pm.includes('const selectNewest = useCallback((n)'));
+check('and an age filter', pm.includes('const selectSince = useCallback((ms)'));
+check('with Last hour and Last 24h, counted', pm.includes('Last hour ({countSince(60 * 60 * 1000)})') && pm.includes('Last 24h ({countSince(24 * 60 * 60 * 1000)})'));
+check('an empty window says so rather than silently clearing', pm.includes("notify('Nothing in that window', 'info')"));
+check('selection only ever covers SENDABLE tiles', pm.includes('const newestFirst = useMemo(') && pm.includes('[...filedJobs]'));
+check('a job records WHEN it finished, or the age filters mean nothing', pm.includes('doneAt: Date.now(),'));
+check('and a library row takes its time from the row itself', pm.includes('doneAt: r.createdAt || 0,'));
+
+// --- replay the two selectors -------------------------------------------------------------------------------
+const now = Date.now();
+const jobs = [
+  { id: 'j1', doneAt: now - 5 * 60_000 },
+  { id: 'j2', doneAt: now - 30 * 60_000 },
+  { id: 'j3', doneAt: now - 3 * 60 * 60_000 },
+  { id: 'j4', doneAt: 0 },
+];
+const sorted = [...jobs].sort((x, y) => (y.doneAt || 0) - (x.doneAt || 0));
+check('newest 2 are the two most recent', sorted.slice(0, 2).map((j) => j.id).join(',') === 'j1,j2');
+const inHour = sorted.filter((j) => (j.doneAt || 0) >= now - 3600_000).map((j) => j.id);
+check('last hour catches both inside it', inHour.join(',') === 'j1,j2');
+check('and excludes the three-hour-old one', !inHour.includes('j3'));
+check('a row with no timestamp is never swept in by an age filter', !inHour.includes('j4'));
+
+// --- before / after is a choice --------------------------------------------------------------------------------
+check('the slider is a toggle', pm.includes('const [showCompare, setShowCompare] = useState('));
+check('off by default', pm.includes("localStorage.getItem('kyros.photoMatch.compare') === '1'"));
+check('remembered', pm.includes("localStorage.setItem('kyros.photoMatch.compare'"));
+check('the tile only compares when asked', pm.includes('showCompare && (job.result ? job.thumb : job.thumbSmall) ? ('));
+check('otherwise it shows the RESULT, not the source', pm.includes('job.result ? `data:${job.result.mimeType};base64,${job.result.base64Data}` : urlOfJob(job)'));
+check('and the tile says what made it', pm.includes("job.engine && ` · ${job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}`"));
+
+// --- two gestures: tick the tile, click the picture (owner, 2026-08-13) ------------------------------
+// "I can click on the side and it selects, but clicking the image opens it — same as the code we
+// already have on Kyros." The Library has had that lightbox for months.
+check('the tile body selects', pm.includes("onClick={() => { if (job.status === 'done' && urlOfJob(job)) toggleJob(job.id); }}"));
+check('the picture opens the large view instead', pm.includes('onClick={(e) => { e.stopPropagation(); setLightboxId(job.id); }}'));
+check('and says so on hover', pm.includes('title="Click to see it full size"'));
+check('the checkbox does not toggle twice', pm.includes('onClick={(e) => e.stopPropagation()}'));
+check('nor do Remove and Delete select the tile they sit on',
+  pm.includes('onClick={(e) => { e.stopPropagation(); deleteJobRow(job); }}'));
+
+check('the overlay is portalled to body, like the Library one', pm.includes('document.body,') && pm.includes('createPortal('));
+check('and the reason is recorded — fixed anchors to a transformed ancestor',
+  pm.includes('nearest ancestor with a transform'));
+check('Esc closes it', pm.includes("if (e.key === 'Escape') setLightboxId('');"));
+check('arrows step through', pm.includes("else if (e.key === 'ArrowLeft') stepLightbox(-1);"));
+check('only the backdrop closes on click, not a drifting pointer',
+  pm.includes("onClick={(e) => { if (e.target === e.currentTarget) setLightboxId(''); }}"));
+check('a tile that leaves the panel closes the overlay rather than showing nothing',
+  pm.includes('if (lightboxId && !lightboxList.some((j) => j.id === lightboxId)) setLightboxId('));
+check('the large view says whose it is and what made it', pm.includes("{job.charName || 'Photo Match'}"));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
