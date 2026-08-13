@@ -22,9 +22,15 @@ const nudeLine = /const NUDE_LINE = (`[\s\S]*?`|'[^']*');/.exec(src);
 const fnStart = src.indexOf('export function buildMatchInstruction');
 const fnEnd = src.indexOf('\n}\n', fnStart) + 3;
 const body = src.slice(fnStart, fnEnd).replace('export function', 'function');
+// The builder reads two module constants. Both are lifted with it, so this runs the REAL text —
+// injecting a stand-in for LIGHTING_LINE would let the file pass while the app shipped something
+// else entirely.
+const lightingLine = /const LIGHTING_LINE = ('[^']*');/.exec(src);
 // eslint-disable-next-line no-new-func
 const buildMatchInstruction = new Function(
-  `const NUDE_LINE = ${nudeLine ? nudeLine[1] : "''"}; ${body}; return buildMatchInstruction;`,
+  `const NUDE_LINE = ${nudeLine ? nudeLine[1] : "''"};
+   const LIGHTING_LINE = ${lightingLine ? lightingLine[1] : "''"};
+   ${body}; return buildMatchInstruction;`,
 )();
 
 const BASE = {
@@ -40,15 +46,15 @@ check('the model is told not to BLEND the two faces — an averaged face IS "it 
 check('the output face is claimed as 100% hers, not a midpoint', /100% image 1, not a midpoint/.test(p));
 check('the source face is forbidden part by part, not just described as "scene only"',
   /FORBIDDEN from image 2:/.test(p) && /facial structure, eyes, nose, mouth, jaw/.test(p));
-check('her likeness wins any conflict outright', /Sacrifice image 2's likeness entirely to keep hers/.test(p));
+check('her likeness wins any conflict outright', /discard her entirely, face and figure alike, and when in doubt copy image 1/.test(p));
 
 // --- the makeup line that CAUSED the second half of the complaint ------------------------------------
 check('the unconditional "keep bold/dark lips" order is gone', !/makeup \(keep bold\/dark lips\)/.test(p));
-check('makeup now comes from HER references', /MAKEUP: exactly as Chloe wears it in image 1/.test(p));
-check('bold shades are protected only IF she wears them', /If image 1 show a bold or dark lip, keep it/.test(p));
+check('makeup now comes from HER references', /MAKEUP: exactly as in image 1 — lips, eyes, lashes, brows/.test(p));
+check('bold shades are protected only IF she wears them', /Keep a bold or dark lip if she wears one/.test(p));
 check('and adding makeup she does not wear is refused outright',
-  /Do NOT add makeup she is not wearing/.test(p));
-check('makeup may never be taken from the source photo', /never take her makeup from image 2/.test(p));
+  /do not ADD makeup she is not wearing/.test(p));
+check('makeup may never be taken from the source photo', /never take it from image 2/.test(p));
 
 // --- tattoos, which the Gemini route has always blocked ---------------------------------------------
 check('the stand-in\'s ink does not travel', /any tattoo, ink or skin marking/.test(p));
@@ -72,14 +78,14 @@ check('and there is headroom left for the appended chips', BUDGET - worst.length
 // "It's like a faceswap but we want to recreate the same image with our model." It was: the prompt
 // said FACE five times and gave the body one clause at the end, so the model swapped a face onto
 // the stand-in's body. It was doing what it was asked.
-check('the wrong answer is named outright', /A result where the body is hers from image 2 and only the face changed is WRONG/.test(p));
+check('the wrong answer is named outright', /A body from image 2 with only the face changed is WRONG/.test(p));
 check('it is told not to edit the source at all', /REBUILD, DO NOT EDIT/.test(p));
-check('and that the stand-in is not in the output', /She does not appear in the output at all/.test(p));
+check('and that the stand-in is not in the output', /she is not in the output/.test(p));
 check('the body is named part by part, not as one word',
   /neck, shoulders, arms, hands, torso, waist, hips, legs, height and build/.test(p));
 check('NO BLENDING covers the body too, not just the face', /not her face and not her body/.test(p));
-check('the final lock leads with the PERSON', /the PERSON in the output is Chloe/.test(p));
-check('and discards the stand-in face AND figure', /discard her completely, face and figure alike/.test(p));
+check('the final lock leads with rendering her from scratch', /render the person from scratch as Chloe/.test(p));
+check('and discards the stand-in face AND figure', /discard her entirely, face and figure alike/.test(p));
 // The balance is the actual bug. Counted, not eyeballed.
 const faceWords = (p.match(/face/gi) || []).length;
 const bodyWords = (p.match(/body|figure|torso|hips|legs|shoulders|build/gi) || []).length;
@@ -132,6 +138,97 @@ check('the storage-full message names where it failed to file', src.includes('bu
 check('and the handler still recognises that message',
   src.includes("includes('is in the gallery but not in ')"));
 check('the page says where the next run will land', src.includes('Files into'));
+
+// --- whose outfit (owner, 2026-08-13) ----------------------------------------------------------------
+// "I need the option to choose between keeping the outfit from the model in the base image, or the
+// outfit from the source photo." The default is the scene's, which is what Photo Match has always
+// done; the other half of the job is keeping the scene and the pose while she wears her own.
+const hers = buildMatchInstruction({ ...BASE, outfitFromChar: true });
+check('by default the outfit still comes from the scene', /From image 2: background, pose, hands\/props, outfit/.test(p));
+check('and is NOT claimed as part of her identity', !/the exact clothing she is wearing/.test(p));
+
+check('with the option on, the outfit leaves the scene list',
+  /From image 2: background, pose, hands\/props, expression/.test(hers) && !/hands\/props, outfit/.test(hers));
+check('and joins what must be matched from her references', /the exact clothing she is wearing/.test(hers));
+check('it is said outright as well, since it reverses the page default', /OUTFIT: she wears HER OWN clothing/.test(hers));
+check('the scene photo is told its outfit does not appear', /that outfit is not in the output/.test(hers));
+check('and everything else still comes from the scene', /Everything else still comes from image 2/.test(hers));
+check('the source garment is added to the FORBIDDEN list', /skin tone, body shape, its clothing/.test(hers));
+
+// The tail lock explains a tight garment as correct — which is nonsense when the garment is hers.
+check('the bust lock stops blaming the scene outfit', /her own outfit sits on her exactly as it does there/.test(hers));
+// One reference reads "image 1", several read "images 1-5" — accept either.
+check('and still keeps her true proportions', /come from images? 1(-\d)? at their true size/.test(hers));
+
+// Exact recreate promises the source outfit; it must not promise it when she brings her own.
+const exactHers = buildMatchInstruction({ ...BASE, exactRecreate: true, outfitFromChar: true });
+check('exact recreate drops "outfit" from what it reproduces', !/same background, pose, props, framing, lighting, outfit/.test(exactHers));
+check('and says which outfit she wears instead', /wearing HER outfit from image 1 rather than the one in image 2/.test(exactHers));
+
+// Nude wins over both — there is no garment either way.
+const nude = buildMatchInstruction({ ...BASE, outfitFromChar: true, wantsNude: true });
+check('nude ignores the outfit choice entirely', !/OUTFIT: she wears HER OWN clothing/.test(nude));
+check('and the control is hidden rather than left doing nothing', src.includes('{!nsfw && ('));
+check('the reason that guard uses nsfw and not wantsNude is recorded',
+  /does not exist at render time/.test(src));
+
+check(`both variants fit the budget (scene ${p.length}, hers ${hers.length})`,
+  p.length <= BUDGET && hers.length <= BUDGET && exactHers.length <= BUDGET);
+check('the page says which one is in force', src.includes('she wears HER outfit from her reference photos'));
+
+// --- the house lighting line, on every prompt (owner, 2026-08-13) ------------------------------------
+const LIGHT = 'Lighting: Lighting is soft and diffused lighting, glowing naturally on her skin';
+check('it is there, verbatim', p.includes(LIGHT));
+for (const [name, opts] of [['faceless', { faceless: true }], ['nude', { wantsNude: true }],
+  ['exact recreate', { exactRecreate: true }], ['her outfit', { outfitFromChar: true }],
+  ['eyes to camera', { lookAtCamera: true }]]) {
+  check(`and on the ${name} variant too`, buildMatchInstruction({ ...BASE, ...opts }).includes(LIGHT));
+}
+check('it sits BEFORE the chips, so a Lighting chip still wins by position',
+  /Deliberately placed BEFORE the chips/.test(src));
+check('the wording is a constant, not retyped per branch', src.includes('const LIGHTING_LINE ='));
+
+// --- eyes to camera ------------------------------------------------------------------------------------
+const eyes = buildMatchInstruction({ ...BASE, lookAtCamera: true });
+check('off by default', !/EYES TO CAMERA/.test(p));
+check('on, it says where she looks', /EYES TO CAMERA: she looks straight into the lens/.test(eyes));
+check('the pose is explicitly kept — only the head turns', /Keep the pose and body angle from image 2/.test(eyes));
+check('and the scene stops supplying the expression, or the two cancel',
+  !/hands\/props, outfit, expression/.test(eyes) && /hands\/props, outfit, lighting/.test(eyes));
+check('never on a faceless result', !/EYES TO CAMERA/.test(buildMatchInstruction({ ...BASE, faceless: true, lookAtCamera: true })));
+check('and the toggle is hidden there too', src.includes('{!faceless && <Toggle checked={lookAtCamera}'));
+
+// --- still fighting the face swap ------------------------------------------------------------------------
+check('the instruction names the MECHANISM, not just the outcome',
+  /Do NOT reuse the pixels of the woman in image 2 or repaint a face onto her/.test(p));
+check('and the final lock says render from scratch', /render the person from scratch as Chloe/.test(p));
+
+// --- the prompt fits by DROPPING, never by slicing the tail -------------------------------------------------
+// The tail is the identity lock. Measured 2026-08-13: the longest prompt was 3,094 against a 3,000
+// cap, so a plain slice would have cut that lock in half.
+const worstOpts = { ...BASE, refCount: 5, exactRecreate: true, varyBackground: true, outfitFromChar: true,
+  lookAtCamera: true, masterPrompt: 'x'.repeat(200) };
+const unbounded = buildMatchInstruction(worstOpts);
+const fitted = buildMatchInstruction({ ...worstOpts, budget: 3000 });
+check(`the worst case really does exceed the cap unbounded (${unbounded.length})`, unbounded.length > 3000);
+check(`and fits once a budget is given (${fitted.length})`, fitted.length <= 3000);
+check('the identity lock SURVIVES the fit', /FINAL — HIGHEST PRIORITY/.test(fitted));
+check('so does the lighting line', fitted.includes(LIGHT));
+check('so does eyes to camera', /EYES TO CAMERA/.test(fitted));
+check('what came out is the boilerplate, whole', !/Photorealistic —/.test(fitted));
+// A budget below what the load-bearing paragraphs alone cost cannot be met by dropping — there is
+// nothing left that is safe to drop. It sheds everything optional, keeps the lock, and leaves the
+// remainder to the caller's slice. Asserting `<= 2400` here would be asserting the impossible.
+check('a tight budget sheds everything optional and still keeps the lock', (() => {
+  const tiny = buildMatchInstruction({ ...worstOpts, budget: 2200 });
+  return /FINAL — HIGHEST PRIORITY/.test(tiny)
+    && !/Photorealistic —/.test(tiny)
+    && !tiny.includes('CAMERA: reproduce')   // NOT /CAMERA:/ — that also matches EYES TO CAMERA:
+    && !/^Chloe: x/m.test(tiny)
+    && tiny.length < unbounded.length;
+})());
+check('the caller passes its real budget, minus the chips it appends after',
+  src.includes('budget: Math.max(600, (engine === ') && src.includes('- extra.trim().length - 8)'));
 
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

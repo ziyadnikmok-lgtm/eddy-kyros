@@ -1808,14 +1808,35 @@ export default function EddyCollection({
      * Falls back to the raw bytes if stripping fails or is switched off: an unstripped file is
      * better than no file, and stripEnabled() is a deliberate user setting.
      */
+    let cleaned = 0;
+    let unstripped = 0;
+    let whyDirty = '';
     const cleanBytes = async (f) => {
-      if (!stripEnabled()) return bytesOf(f.b64);
+      if (!stripEnabled()) { unstripped += 1; whyDirty = 'stripping is switched off'; return bytesOf(f.b64); }
       try {
         const res = await stripMetadata(new Blob([bytesOf(f.b64)], { type: f.mime || 'image/png' }));
+        /**
+         * stripMetadata NEVER throws — an unparseable format comes back untouched with
+         * `cleaned: false` and a reason. Reading only res.blob treated that as success, so a file
+         * that kept its metadata was written and reported as saved (owner, 2026-08-13: "it does not
+         * do the metadata clean, only on my laptop"). A machine-specific miss is exactly the shape
+         * this hid: nothing on screen says which of the two happened.
+         */
+        if (res.cleaned) cleaned += 1;
+        else { unstripped += 1; whyDirty = res.reason || `nothing to strip in ${f.mime || 'that format'}`; }
         return new Uint8Array(await res.blob.arrayBuffer());
-      } catch {
+      } catch (err) {
+        unstripped += 1;
+        whyDirty = err?.message || 'strip failed';
         return bytesOf(f.b64);
       }
+    };
+    /** What the toast should say about metadata, in one place — both Electron branches use it. */
+    const cleanNote = () => {
+      if (!cleaned && !unstripped) return '';
+      if (!unstripped) return ' — metadata cleaned';
+      if (!cleaned) return ` — ⚠ NOT cleaned (${whyDirty})`;
+      return ` — ${cleaned} cleaned, ⚠ ${unstripped} not (${whyDirty})`;
     };
 
     const folderName = `${String(title || 'eddy').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-images`;
@@ -1840,7 +1861,7 @@ export default function EddyCollection({
        */
       if (!n) notify(`Nothing could be saved${lastErr ? ` — ${lastErr}` : ''}`, 'error');
       else if (n < files.length) notify(`Saved ${n} of ${files.length} to Downloads/${folderName} — ${files.length - n} failed${lastErr ? `: ${lastErr}` : ''}`, 'info');
-      else notify(`Saved ${n} image${n === 1 ? '' : 's'} to Downloads/${folderName} ✨`, 'success');
+      else notify(`Saved ${n} image${n === 1 ? '' : 's'} to Downloads/${folderName}${cleanNote()}`, unstripped ? 'info' : 'success');
     } else if (isElectron && window.electronAPI?.chooseDownloadFolder && window.electronAPI?.saveFileToFolder) {
       const directory = await window.electronAPI.chooseDownloadFolder({
         title: `Choose where to save the ${(title || 'these').toLowerCase()} images`,
@@ -1857,7 +1878,7 @@ export default function EddyCollection({
       // Same as above: zero saved is a failure, not a quiet success.
       if (!n) notify(`Nothing could be saved${lastErr ? ` — ${lastErr}` : ''}`, 'error');
       else if (n < files.length) notify(`Saved ${n} of ${files.length} — ${files.length - n} failed${lastErr ? `: ${lastErr}` : ''}`, 'info');
-      else notify(`Saved ${n} image${n === 1 ? '' : 's'} to the folder ✨`, 'success');
+      else notify(`Saved ${n} image${n === 1 ? '' : 's'} to the folder${cleanNote()}`, unstripped ? 'info' : 'success');
     } else {
       let n = 0;
       for (const f of files) {

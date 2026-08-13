@@ -89,6 +89,12 @@ const SEEDREAM_PROMPT_BUDGET = 3000;
 const NANO2_PROMPT_BUDGET = 8000;
 
 /**
+ * The house lighting, on every Photo Match prompt (owner, 2026-08-13). Verbatim, because it was
+ * given verbatim — the wording is the request, not a paraphrase of one.
+ */
+const LIGHTING_LINE = 'Lighting: Lighting is soft and diffused lighting, glowing naturally on her skin';
+
+/**
  * THE RESULTS PANEL IS A PERSISTENT WORKING QUEUE, not run state.
  *
  * Eddy's has been one for months: a picture stays on screen through reloads and navigation until it
@@ -161,7 +167,7 @@ function shrinkForStorage(dataUrl, max = 360) {
   });
 }
 
-export function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRecreate, varyBackground, allowExpressionChange, allowHairChange, allowBodyChange, allowLightingChange, faceless, wantsNude, addGenericNudeLine, sourceFaceBlurred }) {
+export function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRecreate, varyBackground, allowExpressionChange, allowHairChange, allowBodyChange, allowLightingChange, faceless, wantsNude, addGenericNudeLine, sourceFaceBlurred, outfitFromChar = false, lookAtCamera = false, budget = 0 }) {
   const who = characterName || 'the character';
   const n = Math.max(1, refCount);
   const refs = n > 1 ? `images 1-${n}` : 'image 1';
@@ -179,10 +185,18 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
    * stand-in's body (owner, 2026-08-13: "it's like a faceswap but we want to recreate the same
    * image with our model"). A body is not one word at the end of a list about a face.
    */
+  /**
+   * WHOSE CLOTHES. Default: the source photo's, because Photo Match exists to put her into a scene
+   * that already has an outfit in it. But a base photo of her in her own outfit is the other half
+   * of the job — keeping the scene and the pose while she wears what SHE is wearing (owner,
+   * 2026-08-13). Nude overrides both: there is no garment either way.
+   */
+  const outfitFromRefs = outfitFromChar && !wantsNude;
   const identity = [
     faceless ? 'skin tone' : 'face, head shape, jaw, skin tone, her makeup',
     allowHairChange ? null : 'hair',
     allowBodyChange ? null : 'neck, shoulders, arms, hands, torso, waist, hips, legs, height and build',
+    outfitFromRefs ? 'the exact clothing she is wearing — every garment, its colour, cut, fabric and length' : null,
   ].filter(Boolean).join(', ');
 
   // Scene comes from the source. Outfit only when dressed; expression only when no Mood preset
@@ -191,8 +205,8 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
   // was one word among eight and the model re-framed to a stock portrait anyway.
   const scene = [
     'background', 'pose', 'hands/props',
-    wantsNude ? null : 'outfit',
-    allowExpressionChange ? null : 'expression',
+    (wantsNude || outfitFromRefs) ? null : 'outfit',
+    (allowExpressionChange || lookAtCamera) ? null : 'expression',
     allowLightingChange ? null : 'lighting',
   ].filter(Boolean).join(', ');
 
@@ -206,16 +220,23 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
      * face. Naming the wrong answer works better on these models than adding another word about
      * the right one, so the wrong answer is named.
      */
-    `REBUILD, DO NOT EDIT: do not modify ${src} and do not paste a face onto the woman in it. She does not appear in the output at all. Produce a NEW photograph of ${who} that reproduces ${src}'s scene. A result where the body is hers from ${src} and only the face changed is WRONG.`,
+    /**
+     * Still the failure being fought, and it survived the first rewrite: the owner reports it
+     * "sometimes just faceswaps in place" (2026-08-13). So the instruction now names the MECHANISM
+     * rather than only the outcome — an edit model's default move is to keep the pixels it was
+     * given and repaint a region, and "do not reuse the pixels" is the one phrasing that speaks to
+     * that directly.
+     */
+    `REBUILD, DO NOT EDIT: produce a NEW photograph of ${who} in ${src}'s scene. Do NOT reuse the pixels of the woman in ${src} or repaint a face onto her — she is not in the output. A body from ${src} with only the face changed is WRONG.`,
     exactRecreate
-      ? `Reproduce ${src} exactly — same background, pose, props, framing, lighting${wantsNude ? '' : ', outfit'} — but the person in it is rebuilt entirely as ${who}${wantsNude ? ', and remove her clothing as instructed below' : ''}.`
+      ? `Reproduce ${src} exactly — same background, pose, props, framing, lighting${(wantsNude || outfitFromRefs) ? '' : ', outfit'} — but the person in it is rebuilt entirely as ${who}${wantsNude ? ', and remove her clothing as instructed below' : ''}${outfitFromRefs ? `, wearing HER outfit from ${refs} rather than the one in ${src}` : ''}.`
       : `A new photo of ${who} in ${src}'s scene, not a retouch of ${src}.`,
     `From ${refs}, match exactly: ${identity}. Where ${src} disagrees, ${refs} win.`,
     `From ${src}: ${scene}.`,
     // #4 — camera as its own instruction. Seedream copies the pose but defaults to a flattering
     // eye-level portrait crop unless the SHOT itself is pinned; this is what "same camera angle"
     // in Eddy needed spelled out separately from framing.
-    `CAMERA: reproduce ${src}'s exact shot — the same camera angle, the same lens height, the same distance and the same crop/framing. A low-angle, high-angle, over-the-shoulder, close-up or wide shot in ${src} stays that shot; do NOT re-frame to a standard eye-level portrait.`,
+    `CAMERA: reproduce ${src}'s exact shot — same angle, lens height, distance and crop. Whatever shot it is (low, high, over-the-shoulder, close-up, wide) it stays that shot; do NOT re-frame to a standard eye-level portrait.`,
   ];
 
   if (sourceFaceBlurred && !faceless) parts.push(`${src}'s face is deliberately blurred — do not reproduce the blur or invent a face from it; render ${who}'s face sharply from ${refs}.`);
@@ -242,10 +263,32 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
    *    months.
    */
   if (!faceless) {
-    parts.push(`MAKEUP: exactly as ${who} wears it in ${refs} — same lips, eyes, lashes, brows. If ${refs} show a bold or dark lip, keep it; do NOT soften or naturalise it. Do NOT add makeup she is not wearing, and never take her makeup from ${src}.`);
+    parts.push(`MAKEUP: exactly as in ${refs} — lips, eyes, lashes, brows. Keep a bold or dark lip if she wears one; do not soften it, do not ADD makeup she is not wearing, and never take it from ${src}.`);
   }
-  parts.push(`FORBIDDEN from ${src}: its face, facial structure, eyes, nose, mouth, jaw, hair colour, skin tone${allowBodyChange ? '' : ', body shape'}, and any tattoo, ink or skin marking. ${who} has only the tattoos visible in ${refs}.`);
+  if (outfitFromRefs) {
+    parts.push(`OUTFIT: she wears HER OWN clothing from ${refs} — same garments, colours, cut, fabric, length. Do NOT dress her in what the woman in ${src} wears; that outfit is not in the output. Everything else still comes from ${src}.`);
+  }
+  parts.push(`FORBIDDEN from ${src}: its face, facial structure, eyes, nose, mouth, jaw, hair colour, skin tone${allowBodyChange ? '' : ', body shape'}${outfitFromRefs ? ', its clothing' : ''}, and any tattoo, ink or skin marking. ${who} has only the tattoos visible in ${refs}.`);
   parts.push(`NO BLENDING: do not mix, merge or average ${who} with the person in ${src} — not her face and not her body. Every part of the person in the output is 100% ${refs}, not a midpoint between the two women.`);
+
+  /**
+   * EYES TO CAMERA. Off by default — the source's gaze is part of the shot being reproduced, and
+   * overriding it every time would quietly change every candid into a portrait. On, it replaces the
+   * gaze rather than fighting it: 'expression' leaves the from-the-scene list above, or the two
+   * instructions cancel and the model does neither (owner, 2026-08-13).
+   */
+  if (lookAtCamera && !faceless) {
+    parts.push(`EYES TO CAMERA: she looks straight into the lens, both eyes visible and meeting the viewer. Keep the pose and body angle from ${src} — only the head and gaze turn to the camera.`);
+  }
+
+  /**
+   * THE LIGHTING LINE, on every prompt (owner, 2026-08-13).
+   *
+   * Deliberately placed BEFORE the chips, which are appended after this whole instruction. Seedream
+   * weights the tail most heavily, so a Lighting chip — "Moody low-key", "Red neon" — still wins by
+   * position. That is the intended relationship: this is the house default, not a lock.
+   */
+  parts.push(LIGHTING_LINE);
 
   parts.push(`Photorealistic — real pores, hair strands, fabric, slight asymmetry; no plastic or CGI look.`);
 
@@ -258,19 +301,46 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
     parts.push(`FINAL — HIGHEST PRIORITY, overrides everything above: her face is intentionally OUT of the shot — cropped above the shoulders, turned away, or hidden by hair/hand/angle so no recognisable face is visible. Do NOT invent or show a face. Her body, hair, skin and proportions still come from ${refs}${allowBodyChange ? '' : ' at their true size — never averaged or shrunk toward ' + src}.`);
   } else {
     const finalLock = [
-      `FINAL — HIGHEST PRIORITY, overrides everything above: the PERSON in the output is ${who} from ${refs} — her face, her hair, her skin and her whole body. The woman in ${src} is an anonymous stand-in: discard her completely, face and figure alike, and if in any doubt copy ${refs}. Sacrifice ${src}'s likeness entirely to keep hers.`,
+      `FINAL — HIGHEST PRIORITY, overrides everything above: render the person from scratch as ${who} from ${refs} — face, hair, skin and whole body. The woman in ${src} is an anonymous stand-in: discard her entirely, face and figure alike, and when in doubt copy ${refs}.`,
       // Body/chest: pinned to the refs UNLESS a size chip is driving it (then the chip, appended
       // after this whole prompt, wins and re-pinning here would fight it).
       allowBodyChange
         ? null
         : (wantsNude
           ? `Her body, figure and chest come from ${refs} at their true size — never averaged or shrunk toward ${src}.`
-          : `Her body, figure and chest come from ${refs} at their true size; the ${src} outfit stretches to fit HER — a tighter pull from a larger chest is correct, not an error.`),
+          : (outfitFromRefs
+            ? `Her body, figure and chest come from ${refs} at their true size, and her own outfit sits on her exactly as it does there.`
+            : `Her body, figure and chest come from ${refs} at their true size; the ${src} outfit stretches to fit HER — a tighter pull from a larger chest is correct, not an error.`)),
     ].filter(Boolean);
     parts.push(finalLock.join(' '));
   }
 
-  return parts.join('\n\n');
+  /**
+   * FIT BY DROPPING, NEVER BY SLICING.
+   *
+   * The caller cut the finished string at the cap. That takes it off the TAIL — which is where the
+   * identity lock lives, and where Seedream weights most heavily. The longest possible prompt
+   * (exact recreate + her outfit + eyes to camera + a 200-character master prompt) measured 3,094
+   * against a 3,000 cap, so its most important paragraph would have been cut in half (2026-08-13).
+   *
+   * Optional paragraphs come out WHOLE instead, cheapest first, until it fits. The caller's slice
+   * stays as a backstop, but everything load-bearing has already been protected.
+   *
+   * Droppable, in order: photoreal boilerplate, the blur note, the master prompt, the camera
+   * paragraph. Never droppable: who is who, REBUILD, the two lists, MAKEUP, OUTFIT, FORBIDDEN,
+   * NO BLENDING, EYES TO CAMERA, the lighting line, and the FINAL lock.
+   */
+  const SEP = '\n\n';
+  const joined = () => parts.join(SEP);
+  if (budget > 0) {
+    const droppable = ['Photorealistic —', `${src}'s face is deliberately blurred`, `${who}: `, 'CAMERA:'];
+    for (const marker of droppable) {
+      if (joined().length <= budget) break;
+      const i = parts.findIndex((t) => typeof t === 'string' && t.startsWith(marker));
+      if (i > -1) parts.splice(i, 1);
+    }
+  }
+  return joined();
 }
 
 // Grouped so the row stays scannable. Each states what to change AND what stays put —
@@ -469,6 +539,18 @@ export default function PhotoMatchSeedreamPage() {
   const blurSourceRef = useRef(blurSource);
   useEffect(() => { blurSourceRef.current = blurSource; }, [blurSource]);
   const [faceless, setFaceless] = useState(_cache.faceless ?? false);
+  /**
+   * WHOSE OUTFIT. false = the scene's (the default, and what Photo Match has always done);
+   * true = hers, from her reference photos. Cached with the rest of Match Mode so it survives a
+   * reload like every other switch on this card.
+   */
+  const [outfitFromChar, setOutfitFromChar] = useState(_cache.outfitFromChar ?? false);
+  /**
+   * EYES TO CAMERA. Off by default: the source's gaze is part of the shot being reproduced, and
+   * forcing it every time turns every candid into a portrait. A toggle, because it is a switch that
+   * adds an instruction — unlike the outfit choice, which picks between two sources.
+   */
+  const [lookAtCamera, setLookAtCamera] = useState(_cache.lookAtCamera ?? false);
   const [blurringAll, setBlurringAll] = useState(false);
   const [manualBlurId, setManualBlurId] = useState(null);  // source id being hand-blurred, or null
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
@@ -523,6 +605,8 @@ export default function PhotoMatchSeedreamPage() {
   useEffect(() => { _cache.nsfw = nsfw; }, [nsfw]);
   useEffect(() => { _cache.blurSource = blurSource; }, [blurSource]);
   useEffect(() => { _cache.faceless = faceless; }, [faceless]);
+  useEffect(() => { _cache.outfitFromChar = outfitFromChar; }, [outfitFromChar]);
+  useEffect(() => { _cache.lookAtCamera = lookAtCamera; }, [lookAtCamera]);
   // Turning NSFW on removes any already-typed outfit-keeping chip. Left in, it would contradict
   // the removal line and the model would do neither — the exact failure this toggle had before.
   useEffect(() => {
@@ -875,6 +959,14 @@ export default function PhotoMatchSeedreamPage() {
         addGenericNudeLine,
         sourceFaceBlurred: blurSource,
         faceless,
+        outfitFromChar,
+        lookAtCamera,
+        /**
+         * The room the base instruction may take, so it can drop a paragraph whole rather than
+         * having its tail sliced off. The chips are appended AFTER it and are what the remaining
+         * space is for — `extra` is measured here rather than guessed.
+         */
+        budget: Math.max(600, (engine === 'nano2' ? NANO2_PROMPT_BUDGET : SEEDREAM_PROMPT_BUDGET) - extra.trim().length - 8),
         refCount,
         masterPrompt: who.id === characterId ? charDetail?.masterPrompt : undefined,
         exactRecreate,
@@ -1465,6 +1557,31 @@ export default function PhotoMatchSeedreamPage() {
             <Toggle checked={varyBackground && !exactRecreate} onChange={setVaryBackground} label="Vary background" />
             <Toggle checked={blurSource} onChange={setBlurSource} label="Blur source face" />
             <Toggle checked={faceless} onChange={setFaceless} label="Faceless result" />
+            {/* No point offering it on a faceless result — there is no face to point at the lens. */}
+            {!faceless && <Toggle checked={lookAtCamera} onChange={setLookAtCamera} label="Look at camera" />}
+            {/* WHOSE OUTFIT. Not a Toggle like its neighbours: this is a choice between two things
+                rather than a switch that turns one off, and a toggle labelled "her outfit" leaves
+                you guessing what OFF means. Hidden while NSFW is on — there is no garment either
+                way, and offering the choice there would be a control that does nothing.
+
+                `nsfw`, not `wantsNude`: the latter is derived inside handleMatch (it also reads the
+                instruction box for an undress request) and does not exist at render time. The
+                builder still guards on wantsNude, so an undress typed into the box wins there. */}
+            {!nsfw && (
+              <span className="flex items-center gap-2">
+                <span className="text-[0.6875rem] uppercase tracking-wider text-zinc-500">Outfit from</span>
+                <span className="flex rounded-lg border border-white/[0.07] bg-white/[0.02] p-0.5">
+                  {[[false, 'Scene photo'], [true, 'Her photos']].map(([val, label]) => (
+                    <button key={label} type="button" onClick={() => setOutfitFromChar(val)}
+                      aria-pressed={outfitFromChar === val}
+                      className={cn('rounded-md px-2.5 py-1 text-xs font-semibold transition cursor-pointer',
+                        outfitFromChar === val ? 'bg-rose-500/20 text-rose-300' : 'text-zinc-500 hover:text-zinc-300')}>
+                      {label}
+                    </button>
+                  ))}
+                </span>
+              </span>
+            )}
           </div>
           {faceless && (
             <p className="text-[0.625rem] leading-relaxed text-fuchsia-400/80">
@@ -1489,7 +1606,9 @@ export default function PhotoMatchSeedreamPage() {
                   : 'Same location, but the lighting mood and minor background details shift — a different moment in the same place.')
                 : (nsfw
                   ? 'Scene, pose and framing are preserved from each source photo. The identity is replaced and the outfit is REMOVED — she is nude.'
-                  : 'Scene, pose, outfit and framing are preserved from each source photo; only the identity is replaced.')}
+                  : (outfitFromChar
+                    ? 'Scene, pose and framing come from each source photo — but she wears HER outfit from her reference photos, not the one in the scene.'
+                    : 'Scene, pose, outfit and framing are preserved from each source photo; only the identity is replaced.'))}
           </p>
         </Card>
 
