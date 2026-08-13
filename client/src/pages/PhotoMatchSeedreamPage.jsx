@@ -87,6 +87,59 @@ const SEEDREAM_PROMPT_BUDGET = 3000;
  */
 const NANO2_PROMPT_BUDGET = 8000;
 
+/**
+ * THE RESULTS PANEL IS A PERSISTENT WORKING QUEUE, not run state.
+ *
+ * Eddy's has been one for months: a picture stays on screen through reloads and navigation until it
+ * is removed. Photo Match's lived in React state alone, so leaving the tab threw the whole run away
+ * and the column was empty again on return (owner, 2026-08-13: "make it save the images there
+ * unless I delete").
+ *
+ * WHAT IS PERSISTED, and nothing else: the light fields needed to redraw a tile. The picture is
+ * read back from the SAVED server copy via galleryId — never the base64, which would blow
+ * IndexedDB the way it once blew localStorage. The source photo is kept only as a small JPEG for
+ * the before/after slider, because the full-size source is the biggest thing on the page.
+ */
+const resultsStore = createPageStore('photomatch-results-v1');
+
+/** The persisted shape of one finished match. Anything not named here is deliberately dropped. */
+function liteJob(j) {
+  return {
+    id: j.id,
+    status: j.status === 'done' ? 'done' : j.status,
+    galleryId: j.galleryId || null,
+    mimeType: j.result?.mimeType || j.mimeType || 'image/png',
+    charName: j.charName || '',
+    filedDb: j.filedDb || 'eddy-library',
+    thumbSmall: j.thumbSmall || null,
+    error: j.error || '',
+  };
+}
+
+/**
+ * A small JPEG of the source, for the slider after a reload.
+ *
+ * ~40KB instead of the several megabytes a phone photo runs to. Failure is non-fatal: without it
+ * the tile still shows the RESULT, which is the half that matters.
+ */
+function shrinkForStorage(dataUrl, max = 360) {
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL('image/jpeg', 0.7));
+      };
+      img.onerror = () => resolve(null);
+      img.src = dataUrl;
+    } catch { resolve(null); }
+  });
+}
+
 export function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRecreate, varyBackground, allowExpressionChange, allowHairChange, allowBodyChange, allowLightingChange, faceless, wantsNude, addGenericNudeLine, sourceFaceBlurred }) {
   const who = characterName || 'the character';
   const n = Math.max(1, refCount);
@@ -670,8 +723,11 @@ export default function PhotoMatchSeedreamPage() {
       });
       // galleryId and the collection it was filed into travel with the job: the results panel below
       // moves pictures between Library and Base Library, and it cannot find a row without them.
+      // A small JPEG of the source, so the before/after slider still works after a reload. Awaited
+      // before the tile flips to done so the persisted row is complete the first time it is written.
+      const thumbSmall = await shrinkForStorage(source.dataUrl);
       setJobs((prev) => prev.map((j) => (j.id === jobId
-        ? { ...j, status: 'done', result: first, galleryId: first.galleryId || null, filedDb: destDb }
+        ? { ...j, status: 'done', result: first, galleryId: first.galleryId || null, filedDb: destDb, thumbSmall }
         : j)));
       setSessionSpend((s) => s + costPerJob);
 
@@ -857,6 +913,34 @@ export default function PhotoMatchSeedreamPage() {
    * the Library tab and find it there. Eddy's results panel has had tick-and-send for months, and
    * this is the same idea with the same words (owner, 2026-08-13).
    */
+  /**
+   * REHYDRATE the panel, once, on open — and only then start persisting.
+   *
+   * The write must not run before the read comes back or the first empty render would erase the
+   * saved queue. Same order Eddy's failedCombos restore uses, and for the same reason.
+   */
+  const [jobsRestored, setJobsRestored] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const saved = await resultsStore.get('queue', []);
+      if (!alive) { return; }
+      if (Array.isArray(saved) && saved.length) {
+        // A row with no galleryId cannot be redrawn or sent anywhere, so it is dropped rather than
+        // restored as a tile with nothing behind it.
+        setJobs((prev) => (prev.length ? prev : saved.filter((j) => j.galleryId)));
+      }
+      setJobsRestored(true);
+    })();
+    return () => { alive = false; };
+  }, []);
+  useEffect(() => {
+    if (!jobsRestored) return;
+    // Only finished, filed pictures are worth keeping: a queued or running job belongs to a run
+    // that no longer exists once the page is closed.
+    resultsStore.set('queue', jobs.filter((j) => j.status === 'done' && j.galleryId).map(liteJob));
+  }, [jobs, jobsRestored]);
+
   const [pickedJobs, setPickedJobs] = useState(() => new Set());
   const toggleJob = useCallback((id) => {
     setPickedJobs((cur) => {
@@ -1325,14 +1409,27 @@ export default function PhotoMatchSeedreamPage() {
                     {job.status === 'done' && <span className="text-[0.625rem] text-zinc-600 font-mono">${costPerJob.toFixed(3)}</span>}
                   </div>
 
-                  {job.status === 'done' && job.result ? (
-                    <CompareSlider
-                      originalSrc={job.thumb}
-                      processedSrc={`data:${job.result.mimeType};base64,${job.result.base64Data}`}
-                      originalLabel="SOURCE"
-                      processedLabel="MATCHED"
-                      className="rounded-lg overflow-hidden border border-zinc-800/60"
-                    />
+                  {job.status === 'done' && (job.result || job.galleryId) ? (
+                    /**
+                     * After a reload there is no base64 — the bytes were never persisted. The
+                     * picture comes back from the server copy via galleryId, and the slider's
+                     * SOURCE side from the small JPEG kept beside it. A restored tile with no
+                     * source thumb shows the result alone rather than a broken slider.
+                     */
+                    (job.result ? job.thumb : job.thumbSmall) ? (
+                      <CompareSlider
+                        originalSrc={job.result ? job.thumb : job.thumbSmall}
+                        processedSrc={job.result
+                          ? `data:${job.result.mimeType};base64,${job.result.base64Data}`
+                          : galleryApi.imageUrl(job.galleryId)}
+                        originalLabel="SOURCE"
+                        processedLabel="MATCHED"
+                        className="rounded-lg overflow-hidden border border-zinc-800/60"
+                      />
+                    ) : (
+                      <img src={galleryApi.imageUrl(job.galleryId)} alt="" loading="lazy"
+                        className="w-full rounded-lg border border-zinc-800/60 bg-zinc-950 object-contain" />
+                    )
                   ) : (
                     <div className="relative">
                       <img src={job.thumb} alt="" className={cn('w-full aspect-[3/4] object-cover rounded-lg border border-zinc-800/60 bg-zinc-950', job.status !== 'done' && 'opacity-50')} />
@@ -1344,9 +1441,20 @@ export default function PhotoMatchSeedreamPage() {
                   {/* Where this one currently lives, so "send to Base" has a visible before and
                       after rather than being an action with no feedback. */}
                   {job.status === 'done' && job.galleryId && (
-                    <p className="text-[0.5625rem] uppercase tracking-wider text-zinc-600">
-                      in {job.filedDb === 'eddy-base' ? 'Base Library' : 'Library'}
-                    </p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[0.5625rem] uppercase tracking-wider text-zinc-600">
+                        in {job.filedDb === 'eddy-base' ? 'Base Library' : 'Library'}
+                      </p>
+                      {/* REMOVE takes it off this panel only. The picture stays in the gallery and
+                          in whichever library it was filed into — this is the queue's exit, not a
+                          delete. Same meaning as Eddy's Remove. */}
+                      <button type="button"
+                        onClick={() => { setJobs((prev) => prev.filter((x) => x.id !== job.id)); setPickedJobs((cur) => { const n = new Set(cur); n.delete(job.id); return n; }); }}
+                        title="Take this off the panel — the picture stays in the gallery and the library"
+                        className="text-[0.625rem] text-zinc-500 underline hover:text-red-300 cursor-pointer">
+                        Remove
+                      </button>
+                    </div>
                   )}
                 </div>
               ))}

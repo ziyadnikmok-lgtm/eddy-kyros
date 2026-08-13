@@ -198,5 +198,44 @@ check('so does the results column', pm.includes('min-w-0 flex-1 space-y-3 lg:min
 check('the results column exists BEFORE the first run, with an empty state',
   pm.includes('No matches yet') && pm.includes('tick any of them to send to Library or Base Library'));
 
+// --- the panel keeps its pictures (owner, 2026-08-13) ---------------------------------------------
+// "Make it save the images there unless I delete — same stuff we built in Eddy." Eddy's results are
+// a persistent working queue; Photo Match's lived in React state and were gone the moment you left
+// the tab.
+check('Photo Match has its own results store, like Eddy', pm.includes("createPageStore('photomatch-results-v1')"));
+check('separate from the form store, so clearing one cannot clear the other',
+  pm.includes("createPageStore('kyros-photo-match-seedream-state')"));
+check('only light fields are persisted — never the base64', pm.includes('function liteJob(j)') && !pm.includes('base64Data: j'));
+check('the picture is redrawn from the saved server copy', pm.includes('galleryApi.imageUrl(job.galleryId)'));
+check('the source side of the slider is kept as a SMALL jpeg', pm.includes("c.toDataURL('image/jpeg', 0.7)"));
+check('and that shrink cannot break a run if it fails', pm.includes('img.onerror = () => resolve(null);'));
+check('the queue is restored on open', pm.includes("await resultsStore.get('queue', [])"));
+check('and never written before the read comes back — the classic order bug',
+  pm.includes('if (!jobsRestored) return;'));
+check('a restored row with no galleryId is dropped, not shown as an empty tile',
+  pm.includes('saved.filter((j) => j.galleryId)'));
+check('a run in progress is not persisted — it belongs to a session that is over',
+  pm.includes("jobs.filter((j) => j.status === 'done' && j.galleryId).map(liteJob)"));
+check('a restored tile with no source thumb shows the result alone, not a broken slider',
+  pm.includes('(job.result ? job.thumb : job.thumbSmall) ? ('));
+check('each tile can be removed — which is what "until I delete" means', pm.includes('Take this off the panel'));
+check('and Remove is the panel exit, not a delete',
+  pm.includes('the picture stays in the gallery and the library')
+  && pm.includes("this is the queue's exit, not a"));
+
+// --- replay: what survives a reload -------------------------------------------------------------------
+const lite = (j) => ({ id: j.id, status: j.status, galleryId: j.galleryId || null, charName: j.charName || '', filedDb: j.filedDb || 'eddy-library', thumbSmall: j.thumbSmall || null });
+const live = [
+  { id: 'a', status: 'done', galleryId: 'g1', result: { base64Data: 'x'.repeat(5000) }, thumb: 'y'.repeat(9000), thumbSmall: 'small' },
+  { id: 'b', status: 'running' },
+  { id: 'c', status: 'done', galleryId: null, result: { base64Data: 'z' } },
+];
+const saved = live.filter((j) => j.status === 'done' && j.galleryId).map(lite);
+check('only the finished, filed one is saved', saved.length === 1 && saved[0].id === 'a');
+check('the heavy fields are gone', !('result' in saved[0]) && !('thumb' in saved[0]));
+check('what is kept is tiny', JSON.stringify(saved[0]).length < 200);
+check('and it still knows where it was filed', saved[0].filedDb === 'eddy-library');
+check('a restored row can still be redrawn', !!saved[0].galleryId);
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
