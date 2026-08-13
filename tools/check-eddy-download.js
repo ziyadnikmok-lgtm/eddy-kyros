@@ -82,8 +82,12 @@ check('the tile path hands its blob to downloadBlob, which strips first',
 check('downloadBlob strips before writing, not after', /if \(stripEnabled\(\)\) \{[\s\S]{0,120}await stripMetadata\(blob\)/.test(strip));
 check('the bulk path strips for itself rather than inheriting it',
   col.includes('const res = await stripMetadata(new Blob([bytesOf(f.b64)]'));
+// The catch now COUNTS the miss as well (2026-08-13). An unstripped file is still better than no
+// file — it just must not be reported as a clean one.
 check('a strip failure still saves the file rather than losing it',
-  new RegExp(String.raw`\} catch \{\s*\n\s*return bytesOf\(f\.b64\);`).test(col));
+  col.includes('return bytesOf(f.b64);'));
+check('and the failure is counted rather than swallowed',
+  col.includes("whyDirty = err?.message || 'strip failed';"));
 check('stripping is ON unless explicitly turned off', /getItem\('kyros\.stripMetadata'\) !== 'off'/.test(strip));
 check('a cleaned file says so in its name', /_metadatacleaned/.test(strip));
 
