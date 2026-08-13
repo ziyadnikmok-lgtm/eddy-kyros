@@ -394,5 +394,41 @@ check('a tile that leaves the panel closes the overlay rather than showing nothi
   pm.includes('if (lightboxId && !lightboxList.some((j) => j.id === lightboxId)) setLightboxId('));
 check('the large view says whose it is and what made it', pm.includes("{job.charName || 'Photo Match'}"));
 
+// --- pressing Generate must not wipe the panel (owner, 2026-08-13) ----------------------------------
+// "I clicked generate and it showed now only this." setJobs(work.map(...)) REPLACED the array, so a
+// new run erased every result already on screen — including the ones just restored from disk and
+// read back out of the libraries. The panel is a persistent queue; a run appends to it.
+check('a run is added to the panel, not swapped in', pm.includes('setJobs((prev) => [...fresh, ...prev]);'));
+// The old form appears once more, in the comment explaining why it went — so this looks for the
+// CALL, not the words.
+check('and the old replace is gone', !pm.includes('    setJobs(work.map('));
+check('a tile read back from a library is selectable too — it has a url, not a galleryId',
+  pm.includes("{job.status === 'done' && urlOfJob(job) && ("));
+check('and the reason is recorded, because it is the same mistake twice',
+  pm.includes('older picture looked unselectable'));
+check('the reason is recorded', /Eleven finished pictures vanished the moment a twelfth was asked for/.test(pm));
+check('a run stamp keeps ids unique across runs', pm.includes('const runStamp = Date.now().toString(36);'));
+check('the tile id carries it', pm.includes('`${src.id}::${who.id}::${runStamp}`'));
+check('and so does the job handed to runOne', pm.includes('id: `${item.src.id}::${item.who.id}::${runStamp}`'));
+check('every job records whose it is, not just a multi-character run',
+  pm.includes("charName: who.name || '',"));
+
+check('progress counts THIS run, not the whole panel', pm.includes('`Matching… (${runProgress.done}/${runProgress.total})`'));
+check('and the finish report does too', pm.includes('const mine = prev.filter((j) => runIds.has(j.id));'));
+check('the run ids live in a ref declared above their first use',
+  pm.indexOf('const runIdsRef = useRef(new Set());') < pm.indexOf('runIdsRef.current = runIds;'));
+
+// --- replay: a second run must not eat the first --------------------------------------------------------
+let panel = [{ id: 'a::g::r1', status: 'done' }, { id: 'b::g::r1', status: 'done' }];
+const startRun = (ids) => { panel = [...ids.map((id) => ({ id, status: 'queued' })), ...panel]; };
+startRun(['a::g::r2']);
+check('the earlier results are still there', panel.filter((j) => j.status === 'done').length === 2);
+check('the new tile is on top', panel[0].id === 'a::g::r2');
+check('re-running the same photo does NOT collide with its first tile',
+  panel.filter((j) => j.id.startsWith('a::g')).length === 2);
+const runIds = new Set(['a::g::r2']);
+const mine = panel.filter((j) => runIds.has(j.id));
+check('progress counts one, not three', mine.length === 1);
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

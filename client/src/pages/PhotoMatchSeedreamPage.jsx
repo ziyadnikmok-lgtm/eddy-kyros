@@ -804,6 +804,13 @@ export default function PhotoMatchSeedreamPage() {
     }
   };
 
+  /**
+   * The ids of the run in progress. A ref because writing it must not re-render, and it is only
+   * ever read to count. Declared here, above the run that fills it and the memo that reads it —
+   * naming it further down is the use-before-define this file has been bitten by.
+   */
+  const runIdsRef = useRef(new Set());
+
   const handleMatch = async () => {
     if (!sources.length) { notify('Add at least one source photo', 'error'); return; }
     if (!characterIds.length) { notify('Pick the character whose identity to use', 'error'); return; }
@@ -908,11 +915,33 @@ export default function PhotoMatchSeedreamPage() {
     if (trimmed) notify(`Instructions trimmed to ${engine === 'nano2' ? NANO2_PROMPT_BUDGET : SEEDREAM_PROMPT_BUDGET} characters — the model rejects longer prompts`, 'error');
 
     setRunning(true);
-    setJobs(work.map(({ src, who }) => ({
-      id: `${src.id}::${who.id}`, thumb: src.dataUrl, status: 'queued', result: null, error: null,
-      // Shown on the tile so a mixed batch says WHOSE result each one is.
-      charName: perChar.length > 1 ? who.name : '',
-    })));
+    /**
+     * A NEW RUN IS ADDED TO THE PANEL, NOT SWAPPED IN.
+     *
+     * This called setJobs(work.map(...)), which REPLACED the array — so pressing Generate wiped
+     * every result already on screen, including the ones just restored from disk and read back out
+     * of the libraries. Eleven finished pictures vanished the moment a twelfth was asked for
+     * (owner, 2026-08-13). The panel is a persistent queue; a run appends to it.
+     *
+     * The run stamp is what makes that safe. The id was `${src.id}::${who.id}`, which is stable
+     * across runs — so re-running the same photo for the same character produced a second tile with
+     * the FIRST tile's id, and the update would land on whichever React found first.
+     */
+    const runStamp = Date.now().toString(36);
+    // Which tiles belong to THIS run. The panel now holds finished work from before it, so
+    // "Matching… (3/12)" and "Batch finished — 12 images" would both be counting other people's
+    // pictures without this.
+    const runIds = new Set();
+    const fresh = work.map(({ src, who }) => ({
+      id: (() => { const id = `${src.id}::${who.id}::${runStamp}`; runIds.add(id); return id; })(),
+      thumb: src.dataUrl, status: 'queued', result: null, error: null,
+      // Shown on the tile so a mixed batch says WHOSE result each one is. Recorded for EVERY run,
+      // not just a multi-character one: it decides which folder the picture is filed under later,
+      // and a blank name there is how a batch ends up in the wrong woman's folder.
+      charName: who.name || '',
+    }));
+    setJobs((prev) => [...fresh, ...prev]);
+    runIdsRef.current = runIds;
 
     // Simple concurrency pool — each job holds an HTTP request while Muapi renders.
     const queue = [...work];
@@ -921,7 +950,7 @@ export default function PhotoMatchSeedreamPage() {
       while (queue.length) {
         const item = queue.shift();
         if (!item) return;
-        await runOne({ ...item.src, id: `${item.src.id}::${item.who.id}` },
+        await runOne({ ...item.src, id: `${item.src.id}::${item.who.id}::${runStamp}` },
           item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length));
       }
     });
@@ -930,8 +959,10 @@ export default function PhotoMatchSeedreamPage() {
     // Report what actually happened. This said "Batch finished" unconditionally, so a run where
     // every job 422'd still looked like a success and the failures were invisible.
     setJobs((prev) => {
-      const failed = prev.filter((j) => j.status === 'failed');
-      const done = prev.filter((j) => j.status === 'done').length;
+      // THIS run only — the panel is full of earlier work now.
+      const mine = prev.filter((j) => runIds.has(j.id));
+      const failed = mine.filter((j) => j.status === 'failed');
+      const done = mine.filter((j) => j.status === 'done').length;
       if (!failed.length) notify(`Batch finished — ${done} image${done === 1 ? '' : 's'} ✨`, 'success');
       else if (!done) notify(`All ${failed.length} failed: ${failed[0].error || 'unknown error'}`, 'error');
       else notify(`${done} done, ${failed.length} failed: ${failed[0].error || 'unknown error'}`, 'error');
@@ -940,6 +971,17 @@ export default function PhotoMatchSeedreamPage() {
   };
 
   const doneJobs = jobs.filter((j) => j.status === 'done');
+  /**
+   * Progress for the RUN, not for the panel.
+   *
+   * The button read doneJobs.length / jobs.length, which was the whole panel — so with eleven
+   * finished pictures already on screen a one-image run opened at "Matching… (11/12)".
+   */
+  const runProgress = useMemo(() => {
+    const ids = runIdsRef.current;
+    const mine = jobs.filter((j) => ids.has(j.id));
+    return { done: mine.filter((j) => j.status === 'done').length, total: mine.length };
+  }, [jobs, running]);
 
   /**
    * THE RESULTS PANEL'S OWN SELECTION.
@@ -1529,7 +1571,7 @@ export default function PhotoMatchSeedreamPage() {
         <Btn onClick={handleMatch} disabled={running} className="w-full">
           {running ? <Spinner size={16} /> : null}
           {running
-            ? `Matching… (${doneJobs.length}/${jobs.length})`
+            ? `Matching… (${runProgress.done}/${runProgress.total})`
             : `Photo Match${runCount > 1 ? ` · ${runCount} images` : ''} · $${totalCost.toFixed(3)}`}
         </Btn>
 
@@ -1630,7 +1672,11 @@ export default function PhotoMatchSeedreamPage() {
                     pickedJobs.has(job.id) ? 'border-rose-500' : 'border-zinc-800/60')}>
                   <div className="flex items-center justify-between gap-2">
                     {/* Only a FILED picture can be sent anywhere, so only those get a tick. */}
-                    {job.status === 'done' && job.galleryId && (
+                    {/* urlOfJob, NOT galleryId: a tile read back out of a library has a url and no
+                        galleryId, so this rendered a checkbox on THIS run's tiles only — every
+                        older picture looked unselectable (owner, 2026-08-13: "I can select only
+                        one"). Same mistake as the filter above, which was already fixed. */}
+                    {job.status === 'done' && urlOfJob(job) && (
                       <input type="checkbox" checked={pickedJobs.has(job.id)} onChange={() => toggleJob(job.id)}
                         onClick={(e) => e.stopPropagation()}
                         title="Tick to send just these"
