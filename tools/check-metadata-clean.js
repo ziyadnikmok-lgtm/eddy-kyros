@@ -97,6 +97,37 @@ const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } el
   // Removed LAST: the clean-mode check above reads the same source file.
   fs.rmSync(dir, { recursive: true, force: true });
 
-  console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
+  // --- a save must SAY whether it cleaned (owner, 2026-08-13) -----------------------------------------
+// "Downloading from a folder does not do the metadata clean — only on my laptop." The code strips on
+// every path, so a machine-specific miss can only be stripping switched off or stripMetadata
+// declining the format — and BOTH were invisible: stripMetadata never throws, it returns
+// { cleaned: false, reason }, and saveToFolder read only res.blob.
+const col = fs.readFileSync(path.join(ROOT, 'client/src/components/EddyCollection.jsx'), 'utf8');
+check('the folder save reads the cleaned flag, not just the bytes', col.includes('if (res.cleaned) cleaned += 1;'));
+check('and keeps the reason it gives', col.includes('whyDirty = res.reason ||'));
+check('stripping switched off is counted as not cleaned, not as success',
+  col.includes("if (!stripEnabled()) { unstripped += 1; whyDirty = 'stripping is switched off';"));
+check('a throw is counted too', col.includes("whyDirty = err?.message || 'strip failed';"));
+check('one note, used by both Electron branches', col.includes('const cleanNote = () =>'));
+check('a fully clean save says so', col.includes("return ' — metadata cleaned';"));
+check('a save that cleaned NOTHING warns', col.includes('⚠ NOT cleaned'));
+check('a partial one says how many', col.includes('${cleaned} cleaned, ⚠ ${unstripped} not'));
+check('and the toast stops being a green tick when anything went out dirty',
+  col.includes("unstripped ? 'info' : 'success'"));
+check('the reason is recorded where it happened', /A machine-specific miss is exactly the shape/.test(col));
+
+// --- replay the note --------------------------------------------------------------------------------
+const note = (cleanedN, dirtyN, why) => {
+  if (!cleanedN && !dirtyN) return '';
+  if (!dirtyN) return ' — metadata cleaned';
+  if (!cleanedN) return ` — ⚠ NOT cleaned (${why})`;
+  return ` — ${cleanedN} cleaned, ⚠ ${dirtyN} not (${why})`;
+};
+check('all clean reads clean', note(5, 0, '') === ' — metadata cleaned');
+check('none clean warns and names the reason', note(0, 5, 'stripping is switched off').includes('NOT cleaned (stripping is switched off)'));
+check('a mix reports both counts', note(3, 2, 'webp').includes('3 cleaned, ⚠ 2 not'));
+check('an empty save says nothing rather than claiming anything', note(0, 0, '') === '');
+
+console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error('  ERROR', e.message); process.exit(1); });
