@@ -133,5 +133,42 @@ check('and the handler still recognises that message',
   src.includes("includes('is in the gallery but not in ')"));
 check('the page says where the next run will land', src.includes('Files into'));
 
+// --- whose outfit (owner, 2026-08-13) ----------------------------------------------------------------
+// "I need the option to choose between keeping the outfit from the model in the base image, or the
+// outfit from the source photo." The default is the scene's, which is what Photo Match has always
+// done; the other half of the job is keeping the scene and the pose while she wears her own.
+const hers = buildMatchInstruction({ ...BASE, outfitFromChar: true });
+check('by default the outfit still comes from the scene', /From image 2: background, pose, hands\/props, outfit/.test(p));
+check('and is NOT claimed as part of her identity', !/the exact clothing she is wearing/.test(p));
+
+check('with the option on, the outfit leaves the scene list',
+  /From image 2: background, pose, hands\/props, expression/.test(hers) && !/hands\/props, outfit/.test(hers));
+check('and joins what must be matched from her references', /the exact clothing she is wearing/.test(hers));
+check('it is said outright as well, since it reverses the page default', /OUTFIT: she wears HER OWN clothing/.test(hers));
+check('the scene photo is told its outfit does not appear', /that outfit does not appear in the output/.test(hers));
+check('and everything else still comes from the scene', /Everything else about the scene still comes from image 2/.test(hers));
+check('the source garment is added to the FORBIDDEN list', /skin tone, body shape, its clothing/.test(hers));
+
+// The tail lock explains a tight garment as correct — which is nonsense when the garment is hers.
+check('the bust lock stops blaming the scene outfit', /her own outfit sits on her exactly as it does there/.test(hers));
+// One reference reads "image 1", several read "images 1-5" — accept either.
+check('and still keeps her true proportions', /come from images? 1(-\d)? at their true size/.test(hers));
+
+// Exact recreate promises the source outfit; it must not promise it when she brings her own.
+const exactHers = buildMatchInstruction({ ...BASE, exactRecreate: true, outfitFromChar: true });
+check('exact recreate drops "outfit" from what it reproduces', !/same background, pose, props, framing, lighting, outfit/.test(exactHers));
+check('and says which outfit she wears instead', /wearing HER outfit from image 1 rather than the one in image 2/.test(exactHers));
+
+// Nude wins over both — there is no garment either way.
+const nude = buildMatchInstruction({ ...BASE, outfitFromChar: true, wantsNude: true });
+check('nude ignores the outfit choice entirely', !/OUTFIT: she wears HER OWN clothing/.test(nude));
+check('and the control is hidden rather than left doing nothing', src.includes('{!nsfw && ('));
+check('the reason that guard uses nsfw and not wantsNude is recorded',
+  /does not exist at render time/.test(src));
+
+check(`both variants fit the budget (scene ${p.length}, hers ${hers.length})`,
+  p.length <= BUDGET && hers.length <= BUDGET && exactHers.length <= BUDGET);
+check('the page says which one is in force', src.includes('she wears HER outfit from her reference photos'));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
