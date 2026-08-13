@@ -668,7 +668,11 @@ export default function PhotoMatchSeedreamPage() {
         mimeType: first.mimeType,
         generatedAt: Date.now(),
       });
-      setJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, status: 'done', result: first } : j)));
+      // galleryId and the collection it was filed into travel with the job: the results panel below
+      // moves pictures between Library and Base Library, and it cannot find a row without them.
+      setJobs((prev) => prev.map((j) => (j.id === jobId
+        ? { ...j, status: 'done', result: first, galleryId: first.galleryId || null, filedDb: destDb }
+        : j)));
       setSessionSpend((s) => s + costPerJob);
 
       /**
@@ -845,6 +849,85 @@ export default function PhotoMatchSeedreamPage() {
   };
 
   const doneJobs = jobs.filter((j) => j.status === 'done');
+
+  /**
+   * THE RESULTS PANEL'S OWN SELECTION.
+   *
+   * Photo Match had no selection at all: the only way to act on a finished picture was to leave for
+   * the Library tab and find it there. Eddy's results panel has had tick-and-send for months, and
+   * this is the same idea with the same words (owner, 2026-08-13).
+   */
+  const [pickedJobs, setPickedJobs] = useState(() => new Set());
+  const toggleJob = useCallback((id) => {
+    setPickedJobs((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+  const filedJobs = useMemo(() => doneJobs.filter((j) => j.galleryId), [doneJobs]);
+  const actionable = useMemo(
+    () => (pickedJobs.size ? filedJobs.filter((j) => pickedJobs.has(j.id)) : filedJobs),
+    [filedJobs, pickedJobs],
+  );
+  const [movingTo, setMovingTo] = useState('');
+
+  /**
+   * Move finished pictures between the two libraries, after the fact.
+   *
+   * They are already filed — the run put them in whichever collection the dropdown named — so this
+   * is a MOVE, and the same careful order the Library's own button uses: write the destination row
+   * first, drop the source row only once that succeeded. A picture is never in neither place.
+   *
+   * A picture already in the target is left alone rather than duplicated.
+   */
+  const moveResultsTo = useCallback(async (targetDb) => {
+    const list = actionable;
+    if (!list.length) { notify('Nothing to send yet', 'error'); return; }
+    const target = targetDb === 'eddy-base' ? baseStore : libraryStore;
+    const targetLabel = targetDb === 'eddy-base' ? 'Base Library' : 'Library';
+    setMovingTo(targetDb);
+    let moved = 0, already = 0;
+    let failure = '';
+    try {
+      const who = charName.trim();
+      const destFolder = (await target.ensureFolder(who || 'Photo Match'))?.id || null;
+      const targetRows = new Map((await target.listItems()).filter((i) => i.url).map((i) => [i.url, i]));
+      for (const job of list) {
+        const url = galleryApi.imageUrl(job.galleryId);
+        if (targetRows.has(url)) { already += 1; continue; }
+        const sourceStore = job.filedDb === 'eddy-base' ? baseStore : libraryStore;
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const landed = await target.addItems([{
+            url,
+            prompt: `Photo Match - ${who || 'no character'}`,
+            name: `photomatch-${job.id}`,
+            ...(who ? { charName: who } : {}),
+          }], destFolder);
+          if (!Array.isArray(landed) || !landed.length) { failure = 'storage is full'; continue; }
+          if (job.filedDb !== targetDb) {
+            // eslint-disable-next-line no-await-in-loop
+            const stale = (await sourceStore.listItems()).find((i) => i.url === url);
+            // eslint-disable-next-line no-await-in-loop
+            if (stale) await sourceStore.removeItem(stale.id);
+          }
+          moved += 1;
+        } catch (err) { failure = err.message; }
+      }
+    } finally {
+      setMovingTo('');
+    }
+    // The jobs stay on screen — they are this run's record. Their filedDb is updated so pressing
+    // the other button afterwards moves them back rather than duplicating.
+    const ids = new Set(list.map((j) => j.id));
+    setJobs((prev) => prev.map((j) => (ids.has(j.id) ? { ...j, filedDb: targetDb } : j)));
+    setPickedJobs(new Set());
+    if (moved && !failure) notify(`${moved} sent to ${targetLabel}${already ? ` (${already} already there)` : ''}`, 'success');
+    else if (moved) notify(`${moved} of ${list.length} sent to ${targetLabel} — ${failure}`, 'error');
+    else if (already) notify(`Already in ${targetLabel}`, 'info');
+    else notify(`Could not send those — ${failure || 'nothing was filed'}`, 'error');
+  }, [actionable, baseStore, libraryStore, charName, notify]);
 
   return (
     <div className="space-y-6 animate-in">
@@ -1167,10 +1250,47 @@ export default function PhotoMatchSeedreamPage() {
               {!running && <button onClick={() => setJobs([])} className="text-[0.6875rem] text-zinc-500 hover:text-zinc-300 transition cursor-pointer underline">Clear</button>}
             </div>
 
+            {/* TICK AND SEND, the same idea Eddy's results panel has had for months.
+                Without it the only way to act on a finished picture was to leave for the Library
+                tab and find it again (owner, 2026-08-13). With nothing ticked the buttons act on
+                everything filed, because "send them all" is the common case and making you tick
+                twenty tiles to say it is not an improvement. */}
+            {filedJobs.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2">
+                <span className="text-xs text-zinc-300">
+                  {pickedJobs.size ? `${pickedJobs.size} selected` : `${filedJobs.length} finished`}
+                </span>
+                <button type="button"
+                  onClick={() => setPickedJobs(pickedJobs.size === filedJobs.length ? new Set() : new Set(filedJobs.map((j) => j.id)))}
+                  className="text-[0.6875rem] text-zinc-400 underline hover:text-zinc-200 cursor-pointer">
+                  {pickedJobs.size === filedJobs.length ? 'Clear selection' : `Select all ${filedJobs.length}`}
+                </button>
+                <span className="ml-auto flex flex-wrap gap-2">
+                  <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs"
+                    disabled={!!movingTo}
+                    onClick={() => moveResultsTo('eddy-library')}>
+                    {movingTo === 'eddy-library' ? 'Sending…' : `Send ${actionable.length} to Library`}
+                  </Btn>
+                  <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs !border-emerald-500/40 !text-emerald-200"
+                    disabled={!!movingTo}
+                    onClick={() => moveResultsTo('eddy-base')}>
+                    {movingTo === 'eddy-base' ? 'Sending…' : `Send ${actionable.length} to Base Library`}
+                  </Btn>
+                </span>
+              </div>
+            )}
+
             <div className="grid [grid-template-columns:repeat(auto-fill,minmax(240px,1fr))] gap-3">
               {jobs.map((job) => (
-                <div key={job.id} className="rounded-xl border border-zinc-800/60 bg-white/[0.02] p-2.5 space-y-2">
+                <div key={job.id} className={cn('rounded-xl border bg-white/[0.02] p-2.5 space-y-2',
+                  pickedJobs.has(job.id) ? 'border-rose-500' : 'border-zinc-800/60')}>
                   <div className="flex items-center justify-between gap-2">
+                    {/* Only a FILED picture can be sent anywhere, so only those get a tick. */}
+                    {job.status === 'done' && job.galleryId && (
+                      <input type="checkbox" checked={pickedJobs.has(job.id)} onChange={() => toggleJob(job.id)}
+                        title="Tick to send just these"
+                        className="cursor-pointer accent-rose-500" />
+                    )}
                     {job.status === 'done' ? <Badge color="green">Done</Badge>
                       : job.status === 'failed' ? <Badge color="red">Failed</Badge>
                       : job.status === 'running' ? <Badge color="yellow">Matching…</Badge>
@@ -1202,6 +1322,13 @@ export default function PhotoMatchSeedreamPage() {
                   )}
 
                   {job.status === 'failed' && <p className="text-[0.625rem] text-red-400 leading-snug">{job.error}</p>}
+                  {/* Where this one currently lives, so "send to Base" has a visible before and
+                      after rather than being an action with no feedback. */}
+                  {job.status === 'done' && job.galleryId && (
+                    <p className="text-[0.5625rem] uppercase tracking-wider text-zinc-600">
+                      in {job.filedDb === 'eddy-base' ? 'Base Library' : 'Library'}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>

@@ -127,5 +127,50 @@ check('the one that failed is STILL in the source', src.has('b'));
 check('and is not in the destination either — no half-move', !dst.has('b'));
 check('the reported count is 2, not 3', done === 2);
 
+// --- Photo Match got its own results panel (owner, 2026-08-13) ----------------------------------------
+// "There is nothing on the side — it shows only the Generation Feed." Right: Photo Match's results
+// had no selection and no actions, so a finished picture could only be acted on by leaving for the
+// Library tab. Eddy's panel has had tick-and-send for months; this is the same idea, same words.
+check('a finished job remembers its gallery id', pm.includes('galleryId: first.galleryId || null'));
+check('and which collection it was filed into', pm.includes('filedDb: destDb'));
+check('there is a selection', pm.includes('const [pickedJobs, setPickedJobs] = useState(() => new Set());'));
+check('with a select-all that flips to clear', pm.includes("pickedJobs.size === filedJobs.length ? 'Clear selection'"));
+check('both destinations are one click', pm.includes("moveResultsTo('eddy-library')") && pm.includes("moveResultsTo('eddy-base')"));
+check('with nothing ticked it acts on everything filed',
+  pm.includes('(pickedJobs.size ? filedJobs.filter((j) => pickedJobs.has(j.id)) : filedJobs)'));
+check('only a FILED picture is offered — an unsaved one cannot be moved',
+  pm.includes('doneJobs.filter((j) => j.galleryId)'));
+check('each tile says which library it is in right now', pm.includes("in {job.filedDb === 'eddy-base' ? 'Base Library' : 'Library'}"));
+
+check('the move writes the destination BEFORE dropping the source', (() => {
+  const add = pm.indexOf('const landed = await target.addItems([{');
+  const rm = pm.indexOf('await sourceStore.removeItem(stale.id)', add);
+  return add > -1 && rm > add;
+})());
+check('a picture already in the target is left alone, not duplicated',
+  pm.includes('if (targetRows.has(url)) { already += 1; continue; }'));
+check('nothing is removed when the source and target are the same collection',
+  pm.includes('if (job.filedDb !== targetDb) {'));
+check('the job record follows the move, so pressing the other button moves it back',
+  pm.includes('ids.has(j.id) ? { ...j, filedDb: targetDb } : j'));
+check('the count reported is what actually moved', pm.includes('if (moved && !failure) notify(`${moved} sent to ${targetLabel}'));
+
+// --- replay: pressing Base twice must not duplicate --------------------------------------------------
+const libRows = new Map([['g1', true]]);
+const baseRows = new Map();
+let job = { url: 'g1', filedDb: 'eddy-library' };
+const sendTo = (target) => {
+  const rows = target === 'eddy-base' ? baseRows : libRows;
+  const from = job.filedDb === 'eddy-base' ? baseRows : libRows;
+  if (rows.has(job.url)) return 'already';
+  rows.set(job.url, true);
+  if (job.filedDb !== target) from.delete(job.url);
+  job = { ...job, filedDb: target };
+  return 'moved';
+};
+check('first press moves it to Base', sendTo('eddy-base') === 'moved' && baseRows.has('g1') && !libRows.has('g1'));
+check('second press is a no-op, not a duplicate', sendTo('eddy-base') === 'already' && baseRows.size === 1);
+check('and it can be sent back', sendTo('eddy-library') === 'moved' && libRows.has('g1') && !baseRows.has('g1'));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
