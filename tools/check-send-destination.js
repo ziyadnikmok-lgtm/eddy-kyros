@@ -74,5 +74,58 @@ sendToBase('u3');
 check('a picture with no Library row still files into Base', base.has('u3'));
 check('and that case removes nothing', library.size === 1);
 
+// --- moving a batch that already exists (owner, 2026-08-13) -------------------------------------------
+// "In photo match there is no select so I can grab the last 30, or the last hour, and send to base."
+// Photo Match's results panel has no selection at all, and its dropdown only decides where the NEXT
+// run goes. The place that already has "Select all", "Last hour" and "Last 24h" is the Library
+// itself — it just had nowhere to send to.
+const col = fs.readFileSync(path.join(ROOT, 'client/src/components/EddyCollection.jsx'), 'utf8');
+check('the selectors this needs already exist', col.includes('Last hour (') && col.includes('Last 24h ('));
+check('Library and Base Library know about each other',
+  col.includes("const COUNTERPART = { 'eddy-library': { db: 'eddy-base'") && col.includes("'eddy-base': { db: 'eddy-library'"));
+check('and nothing else does — outfit, pose and character have nowhere to send',
+  col.includes('const counterpart = COUNTERPART[dbName] || null;'));
+check('the button only renders where there is a counterpart', col.includes('{counterpart && ('));
+check('it names the destination and the count', col.includes('`Send ${selected.length} to ${counterpart.label}`'));
+// The BUTTON, not the function that declares it — the definition sits far above the bulk bar.
+check('it sits with the selection it acts on', (() => {
+  const bar = col.indexOf('<span className="text-xs text-zinc-300">{selected.length} selected</span>');
+  const btn = col.indexOf('onClick={sendSelectedToCounterpart}');
+  return bar > -1 && btn > bar;
+})());
+
+check('the destination row is written BEFORE the source row is dropped', (() => {
+  const add = col.indexOf('await otherStore.addItems([payload]');
+  const rm = col.indexOf('await store.removeItem(id);', add);
+  return add > -1 && rm > add;
+})());
+check('a full quota leaves the picture where it was rather than nowhere',
+  col.includes("if (!Array.isArray(landed) || !landed.length) { failure = 'storage is full'; continue; }"));
+check('a row with no server url carries its BYTES across',
+  col.includes('payload.dataUrl = thumbsRef.current[id] || await store.getImage(id);'));
+check('and a row whose image cannot be read is skipped, not indexed empty',
+  col.includes("failure = 'a picture had no image behind it'; continue;"));
+check('provenance travels with it', col.includes('...(it.comboKey ? { comboKey: it.comboKey } : {}),'));
+check('the folder name is recreated in the destination', col.includes('await otherStore.ensureFolder(name)'));
+check('one ensureFolder per name, not per picture', col.includes('!destFolders.has(name)'));
+check('the count reported is what actually landed', col.includes('if (done === total) notify(`Sent ${done} to'));
+
+// --- replay: a partial failure must not lose a picture --------------------------------------------------
+const src = new Map([['a', { url: 'ua' }], ['b', { url: 'ub' }], ['c', { url: 'uc' }]]);
+const dst = new Map();
+const quotaFullFor = new Set(['b']);
+let done = 0;
+for (const id of ['a', 'b', 'c']) {
+  const landed = !quotaFullFor.has(id);
+  if (!landed) continue;              // destination write failed -> source untouched
+  dst.set(id, src.get(id));
+  src.delete(id);
+  done += 1;
+}
+check('the two that landed are gone from the source', !src.has('a') && !src.has('c'));
+check('the one that failed is STILL in the source', src.has('b'));
+check('and is not in the destination either — no half-move', !dst.has('b'));
+check('the reported count is 2, not 3', done === 2);
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

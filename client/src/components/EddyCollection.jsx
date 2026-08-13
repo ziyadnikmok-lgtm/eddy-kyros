@@ -2059,6 +2059,89 @@ export default function EddyCollection({
     notify(nowFav ? '★ Added to Favorites' : 'Removed from Favorites', 'success');
   };
 
+  /**
+   * THE OTHER COLLECTION, when this one has a counterpart.
+   *
+   * Library and Base Library are two databases behind two tabs, and a finished picture is sometimes
+   * the next base photo — which is only knowable once you can see it. Every other collection
+   * (outfit, pose, character) has no counterpart and gets no button.
+   */
+  const COUNTERPART = { 'eddy-library': { db: 'eddy-base', label: 'Base Library' }, 'eddy-base': { db: 'eddy-library', label: 'Library' } };
+  const counterpart = COUNTERPART[dbName] || null;
+  const otherStore = useMemo(
+    () => (counterpart ? createEddyCollection(counterpart.db) : null),
+    [counterpart],
+  );
+  const [sending, setSending] = useState(false);
+
+  /**
+   * Move the selection into the other collection.
+   *
+   * A MOVE, not a copy: one picture in one tab. The order matters — the destination row is written
+   * FIRST and the source row only dropped once that succeeded, so a quota failure halfway through
+   * leaves the picture where it was rather than nowhere.
+   *
+   * Carries the bytes when there are bytes. A generated row points at the server gallery with `url`
+   * and costs nothing to move; an imported or pasted row holds its image in IndexedDB, and moving
+   * only the index entry would leave a tile with nothing behind it. Provenance travels too, so a
+   * moved picture still knows what made it.
+   */
+  const sendSelectedToCounterpart = async () => {
+    if (!counterpart || !otherStore || !selected.length) return;
+    setSending(true);
+    let done = 0;
+    let failure = '';
+    try {
+      const byId = new Map(items.map((i) => [i.id, i]));
+      const folderName = (id) => folders.find((f) => f.id === id)?.name || '';
+      // One ensureFolder per distinct name, not per item.
+      const destFolders = new Map();
+      for (const id of selected) {
+        const it = byId.get(id);
+        if (!it) continue;
+        try {
+          const name = folderName(it.folderId);
+          if (name && !destFolders.has(name)) {
+            // eslint-disable-next-line no-await-in-loop
+            destFolders.set(name, (await otherStore.ensureFolder(name))?.id || null);
+          }
+          const payload = {
+            name: it.name || 'image',
+            prompt: it.prompt || '',
+            videoPrompt: it.videoPrompt || '',
+            poseView: it.poseView || '',
+            ...(it.url ? { url: it.url } : {}),
+            ...(it.basePhotoId ? { basePhotoId: it.basePhotoId } : {}),
+            ...(it.baseId ? { baseId: it.baseId } : {}),
+            ...(it.poseId ? { poseId: it.poseId } : {}),
+            ...(it.outfitId ? { outfitId: it.outfitId } : {}),
+            ...(it.comboKey ? { comboKey: it.comboKey } : {}),
+            ...(it.charName ? { charName: it.charName } : {}),
+            ...(Number.isFinite(it.price) ? { price: it.price } : {}),
+          };
+          if (!it.url) {
+            // eslint-disable-next-line no-await-in-loop
+            payload.dataUrl = thumbsRef.current[id] || await store.getImage(id);
+            if (!payload.dataUrl) { failure = 'a picture had no image behind it'; continue; }
+          }
+          // eslint-disable-next-line no-await-in-loop
+          const landed = await otherStore.addItems([payload], name ? destFolders.get(name) : null);
+          if (!Array.isArray(landed) || !landed.length) { failure = 'storage is full'; continue; }
+          // eslint-disable-next-line no-await-in-loop
+          await store.removeItem(id);
+          done += 1;
+        } catch (err) { failure = err.message; }
+      }
+    } finally {
+      setSending(false);
+    }
+    const total = selected.length;
+    setSelected([]);
+    await refresh();
+    if (done === total) notify(`Sent ${done} to ${counterpart.label}`, 'success');
+    else notify(`Sent ${done} of ${total} — ${failure || 'some writes failed'}`, 'error');
+  };
+
   const moveSelected = async (raw) => {
     const folderId = raw === 'none' ? null : raw;
     let moved = 0;
@@ -2558,6 +2641,18 @@ export default function EddyCollection({
           <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs" onClick={downloadSelected}>
             Download {selected.length}
           </Btn>
+          {/* THE OTHER LIBRARY. Sits with the selection it acts on — and with "Last hour" and
+              "Last 24h" right above, which is how you grab a run you just made and move the whole
+              lot across in one go (owner, 2026-08-13). Only rendered where a counterpart exists:
+              outfit, pose and character have nowhere to send to. */}
+          {counterpart && (
+            <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs !border-emerald-500/40 !text-emerald-200"
+              disabled={sending}
+              onClick={sendSelectedToCounterpart}
+              title={`Move these into ${counterpart.label}. They leave this tab — one picture, one place.`}>
+              {sending ? 'Sending…' : `Send ${selected.length} to ${counterpart.label}`}
+            </Btn>
+          )}
           {/* WHITE PLATE LIVES HERE, with the selection it acts on.
               It was only in the toolbar at the very top of the page, which is where you are not: you
               tick cards while scrolled down among them, so the button sat off-screen the entire time
