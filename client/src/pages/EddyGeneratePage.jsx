@@ -189,7 +189,9 @@ function nextBatchName(folders, base) {
  * two folders, half the batch in each. So the PROMISE is cached, not the id: the second caller
  * awaits the first one's creation instead of racing it.
  */
-function makeBatchFolders(libraryStore, fallbackId) {
+// `store` because it is whichever collection the run is filing into — Library or Base Library —
+// not the Library specifically. It was named libraryStore back when there was only one.
+function makeBatchFolders(store, fallbackId) {
   const pending = new Map();
   return (name) => {
     const who = String(name || '').trim();
@@ -197,9 +199,9 @@ function makeBatchFolders(libraryStore, fallbackId) {
     if (!pending.has(who)) {
       pending.set(who, (async () => {
         try {
-          const folders = await libraryStore.listFolders();
+          const folders = await store.listFolders();
           const next = nextBatchName(folders, who);
-          return (await libraryStore.ensureFolder(next))?.id || fallbackId;
+          return (await store.ensureFolder(next))?.id || fallbackId;
         } catch {
           // A folder we could not make must not lose the picture -- fall back to the run's folder.
           return fallbackId;
@@ -210,7 +212,8 @@ function makeBatchFolders(libraryStore, fallbackId) {
   };
 }
 
-async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName }) {
+// Same here: `store` is the collection this run files into, chosen before Generate.
+async function resolveLibraryFolder(store, { maxNano, maxOutfit, nsfw, characterName }) {
   const who = String(characterName || '').trim();
   // Every branch falls back to the generic bucket rather than to null.
   //
@@ -221,7 +224,7 @@ async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, ch
   //
   // The generic folder is the floor, and it is created here rather than left to chance, so the
   // worst case is "in the wrong folder" — recoverable by dragging — instead of "gone".
-  const generic = async () => (await libraryStore.ensureFolder(nsfw ? 'Eddy NSFW' : 'Eddy'))?.id || null;
+  const generic = async () => (await store.ensureFolder(nsfw ? 'Eddy NSFW' : 'Eddy'))?.id || null;
   /**
    * ONE FOLDER PER CHARACTER. Nothing below it, and no tab above it.
    *
@@ -231,13 +234,13 @@ async function resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, ch
    * name is the whole answer, and it is the same answer on every tab — Eddy, Max Nano, Max Outfit
    * and Photo Match all put her pictures in one place.
    */
-  if (who) return (await libraryStore.ensureFolder(who))?.id || await generic();
+  if (who) return (await store.ensureFolder(who))?.id || await generic();
 
 
   // No character picked. Max Nano / Max Outfit still keep their own pile rather than falling into
   // the shared Eddy bucket — with no name to file under, the tab is the only thing left to sort by.
   const ownRoot = maxOutfit ? MAX_OUTFIT_FOLDER : (maxNano ? MAX_NANO_FOLDER : '');
-  if (ownRoot) return (await libraryStore.ensureFolder(ownRoot))?.id || await generic();
+  if (ownRoot) return (await store.ensureFolder(ownRoot))?.id || await generic();
   return generic();
 }
 
@@ -3376,6 +3379,34 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   const outfitStore = useMemo(() => createEddyCollection('eddy-outfit'), []);
   const poseStore = useMemo(() => createEddyCollection('eddy-pose'), []);
   const libraryStore = useMemo(() => createEddyCollection('eddy-library'), []);
+  /**
+   * The other collection, declared HERE — above generateCombo and above the send picker, both of
+   * which need it. A ref-free useMemo, and createEddyCollection caches per database, so this is the
+   * same instance and the same write queue the Base Library tab uses.
+   */
+  const baseLibStore = useMemo(() => createEddyCollection('eddy-base'), []);
+
+  /**
+   * WHERE THIS RUN'S PICTURES GO — chosen BEFORE Generate, not after.
+   *
+   * Sending after the fact already worked (the results panel has both buttons), and it is the wrong
+   * moment: you know whether you are making base photos before you press the button, and moving a
+   * batch of sixty afterwards is sixty tiles to tick (Eddy, via the owner, 2026-08-13). Photo Match
+   * SD has had this since yesterday; this is the same control on the tab that generates most.
+   *
+   * Remembered, because whoever is filling Base Library is doing it for a run of work.
+   */
+  const [genDestDb, setGenDestDb] = useState(() => {
+    try {
+      const saved = localStorage.getItem('kyros.eddy.genDest');
+      return saved === 'eddy-base' ? 'eddy-base' : 'eddy-library';
+    } catch { return 'eddy-library'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('kyros.eddy.genDest', genDestDb); } catch { /* private mode */ }
+  }, [genDestDb]);
+  const genStore = genDestDb === 'eddy-base' ? baseLibStore : libraryStore;
+  const genDestLabel = genDestDb === 'eddy-base' ? 'Base Library' : 'Library';
   // Read only by the character lookup above: a folder in each IS a character.
   const charStore = useMemo(() => createEddyCollection('eddy-character'), []);
   const baseStore = useMemo(() => createEddyCollection('eddy-base'), []);
@@ -5080,7 +5111,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     }
     if (!runCtx) {
       try {
-        libFolderId = await resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName });
+        libFolderId = await resolveLibraryFolder(genStore, { maxNano, maxOutfit, nsfw, characterName });
       } catch (err) {
         // Still never fails the generation — but it is no longer SILENT. Swallowing this is what
         // let 89 pictures file to no folder without a word on screen; "in the wrong place" is
@@ -5508,7 +5539,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           engine,
           resolution,
         });
-        const filed = await libraryStore.addItems(
+        const filed = await genStore.addItems(
           [{
             url: galleryApi.imageUrl(first.galleryId),
             prompt,
@@ -5585,7 +5616,13 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     let skippedCount = 0;
     if (skipDupes && !isRetry && batch.length) {
       try {
-        const seen = buildSeenKeys(await libraryStore.listItems());
+        /**
+         * BOTH collections. The guard matched against the Library alone, so a run filed into Base
+         * Library would look brand new the next time it was ticked — the recipe is generated, the
+         * picture exists, and it is simply in the other tab.
+         */
+        const [libRows, baseRows] = await Promise.all([libraryStore.listItems(), baseLibStore.listItems()]);
+        const seen = buildSeenKeys([...libRows, ...baseRows]);
         const { fresh, skipped } = splitBySeen(batch, seen, { engine, resolution });
         skippedCount = skipped.length;
         if (skippedCount && !fresh.length) {
@@ -5682,7 +5719,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // "Gwen". Resolved once per run so a 25-image batch doesn't hunt for it 25 times.
     let libFolderId = null;
     try {
-      libFolderId = await resolveLibraryFolder(libraryStore, { maxNano, maxOutfit, nsfw, characterName });
+      libFolderId = await resolveLibraryFolder(genStore, { maxNano, maxOutfit, nsfw, characterName });
     } catch (err) {
       // Resolved ONCE per run, so a failure here strands the WHOLE batch in no folder — which is
       // exactly how a 25-image run can vanish from every folder at once. Never silent.
@@ -5724,7 +5761,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
      * be dozens of folders holding one picture each (owner, 2026-08-10).
      */
     const numberBatches = maxNano || maxOutfit;
-    const preAlloc = makeBatchFolders(libraryStore, libFolderId);
+    const preAlloc = makeBatchFolders(genStore, libFolderId);
     const runWho = String(characterName || '').trim();
     const runFolderId = (numberBatches && runWho)
       ? await preAlloc(maxOutfit ? `${runWho} Outfit` : runWho)
@@ -5749,7 +5786,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
         if (!who) return Promise.resolve(libFolderId);
         if (!pending.has(who)) {
           pending.set(who, (async () => {
-            try { return (await libraryStore.ensureFolder(who))?.id || libFolderId; }
+            try { return (await genStore.ensureFolder(who))?.id || libFolderId; }
             catch { return libFolderId; }
           })());
         }
@@ -6214,7 +6251,6 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
    * it is cannot be known until it exists (owner, 2026-08-13).
    */
   const [filingDb, setFilingDb] = useState('eddy-library');
-  const baseLibStore = useMemo(() => createEddyCollection('eddy-base'), []);
   const filingStore = filingDb === 'eddy-base' ? baseLibStore : libraryStore;
   const filingLabel = filingDb === 'eddy-base' ? 'Base Library' : 'Library';
 
@@ -7189,7 +7225,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             "Eddy" folder with nothing on screen disagreeing. That is exactly how a Grace batch
             ended up in "Eddy" (owner, 2026-08-09). */}
         <p className="text-center text-xs text-zinc-500">
-          Saving into Library ›{' '}
+          Saving into {genDestLabel} ›{' '}
           {batchPreview.length > 0 ? (
             /* The folders this click WILL create, named exactly as they will read in the Library.
                Several when the run spans several characters -- one click, one folder each. */
@@ -7286,6 +7322,27 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             </span>
           </div>
         )}
+        {/* WHERE THIS RUN LANDS — set before Generate, beside the price it will cost.
+            Sending afterwards still works (the results panel has both buttons); this is for when
+            you already know you are making base photos, and would otherwise tick sixty tiles to
+            say so after the fact. */}
+        <label className="flex items-center justify-between gap-2 rounded-xl border border-white/[0.06] bg-black/20 px-3 py-2">
+          <span className="text-[0.6875rem] uppercase tracking-wider text-zinc-500">Send results to</span>
+          <select
+            value={genDestDb}
+            onChange={(e) => setGenDestDb(e.target.value)}
+            className="rounded-lg border border-white/[0.07] bg-zinc-900 px-2 py-1 text-xs text-zinc-200 cursor-pointer"
+          >
+            <option value="eddy-library">Library</option>
+            <option value="eddy-base">Base Library</option>
+          </select>
+        </label>
+        {genDestDb === 'eddy-base' && (
+          <p className="text-center text-[0.625rem] text-emerald-300/80">
+            This run files into Base Library — not the Library.
+          </p>
+        )}
+
         {/* The override. Skipping is right by default, but the seed is random — another take on a
             recipe already used is a legitimate thing to want, and this is where it is asked for.
             Shown as a warning line when off so a bigger-than-expected bill has its reason on

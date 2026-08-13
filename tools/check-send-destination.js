@@ -430,5 +430,31 @@ const runIds = new Set(['a::g::r2']);
 const mine = panel.filter((j) => runIds.has(j.id));
 check('progress counts one, not three', mine.length === 1);
 
+// --- Eddy chooses BEFORE the run too (Eddy Casarin, via the owner, 2026-08-13) ---------------------
+// "Not sending to the library after generate. Need to choose which library it goes into BEFORE the
+// generate." Sending afterwards already worked; it is the wrong moment. You know whether you are
+// making base photos before you press the button, and moving sixty afterwards is sixty ticks.
+check('the Eddy page has a pre-run destination', gen.includes("const [genDestDb, setGenDestDb] = useState("));
+check('remembered between runs', gen.includes("localStorage.getItem('kyros.eddy.genDest')"));
+check('it is a control beside the Generate button', gen.includes('<span className="text-[0.6875rem] uppercase tracking-wider text-zinc-500">Send results to</span>'));
+check('and it says out loud when a run is NOT going to the Library',
+  gen.includes('This run files into Base Library'));
+check('the line under the button names the destination', gen.includes('Saving into {genDestLabel}'));
+
+check('the run resolves its folder in the CHOSEN collection',
+  gen.includes('resolveLibraryFolder(genStore, { maxNano, maxOutfit, nsfw, characterName })')
+  && !gen.includes('resolveLibraryFolder(libraryStore,'));
+check('numbered batch folders are made there too', gen.includes('makeBatchFolders(genStore, libFolderId)'));
+check('a per-character folder as well', gen.includes('await genStore.ensureFolder(who)'));
+check('and the write itself goes there', gen.includes('const filed = await genStore.addItems('));
+check('one store handle, declared above everything that files',
+  gen.indexOf("const baseLibStore = useMemo(() => createEddyCollection('eddy-base')") < gen.indexOf('const generateCombo = useCallback('));
+
+// The guard would otherwise treat a Base-filed run as never generated.
+check('the duplicate guard reads BOTH collections',
+  gen.includes('const [libRows, baseRows] = await Promise.all([libraryStore.listItems(), baseLibStore.listItems()]);')
+  && gen.includes('buildSeenKeys([...libRows, ...baseRows])'));
+check('and the reason is recorded', /would look brand new the next time it was ticked/.test(gen));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

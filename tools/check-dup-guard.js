@@ -18,7 +18,11 @@ check('the guard runs inside run(), before anything is dispatched', (() => {
   const j = gen.indexOf('await runPool(');
   return i > -1 && j > i;
 })());
-check('it reads the Library to build the seen set', gen.includes('buildSeenKeys(await libraryStore.listItems())'));
+// BOTH collections since 2026-08-13: a run can be filed into Base Library before it starts, and
+// matching only the Library would call every one of those recipes new.
+check('it reads BOTH collections to build the seen set',
+  gen.includes('buildSeenKeys([...libRows, ...baseRows])')
+  && gen.includes('Promise.all([libraryStore.listItems(), baseLibStore.listItems()])'));
 check('it trims the batch BEFORE the confirm gate, so the price quoted is the price paid', (() => {
   const guard = gen.indexOf('const { fresh, skipped } = splitBySeen(');
   const confirm = gen.indexOf('Start this run?');
