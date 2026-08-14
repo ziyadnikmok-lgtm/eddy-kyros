@@ -3332,7 +3332,7 @@ const _cache = {
   // persist alongside everything else: they steer the next Randomise CLICK and nothing else — no
   // effect on Generate — and both are visible on screen, so a restored value can never act as
   // hidden state.
-  randomCount: 12, randomTags: [],
+  randomCount: 12, randomTags: [], randomViews: [],
   // staticCamera defaults ON: the user asked for the camera lock to be the standing default, so a
   // fresh page (or one whose stored value predates this feature) starts with movement/zoom locked out.
   nsfw: false, aspectRatio: 'auto', resolution: '1K', staticCamera: true,
@@ -3444,6 +3444,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   const [pickedPoses, setPickedPoses] = useState(_cache.pickedPoses);
   const [randomCount, setRandomCount] = useState(_cache.randomCount);
   const [randomTags, setRandomTags] = useState(_cache.randomTags);
+  const [randomViews, setRandomViews] = useState(_cache.randomViews);
   // Max Outfit's sources: ids of Library items, each becoming one generation.
   const [pickedBases, setPickedBases] = useState(_cache.pickedBases || []);
   /**
@@ -4051,6 +4052,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       setPickedPoses((v) => (v.length ? v : saved.pickedPoses || []));
       if (saved.randomCount) setRandomCount(saved.randomCount);
       if (saved.randomTags?.length) setRandomTags(saved.randomTags);
+      if (saved.randomViews?.length) setRandomViews(saved.randomViews);
       setPickedBases((v) => (v.length ? v : saved.pickedBases || []));
       setPickedBasePhotos((v) => (v.length ? v : saved.pickedBasePhotos || []));
       setOutfitRotation((v) => (v === true && typeof saved.outfitRotation === 'boolean' ? saved.outfitRotation : v));
@@ -4162,14 +4164,14 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   }, [activeModel, models, notify]);
 
   useEffect(() => {
-    const snap = { baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, outfitRotation, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine, randomCount, randomTags };
+    const snap = { baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, outfitRotation, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine, randomCount, randomTags, randomViews };
     Object.assign(_cache, snap);
     stateStore.set('state', snap);
   // pickedBases / outfitRotation / smartMatch are IN the snapshot above, so they have to be in
   // these deps too. Without them this effect never re-ran when only a Max Outfit control changed,
   // and the whole selection was gone on the next app start — the snapshot is only written from
   // here.
-  }, [baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, outfitRotation, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine, randomCount, randomTags]);
+  }, [baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, outfitRotation, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine, randomCount, randomTags, randomViews]);
 
   /**
    * Submits ONE video job and returns as soon as Muapi accepts it (a taskId) — the render finishes
@@ -6785,8 +6787,11 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
                 Favorite filter narrows the draw. Unlike Select all it REPLACES the picks rather
                 than adding: repeat clicks on "randomise 12" should keep giving you 12, not 24. */}
             {slot.key === 'pose' && openPickers.pose && visible.length > 0 && (() => {
-              const pool = eligiblePoses(visible, randomTags, readPoseTags);
+              const pool = eligiblePoses(visible, { tags: randomTags, views: randomViews },
+                { readTags: readPoseTags, readView: readPoseView });
               const d = describeDraw(randomCount, pool.length, pickedOutfits.length);
+              const chip = (on) => cn('rounded-md px-2 py-1 text-[0.6875rem] font-bold uppercase tracking-wide transition cursor-pointer',
+                on ? 'bg-fuchsia-500/25 text-fuchsia-200' : 'text-zinc-600 hover:text-zinc-300');
               return (
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-2">
                   <span className="text-[0.6875rem] font-semibold uppercase tracking-wider text-zinc-500">Randomise</span>
@@ -6799,12 +6804,27 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
                       <button key={tag} type="button"
                         onClick={() => setRandomTags((v) => (on ? v.filter((t) => t !== tag) : [...v, tag]))}
                         title={on ? `Stop restricting to ${tag}` : `Only draw ${tag} poses`}
-                        className={cn('rounded-md px-2 py-1 text-[0.6875rem] font-bold uppercase tracking-wide transition cursor-pointer',
-                          on ? 'bg-fuchsia-500/25 text-fuchsia-200' : 'text-zinc-600 hover:text-zinc-300')}>
+                        className={chip(on)}>
                         {tag}
                       </button>
                     );
                   })}
+                  {/* Views are a SECOND family, so they get their own divider. Within a family the
+                      chips are OR (front or back); across families it is AND, so back + mirror
+                      selfie draws back-facing mirror selfies rather than the union of the two. */}
+                  <span className="flex items-center gap-1 border-l border-white/[0.08] pl-2">
+                    {['front', 'back', 'closeup'].map((v) => {
+                      const on = randomViews.includes(v);
+                      return (
+                        <button key={v} type="button"
+                          onClick={() => setRandomViews((x) => (on ? x.filter((t) => t !== v) : [...x, v]))}
+                          title={on ? `Stop restricting to ${v}` : `Only draw ${v} poses`}
+                          className={chip(on)}>
+                          {v === 'closeup' ? 'close-up' : v}
+                        </button>
+                      );
+                    })}
+                  </span>
                   <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs"
                     disabled={!d.taking}
                     onClick={() => keepScroll(() => setPickedPoses(drawPoses(pool, randomCount)))}>

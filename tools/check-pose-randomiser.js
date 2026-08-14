@@ -18,7 +18,7 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8').replace(/\r\n/g,
 // eslint-disable-next-line no-new-func
 const rnd = new Function(`${read('client/src/lib/poseRandomiser.js').replace(/^export /gm, '')}; return { eligiblePoses, drawPoses, describeDraw };`)();
 // eslint-disable-next-line no-new-func
-const text = new Function(`${read('client/src/lib/poseText.js').replace(/^export /gm, '')}; return { readPoseTags, POSE_TAGS };`)();
+const text = new Function(`${read('client/src/lib/poseText.js').replace(/^export /gm, '')}; return { readPoseTags, readPoseView, POSE_TAGS };`)();
 const { eligiblePoses, drawPoses, describeDraw } = rnd;
 const { readPoseTags } = text;
 
@@ -38,32 +38,65 @@ const grid = [
 ];
 
 // --- 1. eligibility ---------------------------------------------------------------------------------
-check('no tags selected draws from everything on screen',
-  eligiblePoses(grid, [], readPoseTags).length === 20);
-check('a tag narrows to just those poses',
-  eligiblePoses(grid, ['mirror selfie'], readPoseTags).length === 6);
-check('and it is the right six',
-  eligiblePoses(grid, ['mirror selfie'], readPoseTags).every((p) => p.id.startsWith('m')));
-check('an answered-no pose is excluded when a tag is selected',
-  !eligiblePoses(grid, ['mirror selfie'], readPoseTags).some((p) => p.id.startsWith('n')));
-check('an unasked pose is excluded too',
-  !eligiblePoses(grid, ['mirror selfie'], readPoseTags).some((p) => p.id.startsWith('u')));
-check('but unasked poses ARE included with no tag selected',
-  eligiblePoses(grid, [], readPoseTags).some((p) => p.id.startsWith('u')));
-check('an unknown tag matches nothing rather than everything',
-  eligiblePoses(grid, ['bed'], readPoseTags).length === 0);
-check('an empty grid is fine', eligiblePoses([], ['mirror selfie'], readPoseTags).length === 0);
-check('a null grid is fine', eligiblePoses(null, [], readPoseTags).length === 0);
+const READ = { readTags: readPoseTags, readView: text.readPoseView };
+const elig = (rows, sel) => eligiblePoses(rows, sel, READ);
 
-// Union, not intersection: "the labels of poses i want" is any-of. An AND across two labels would
+check('nothing selected draws from everything on screen', elig(grid, {}).length === 20);
+check('a tag narrows to just those poses', elig(grid, { tags: ['mirror selfie'] }).length === 6);
+check('and it is the right six', elig(grid, { tags: ['mirror selfie'] }).every((p) => p.id.startsWith('m')));
+check('an answered-no pose is excluded when a tag is selected',
+  !elig(grid, { tags: ['mirror selfie'] }).some((p) => p.id.startsWith('n')));
+check('an unasked pose is excluded too',
+  !elig(grid, { tags: ['mirror selfie'] }).some((p) => p.id.startsWith('u')));
+check('but unasked poses ARE included with no tag selected',
+  elig(grid, {}).some((p) => p.id.startsWith('u')));
+check('an unknown tag matches nothing rather than everything', elig(grid, { tags: ['bed'] }).length === 0);
+check('an empty grid is fine', elig([], { tags: ['mirror selfie'] }).length === 0);
+check('a null grid is fine', elig(null, {}).length === 0);
+check('an omitted selection object is fine', eligiblePoses(grid, undefined, READ).length === 20);
+
+// Union WITHIN a family: "the labels of poses i want" is any-of. An AND across two tags would
 // return nothing almost every time, which reads as a broken button.
 const twoTags = [pose('a', ['mirror selfie']), pose('b', ['bed']), pose('c', ['mirror selfie', 'bed'])];
 const readAny = (p) => { try { return JSON.parse(p).pose_action.tags || []; } catch { return []; } };
 check('two selected tags are a UNION, not an intersection',
-  eligiblePoses(twoTags, ['mirror selfie', 'bed'], readAny).length === 3);
+  eligiblePoses(twoTags, { tags: ['mirror selfie', 'bed'] }, { readTags: readAny }).length === 3);
+
+// --- 1b. views, and how the two families combine -----------------------------------------------------
+const viewed = (id, view, tags) => ({
+  id,
+  prompt: JSON.stringify({ pose_action: { description: id, view, ...(tags ? { tags } : {}) } }),
+});
+// 2 back mirror selfies (the real 004/058 shape), 1 front mirror selfie, and plain ones.
+const mixed = [
+  viewed('bm1', 'back', ['mirror selfie']),
+  viewed('bm2', 'back', ['mirror selfie']),
+  viewed('fm1', 'front', ['mirror selfie']),
+  viewed('b1', 'back', []),
+  viewed('f1', 'front', []),
+  viewed('c1', 'closeup', []),
+  { id: 'plain', prompt: 'just a sentence, no JSON at all' },
+];
+check('a view narrows to that view', elig(mixed, { views: ['back'] }).map((p) => p.id).join(',') === 'bm1,bm2,b1');
+check('two views are a UNION — a pose has only one, so an AND could never match',
+  elig(mixed, { views: ['back', 'closeup'] }).length === 4);
+check('close-up is selectable on its own', elig(mixed, { views: ['closeup'] }).map((p) => p.id).join(',') === 'c1');
+check('an unlabelled card counts as front, matching the rest of the app',
+  elig(mixed, { views: ['front'] }).some((p) => p.id === 'plain'));
+
+// THE ONE THAT MATTERS: across families it is AND. In one OR bucket this would return 6 of 7 —
+// "everything back plus everything mirror" — which is close to no filter and looks broken.
+const backMirror = elig(mixed, { views: ['back'], tags: ['mirror selfie'] });
+check('back + mirror selfie is an INTERSECTION, not a union', backMirror.length === 2);
+check('and it is exactly the back-facing mirror selfies', backMirror.map((p) => p.id).join(',') === 'bm1,bm2');
+check('front + mirror selfie picks the other one', elig(mixed, { views: ['front'], tags: ['mirror selfie'] }).map((p) => p.id).join(',') === 'fm1');
+check('a combination with no members returns empty rather than falling back to everything',
+  elig(mixed, { views: ['closeup'], tags: ['mirror selfie'] }).length === 0);
+check('an empty family is not a filter',
+  elig(mixed, { views: [], tags: ['mirror selfie'] }).length === 3);
 
 // --- 2. the draw --------------------------------------------------------------------------------------
-const pool20 = eligiblePoses(grid, [], readPoseTags);
+const pool20 = elig(grid, {});
 check('asking for 5 of 20 returns exactly 5', drawPoses(pool20, 5).length === 5);
 check('every drawn id came from the pool',
   drawPoses(pool20, 5).every((id) => pool20.some((p) => p.id === id)));
@@ -72,7 +105,7 @@ check('asking for exactly the pool size returns all of it', drawPoses(pool20, 20
 
 // The shortfall case — take everything, do not throw, do not pad.
 check('asking for 30 of 20 returns 20', drawPoses(pool20, 30).length === 20);
-const six = eligiblePoses(grid, ['mirror selfie'], readPoseTags);
+const six = elig(grid, { tags: ['mirror selfie'] });
 check('asking for 30 mirror selfies when 6 exist returns 6', drawPoses(six, 30).length === 6);
 
 check('zero returns nothing', drawPoses(pool20, 0).length === 0);
@@ -121,7 +154,7 @@ check('a negative number cannot produce a negative image count', describeDraw(-5
 // --- 5. the UI is wired the way the logic assumes ------------------------------------------------------
 const page = read('client/src/pages/EddyGeneratePage.jsx');
 check('the randomiser draws from `visible`, the same array Select all uses',
-  page.includes('eligiblePoses(visible, randomTags, readPoseTags)'));
+  page.includes('eligiblePoses(visible, { tags: randomTags, views: randomViews }'));
 check('it is scoped to the pose slot only', page.includes("slot.key === 'pose' && openPickers.pose"));
 check('the button REPLACES the picks rather than adding to them',
   page.includes('setPickedPoses(drawPoses(pool, randomCount))'));
@@ -137,9 +170,9 @@ check('the randomiser row is a SIBLING of the header, not inside it',
 check('and it sits above the picked list, not after it',
   page.indexOf('{/* RANDOMISE (owner, 2026-08-14') < page.indexOf('{/* THE PICKED LIST.'));
 check('the count survives a tab switch', page.includes('randomCount: 12, randomTags: []'));
-check('and is in the snapshot that persists it', /const snap = \{[^}]*randomCount, randomTags \}/.test(page));
+check('and is in the snapshot that persists it', /const snap = \{[^}]*randomCount, randomTags, randomViews \}/.test(page));
 check('with both in the effect deps, or the snapshot never rewrites',
-  /\}, \[baseImage[^\]]*randomCount, randomTags\]\);/.test(page));
+  /\}, \[baseImage[^\]]*randomCount, randomTags, randomViews\]\);/.test(page));
 
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

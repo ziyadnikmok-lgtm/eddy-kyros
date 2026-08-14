@@ -18,18 +18,38 @@
 /**
  * The subset of `visible` a draw is allowed to pick from.
  *
- * No tags selected means "anything on screen", which is the plain "give me 12 random poses" case.
- * With tags selected it is a UNION — a pose carrying ANY of them qualifies — because "the labels of
- * poses i want" reads as any-of, and an AND across two labels would usually return nothing.
- * Untagged poses are excluded the moment a tag is chosen: they are not the thing that was asked for.
+ * TWO FAMILIES OF FILTER, AND THEY COMBINE DIFFERENTLY. This is the part worth getting right.
+ *
+ *   * WITHIN a family it is OR. front+back means "front or back", because a pose has exactly one
+ *     view and an AND there can never match anything. Same for tags: "the labels of poses i want"
+ *     reads as any-of.
+ *   * ACROSS families it is AND. back + mirror selfie means "back-facing mirror selfies" — the
+ *     query that is actually useful. Thrown into one OR bucket it would mean "everything back, plus
+ *     everything mirror", which is close to no filter at all and looks broken.
+ *
+ * An empty family is not a filter: no views picked means any view, no tags picked means any tags
+ * (including none). That is the plain "give me 12 random poses" case.
+ *
+ * Untagged poses drop out the moment a tag is chosen — they are not what was asked for. Views need
+ * no such rule: readPoseView answers 'front' for an unlabelled card, which is how the rest of the
+ * app already treats it.
  */
-export function eligiblePoses(visible, tags, readTags) {
+export function eligiblePoses(visible, { tags = [], views = [] } = {}, { readTags, readView } = {}) {
   const rows = Array.isArray(visible) ? visible : [];
-  const want = (Array.isArray(tags) ? tags : []).filter(Boolean);
-  if (!want.length) return rows;
+  const wantTags = (Array.isArray(tags) ? tags : []).filter(Boolean);
+  const wantViews = (Array.isArray(views) ? views : []).filter(Boolean);
+  if (!wantTags.length && !wantViews.length) return rows;
+
   return rows.filter((row) => {
-    const has = readTags(row?.prompt);
-    return want.some((t) => has.includes(t));
+    if (wantTags.length) {
+      const has = readTags ? readTags(row?.prompt) : [];
+      if (!wantTags.some((t) => has.includes(t))) return false;
+    }
+    if (wantViews.length) {
+      const v = readView ? readView(row?.prompt) : 'front';
+      if (!wantViews.includes(v)) return false;
+    }
+    return true;
   });
 }
 
