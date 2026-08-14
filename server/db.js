@@ -188,6 +188,57 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_generation_runs_feature_started
     ON generation_runs(feature, started_at);
 
+  /**
+   * The DURABLE generation queue (owner, 2026-08-14).
+   *
+   * generation_runs above is an audit trail — it records that something happened. This holds the
+   * work itself, so a run survives the app closing, an update, or a crash.
+   *
+   * WHY IT CAN WORK AT ALL: Muapi is submit-then-poll. generateSeedreamEdit gets a request_id back
+   * and then polls it to completion inside one HTTP request, so today an app that dies mid-render
+   * throws away a picture that Muapi has already produced and already billed. Persisting that id is
+   * the whole trick: on the next boot the job is still pollable and the image is still retrievable.
+   *
+   * WHY filed IS SEPARATE FROM status: the Eddy libraries are IndexedDB, inside the browser.
+   * The server cannot write to them. So the server takes a job as far as done with a gallery_id,
+   * and the CLIENT files it into the chosen collection on load and flips filed. Two owners, two
+   * flags — collapsing them would mean a job counted as complete while its picture had reached no
+   * library at all.
+   *
+   * (No backticks anywhere in this comment: it lives inside a template literal, and one would end
+   * the string and take the whole server's schema with it. It did, once.)
+   *
+   * dest_db / dest_folder are captured at ENQUEUE time, not read at filing time: the destination a
+   * run was started with is the one it should land in, even if the dropdown has been changed twice
+   * since.
+   */
+  CREATE TABLE IF NOT EXISTS generation_jobs (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    feature      TEXT NOT NULL,
+    status       TEXT NOT NULL,
+    task_id      TEXT,
+    payload      TEXT NOT NULL,
+    dest_db      TEXT,
+    dest_folder  TEXT,
+    card_prompt  TEXT,
+    card_name    TEXT,
+    gallery_id   TEXT,
+    filed        INTEGER NOT NULL DEFAULT 0,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    error        TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+  );
+
+  -- The worker's hot path: "what is queued, and what is still in flight".
+  CREATE INDEX IF NOT EXISTS idx_generation_jobs_status
+    ON generation_jobs(status, created_at);
+
+  -- The client's boot question: "what finished while I was gone that I have not filed".
+  CREATE INDEX IF NOT EXISTS idx_generation_jobs_unfiled
+    ON generation_jobs(user_id, filed, status);
+
   CREATE INDEX IF NOT EXISTS idx_generation_runs_status_started
     ON generation_runs(status, started_at);
 

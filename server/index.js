@@ -108,6 +108,7 @@ const photoMatchRouter = require('./routes/photoMatch');
 const nanoBypassRouter = require('./routes/nanoBypass');
 const outfitSwapRouter = require('./routes/outfitSwap');
 const seedreamEditRouter = require('./routes/seedreamEdit');
+const jobsRouter = require('./routes/jobs');
 const seedanceOmniRouter = require('./routes/seedanceOmni');
 const xReplyRouter = require('./routes/xReply');
 const authRouter = require('./routes/authRoutes');
@@ -451,6 +452,9 @@ app.use('/api/niches', nichesRouter);
 app.use('/api/brand-voice', brandVoiceRouter);
 app.use('/api/story', storyRouter);
 app.use('/api/gallery', galleryRouter);
+// The durable generation queue. Not behind generateLimiter: enqueuing is a disk write, and
+// rate-limiting the QUEUE would throttle exactly the mechanism that exists to absorb bursts.
+app.use('/api/jobs', jobsRouter);
 app.use('/api/library', libraryRouter);
 app.use('/api/scene', generateLimiter, sceneRouter);
 app.use('/api/scene-memory', sceneMemoryRouter);
@@ -658,6 +662,10 @@ migrateVideosToFaststart();
 // recovers anything left 'processing' by a previous run. Video delivery must not depend on a
 // page component staying mounted.
 require('./services/videoReconciler').startVideoReconciler();
+// Same job for images. A Seedream render used to be awaited inside one HTTP request, so closing
+// the app mid-render lost a picture Muapi had already made and already charged for. This picks
+// those up from the queue on boot and finishes them.
+require('./services/generationReconciler').startGenerationReconciler();
 
 const server = app.listen(PORT, HOST, () => {
   console.log('');

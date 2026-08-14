@@ -387,6 +387,17 @@ export const images = {
   children: (id) => request(`/images/${id}/children`),
 };
 
+/**
+ * The durable generation queue. A job is on disk before anything is sent, so a run survives the app
+ * closing, an update or a crash — see server/services/jobQueue.js for the state machine.
+ */
+export const jobs = {
+  enqueue: (body) => request('/jobs', { method: 'POST', body }),
+  get: (id) => request(`/jobs/${id}`),
+  list: () => request('/jobs'),
+  markFiled: (id) => request(`/jobs/${id}/filed`, { method: 'POST' }),
+};
+
 export const gallery = {
   list: () => request('/gallery'),
   upload: async (file, fields = {}) => {

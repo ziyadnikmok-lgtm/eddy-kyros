@@ -11,6 +11,7 @@ import GenerationFeedPanel, { GenerationFeedVideoWatcher } from './components/Ge
 import { keys as keysApi } from './services/api';
 import { WORKSPACES, getWorkspace, setWorkspace as persistWorkspace, workspaceEngines } from './lib/workspace';
 import { cn } from './lib/utils';
+import { reconcileUnfiled } from './lib/generationQueue';
 import {
   IconBadgeSparkle,
   IconFlame,
@@ -632,7 +633,7 @@ function WorkspaceTabs({ current, onSelect }) {
 }
 
 function MainApp({ onLogout, currentUser }) {
-  const { activeKey, setActiveKey, vertexActive, setVertexActive, integrationRefreshToken, page, navigateTo } = useApp();
+  const { activeKey, setActiveKey, vertexActive, setVertexActive, integrationRefreshToken, page, navigateTo, notify } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which workspace tab is active. Initialised from the same store main.jsx already applied before
   // first paint, so state and the DOM attribute never disagree on load.
@@ -657,6 +658,27 @@ function MainApp({ onLogout, currentUser }) {
       navigateTo('eddy');
     }
   }, [page, currentUser, navigateTo]);
+
+  /**
+   * Collect anything that finished while the app was closed.
+   *
+   * The server keeps a durable queue and will finish a Seedream render whether or not a tab is
+   * watching, but it cannot put the picture in an Eddy library — those are IndexedDB, in here. So
+   * on load the client asks what is waiting and files each one into the library its run was STARTED
+   * with. Runs once, after sign-in, and says nothing when there is nothing to collect.
+   */
+  useEffect(() => {
+    if (!currentUser) return undefined;
+    let cancelled = false;
+    reconcileUnfiled()
+      .then(({ filed, failed }) => {
+        if (cancelled || (!filed && !failed)) return;
+        const missed = failed ? ` · ${failed} could not be filed and will retry` : '';
+        notify(`Recovered ${filed} picture${filed === 1 ? '' : 's'} finished while you were away${missed}`, filed ? 'success' : 'error');
+      })
+      .catch(() => { /* never block the app on bookkeeping */ });
+    return () => { cancelled = true; };
+  }, [currentUser, notify]);
 
   useEffect(() => {
     let cancelled = false;

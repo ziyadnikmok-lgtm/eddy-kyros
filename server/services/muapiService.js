@@ -327,7 +327,7 @@ async function _downloadAsBase64(url) {
  * returns the resulting image(s) as base64 so the caller can store them.
  * @param {Array<{base64:string, mimeType:string}>} images
  */
-async function generateSeedreamEdit(images, prompt, opts = {}) {
+async function submitSeedreamEdit(images, prompt, opts = {}) {
   // Validate before touching config: a bad request shouldn't report "no API key".
   if (!prompt?.trim()) throw new AppError('A prompt is required', 400, 'VALIDATION_ERROR');
   if (!Array.isArray(images) || !images.length) throw new AppError('At least one source image is required', 400, 'VALIDATION_ERROR');
@@ -374,26 +374,67 @@ async function generateSeedreamEdit(images, prompt, opts = {}) {
   const taskId = data?.request_id || data?.id;
   if (!taskId) throw new AppError('Muapi returned no request ID', 502, 'MUAPI_TASK_ERROR');
   log.info('muapi_seedream_task_created', { taskId });
+  return { taskId };
+}
+
+/**
+ * Turn Muapi's outputs into base64 images. Its shape varies by model, hence the three branches.
+ */
+async function _seedreamOutputs(outputs) {
+  if (!outputs.length) throw new AppError('Seedream returned no image', 502, 'MUAPI_EMPTY');
+  return Promise.all(outputs.slice(0, 4).map(async (o) => {
+    if (typeof o === 'string' && /^https?:/.test(o)) return await _downloadAsBase64(o);
+    const m = typeof o === 'string' && o.match(/^data:([^;]+);base64,(.+)$/);
+    if (m) return { base64Data: m[2], mimeType: m[1] };
+    if (o?.url) return await _downloadAsBase64(o.url);
+    throw new AppError('Unrecognised Seedream output format', 502, 'MUAPI_EMPTY');
+  }));
+}
+
+/**
+ * ONE look at a submitted task — no waiting.
+ *
+ * This is what makes a durable queue possible. generateSeedreamEdit below blocks until the render
+ * finishes, which is fine while the app is open and useless after a restart: the caller is gone but
+ * the task is still valid on Muapi's side. The worker polls with this instead, so a job interrupted
+ * mid-render is simply picked up again on the next boot rather than lost and re-paid for.
+ *
+ * Returns { status: 'processing' } | { status: 'completed', images } | { status: 'failed', error }.
+ * It does not throw on a FAILED task — that is an answer, and the queue records it as one. It still
+ * throws on a broken connection or a bad key, which are not answers.
+ */
+async function pollSeedreamEdit(taskId) {
+  const res = await getTaskStatus(taskId);
+  if (res.status === 'completed') {
+    return { status: 'completed', images: await _seedreamOutputs(res.outputs), modelUsed: SEEDREAM_EDIT_SLUG };
+  }
+  if (res.status === 'failed') {
+    // Content-policy rejections surface here (Muapi enforces this account-side).
+    return { status: 'failed', error: res.error || 'unknown error' };
+  }
+  return { status: 'processing' };
+}
+
+/**
+ * Submit and wait — the original blocking call, unchanged in behaviour.
+ *
+ * `opts.onTaskId` is the one addition: it fires the moment Muapi accepts, so a caller that wants
+ * the job to survive a crash can write the id down before the render starts. Without it the id
+ * exists only inside this function's stack frame, which is exactly how a paid picture used to be
+ * lost when the app closed.
+ */
+async function generateSeedreamEdit(images, prompt, opts = {}) {
+  const { taskId } = await submitSeedreamEdit(images, prompt, opts);
+  if (typeof opts.onTaskId === 'function') {
+    try { opts.onTaskId(taskId); } catch { /* bookkeeping must never sink a live render */ }
+  }
 
   const deadline = Date.now() + EDIT_MAX_POLL_MS;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, EDIT_POLL_INTERVAL_MS));
-    const res = await getTaskStatus(taskId);
-    if (res.status === 'completed') {
-      if (!res.outputs.length) throw new AppError('Seedream returned no image', 502, 'MUAPI_EMPTY');
-      const out = await Promise.all(res.outputs.slice(0, 4).map(async (o) => {
-        if (typeof o === 'string' && /^https?:/.test(o)) return await _downloadAsBase64(o);
-        const m = typeof o === 'string' && o.match(/^data:([^;]+);base64,(.+)$/);
-        if (m) return { base64Data: m[2], mimeType: m[1] };
-        if (o?.url) return await _downloadAsBase64(o.url);
-        throw new AppError('Unrecognised Seedream output format', 502, 'MUAPI_EMPTY');
-      }));
-      return { images: out, modelUsed: SEEDREAM_EDIT_SLUG };
-    }
-    if (res.status === 'failed') {
-      // Content-policy rejections surface here (Muapi enforces this account-side).
-      throw new AppError(`Seedream edit failed: ${res.error || 'unknown error'}`, 502, 'MUAPI_FAILED');
-    }
+    const res = await pollSeedreamEdit(taskId);
+    if (res.status === 'completed') return { images: res.images, modelUsed: res.modelUsed };
+    if (res.status === 'failed') throw new AppError(`Seedream edit failed: ${res.error}`, 502, 'MUAPI_FAILED');
   }
   throw new AppError('Seedream edit timed out after 3 minutes', 504, 'MUAPI_TIMEOUT');
 }
@@ -523,6 +564,8 @@ module.exports = {
   createVideoTask,
   getTaskStatus,
   generateSeedreamEdit,
+  submitSeedreamEdit,
+  pollSeedreamEdit,
   createOmniTask,
   trainOmniCharacter,
   OMNI_MODELS,
