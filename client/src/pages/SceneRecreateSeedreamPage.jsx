@@ -11,6 +11,8 @@ import { pushPending, resolvePending, failPending } from '../lib/generationFeed'
 import { consumeSourceHandoff } from '../lib/sourceHandoff';
 import { detectAspectRatio } from '../lib/detectAspectRatio';
 import { createPageStore } from '../lib/pageStateStore';
+import { useLibraryDestination, LibraryDestinationPicker, LibraryDestinationNote } from '../components/LibraryDestinationPicker';
+import { fileIntoLibrary, cardName } from '../lib/libraryDestination';
 import { cn } from '../lib/utils';
 
 const ASPECT_OPTIONS = [{ value: 'auto', label: 'Auto (match source)' }, ...SEEDREAM_ASPECT_RATIOS.map((r) => ({ value: r, label: r }))];
@@ -275,6 +277,8 @@ export default function SceneRecreateSeedreamPage() {
 
   const charDetail = characterId ? charDetails[characterId] : null;
   const charName = chars.find((c) => c.id === characterId)?.name || '';
+  // Where this run lands. Its own key — choosing Base here must not redirect the other tabs.
+  const dest = useLibraryDestination('kyros.sceneRecreate.genDest');
   // NOT filtered by isActive: references are created with isActive:false by default
   // (server/services/referenceManager.js), so filtering on it silently discarded every one of
   // the character's photos and left just her main image to carry the identity. Keep it unfiltered.
@@ -473,6 +477,22 @@ export default function SceneRecreateSeedreamPage() {
       });
       setJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, status: 'done', result: first, usedPrompt: prompt } : j)));
       setSessionSpend((s) => s + costPerJob);
+      // File it, into HER folder — this tab always knows the character, so the result can land
+      // where the rest of her work is rather than in a generic pile. A filing miss is reported but
+      // does not fail the job: the picture exists, is billed and is on the feed, and marking it
+      // failed would invite a re-run of something that already succeeded.
+      if (first.galleryId) {
+        try {
+          await fileIntoLibrary(dest.store, {
+            url: galleryApi.imageUrl(first.galleryId),
+            prompt: `Scene Recreate - ${charName || 'no character'}`,
+            name: cardName('scene', jobId),
+            ...(charName ? { charName } : {}),
+          }, { folder: charName || 'Scene Recreate', label: dest.label });
+        } catch (fileErr) {
+          notify(fileErr.message || `Could not file into ${dest.label}`, 'error');
+        }
+      }
     } catch (err) {
       // failPending (not rejectPending): keep the feed card and SHOW the error, so a 422 that
       // kills a job doesn't vanish silently from the feed.
@@ -789,6 +809,11 @@ export default function SceneRecreateSeedreamPage() {
             {aspectRatio === 'auto' && <> · Auto snaps each photo to its closest Seedream ratio</>}
           </p>
         </Card>
+
+        {/* Chosen before the run — this tab used to file nowhere at all, so every recreation existed
+            only in the gallery and on the feed. Results land in the character's own folder. */}
+        <LibraryDestinationPicker value={dest.destDb} onChange={dest.setDestDb} />
+        <LibraryDestinationNote value={dest.destDb} />
 
         <Btn onClick={handleRecreate} disabled={running} className="w-full">
           {running ? <Spinner size={16} /> : null}

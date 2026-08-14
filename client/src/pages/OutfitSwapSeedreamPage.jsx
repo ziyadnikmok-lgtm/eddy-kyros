@@ -10,6 +10,8 @@ import { detectAspectRatio } from '../lib/detectAspectRatio';
 import { NSFW_PRESETS } from '../lib/nsfwPresets';
 import { loadShelf, addToShelf, removeFromShelf } from '../lib/outfitShelfStore';
 import { createPageStore } from '../lib/pageStateStore';
+import { useLibraryDestination, LibraryDestinationPicker, LibraryDestinationNote } from '../components/LibraryDestinationPicker';
+import { fileIntoLibrary, cardName } from '../lib/libraryDestination';
 import { createEddyCollection } from '../lib/eddyCollectionStore';
 import { cn } from '../lib/utils';
 
@@ -115,6 +117,8 @@ export default function OutfitSwapSeedreamPage() {
   const [nsfw, setNsfw] = useState(_cache.nsfw);
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [resolution, setResolution] = useState(_cache.resolution);
+  // Where this run lands. Its own key -- choosing Base here must not redirect the other tabs.
+  const dest = useLibraryDestination('kyros.outfitSwap.genDest');
 
   const [shelf, setShelf] = useState([]);
   const [galleryImages, setGalleryImages] = useState([]);
@@ -358,6 +362,19 @@ export default function OutfitSwapSeedreamPage() {
       });
       setJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, status: 'done', result: first } : j)));
       setSessionSpend((s) => s + costPerJob);
+      // File it. A filing miss is reported but does not fail the swap — the picture exists, is
+      // billed and is on the feed, so failing it would invite a re-run of work already done.
+      if (first.galleryId) {
+        try {
+          await fileIntoLibrary(dest.store, {
+            url: galleryApi.imageUrl(first.galleryId),
+            prompt: 'Outfit Swap (Seedream)',
+            name: cardName('outfitswap', jobId),
+          }, { folder: 'Outfit Swap', label: dest.label });
+        } catch (fileErr) {
+          notify(fileErr.message || `Could not file into ${dest.label}`, 'error');
+        }
+      }
     } catch (err) {
       rejectPending(feedId);
       setJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, status: 'failed', error: err.message || 'Swap failed' } : j)));
@@ -651,6 +668,10 @@ export default function OutfitSwapSeedreamPage() {
           </p>
         </Card>
 
+        {/* Chosen before the run -- this tab used to file nowhere at all, so results existed
+            only in the gallery and on the feed. */}
+        <LibraryDestinationPicker value={dest.destDb} onChange={dest.setDestDb} />
+        <LibraryDestinationNote value={dest.destDb} />
         <Btn onClick={handleSwap} disabled={running} className="w-full">
           {running ? <Spinner size={16} /> : null}
           {running

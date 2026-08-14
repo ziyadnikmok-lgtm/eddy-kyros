@@ -14,6 +14,8 @@ import { detectAspectRatio } from '../lib/detectAspectRatio';
 import { consumeSourceHandoff } from '../lib/sourceHandoff';
 import { NSFW_PRESETS, nudeState, NUDE_LINE } from '../lib/nsfwPresets';
 import { createPageStore } from '../lib/pageStateStore';
+import { useLibraryDestination, LibraryDestinationPicker, LibraryDestinationNote } from '../components/LibraryDestinationPicker';
+import { fileIntoLibrary, cardName } from '../lib/libraryDestination';
 import { cn } from '../lib/utils';
 
 // 'auto' snaps to whichever supported ratio is closest to the source image — Seedream has a
@@ -162,6 +164,8 @@ export default function SeedreamEditPage() {
   const [prompt, setPrompt] = useState(_cache.prompt);
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [resolution, setResolution] = useState(_cache.resolution);
+  // Where this run lands. Its own key -- choosing Base here must not redirect the other tabs.
+  const dest = useLibraryDestination('kyros.seedreamEdit.genDest');
 
   const [images, setImages] = useState([]); // [{ id, dataUrl }]
   const [dragging, setDragging] = useState(false);
@@ -354,7 +358,20 @@ export default function SeedreamEditPage() {
           mimeType: first.mimeType,
           generatedAt: Date.now(),
         });
-        notify('Edit complete ✨', 'success');
+        // File it. A filing miss is reported separately and does not turn a finished edit into a
+        // failure — the picture exists, is billed and is on the feed.
+        if (first.galleryId) {
+          try {
+            await fileIntoLibrary(dest.store, {
+              url: galleryApi.imageUrl(first.galleryId),
+              prompt: finalPrompt,
+              name: cardName('seedream', 0),
+            }, { folder: 'Seedream 5 Pro', label: dest.label });
+          } catch (fileErr) {
+            notify(fileErr.message || `Could not file into ${dest.label}`, 'error');
+          }
+        }
+        notify(`Edit complete ✨ · filed into ${dest.label}`, 'success');
       } else {
         rejectPending(feedId);
         notify('Seedream returned no image', 'error');
@@ -604,6 +621,10 @@ export default function SeedreamEditPage() {
         </Card>
 
         {/* Generate */}
+        {/* Chosen before the run -- this tab used to file nowhere at all, so results existed
+            only in the gallery and on the feed. */}
+        <LibraryDestinationPicker value={dest.destDb} onChange={dest.setDestDb} />
+        <LibraryDestinationNote value={dest.destDb} />
         <Btn onClick={handleGenerate} className="w-full">
           {inFlight > 0 ? <Spinner size={16} /> : null}
           {perImage && images.length > 1

@@ -7,6 +7,8 @@ import { pushPending, resolvePending, failPending } from '../lib/generationFeed'
 import { consumeSourceHandoff } from '../lib/sourceHandoff';
 import { detectAspectRatio } from '../lib/detectAspectRatio';
 import { createPageStore } from '../lib/pageStateStore';
+import { useLibraryDestination, LibraryDestinationPicker, LibraryDestinationNote } from '../components/LibraryDestinationPicker';
+import { fileIntoLibrary, cardName } from '../lib/libraryDestination';
 import { cn } from '../lib/utils';
 
 const ASPECT_OPTIONS = [{ value: 'auto', label: 'Auto (match photo)' }, ...SEEDREAM_ASPECT_RATIOS.map((r) => ({ value: r, label: r }))];
@@ -128,6 +130,8 @@ export default function PoseRemixSeedreamPage() {
   const [count, setCount] = useState(_cache.count);
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState([]);
+  // Where this run lands. Its own key — choosing Base here must not redirect the other tabs.
+  const dest = useLibraryDestination('kyros.poseRemix.genDest');
 
   const listPose = vibeByKey(vibe).poses[poseIndex % vibeByKey(vibe).poses.length];
   const pose = aiPose || listPose;
@@ -268,6 +272,20 @@ export default function PoseRemixSeedreamPage() {
           prompt: label, imageModel: 'Seedream 5.0 Pro Edit',
           aspectRatio: ratio, resolutionTier: resolution, mimeType: first.mimeType, generatedAt: Date.now(),
         });
+        // File it. A filing miss is NOT a failed remix — the picture exists, is billed and is on the
+        // feed — so it is reported and the job still counts as done, rather than telling you to
+        // re-run something that already succeeded.
+        if (first.galleryId) {
+          try {
+            await fileIntoLibrary(dest.store, {
+              url: galleryApi.imageUrl(first.galleryId),
+              prompt: label,
+              name: cardName('poseremix', idx),
+            }, { folder: 'Pose Remix', label: dest.label });
+          } catch (fileErr) {
+            notify(fileErr.message || `Could not file into ${dest.label}`, 'error');
+          }
+        }
         return true;
       } catch (err) {
         failPending(feedId, err.message || 'Pose remix failed');
@@ -431,6 +449,10 @@ export default function PoseRemixSeedreamPage() {
             ))}
           </div>
         </div>
+        {/* Chosen before the run, beside the price — this tab used to file nowhere at all, so
+            results existed only in the gallery and on the feed. */}
+        <LibraryDestinationPicker value={dest.destDb} onChange={dest.setDestDb} />
+        <LibraryDestinationNote value={dest.destDb} />
         <Btn onClick={handleGenerate} disabled={loading} className="w-full">
           {loading ? <Spinner size={16} /> : null}
           {loading ? `Reposing ${jobTotal}…` : `Repose ${jobTotal} image${jobTotal === 1 ? '' : 's'} · ${vibeByKey(vibe).label} · $${cost.toFixed(3)}`}
