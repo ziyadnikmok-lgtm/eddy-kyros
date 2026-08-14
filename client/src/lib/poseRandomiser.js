@@ -54,6 +54,31 @@ export function eligiblePoses(visible, { tags = [], views = [] } = {}, { readTag
 }
 
 /**
+ * How many poses each chip would give you — the number printed on the chip itself.
+ *
+ * CONTEXTUAL, NOT ABSOLUTE, and that is the whole point. A chip that always showed its own total
+ * would promise a number you cannot get: with "mirror selfie" already on, a BACK chip reading 12
+ * is a lie, because clicking it yields the 2 poses that are both. So each chip is counted against
+ * the CURRENT state of the OTHER family.
+ *
+ * Within its own family a chip ignores its siblings, because that family is an OR — adding a second
+ * view can only grow the pool, so counting "front" against "back" would understate it.
+ *
+ * Counted over `visible`, so a folder chip or the Favorite filter is already reflected. Every
+ * number on screen is therefore the number you would actually draw from.
+ */
+export function chipCounts(visible, { tags = [], views = [] } = {}, readers = {}, vocab = {}) {
+  const counts = { tags: {}, views: {} };
+  for (const tag of vocab.tags || []) {
+    counts.tags[tag] = eligiblePoses(visible, { tags: [tag], views }, readers).length;
+  }
+  for (const view of vocab.views || []) {
+    counts.views[view] = eligiblePoses(visible, { tags, views: [view] }, readers).length;
+  }
+  return counts;
+}
+
+/**
  * N ids drawn at random, without replacement.
  *
  * Fisher-Yates over a COPY — shuffling the caller's array would reorder the grid as a side effect of

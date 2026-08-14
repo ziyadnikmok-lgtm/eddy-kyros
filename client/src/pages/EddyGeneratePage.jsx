@@ -22,7 +22,7 @@ import { createPageStore } from '../lib/pageStateStore';
 // out of the generate flow and now lives only on the Pose tab, where it can be acted on.
 import { comboKey, buildSeenKeys, splitBySeen, spendToday } from '../lib/provenance';
 import { poseSentence, readPoseView, readPoseExpression, readPoseTags, POSE_TAGS } from '../lib/poseText';
-import { eligiblePoses, drawPoses, describeDraw } from '../lib/poseRandomiser';
+import { eligiblePoses, drawPoses, describeDraw, chipCounts } from '../lib/poseRandomiser';
 import { runPool } from '../lib/runPool';
 import { cn } from '../lib/utils';
 import { downloadBlob, stripEnabled } from '../lib/stripMetadata';
@@ -6790,8 +6790,17 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
               const pool = eligiblePoses(visible, { tags: randomTags, views: randomViews },
                 { readTags: readPoseTags, readView: readPoseView });
               const d = describeDraw(randomCount, pool.length, pickedOutfits.length);
-              const chip = (on) => cn('rounded-md px-2 py-1 text-[0.6875rem] font-bold uppercase tracking-wide transition cursor-pointer',
-                on ? 'bg-fuchsia-500/25 text-fuchsia-200' : 'text-zinc-600 hover:text-zinc-300');
+              const counts = chipCounts(visible, { tags: randomTags, views: randomViews },
+                { readTags: readPoseTags, readView: readPoseView },
+                { tags: POSE_TAGS, views: ['front', 'back', 'closeup'] });
+              // A chip worth zero is disabled rather than hidden: knowing you have no back-facing
+              // mirror selfies is useful, and a chip that vanishes as you click elsewhere is worse
+              // than one that greys out. An ACTIVE chip is never disabled — you must be able to
+              // switch it back off.
+              const chip = (on, n) => cn('rounded-md px-2 py-1 text-[0.6875rem] font-bold uppercase tracking-wide transition',
+                on ? 'bg-fuchsia-500/25 text-fuchsia-200 cursor-pointer'
+                  : n === 0 ? 'text-zinc-700 cursor-not-allowed'
+                    : 'text-zinc-600 hover:text-zinc-300 cursor-pointer');
               return (
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-2">
                   <span className="text-[0.6875rem] font-semibold uppercase tracking-wider text-zinc-500">Randomise</span>
@@ -6800,12 +6809,13 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
                     className="w-16 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-center text-xs text-zinc-200 outline-none focus:border-blue-500/50" />
                   {POSE_TAGS.map((tag) => {
                     const on = randomTags.includes(tag);
+                    const n = counts.tags[tag] ?? 0;
                     return (
-                      <button key={tag} type="button"
+                      <button key={tag} type="button" disabled={!on && n === 0}
                         onClick={() => setRandomTags((v) => (on ? v.filter((t) => t !== tag) : [...v, tag]))}
-                        title={on ? `Stop restricting to ${tag}` : `Only draw ${tag} poses`}
-                        className={chip(on)}>
-                        {tag}
+                        title={n === 0 ? `No ${tag} poses in this view` : on ? `Stop restricting to ${tag}` : `Only draw ${tag} poses — ${n} available`}
+                        className={chip(on, n)}>
+                        {tag} <span className={on ? 'text-fuchsia-300/70' : 'text-zinc-600'}>{n}</span>
                       </button>
                     );
                   })}
@@ -6815,12 +6825,13 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
                   <span className="flex items-center gap-1 border-l border-white/[0.08] pl-2">
                     {['front', 'back', 'closeup'].map((v) => {
                       const on = randomViews.includes(v);
+                      const n = counts.views[v] ?? 0;
                       return (
-                        <button key={v} type="button"
+                        <button key={v} type="button" disabled={!on && n === 0}
                           onClick={() => setRandomViews((x) => (on ? x.filter((t) => t !== v) : [...x, v]))}
-                          title={on ? `Stop restricting to ${v}` : `Only draw ${v} poses`}
-                          className={chip(on)}>
-                          {v === 'closeup' ? 'close-up' : v}
+                          title={n === 0 ? `No ${v} poses with those labels` : on ? `Stop restricting to ${v}` : `Only draw ${v} poses — ${n} available`}
+                          className={chip(on, n)}>
+                          {v === 'closeup' ? 'close-up' : v} <span className={on ? 'text-fuchsia-300/70' : 'text-zinc-600'}>{n}</span>
                         </button>
                       );
                     })}

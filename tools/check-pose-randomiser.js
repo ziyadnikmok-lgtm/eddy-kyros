@@ -16,10 +16,10 @@ const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
 
 // eslint-disable-next-line no-new-func
-const rnd = new Function(`${read('client/src/lib/poseRandomiser.js').replace(/^export /gm, '')}; return { eligiblePoses, drawPoses, describeDraw };`)();
+const rnd = new Function(`${read('client/src/lib/poseRandomiser.js').replace(/^export /gm, '')}; return { eligiblePoses, drawPoses, describeDraw, chipCounts };`)();
 // eslint-disable-next-line no-new-func
 const text = new Function(`${read('client/src/lib/poseText.js').replace(/^export /gm, '')}; return { readPoseTags, readPoseView, POSE_TAGS };`)();
-const { eligiblePoses, drawPoses, describeDraw } = rnd;
+const { eligiblePoses, drawPoses, describeDraw, chipCounts } = rnd;
 const { readPoseTags } = text;
 
 let pass = 0, fail = 0;
@@ -94,6 +94,37 @@ check('a combination with no members returns empty rather than falling back to e
   elig(mixed, { views: ['closeup'], tags: ['mirror selfie'] }).length === 0);
 check('an empty family is not a filter',
   elig(mixed, { views: [], tags: ['mirror selfie'] }).length === 3);
+
+// --- 1c. the number printed on each chip ------------------------------------------------------------------
+// "I select front and it shows 35 — that's how many front poses there are" (owner, 2026-08-14).
+const VOCAB = { tags: ['mirror selfie'], views: ['front', 'back', 'closeup'] };
+const cc = (rows, sel) => chipCounts(rows, sel, READ, VOCAB);
+
+const c0 = cc(mixed, {});
+check('with nothing selected each view chip shows its own total',
+  c0.views.front === 3 && c0.views.back === 3 && c0.views.closeup === 1);
+check('and the tag chip shows its total', c0.tags['mirror selfie'] === 3);
+check('the view counts add up to the whole grid', c0.views.front + c0.views.back + c0.views.closeup === mixed.length);
+
+// THE POINT: counts follow the OTHER family. A back chip reading 3 while "mirror selfie" is on
+// would promise a draw of 3 and deliver 2.
+const cTag = cc(mixed, { tags: ['mirror selfie'] });
+check('with mirror selfie on, back counts only the back mirror selfies', cTag.views.back === 2);
+check('front likewise', cTag.views.front === 1);
+check('and a combination with no members reads 0, not a stale total', cTag.views.closeup === 0);
+check('each contextual count matches what the draw would actually yield',
+  cTag.views.back === elig(mixed, { tags: ['mirror selfie'], views: ['back'] }).length);
+
+// A chip does NOT count against its own family — that family is an OR, so a second pick only grows
+// the pool. Counting front against back would understate it.
+const cView = cc(mixed, { views: ['back'] });
+check('a view chip ignores its own siblings', cView.views.front === 3);
+check('while the tag chip narrows to that view', cView.tags['mirror selfie'] === 2);
+
+check('counts respect the grid they are given — a folder filter is already applied',
+  cc(mixed.filter((p) => p.id.startsWith('bm')), {}).views.back === 2);
+check('an empty grid counts zero everywhere', cc([], {}).views.front === 0);
+check('an unknown vocabulary entry counts zero rather than throwing', cc(mixed, {}).tags.bed === undefined);
 
 // --- 2. the draw --------------------------------------------------------------------------------------
 const pool20 = elig(grid, {});
