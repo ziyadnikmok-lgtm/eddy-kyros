@@ -251,6 +251,17 @@ const NAV_SECTIONS = [
     items: [
       { id: 'seedanceVideo', label: 'Seedance Video' },
       { id: 'seedanceOmni', label: 'Seedance Omni' },
+      // WHERE FINISHED VIDEOS ARE. Moved here from the Gemini section on 2026-08-14, because that
+      // section renders in NO workspace: all three are engines:['seedream'] since Gemini was
+      // removed on 2026-08-09, so every item left behind in it became unreachable. This one mattered
+      // — it is the only page that lists generated videos, and 100 of them (292 MB, all downloaded)
+      // had no route to them from anywhere in the app.
+      //
+      // It sits ABOVE Video Library on purpose: "Video Library" is the eddy-video INPUT collection
+      // (a reference image plus the prompt to use with it), and having the two adjacent with the
+      // output first is what stops the next person looking for their renders in the input library —
+      // which is exactly how this was reported (owner, 2026-08-14).
+      { id: 'videoGallery', label: 'Video Gallery' },
       { id: 'videoLibrary', label: 'Video Library' },
     ],
   },
@@ -285,7 +296,9 @@ const NAV_SECTIONS = [
       { id: 'poseFix', label: 'Pose Remix' },
       { id: 'nanoBypass', label: 'Nano Bypass' },
       { id: 'video', label: 'Video' },
-      { id: 'videoGallery', label: 'Video Gallery' },
+      // videoGallery moved to the Video section above — see the note there. Left out here rather
+      // than duplicated: two nav entries sharing one id is a trap waiting for whoever revives this
+      // section.
       { id: 'characters', label: 'Characters' },
     ],
   },
