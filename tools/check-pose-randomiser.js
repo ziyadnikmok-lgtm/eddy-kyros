@@ -37,32 +37,26 @@ const grid = [
   ...Array.from({ length: 10 }, (_, i) => pose(`u${i}`)),
 ];
 
-// --- 1. eligibility ---------------------------------------------------------------------------------
+// --- 1. eligibility: THE CHIPS ARE EXCLUSIONS -----------------------------------------------------
+// "Choosing which label you don't want" (owner, 2026-08-14). Ticking a chip REMOVES those poses.
+// The direction is the whole feature, and a flip would be invisible on a grid where most poses
+// share a label — so every assertion below names which poses survive, not just how many.
 const READ = { readTags: readPoseTags, readView: text.readPoseView };
 const elig = (rows, sel) => eligiblePoses(rows, sel, READ);
 
-check('nothing selected draws from everything on screen', elig(grid, {}).length === 20);
-check('a tag narrows to just those poses', elig(grid, { tags: ['mirror selfie'] }).length === 6);
-check('and it is the right six', elig(grid, { tags: ['mirror selfie'] }).every((p) => p.id.startsWith('m')));
-check('an answered-no pose is excluded when a tag is selected',
-  !elig(grid, { tags: ['mirror selfie'] }).some((p) => p.id.startsWith('n')));
-check('an unasked pose is excluded too',
-  !elig(grid, { tags: ['mirror selfie'] }).some((p) => p.id.startsWith('u')));
-check('but unasked poses ARE included with no tag selected',
-  elig(grid, {}).some((p) => p.id.startsWith('u')));
-check('an unknown tag matches nothing rather than everything', elig(grid, { tags: ['bed'] }).length === 0);
+check('nothing ticked leaves the whole grid eligible', elig(grid, {}).length === 20);
+check('excluding a tag DROPS those poses', elig(grid, { tags: ['mirror selfie'] }).length === 14);
+check('and none of the survivors carry it',
+  !elig(grid, { tags: ['mirror selfie'] }).some((p) => p.id.startsWith('m')));
+check('an answered-no pose SURVIVES a tag exclusion — it does not carry the tag',
+  elig(grid, { tags: ['mirror selfie'] }).some((p) => p.id.startsWith('n')));
+check('an unasked pose survives too', elig(grid, { tags: ['mirror selfie'] }).some((p) => p.id.startsWith('u')));
+check('excluding an unknown tag removes nothing', elig(grid, { tags: ['bed'] }).length === 20);
 check('an empty grid is fine', elig([], { tags: ['mirror selfie'] }).length === 0);
 check('a null grid is fine', elig(null, {}).length === 0);
-check('an omitted selection object is fine', eligiblePoses(grid, undefined, READ).length === 20);
+check('an omitted selection object leaves everything eligible', eligiblePoses(grid, undefined, READ).length === 20);
 
-// Union WITHIN a family: "the labels of poses i want" is any-of. An AND across two tags would
-// return nothing almost every time, which reads as a broken button.
-const twoTags = [pose('a', ['mirror selfie']), pose('b', ['bed']), pose('c', ['mirror selfie', 'bed'])];
-const readAny = (p) => { try { return JSON.parse(p).pose_action.tags || []; } catch { return []; } };
-check('two selected tags are a UNION, not an intersection',
-  eligiblePoses(twoTags, { tags: ['mirror selfie', 'bed'] }, { readTags: readAny }).length === 3);
-
-// --- 1b. views, and how the two families combine -----------------------------------------------------
+// --- 1b. views, and two exclusions together -----------------------------------------------------------
 const viewed = (id, view, tags) => ({
   id,
   prompt: JSON.stringify({ pose_action: { description: id, view, ...(tags ? { tags } : {}) } }),
@@ -77,54 +71,59 @@ const mixed = [
   viewed('c1', 'closeup', []),
   { id: 'plain', prompt: 'just a sentence, no JSON at all' },
 ];
-check('a view narrows to that view', elig(mixed, { views: ['back'] }).map((p) => p.id).join(',') === 'bm1,bm2,b1');
-check('two views are a UNION — a pose has only one, so an AND could never match',
-  elig(mixed, { views: ['back', 'closeup'] }).length === 4);
-check('close-up is selectable on its own', elig(mixed, { views: ['closeup'] }).map((p) => p.id).join(',') === 'c1');
-check('an unlabelled card counts as front, matching the rest of the app',
-  elig(mixed, { views: ['front'] }).some((p) => p.id === 'plain'));
+const ids = (rows) => rows.map((p) => p.id).join(',');
 
-// THE ONE THAT MATTERS: across families it is AND. In one OR bucket this would return 6 of 7 —
-// "everything back plus everything mirror" — which is close to no filter and looks broken.
-const backMirror = elig(mixed, { views: ['back'], tags: ['mirror selfie'] });
-check('back + mirror selfie is an INTERSECTION, not a union', backMirror.length === 2);
-check('and it is exactly the back-facing mirror selfies', backMirror.map((p) => p.id).join(',') === 'bm1,bm2');
-check('front + mirror selfie picks the other one', elig(mixed, { views: ['front'], tags: ['mirror selfie'] }).map((p) => p.id).join(',') === 'fm1');
-check('a combination with no members returns empty rather than falling back to everything',
-  elig(mixed, { views: ['closeup'], tags: ['mirror selfie'] }).length === 0);
-check('an empty family is not a filter',
-  elig(mixed, { views: [], tags: ['mirror selfie'] }).length === 3);
+check('excluding a view drops exactly that view', ids(elig(mixed, { views: ['back'] })) === 'fm1,f1,c1,plain');
+check('excluding two views drops both', ids(elig(mixed, { views: ['back', 'closeup'] })) === 'fm1,f1,plain');
+check('an unlabelled card counts as front, so excluding front drops it too',
+  !elig(mixed, { views: ['front'] }).some((p) => p.id === 'plain'));
+check('excluding close-up leaves everything else', elig(mixed, { views: ['closeup'] }).length === 6);
 
-// --- 1c. the number printed on each chip ------------------------------------------------------------------
-// "I select front and it shows 35 — that's how many front poses there are" (owner, 2026-08-14).
+// Across families: remove this AND also remove that. Unlike inclusion there is no subtlety here —
+// but the arithmetic still has to account for overlap rather than double-counting it.
+const noMirrorNoFront = elig(mixed, { views: ['front'], tags: ['mirror selfie'] });
+check('excluding front AND mirror selfie leaves neither', ids(noMirrorNoFront) === 'b1,c1');
+check('the overlap is not double-counted — 7 minus 5 distinct, not 7 minus 6',
+  noMirrorNoFront.length === 2);
+check('excluding everything leaves nothing rather than falling back to everything',
+  elig(mixed, { views: ['front', 'back', 'closeup'] }).length === 0);
+check('an empty family excludes nothing', elig(mixed, { views: [], tags: ['mirror selfie'] }).length === 4);
+
+// The direction, stated as a property: adding an exclusion can only ever SHRINK the pool.
+const grow = elig(mixed, { tags: ['mirror selfie'] }).length <= elig(mixed, {}).length
+  && elig(mixed, { tags: ['mirror selfie'], views: ['back'] }).length <= elig(mixed, { tags: ['mirror selfie'] }).length;
+check('every added exclusion shrinks or holds the pool — never grows it', grow);
+
+// --- 1c. the number on each chip is what it COSTS you ------------------------------------------------------
 const VOCAB = { tags: ['mirror selfie'], views: ['front', 'back', 'closeup'] };
 const cc = (rows, sel) => chipCounts(rows, sel, READ, VOCAB);
 
 const c0 = cc(mixed, {});
-check('with nothing selected each view chip shows its own total',
+check('with nothing ticked, a chip costs what it would remove',
   c0.views.front === 3 && c0.views.back === 3 && c0.views.closeup === 1);
-check('and the tag chip shows its total', c0.tags['mirror selfie'] === 3);
-check('the view counts add up to the whole grid', c0.views.front + c0.views.back + c0.views.closeup === mixed.length);
+check('and the tag chip likewise', c0.tags['mirror selfie'] === 3);
+check('the view costs add up to the whole grid', c0.views.front + c0.views.back + c0.views.closeup === mixed.length);
 
-// THE POINT: counts follow the OTHER family. A back chip reading 3 while "mirror selfie" is on
-// would promise a draw of 3 and deliver 2.
+// OVERLAP is the reason this is a difference and not a count. With mirror selfies already gone,
+// FRONT can only take the 2 front poses that are left, not all 3.
 const cTag = cc(mixed, { tags: ['mirror selfie'] });
-check('with mirror selfie on, back counts only the back mirror selfies', cTag.views.back === 2);
-check('front likewise', cTag.views.front === 1);
-check('and a combination with no members reads 0, not a stale total', cTag.views.closeup === 0);
-check('each contextual count matches what the draw would actually yield',
-  cTag.views.back === elig(mixed, { tags: ['mirror selfie'], views: ['back'] }).length);
+check('with mirror selfie excluded, front now costs only what remains', cTag.views.front === 2);
+check('back likewise', cTag.views.back === 1);
+check('close-up is untouched by that exclusion', cTag.views.closeup === 1);
+check('each cost equals the pool difference it actually causes',
+  cTag.views.front === elig(mixed, { tags: ['mirror selfie'] }).length
+    - elig(mixed, { tags: ['mirror selfie'], views: ['front'] }).length);
 
-// A chip does NOT count against its own family — that family is an OR, so a second pick only grows
-// the pool. Counting front against back would understate it.
-const cView = cc(mixed, { views: ['back'] });
-check('a view chip ignores its own siblings', cView.views.front === 3);
-check('while the tag chip narrows to that view', cView.tags['mirror selfie'] === 2);
+// A TICKED chip reports what unticking would give back — one definition, both directions.
+const cOn = cc(mixed, { views: ['back'] });
+check('a ticked chip shows how many it would give back', cOn.views.back === 3);
+check('and that matches the pool it would restore',
+  cOn.views.back === elig(mixed, {}).length - elig(mixed, { views: ['back'] }).length);
 
-check('counts respect the grid they are given — a folder filter is already applied',
+check('costs respect the grid they are given — a folder filter is already applied',
   cc(mixed.filter((p) => p.id.startsWith('bm')), {}).views.back === 2);
-check('an empty grid counts zero everywhere', cc([], {}).views.front === 0);
-check('an unknown vocabulary entry counts zero rather than throwing', cc(mixed, {}).tags.bed === undefined);
+check('an empty grid costs zero everywhere', cc([], {}).views.front === 0);
+check('a chip outside the vocabulary is simply absent', cc(mixed, {}).tags.bed === undefined);
 
 // --- 2. the draw --------------------------------------------------------------------------------------
 const pool20 = elig(grid, {});
@@ -136,8 +135,8 @@ check('asking for exactly the pool size returns all of it', drawPoses(pool20, 20
 
 // The shortfall case — take everything, do not throw, do not pad.
 check('asking for 30 of 20 returns 20', drawPoses(pool20, 30).length === 20);
-const six = elig(grid, { tags: ['mirror selfie'] });
-check('asking for 30 mirror selfies when 6 exist returns 6', drawPoses(six, 30).length === 6);
+const six = elig(grid, { tags: [] }).slice(0, 6);
+check('asking for 30 when only 6 are eligible returns 6', drawPoses(six, 30).length === 6);
 
 check('zero returns nothing', drawPoses(pool20, 0).length === 0);
 check('a negative returns nothing rather than throwing', drawPoses(pool20, -5).length === 0);

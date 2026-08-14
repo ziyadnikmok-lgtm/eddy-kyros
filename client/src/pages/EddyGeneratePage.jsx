@@ -6793,12 +6793,12 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
               const counts = chipCounts(visible, { tags: randomTags, views: randomViews },
                 { readTags: readPoseTags, readView: readPoseView },
                 { tags: POSE_TAGS, views: ['front', 'back', 'closeup'] });
-              // A chip worth zero is disabled rather than hidden: knowing you have no back-facing
-              // mirror selfies is useful, and a chip that vanishes as you click elsewhere is worse
-              // than one that greys out. An ACTIVE chip is never disabled — you must be able to
-              // switch it back off.
+              // ROSE, not fuchsia: a lit chip here means "these are being thrown out", and the
+              // colour that reads as removal everywhere else in this app should not read as
+              // selection in one row. A chip that costs 0 is disabled — ticking it would do
+              // nothing — but an already-ticked chip never is, or it could not be switched off.
               const chip = (on, n) => cn('rounded-md px-2 py-1 text-[0.6875rem] font-bold uppercase tracking-wide transition',
-                on ? 'bg-fuchsia-500/25 text-fuchsia-200 cursor-pointer'
+                on ? 'bg-rose-500/25 text-rose-200 line-through decoration-rose-300/50 cursor-pointer'
                   : n === 0 ? 'text-zinc-700 cursor-not-allowed'
                     : 'text-zinc-600 hover:text-zinc-300 cursor-pointer');
               return (
@@ -6807,15 +6807,18 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
                   <input type="number" min="1" value={randomCount}
                     onChange={(e) => setRandomCount(e.target.value)}
                     className="w-16 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-center text-xs text-zinc-200 outline-none focus:border-blue-500/50" />
+                  {/* Says which way the chips run. Without it a lit chip is ambiguous — it could
+                      just as easily mean "only these". */}
+                  <span className="text-[0.6875rem] uppercase tracking-wider text-zinc-600">leave out</span>
                   {POSE_TAGS.map((tag) => {
                     const on = randomTags.includes(tag);
                     const n = counts.tags[tag] ?? 0;
                     return (
                       <button key={tag} type="button" disabled={!on && n === 0}
                         onClick={() => setRandomTags((v) => (on ? v.filter((t) => t !== tag) : [...v, tag]))}
-                        title={n === 0 ? `No ${tag} poses in this view` : on ? `Stop restricting to ${tag}` : `Only draw ${tag} poses — ${n} available`}
+                        title={on ? `Put ${tag} poses back in — ${n} more to draw from` : n === 0 ? `Nothing to exclude — no ${tag} poses left` : `Leave ${tag} poses out — drops ${n}`}
                         className={chip(on, n)}>
-                        {tag} <span className={on ? 'text-fuchsia-300/70' : 'text-zinc-600'}>{n}</span>
+                        {tag} <span className={on ? 'text-rose-300/70' : 'text-zinc-600'}>{n}</span>
                       </button>
                     );
                   })}
@@ -6829,9 +6832,9 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
                       return (
                         <button key={v} type="button" disabled={!on && n === 0}
                           onClick={() => setRandomViews((x) => (on ? x.filter((t) => t !== v) : [...x, v]))}
-                          title={n === 0 ? `No ${v} poses with those labels` : on ? `Stop restricting to ${v}` : `Only draw ${v} poses — ${n} available`}
+                          title={on ? `Put ${v} poses back in — ${n} more to draw from` : n === 0 ? `Nothing to exclude — no ${v} poses left` : `Leave ${v} poses out — drops ${n}`}
                           className={chip(on, n)}>
-                          {v === 'closeup' ? 'close-up' : v} <span className={on ? 'text-fuchsia-300/70' : 'text-zinc-600'}>{n}</span>
+                          {v === 'closeup' ? 'close-up' : v} <span className={on ? 'text-rose-300/70' : 'text-zinc-600'}>{n}</span>
                         </button>
                       );
                     })}
