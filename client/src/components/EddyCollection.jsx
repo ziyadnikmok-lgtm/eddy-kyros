@@ -8,7 +8,9 @@ import BlurByHand from './BlurByHand';
 import { eddyVision, gallery as galleryApi, video as videoApi, seedream as seedreamApi } from '../services/api';
 import { cn } from '../lib/utils';
 import { downloadBlob, stripMetadata, stripEnabled } from '../lib/stripMetadata';
-import { isPosePromptBroken, hasPoseView, readPoseView, mergePoseView, poseSentence } from '../lib/poseText';
+import { isPosePromptBroken, hasPoseView, readPoseView, mergePoseView, poseSentence,
+  readPoseDescription, readPoseTags, hasPoseTags, mergePoseTags } from '../lib/poseText';
+import { planPoseTagBackfill } from '../lib/poseTagBackfill';
 
 /**
  * Eddy's shared collection UI — folders on top, items below, drop/paste/upload to add.
@@ -290,6 +292,7 @@ export default function EddyCollection({
   const [describeProgress, setDescribeProgress] = useState(null);
   const [describingAll, setDescribingAll] = useState(false);
   const [labelingViews, setLabelingViews] = useState(false);
+  const [taggingMirrors, setTaggingMirrors] = useState(false);
   const [labelingOne, setLabelingOne] = useState({});
   // Checked once per loop iteration rather than aborting the in-flight fetch — Stop means "don't
   // start the next one", not "cut off the request already in the air".
@@ -635,8 +638,51 @@ export default function EddyCollection({
   // / mergePoseView) the way redescribeBroken's full rewrite is allowed to for a broken card.
   const unlabeledViewTargets = useMemo(() => {
     if (describeKind !== 'pose') return [];
-    return visible.filter((i) => (thumbs[i.id] || i.url) && !isPosePromptBroken(i.prompt) && i.prompt?.trim() && !hasPoseView(i.prompt));
+    // Widened for tags (2026-08-14): a card labelled before tags existed has a view but no tags
+    // array, and the call that would answer the tag is the same one that answered the view. Cards
+    // that have BOTH are still skipped, so this never re-charges for an answer already on disk.
+    return visible.filter((i) => (thumbs[i.id] || i.url) && !isPosePromptBroken(i.prompt) && i.prompt?.trim()
+      && (!hasPoseView(i.prompt) || !hasPoseTags(i.prompt)));
   }, [describeKind, visible, thumbs]);
+
+  /**
+   * The FREE mirror-selfie pass — what the saved descriptions already answer, at no cost.
+   *
+   * Scoped to the WHOLE collection rather than `visible`, unlike the AI labeller above. That one is
+   * scoped because it spends money per card and you should be able to aim it at one folder; this one
+   * is free and idempotent, so limiting it to the current filter would just mean running it once per
+   * folder to get the same result.
+   *
+   * No image needed — it reads text — so cards with no thumbnail are included, which the AI pass
+   * cannot do at all.
+   */
+  const mirrorTagPlan = useMemo(() => {
+    if (describeKind !== 'pose') return null;
+    const { patches, stats } = planPoseTagBackfill(items, { readPoseDescription, hasPoseTags, mergePoseTags });
+    return patches.size ? { patches, stats } : null;
+  }, [describeKind, items]);
+
+  const tagMirrors = useCallback(async () => {
+    if (!mirrorTagPlan) return;
+    setTaggingMirrors(true);
+    let written = 0;
+    try {
+      for (const [id, patch] of mirrorTagPlan.patches) {
+        try { await store.updateItem(id, patch); written += 1; } catch { /* one bad row must not stop the pass */ }
+      }
+      await refresh();
+      // Says what is LEFT as well as what was done: the number still needing the paid pass is the
+      // only way to tell "the library is tagged" from "the free pass found the easy half".
+      const left = mirrorTagPlan.stats.silent;
+      notify(
+        `Tagged ${written} mirror selfie${written === 1 ? '' : 's'} · free`
+        + (left ? ` — ${left} still unanswered, use Label poses for those` : ''),
+        'success',
+      );
+    } finally {
+      setTaggingMirrors(false);
+    }
+  }, [mirrorTagPlan, store, refresh, notify]);
 
   // Duplicate STARS: several cards sharing one title all ended up favorited, because a collection
   // with repeated titles gets a star on every copy (12 favourites became 23 on the last import).
@@ -712,6 +758,25 @@ export default function EddyCollection({
   }, [store, refresh, notify]);
 
   /**
+   * Toggle one tag on a pose card. Clicking the active chip CLEARS it — same affordance as the
+   * outfit view buttons, so a wrong AI answer can be undone rather than only swapped.
+   *
+   * Clearing writes an empty array rather than removing the key, because [] is the "asked, and it
+   * is not one" answer: it stops the paid labelling pass re-asking about a card you have already
+   * corrected by hand.
+   */
+  const setPoseTag = useCallback(async (it, tag) => {
+    const current = readPoseTags(it.prompt);
+    const next = mergePoseTags(it.prompt, current.includes(tag) ? current.filter((t) => t !== tag) : [...current, tag]);
+    if (next === it.prompt) {
+      notify('This card has no readable pose text yet — use "Re-describe with AI" first', 'error');
+      return;
+    }
+    await store.updateItem(it.id, { prompt: next });
+    await refresh();
+  }, [store, refresh, notify]);
+
+  /**
    * An OUTFIT's angle, written to the row.
    *
    * Poses keep theirs inside the prompt JSON (mergePoseView). Outfits cannot: theirs is routinely
@@ -745,7 +810,14 @@ export default function EddyCollection({
     }
     const view = r?.view ?? r?.data?.view ?? '';
     if (!view) return false;
-    await store.updateItem(it.id, { prompt: mergePoseView(it.prompt, view) });
+    // TWO answers from the one call (2026-08-14). Two surgical merges rather than one rewrite, so
+    // the description stays exactly as written. `mirror` is read with ?? false, not ||, because an
+    // older server build that has no such field must mean "no tag" — and must NOT stamp an empty
+    // tags array, which would mark the card answered and stop a newer build ever asking.
+    let prompt = mergePoseView(it.prompt, view);
+    const mirror = r?.mirror ?? r?.data?.mirror;
+    if (typeof mirror === 'boolean') prompt = mergePoseTags(prompt, mirror ? ['mirror selfie'] : []);
+    await store.updateItem(it.id, { prompt });
     return true;
   }, [store]);
 
@@ -776,7 +848,8 @@ export default function EddyCollection({
     let done = 0;
     for (let pass = 1; ; pass += 1) {
       const remaining = (await store.listItems()).filter(
-        (i) => !isPosePromptBroken(i.prompt) && i.prompt?.trim() && !hasPoseView(i.prompt)
+        (i) => !isPosePromptBroken(i.prompt) && i.prompt?.trim()
+          && (!hasPoseView(i.prompt) || !hasPoseTags(i.prompt))
       );
       if (!remaining.length) break;
       let progressed = 0;
@@ -2498,6 +2571,17 @@ export default function EddyCollection({
                 {labelingViews ? 'Labelling…' : `Label ${unlabeledViewTargets.length} pose${unlabeledViewTargets.length === 1 ? '' : 's'}`}
               </Btn>
             )}
+            {/* The FREE half of mirror-selfie tagging (2026-08-14). Reads the saved descriptions and
+                tags what they already say, at no cost and with no image — the same trade
+                poseViewBackfill made for front/back. Sits before the paid labeller on purpose: run
+                this first and the AI pass has fewer cards left to charge for. Only appears when it
+                would actually do something, and its label states the count so it never looks like a
+                no-op button. */}
+            {!describingAll && mirrorTagPlan && (
+              <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm !border-fuchsia-500/40 !text-fuchsia-200" onClick={tagMirrors} disabled={taggingMirrors}>
+                {taggingMirrors ? 'Tagging…' : `Tag ${mirrorTagPlan.patches.size} mirror selfie${mirrorTagPlan.patches.size === 1 ? '' : 's'} · free`}
+              </Btn>
+            )}
             {/* Back-view descriptions for outfits that predate the two-prompt upload (2026-08-06).
                 Writes ONLY backPrompt — the front description is never touched. */}
             {!describingAll && missingBackTargets.length > 0 && (
@@ -3048,6 +3132,24 @@ export default function EddyCollection({
                       );
                     })}
                     {!hasPoseView(it.prompt) && <span className="ml-0.5 text-[0.625rem] text-amber-400/80">unlabeled</span>}
+                    {/* TAGS — a separate family, deliberately a different colour from the three blue
+                        view buttons so the row never reads as one set of four. A mirror selfie is
+                        not a fourth view: it coexists with front/back (see POSE_TAGS in poseText).
+                        Same argument as the view buttons for having it at all — the AI answer is a
+                        guess you cannot see, and one click is certain. */}
+                    <span className="ml-1 border-l border-white/[0.08] pl-1.5">
+                      <button type="button" onClick={() => setPoseTag(it, 'mirror selfie')}
+                        disabled={labelingOne[it.id]}
+                        title={readPoseTags(it.prompt).includes('mirror selfie')
+                          ? 'Clear the mirror selfie tag'
+                          : 'Mark this pose as a mirror selfie'}
+                        className={cn('rounded px-1.5 py-0.5 text-[0.625rem] font-bold uppercase tracking-wide transition cursor-pointer disabled:opacity-40',
+                          readPoseTags(it.prompt).includes('mirror selfie')
+                            ? 'bg-fuchsia-500/25 text-fuchsia-200'
+                            : 'text-zinc-600 hover:text-zinc-300')}>
+                        mirror
+                      </button>
+                    </span>
                   </span>
                   <button className="text-[0.6875rem] text-zinc-500 hover:text-blue-300 cursor-pointer disabled:opacity-40"
                     disabled={labelingOne[it.id]} onClick={() => retryLabelOne(it)}>

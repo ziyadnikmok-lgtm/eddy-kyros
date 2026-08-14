@@ -178,3 +178,80 @@ export function mergePoseView(oldText, newView) {
   parsed.pose_action.view = newView;
   return JSON.stringify(parsed);
 }
+
+/**
+ * TAGS — a second, INDEPENDENT label family on the same saved block (owner, 2026-08-14).
+ *
+ * WHY NOT A FOURTH VIEW: the obvious way to add "mirror selfie" is another value in POSE_VIEWS, and
+ * it would quietly break outfit matching. `view` answers ONE question -- which side of her GARMENT
+ * the camera sees (see VIEW_RULE in server/routes/eddyVision.js) -- and three things depend on that
+ * answer: Max Outfit pairs a back shot with the back-view outfit description, smartMatch pairs a
+ * close-up pose with a close-up outfit, and the generation prompt picks its body clause from it.
+ * A mirror selfie is orthogonal to all three: she can face the mirror (front of the outfit to the
+ * camera) or turn away from it (back of the outfit to the camera). Folding it into `view` forces
+ * every mirror pose to give up its front/back answer, and those poses start being described with
+ * the wrong side of the garment -- the exact mismatch `view` exists to prevent.
+ *
+ * WHY AN ARRAY AND NOT A `mirrorSelfie` BOOLEAN: the randomiser that motivated this filters by
+ * "the labels I want", plural. A boolean makes the second label a rebuild; an array makes it one
+ * more string in POSE_TAGS.
+ *
+ * WHY IN THE JSON AND NOT A ROW FIELD: `_addItems` in eddyCollectionStore.js has an ALLOWLIST and
+ * drops any field not named in it, with no error -- that is how poseView was nearly lost. Storing
+ * inside pose_action sidesteps it. (Outfits do keep their view as a row field. That split is
+ * deliberate and is not widened here.)
+ */
+export const POSE_TAGS = ['mirror selfie'];
+
+const POSE_TAG_SET = new Set(POSE_TAGS);
+
+/** Normalise a caller's list to the stored shape: lowercased, trimmed, known-only, deduped. */
+function cleanTags(tags) {
+  if (!Array.isArray(tags)) return [];
+  const out = [];
+  for (const t of tags) {
+    const v = String(t || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (POSE_TAG_SET.has(v) && !out.includes(v)) out.push(v);
+  }
+  return out;
+}
+
+/**
+ * The tags on a card, always an array. [] covers three different situations on purpose — never
+ * asked, asked and answered no, and unparseable — because no caller needs to tell them apart for
+ * FILTERING. The one place the difference matters (deciding what still needs labelling) asks
+ * hasPoseTags instead, exactly as hasPoseView exists beside readPoseView's 'front' default.
+ */
+export function readPoseTags(text) {
+  const raw = String(text || '').trim();
+  if (!raw.startsWith('{') && !raw.startsWith('"')) return [];
+  const parsed = tryParsePoseJson(raw);
+  return cleanTags(parsed?.pose_action?.tags);
+}
+
+/**
+ * True only when the saved JSON EXPLICITLY carries a pose_action.tags ARRAY — including an empty
+ * one. An empty array is a real answer ("we looked, it is not a mirror selfie") and must stop the
+ * card being re-scanned and re-charged on every later labelling pass.
+ */
+export function hasPoseTags(text) {
+  const raw = String(text || '').trim();
+  if (!raw.startsWith('{') && !raw.startsWith('"')) return false;
+  const parsed = tryParsePoseJson(raw);
+  return Array.isArray(parsed?.pose_action?.tags);
+}
+
+/**
+ * Write tags into an existing saved pose JSON, touching nothing else — the sibling of
+ * mergePoseView, with the same contract and the same deliberate side effect (a CSV-garbled card
+ * gets written back as clean JSON). Unknown tag strings are dropped rather than stored, so a typo
+ * or a stale vocabulary can never create a label the filter UI has no chip for.
+ */
+export function mergePoseTags(oldText, tags) {
+  const raw = String(oldText || '').trim();
+  if (!raw.startsWith('{') && !raw.startsWith('"')) return raw;
+  const parsed = tryParsePoseJson(raw);
+  if (!parsed || !parsed.pose_action || typeof parsed.pose_action !== 'object') return raw;
+  parsed.pose_action.tags = cleanTags(tags);
+  return JSON.stringify(parsed);
+}

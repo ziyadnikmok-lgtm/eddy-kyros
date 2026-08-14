@@ -83,6 +83,51 @@ const VIEW_RULE = [
   'When genuinely torn between front and back, answer "front".',
 ].join(' ');
 
+/**
+ * The mirror-selfie question, asked alongside the view because the call is already being made and
+ * the picture is already uploaded — one round trip, one price, two answers (owner, 2026-08-14).
+ *
+ * It is a TAG and not a fourth view value: see the note on POSE_TAGS in client/src/lib/poseText.js.
+ * A mirror selfie can be shot facing the mirror or turned away from it, so it has to coexist with
+ * front/back rather than replace it.
+ *
+ * The tie-break is "no", mirroring VIEW_RULE's "when torn, answer front", and for the same kind of
+ * reason: an unwanted tag is permanent and silent — nothing re-reads a card once it has an answer —
+ * while a missing one costs a single hand-click on a chip that is right there on the card.
+ */
+const MIRROR_RULE = [
+  'Then answer whether this photo is a MIRROR SELFIE — a photo she is taking of herself by',
+  'photographing her own reflection. Answer "yes" only when the picture is being taken INTO a',
+  'mirror: a phone visibly raised or held toward the glass, the frame or edge of a mirror in shot,',
+  'or an obvious reflection being photographed.',
+  'Answer "no" for a normal photo taken by someone else, for a phone held for any other reason,',
+  'and for a reflective surface — water, a window, sunglasses — that is not being used as a mirror.',
+  'A mirror merely visible somewhere in the room is "no".',
+  'When genuinely unsure, answer "no".',
+].join(' ');
+
+/**
+ * Read `<view> <yes|no>` out of whatever the model actually said.
+ *
+ * WHY IT IS NOT A `.replace(/[^a-z]/g, '')`: that is what the single-word version did, and it works
+ * only for a one-word reply. The moment a second word arrives, "front yes" collapses to "frontyes",
+ * matches nothing, and falls back to "front" — which would have looked correct for front poses and
+ * silently mislabelled every back and close-up one the day the second question was added.
+ *
+ * The mirror answer is read ONLY when the first token is a recognised view. A reply that does not
+ * begin with one ("I think it is front") is a model ignoring the format, and a "yes" found loose
+ * inside prose like that is not an answer to this question. Such a reply keeps today's exact
+ * behaviour — view defaults to front, no tag — rather than guessing.
+ */
+function parseViewAndMirror(text) {
+  const tokens = String(text || '').trim().toLowerCase().split(/[^a-z]+/).filter(Boolean);
+  const known = ['front', 'back', 'closeup'].includes(tokens[0]);
+  return {
+    view: known ? tokens[0] : 'front',
+    mirror: known && tokens[1] === 'yes',
+  };
+}
+
 const BRIEFS = {
   // An outfit reference is usually a product shot: a garment on a mannequin, flat on a bed, or
   // worn. Only the CLOTHING matters — describing the body or setting would drag them into the
@@ -268,7 +313,7 @@ router.post('/describe', async (req, res, next) => {
 /**
  * POST /api/eddy/classify-pose-view
  * Body: { image: base64 | dataUrl, mimeType, description?: string }
- * -> { view: 'front' | 'back' | 'closeup' }
+ * -> { view: 'front' | 'back' | 'closeup', mirror: boolean }
  *
  * Classifies front/back/closeup WITHOUT rewriting the saved pose description — /describe above
  * (re)generates the whole pose_action block; this only ever returns one word, so it is safe to
@@ -280,6 +325,13 @@ router.post('/describe', async (req, res, next) => {
  * shoulder" — so classification reads both the picture and the text that was written for it,
  * not the image alone. Optional: an image-only pose (no prompt yet) still classifies fine off
  * the picture.
+ *
+ * TWO ANSWERS, ONE CALL (2026-08-14): the mirror-selfie tag rides along on the same round trip and
+ * the same uploaded image, so tagging the library costs nothing beyond the view pass that was
+ * already going to run. The reply is `<view> <yes|no>` and is parsed defensively — a reply with no
+ * second token, or an unrecognised one, yields `mirror: false` and leaves `view` behaving EXACTLY
+ * as it did before this change. That degradation path is the point: a hosted model that starts
+ * answering differently must cost a missing tag, never a wrong view or a mis-tagged library.
  */
 router.post('/classify-pose-view', async (req, res, next) => {
   try {
@@ -300,14 +352,15 @@ router.post('/classify-pose-view', async (req, res, next) => {
       'Look at this photo of a posed subject.',
       descHint ? `Its saved pose description reads: "${descHint}". Use it alongside the photo — it may already say things like "facing away" or "over her shoulder" that settle the answer.` : '',
       VIEW_RULE,
-      'Reply with ONLY that one word — no punctuation, no explanation.',
+      MIRROR_RULE,
+      'Reply with ONLY two words separated by one space: the view word, then yes or no.',
+      'For example: "front no". No punctuation, no explanation.',
     ].filter(Boolean).join(' ');
 
     const raw = await geminiService.analyzeImageWithPrompt(apiKey, base64, mimeType, prompt);
-    const word = String(typeof raw === 'string' ? raw : raw?.text || '').trim().toLowerCase().replace(/[^a-z]/g, '');
-    const view = ['front', 'back', 'closeup'].includes(word) ? word : 'front';
+    const { view, mirror } = parseViewAndMirror(typeof raw === 'string' ? raw : raw?.text);
 
-    res.json({ success: true, data: { view } });
+    res.json({ success: true, data: { view, mirror } });
   } catch (err) {
     next(err);
   }

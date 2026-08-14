@@ -21,7 +21,8 @@ import { createPageStore } from '../lib/pageStateStore';
 // isPosePromptBroken is deliberately no longer imported here: the broken-prompt notice was demoted
 // out of the generate flow and now lives only on the Pose tab, where it can be acted on.
 import { comboKey, buildSeenKeys, splitBySeen, spendToday } from '../lib/provenance';
-import { poseSentence, readPoseView, readPoseExpression } from '../lib/poseText';
+import { poseSentence, readPoseView, readPoseExpression, readPoseTags, POSE_TAGS } from '../lib/poseText';
+import { eligiblePoses, drawPoses, describeDraw } from '../lib/poseRandomiser';
 import { runPool } from '../lib/runPool';
 import { cn } from '../lib/utils';
 import { downloadBlob, stripEnabled } from '../lib/stripMetadata';
@@ -3327,6 +3328,11 @@ function _getRunSnap() {
 
 const _cache = {
   baseImage: '', faceImage: '', characterName: '', pickedOutfits: [], pickedPoses: [], pickedBases: [], pickedBasePhotos: [], outfitRotation: true, instruction: '',
+  // Randomiser settings, so switching tabs does not reset the number you just typed. Safe to
+  // persist alongside everything else: they steer the next Randomise CLICK and nothing else — no
+  // effect on Generate — and both are visible on screen, so a restored value can never act as
+  // hidden state.
+  randomCount: 12, randomTags: [],
   // staticCamera defaults ON: the user asked for the camera lock to be the standing default, so a
   // fresh page (or one whose stored value predates this feature) starts with movement/zoom locked out.
   nsfw: false, aspectRatio: 'auto', resolution: '1K', staticCamera: true,
@@ -3436,6 +3442,8 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   const [characterName, setCharacterName] = useState(_cache.characterName || '');
   const [pickedOutfits, setPickedOutfits] = useState(_cache.pickedOutfits);
   const [pickedPoses, setPickedPoses] = useState(_cache.pickedPoses);
+  const [randomCount, setRandomCount] = useState(_cache.randomCount);
+  const [randomTags, setRandomTags] = useState(_cache.randomTags);
   // Max Outfit's sources: ids of Library items, each becoming one generation.
   const [pickedBases, setPickedBases] = useState(_cache.pickedBases || []);
   /**
@@ -4041,6 +4049,8 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       setCharacterName((v) => v || saved.characterName || '');
       setPickedOutfits((v) => (v.length ? v : saved.pickedOutfits || []));
       setPickedPoses((v) => (v.length ? v : saved.pickedPoses || []));
+      if (saved.randomCount) setRandomCount(saved.randomCount);
+      if (saved.randomTags?.length) setRandomTags(saved.randomTags);
       setPickedBases((v) => (v.length ? v : saved.pickedBases || []));
       setPickedBasePhotos((v) => (v.length ? v : saved.pickedBasePhotos || []));
       setOutfitRotation((v) => (v === true && typeof saved.outfitRotation === 'boolean' ? saved.outfitRotation : v));
@@ -4152,14 +4162,14 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   }, [activeModel, models, notify]);
 
   useEffect(() => {
-    const snap = { baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, outfitRotation, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine };
+    const snap = { baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, outfitRotation, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine, randomCount, randomTags };
     Object.assign(_cache, snap);
     stateStore.set('state', snap);
   // pickedBases / outfitRotation / smartMatch are IN the snapshot above, so they have to be in
   // these deps too. Without them this effect never re-ran when only a Max Outfit control changed,
   // and the whole selection was gone on the next app start — the snapshot is only written from
   // here.
-  }, [baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, outfitRotation, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine]);
+  }, [baseImage, faceImage, characterName, pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, outfitRotation, instruction, nsfw, aspectRatio, resolution, staticCamera, faceless, lighting, sendPoseImage, sendOutfitImage, build, engine, randomCount, randomTags]);
 
   /**
    * Submits ONE video job and returns as soon as Muapi accepts it (a taskId) — the render finishes
@@ -6764,6 +6774,55 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
                 </Btn>
               </span>
             </div>
+
+            {/* RANDOMISE (owner, 2026-08-14: "i write a number of how many poses i want, and choose
+                the labels of poses i want and click randomise").
+
+                Its own row UNDER the header, not in it — the header already carries Select all,
+                Clear all and Choose, and a fourth control there pushes them off a narrow window.
+
+                Scoped to `visible`, exactly like Select all beside it, so a folder chip or the
+                Favorite filter narrows the draw. Unlike Select all it REPLACES the picks rather
+                than adding: repeat clicks on "randomise 12" should keep giving you 12, not 24. */}
+            {slot.key === 'pose' && openPickers.pose && visible.length > 0 && (() => {
+              const pool = eligiblePoses(visible, randomTags, readPoseTags);
+              const d = describeDraw(randomCount, pool.length, pickedOutfits.length);
+              return (
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-2">
+                  <span className="text-[0.6875rem] font-semibold uppercase tracking-wider text-zinc-500">Randomise</span>
+                  <input type="number" min="1" value={randomCount}
+                    onChange={(e) => setRandomCount(e.target.value)}
+                    className="w-16 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-center text-xs text-zinc-200 outline-none focus:border-blue-500/50" />
+                  {POSE_TAGS.map((tag) => {
+                    const on = randomTags.includes(tag);
+                    return (
+                      <button key={tag} type="button"
+                        onClick={() => setRandomTags((v) => (on ? v.filter((t) => t !== tag) : [...v, tag]))}
+                        title={on ? `Stop restricting to ${tag}` : `Only draw ${tag} poses`}
+                        className={cn('rounded-md px-2 py-1 text-[0.6875rem] font-bold uppercase tracking-wide transition cursor-pointer',
+                          on ? 'bg-fuchsia-500/25 text-fuchsia-200' : 'text-zinc-600 hover:text-zinc-300')}>
+                        {tag}
+                      </button>
+                    );
+                  })}
+                  <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs"
+                    disabled={!d.taking}
+                    onClick={() => keepScroll(() => setPickedPoses(drawPoses(pool, randomCount)))}>
+                    Randomise
+                  </Btn>
+                  {/* States the truth every time, including the shortfall. Asking for 30 and being
+                      handed 4 with no explanation is the failure this line exists to prevent. */}
+                  <span className={cn('text-[0.6875rem]', d.short ? 'text-amber-400/90' : 'text-zinc-500')}>
+                    {d.taking === 0
+                      ? (randomTags.length ? 'nothing on screen carries that label' : 'nothing to draw from')
+                      : d.short
+                        ? `only ${d.poolSize} match — taking all ${d.poolSize}`
+                        : `${d.taking} of ${d.poolSize}`}
+                    {d.images > 0 && ` · ${d.images} image${d.images === 1 ? '' : 's'}`}
+                  </span>
+                </div>
+              );
+            })()}
 
             {/* THE PICKED LIST.
                 Above COMPACT_PICKED it switches to a thumbnail grid. Sixty picked poses rendered as
