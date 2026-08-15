@@ -98,7 +98,22 @@ export function createEddyCollection(dbName) {
       const clean = String(name || 'Untitled').trim().slice(0, 40);
       const pid = parentId || null;
       const folders = await impl.listFolders();
-      const hit = folders.find((f) => f.name === clean && (f.parentId || null) === pid);
+      /**
+       * Case-INSENSITIVE match, so one character can never end up with two folders.
+       *
+       * A live Eddy run files under the character's name as typed ("Chloe"). Recovery from the
+       * gallery reads her name back off the generation's TAGS -- and galleryManager.save()
+       * lowercases every tag -- so it asked for "chloe", missed "Chloe" on an exact compare, and
+       * created a second folder beside it. 25 recovered images landed there on 2026-08-15, looking
+       * for all the world like they had never come back.
+       *
+       * That is the ONE FOLDER PER CHARACTER rule, and it is also the rule that recovery must file
+       * exactly the way a live run files -- a near-miss folder just moves the problem somewhere
+       * less visible. The first folder created keeps its capitalisation; later spellings join it.
+       */
+      const hit = folders.find((f) => (
+        String(f.name).toLowerCase() === clean.toLowerCase() && (f.parentId || null) === pid
+      ));
       if (hit) return hit;
       const folder = { id: `f-${newId()}`, name: clean, parentId: pid, createdAt: Date.now() };
       await write('folders', [...folders, folder]);
@@ -170,6 +185,48 @@ export function createEddyCollection(dbName) {
 
     async getImage(id) {
       return store.get(`img:${id}`, '');
+    },
+
+    /**
+     * WHICH rows have a picture stored here — read from the key list, so it costs no bytes.
+     *
+     * A row either carries its own image (`img:<id>`) or points at one the server already holds
+     * (`url` on the index row, nothing stored here). Asking `getImage` to tell them apart means
+     * paying a read per row to be told "nothing", and the Eddy Library is 2,298 rows of exactly
+     * that: every single one is server-backed, so every single read came back empty after ~34 ms.
+     * That is the wait when the Library opens (owner, 2026-08-15).
+     *
+     * Returns { front, back } — `back` is the outfit back-crop under `img:<id>:back`, which the
+     * second pump pass would otherwise probe row by row for the same nothing.
+     *
+     * An id blanked by removeItem keeps its key with an empty value; that row is gone from the
+     * index, so nothing ever asks for it.
+     */
+    async storedImageIds() {
+      const keys = await store.keys();
+      const front = new Set();
+      const back = new Set();
+      for (const k of keys) {
+        if (typeof k !== 'string' || !k.startsWith('img:')) continue;
+        const rest = k.slice(4);
+        // Item ids carry no colon, so the suffix is unambiguous: `:alt` and `:preplate` are
+        // spare copies nothing renders, and are deliberately not reported.
+        if (rest.endsWith(':back')) back.add(rest.slice(0, -5));
+        else if (!rest.includes(':')) front.add(rest);
+      }
+      return { front, back };
+    },
+
+    /** Several pictures in ONE transaction — positional, '' where a row has none. */
+    async getImages(ids) {
+      const vals = await store.getMany(ids.map((id) => `img:${id}`), '');
+      return vals.map((v) => v || '');
+    },
+
+    /** The same, for outfit back-crops. */
+    async getBackImages(ids) {
+      const vals = await store.getMany(ids.map((id) => `img:${id}:back`), '');
+      return vals.map((v) => v || '');
     },
 
     // --- Favorites: their own small key, read straight through, never mixed into `index`. ---

@@ -138,10 +138,32 @@ function resolveOrphans() {
  * From here the job must never be re-submitted, only re-polled — a resend is a second charge for a
  * picture that is already being rendered.
  */
+/**
+ * DROP THE SOURCE IMAGES once the provider has the job.
+ *
+ * The payload holds them as base64 and this row is permanent, so a queue that keeps them keeps a
+ * copy of every input image forever. Eddy sends one ~9.8 MB base photo with every combo: 27 queued
+ * jobs took saas.db from 248 KB to 479 MB in ten minutes (2026-08-15). The database, its WAL, the
+ * renderer and the server all held those bytes at once; the app reached 2.9 GB, the CPU pegged, and
+ * its own status checks to WaveSpeed began timing out at 30s. Nothing completed, and it read like a
+ * network fault when it was self-inflicted. At 300 lanes the same run would write gigabytes.
+ *
+ * The images are needed only up to submission — after that the task_id IS the job. requeueUnsent
+ * refuses to touch a row carrying a task_id, so no resume path needs what is dropped here.
+ */
 function markSubmitted(id, taskId) {
   if (!taskId) throw new Error('markSubmitted: a taskId is required — without it the job cannot be resumed');
-  db.prepare(`UPDATE generation_jobs SET status = ?, task_id = ?, updated_at = ? WHERE id = ?`)
-    .run(STATUS.SUBMITTED, taskId, now(), id);
+  const row = db.prepare('SELECT payload FROM generation_jobs WHERE id = ?').get(id);
+  let slim = row?.payload ?? null;
+  try {
+    const p = row?.payload ? JSON.parse(row.payload) : {};
+    // Keep everything that describes the RESULT — the saver reads prompt, aspectRatio, model and
+    // tags — and drop only the images, which are the sole large field.
+    const { images, ...rest } = p;
+    slim = JSON.stringify({ ...rest, imageCount: Array.isArray(images) ? images.length : 0 });
+  } catch { /* unparseable: leave it rather than lose the record */ }
+  db.prepare(`UPDATE generation_jobs SET status = ?, task_id = ?, payload = ?, updated_at = ? WHERE id = ?`)
+    .run(STATUS.SUBMITTED, taskId, slim, now(), id);
 }
 
 /**

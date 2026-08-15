@@ -184,6 +184,31 @@ export default function EddyCollection({
       setThumbs(kept);
     }
     const remaining = new Set([...live].filter((id) => !(id in thumbsRef.current)));
+
+    /**
+     * ASK THE KEY LIST FIRST, then only read what is actually there.
+     *
+     * A row is either locally stored or server-backed, never both in practice, and a server-backed
+     * row has nothing under `img:<id>`. Reading anyway is a full IndexedDB round trip to be told
+     * "empty" — 2,298 of them on the owner's Library, where not one row is local (measured
+     * 2026-08-15). One key list settles every one of them, and the pump has nothing left to do.
+     *
+     * The blanks still go INTO `thumbs` as '': the sweeps and bulk actions test `thumbs[id] || url`,
+     * and leaving the key absent would make "not loaded yet" and "no local copy" the same thing.
+     */
+    const stored = await store.storedImageIds().catch(() => null);
+    if (pumpRunRef.current !== run) return;
+    if (stored) {
+      const blanks = {};
+      for (const id of [...remaining]) {
+        if (!stored.front.has(id)) { blanks[id] = ''; remaining.delete(id); }
+      }
+      if (Object.keys(blanks).length) {
+        thumbsRef.current = { ...thumbsRef.current, ...blanks };
+        setThumbs((t) => ({ ...t, ...blanks }));
+      }
+    }
+
     setImagesPending(remaining.size);
     const BATCH = 8;
     while (remaining.size) {
@@ -191,9 +216,11 @@ export default function EddyCollection({
       // On screen first. wantRef is re-read every batch, so a scroll re-prioritises immediately.
       const onScreen = wantRef.current.filter((id) => remaining.has(id));
       const batch = (onScreen.length ? onScreen : [...remaining]).slice(0, BATCH);
+      // One transaction for the whole batch, not one per picture.
       // eslint-disable-next-line no-await-in-loop -- batching IS the point; all at once is the bug
-      const pairs = await Promise.all(batch.map(async (id) => [id, await store.getImage(id)]));
+      const values = await store.getImages(batch);
       if (pumpRunRef.current !== run) return;
+      const pairs = batch.map((id, i) => [id, values[i]]);
       for (const [id] of pairs) remaining.delete(id);
       const patch = Object.fromEntries(pairs);
       thumbsRef.current = { ...thumbsRef.current, ...patch };
@@ -205,11 +232,19 @@ export default function EddyCollection({
     }
     // Outfit back-crops are a second, smaller pass — nothing renders them until the front is there.
     if (alsoBack) {
+      // Same rule as above: only the ids that HAVE a back crop are read. This pass used to walk
+      // every row one at a time, which on a 1,109-row outfit collection is 1,109 round trips to
+      // find the handful that carry one.
+      const withBack = stored
+        ? allItems.filter((it) => stored.back.has(it.id)).map((it) => it.id)
+        : allItems.map((it) => it.id);
       const backMap = {};
-      for (const it of allItems) {
+      for (let i = 0; i < withBack.length; i += BATCH) {
         if (pumpRunRef.current !== run) return;
-        // eslint-disable-next-line no-await-in-loop
-        backMap[it.id] = await store.getBackImage(it.id);
+        const slice = withBack.slice(i, i + BATCH);
+        // eslint-disable-next-line no-await-in-loop -- batched, same as the front pass
+        const values = await store.getBackImages(slice);
+        slice.forEach((id, n) => { backMap[id] = values[n]; });
       }
       if (pumpRunRef.current !== run) return;
       setBackThumbs(backMap);
@@ -2988,6 +3023,19 @@ export default function EddyCollection({
                     crossOrigin="anonymous"
                     src={gridSrc(thumbs[it.id] || it.url)}
                     alt={it.name}
+                    /**
+                     * FETCH WHEN THE TILE IS NEAR THE VIEWPORT, not when it mounts.
+                     *
+                     * A page is 120 tiles and the screen holds about a dozen. Every one of the 120
+                     * asked the server for its thumbnail at once, six at a time over the connection,
+                     * and each of those costs a full-size PNG decode server-side (75 ms measured on
+                     * a 5 MB file, 2026-08-15) — so the pictures you are actually looking at queued
+                     * behind a hundred you are not.
+                     *
+                     * decoding=async keeps the decode off the thread that is still painting the grid.
+                     */
+                    loading="lazy"
+                    decoding="async"
                     // A 404 on a gallery URL is otherwise indistinguishable from a very slow load.
                     onError={() => markBroken(it.id)}
                     // contain, not cover, on prompt cards: a pose is judged by the whole body,

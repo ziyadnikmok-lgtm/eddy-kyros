@@ -15,6 +15,31 @@ class GalleryManager {
 
   get _dataFile() { return path.join(getDataDir(), 'gallery.json'); }
   get _uploadsDir() { return getUploadsDir(); }
+  // Derived, throwaway data: 400px JPEG previews of the files in uploads. Safe to delete at any
+  // time — the next request rebuilds whatever is missing. Per-user, like everything else here.
+  get _thumbsDir() { return path.join(getDataDir(), 'thumbs'); }
+
+  /**
+   * Where the cached preview for `id` lives, with the directory made.
+   *
+   * A thumbnail was re-encoded from the original on EVERY request: 75 ms of PNG decode for one
+   * tile, and the Library asks for a hundred and twenty at once (measured 2026-08-15). The file is
+   * content for a fixed id, so it can be built once and read back in about a millisecond.
+   */
+  thumbPath(id) {
+    if (!/^[\w.-]+$/.test(String(id))) throw new AppError('Invalid image id', 400, 'INVALID_ID');
+    const dir = this._thumbsDir;
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return path.join(dir, `${id}.jpg`);
+  }
+
+  /** Drop a cached preview — used when the image behind it goes. */
+  dropThumb(id) {
+    try {
+      const fp = path.join(this._thumbsDir, `${id}.jpg`);
+      if (fs.existsSync(fp)) fs.unlinkSync(fp);
+    } catch { /* a stale preview is harmless: its id 404s before it is ever served */ }
+  }
 
   // Returns (and lazily initialises) per-user in-memory state
   _getState() {
@@ -79,7 +104,15 @@ class GalleryManager {
     return entry;
   }
 
-  list({ page, limit, tag } = {}) {
+  /**
+   * `fields: 'slim'` returns id, tags and createdAt ONLY.
+   *
+   * The full listing here is 8.9 MB, of which 7.7 MB is prompt text, and the Library's recovery
+   * sweep fetches it on every single open just to ask "which ids am I missing?" — building,
+   * shipping and parsing nine megabytes to answer a question about identifiers (2026-08-15). Slim
+   * is about 130 KB. Anything that needs a prompt fetches that one image by id.
+   */
+  list({ page, limit, tag, fields } = {}) {
     const state = this._getState();
     const uploadsDir = this._uploadsDir;
     const now = Date.now();
@@ -111,7 +144,10 @@ class GalleryManager {
       results = results.slice(start, start + lim);
     }
 
-    return { images: results.map((e) => this._toSafe(e)), total, page: pg || 1, pages: lim > 0 ? Math.ceil(total / lim) : 1 };
+    const shape = fields === 'slim'
+      ? (e) => ({ id: e.id, tags: e.tags || [], createdAt: e.createdAt })
+      : (e) => this._toSafe(e);
+    return { images: results.map(shape), total, page: pg || 1, pages: lim > 0 ? Math.ceil(total / lim) : 1 };
   }
 
   get(id) {
@@ -149,6 +185,7 @@ class GalleryManager {
     const entry = state.store[idx];
     const fp = path.join(uploadsDir, entry.filename);
     if (path.resolve(fp).startsWith(path.resolve(uploadsDir)) && fs.existsSync(fp)) fs.unlinkSync(fp);
+    this.dropThumb(entry.id);
     state.validFiles.delete(entry.filename);
 
     state.store.splice(idx, 1);

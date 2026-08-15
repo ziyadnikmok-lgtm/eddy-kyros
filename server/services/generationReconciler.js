@@ -20,6 +20,7 @@ const jobQueue = require('./jobQueue');
 const muapi = require('./muapiService');
 const wavespeed = require('./wavespeedService');
 const gallery = require('./galleryManager');
+const jobBlobs = require('./jobBlobs');
 const imageStore = require('./imageStore');
 const log = require('../utils/logger');
 
@@ -221,7 +222,9 @@ async function submitOne() {
   if (!job) return false;
   const engine = engineOf(job);
   try {
-    const images = job.payload?.images || [];
+    // Source images arrive as { ref } — a content hash parked once per run by jobBlobs — and are
+    // read back here. A plain { base64 } still works, for rows enqueued before blobs existed.
+    const images = jobBlobs.resolve(job.payload?.images || []);
     const opts = { aspectRatio: job.payload?.aspectRatio, resolution: job.payload?.resolution };
     let sub;
     if (engine === 'seedream5') {
@@ -333,6 +336,7 @@ function startGenerationReconciler() {
   // Close out anything caught mid-send by the last shutdown BEFORE the first pass, so the sweep
   // never picks up a job whose fate is unknown.
   try {
+    jobBlobs.sweep();
     const orphans = jobQueue.resolveOrphans();
     if (orphans) log.warn('generation_jobs_orphaned', { count: orphans });
   } catch (err) {

@@ -1,4 +1,5 @@
 const express = require('express');
+const fs = require('node:fs');
 let _sharp; const sharp = (...a) => { if (!_sharp) _sharp = require('sharp'); return _sharp(...a); };
 const galleryManager = require('../services/galleryManager');
 const { parseImageUpload } = require('../middleware/upload');
@@ -21,6 +22,9 @@ router.get('/', (req, res, next) => {
       page: req.query.page,
       limit: req.query.limit,
       tag: req.query.tag,
+      // 'slim' drops the prompt text — see galleryManager.list. Callers that only need to know
+      // WHICH images exist ask for it; everything else is unchanged.
+      fields: req.query.fields,
     });
     res.json({ success: true, data: result });
   } catch (err) {
@@ -285,19 +289,49 @@ router.delete('/:id', (req, res, next) => {
 
 // open-folder removed — no desktop in Docker container
 
-// Thumbnail endpoint — serves a small preview for mobile gallery pickers
+/**
+ * Thumbnail endpoint — the 400px preview every grid in the app renders.
+ *
+ * BUILT ONCE, THEN READ FROM DISK. It used to run sharp over the original on every request: a
+ * generated PNG here is 1.5–10 MB, which measured 75 ms per thumbnail, unchanged on the tenth
+ * request for the same picture. A Library page is 120 tiles, so opening it asked for nine seconds
+ * of image decoding — on the same process that is running the generation queue (2026-08-15).
+ *
+ * The cache is keyed by id and validated against the source file's mtime, so replacing an image in
+ * place cannot serve the old preview. It lives under the user's data dir and is safe to delete.
+ */
 router.get('/:id/thumb', async (req, res, next) => {
   try {
     const { filePath } = galleryManager.getFilePath(req.params.id);
+    const thumbFile = galleryManager.thumbPath(req.params.id);
+    const src = fs.statSync(filePath);
+
+    // A gallery file never changes after it is written, so the preview can be cached hard. The
+    // ETag still carries the mtime, so an image replaced in place is refetched rather than stuck.
+    res.set('Content-Type', 'image/jpeg');
+    res.set('Cache-Control', 'private, max-age=31536000, immutable');
+    res.set('ETag', `W/"${req.params.id}-${Math.round(src.mtimeMs)}"`);
+    if (req.headers['if-none-match'] === res.get('ETag')) return res.status(304).end();
+
+    const cached = fs.existsSync(thumbFile) ? fs.statSync(thumbFile) : null;
+    if (cached && cached.mtimeMs >= src.mtimeMs && cached.size > 0) {
+      return res.sendFile(thumbFile);
+    }
+
     const buf = await sharp(filePath)
       .resize({ width: 400, withoutEnlargement: true })
       .jpeg({ quality: 70 })
       .toBuffer();
-    res.set('Content-Type', 'image/jpeg');
-    res.set('Cache-Control', 'private, max-age=86400');
-    res.send(buf);
+    // Write via a temp name and rename: two tiles of the same picture can arrive together, and a
+    // half-written JPEG served to the other one is a broken image with no way to tell why.
+    try {
+      const tmp = `${thumbFile}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, buf);
+      fs.renameSync(tmp, thumbFile);
+    } catch { /* cache is an optimisation — a full disk still gets its picture */ }
+    return res.send(buf);
   } catch (err) {
-    next(err);
+    return next(err);
   }
 });
 
