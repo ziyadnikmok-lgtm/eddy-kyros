@@ -87,7 +87,10 @@ check('cost: 3 photos x 2 characters at $0.05 = $0.30',
 // set by Chromium's sockets-per-host, and measured rather than assumed: 38,105 generation requests
 // in app.log, max concurrent overlap 6, with Eddy configured for 12 lanes throughout.
 check('the 4-lane cap is gone', !g.includes('const MAX_CONCURRENT_JOBS = 4;'));
-check('lanes are set per engine', g.includes('const LANES = { seedream: 12, nano2: 6 };'));
+// Reworded 2026-08-15: both lanes were pinned to Chromium's six-sockets-per-host, because a
+// render held one for its whole duration. On the queue they match the server's MAX_INFLIGHT and
+// the server does the limiting.
+check('lanes are set per engine', /const LANES = \{ seedream: \d+, nano2: \d+ \};/.test(g));
 check('and the pool uses them', g.includes('const lanes = LANES[engine] || LANES.seedream;'));
 check('the pool never spawns more workers than there is work',
   g.includes('Math.min(lanes, queue.length)'));

@@ -342,5 +342,26 @@ check('Stop reports what it actually saved', eddy.includes('dropped, nothing cha
 check('cancel refuses submitted work, matching retry and the orphan sweep',
   !/cancelQueued[\s\S]{0,400}STATUS\.SUBMITTED/.test(jq));
 
+// --- 12. Photo Match SD on the queue, and the bug that came with it ---------------------------------
+const pm = read('client/src/pages/PhotoMatchSeedreamPage.jsx');
+
+check('Photo Match SD routes through the queue', pm.includes("import { queuedSeedreamEdit } from '../lib/generationQueue';"));
+check('and no longer calls the blocking route', !pm.includes('seedreamApi.edit('));
+check('both engines are named', pm.includes("model: engine === 'nano2' ? 'nano2' : 'seedream5',"));
+check('tags travel, so a recovered match stays attributable', pm.includes("tags: charName.trim() ? ['eddy', charName.trim()] : ['eddy'],"));
+check('the destination is read from a ref, not a stale closure', pm.includes('destDb: destDbRef.current,'));
+const lanes = (pm.match(/LANES = \{ seedream: (\d+), nano2: (\d+) \}/) || []);
+check(`its lanes match the server ceiling (${lanes[1]}/${lanes[2]})`, Number(lanes[1]) >= 300 && Number(lanes[2]) >= 300);
+
+// THE BUG THIS INTRODUCED, caught before shipping. Three render sites branched on `job.result`
+// being truthy and then read base64Data off it. Fine while every result arrived inline; broken the
+// moment one came back through the queue — the object is there, base64Data is not, and the tile
+// renders `data:undefined;base64,undefined`. A broken image for a picture that generated perfectly.
+check('there is one resolver for what to display', pm.includes('function resultSrc(j)'));
+check('it prefers the server copy', pm.includes('const server = urlOfJob(j);'));
+check('and falls back to bytes only when there is no server copy', pm.includes("return j.result?.base64Data ?"));
+check('no render site builds a data URL from job.result any more', !/job\.result \? `data:/.test(pm));
+check('all three sites use it', (pm.match(/resultSrc\(job\)/g) || []).length === 3);
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

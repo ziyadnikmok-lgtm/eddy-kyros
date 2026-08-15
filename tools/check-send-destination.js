@@ -370,7 +370,12 @@ check('the slider is a toggle', pm.includes('const [showCompare, setShowCompare]
 check('off by default', pm.includes("localStorage.getItem('kyros.photoMatch.compare') === '1'"));
 check('remembered', pm.includes("localStorage.setItem('kyros.photoMatch.compare'"));
 check('the tile only compares when asked', pm.includes('showCompare && (job.result ? job.thumb : job.thumbSmall) ? ('));
-check('otherwise it shows the RESULT, not the source', pm.includes('job.result ? `data:${job.result.mimeType};base64,${job.result.base64Data}` : urlOfJob(job)'));
+// Reworded 2026-08-15. This used to branch on `job.result` being truthy and read base64Data off
+// it, which broke the moment a render arrived through the queue: the object is there, the bytes
+// are not, and the tile rendered data:undefined;base64,undefined. resultSrc asks for the server
+// copy first and falls back to bytes only when there is none.
+check('otherwise it shows the RESULT, not the source', pm.includes('resultSrc(job)'));
+check('and it prefers the server copy over inline bytes', pm.includes('function resultSrc(j)'));
 check('and the tile says what made it', pm.includes("job.engine && ` · ${job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}`"));
 
 // --- two gestures: tick the tile, click the picture (owner, 2026-08-13) ------------------------------

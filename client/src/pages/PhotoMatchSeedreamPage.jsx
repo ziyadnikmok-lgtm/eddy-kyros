@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { seedream as seedreamApi, gallery as galleryApi } from '../services/api';
+import { gallery as galleryApi } from '../services/api';
 import { createEddyCollection } from '../lib/eddyCollectionStore';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Select, Textarea, Toggle, Badge, Spinner } from '../components/UI';
@@ -11,6 +11,7 @@ import { consumeSourceHandoff } from '../lib/sourceHandoff';
 import { detectAspectRatio } from '../lib/detectAspectRatio';
 import { NSFW_PRESETS, nudeState, NUDE_LINE } from '../lib/nsfwPresets';
 import { createPageStore } from '../lib/pageStateStore';
+import { queuedSeedreamEdit } from '../lib/generationQueue';
 import { cn } from '../lib/utils';
 import { autoBlurFace } from '../lib/autoBlurFace';
 import ManualBlurModal from '../components/ManualBlurModal';
@@ -54,7 +55,10 @@ const MAX_SOURCES = 50;
  * Matched to Eddy's lanes per engine rather than kept deliberately smaller: the owner runs this
  * page on its own, and starving it to protect a batch that is not running cost half the throughput.
  */
-const LANES = { seedream: 12, nano2: 6 };
+// Both were pinned to Chromium's six-sockets-per-host, because a render held one for its whole
+// duration. On the queue an enqueue is a short POST and the wait is a cheap poll, so these match the
+// server's MAX_INFLIGHT and the server does the real limiting.
+const LANES = { seedream: 300, nano2: 300 };
 const SPEND_KEY = 'kyros.photoMatchSeedream.sessionSpend';
 
 // Seedream enforces an undocumented prompt-length cap ("The text length cannot exceed the
@@ -118,6 +122,23 @@ const resultsStore = createPageStore('photomatch-results-v1');
  */
 function urlOfJob(j) {
   return j.url || (j.galleryId ? galleryApi.imageUrl(j.galleryId) : '');
+}
+
+/**
+ * The picture to SHOW for a job — server copy first, raw bytes only as a fallback.
+ *
+ * The two render sites used to branch on `job.result` being truthy and then read
+ * result.base64Data from it. That held while every result arrived inline, and broke the moment a
+ * render came back through the queue: the result object is there, base64Data is not, and the tile
+ * renders `data:undefined;base64,undefined` — a broken image for a picture that generated fine.
+ *
+ * Asking for the server copy first is also simply better: it is the same file, it is already on
+ * disk, and it does not hold megabytes of base64 in memory per tile.
+ */
+function resultSrc(j) {
+  const server = urlOfJob(j);
+  if (server) return server;
+  return j.result?.base64Data ? `data:${j.result.mimeType || 'image/png'};base64,${j.result.base64Data}` : '';
 }
 
 /** The persisted shape of one finished match. Anything not named here is deliberately dropped. */
@@ -508,6 +529,10 @@ export default function PhotoMatchSeedreamPage() {
   const baseStore = useMemo(() => createEddyCollection('eddy-base'), []);
   const destStore = destDb === 'eddy-base' ? baseStore : libraryStore;
   const destLabel = DESTINATIONS.find((d) => d.value === destDb)?.label || 'Library';
+  // Read at await time by the queued call, so a destination changed mid-run cannot be captured
+  // stale by a job that was enqueued earlier.
+  const destDbRef = useRef(destDb);
+  destDbRef.current = destDb;
   const [chars, setChars] = useState([]);        // folders in eddy-character
   const [charItems, setCharItems] = useState([]);
   const [charThumbs, setCharThumbs] = useState({});
@@ -814,18 +839,32 @@ export default function PhotoMatchSeedreamPage() {
       const sourceImg = parseDataUrl(source.dataUrl);
       if (!sourceImg) throw new Error('Could not read the source photo');
 
-      const data = await withRateLimitRetry(() => seedreamApi.edit({
+      /**
+       * Through the durable queue, same as Eddy.
+       *
+       * The return shape is unchanged — { images, provider } — so everything below that reads
+       * data.images[0] is untouched. What changes is that the SERVER holds the render rather than
+       * this page holding an HTTP connection for three minutes, which is what capped this at six
+       * regardless of the lane count.
+       *
+       * destDb and the character folder ride along so that a run interrupted by the app closing is
+       * filed into the same place it would have gone, rather than needing to be found by hand.
+       */
+      const data = await withRateLimitRetry(() => queuedSeedreamEdit({
+        feature: 'photoMatchSeedream',
         images: [...charRefs, sourceImg],
         prompt,
         aspectRatio: ratio,
         resolution,
-        // Omitted entirely on the Seedream path so that request stays byte-identical to what it
-        // was before this switch existed.
-        ...(engine === 'nano2' ? { model: 'nano2' } : {}),
+        model: engine === 'nano2' ? 'nano2' : 'seedream5',
+        provider: 'wavespeed',
         // Her name travels with the generation so "Recover missing" can file a stranded Photo
         // Match picture into the right folder, exactly as it does for Eddy's.
         tags: charName.trim() ? ['eddy', charName.trim()] : ['eddy'],
-      }, engine === 'nano2' ? { timeoutMs: NANO2_CLIENT_TIMEOUT_MS } : undefined));
+        destDb: destDbRef.current,
+        destFolder: charName.trim() || 'Photo Match',
+        cardPrompt: `Photo Match - ${charName.trim() || 'no character'}`,
+      }));
 
       const first = (data.images || [])[0];
       if (!first) throw new Error(`${engine === 'nano2' ? 'Nano Banana 2' : 'Seedream'} returned no image`);
@@ -1840,15 +1879,13 @@ export default function PhotoMatchSeedreamPage() {
                     showCompare && (job.result ? job.thumb : job.thumbSmall) ? (
                       <CompareSlider
                         originalSrc={job.result ? job.thumb : job.thumbSmall}
-                        processedSrc={job.result
-                          ? `data:${job.result.mimeType};base64,${job.result.base64Data}`
-                          : urlOfJob(job)}
+                        processedSrc={resultSrc(job)}
                         originalLabel="SOURCE"
                         processedLabel="MATCHED"
                         className="rounded-lg overflow-hidden border border-zinc-800/60"
                       />
                     ) : (
-                      <img src={job.result ? `data:${job.result.mimeType};base64,${job.result.base64Data}` : urlOfJob(job)}
+                      <img src={resultSrc(job)}
                         alt="" loading="lazy"
                         onClick={(e) => { e.stopPropagation(); setLightboxId(job.id); }}
                         title="Click to see it full size"
@@ -1911,7 +1948,7 @@ export default function PhotoMatchSeedreamPage() {
       {lightboxId && (() => {
         const job = lightboxList.find((j) => j.id === lightboxId);
         if (!job) return null;
-        const src = job.result ? `data:${job.result.mimeType};base64,${job.result.base64Data}` : urlOfJob(job);
+        const src = resultSrc(job);
         const i = lightboxList.findIndex((j) => j.id === lightboxId);
         return createPortal(
           <div
