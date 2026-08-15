@@ -663,7 +663,7 @@ function _rememberUpload(hash, url) {
  * WaveSpeed models, and a base photo that quietly pulled in a web image would break the one thing
  * this call exists to guarantee: that the person who comes back is the person in the references.
  */
-async function generateNanoBanana2Edit(imageInputs, prompt, opts = {}) {
+async function submitNanoBanana2Edit(imageInputs, prompt, opts = {}) {
   if (!Array.isArray(imageInputs) || !imageInputs.length) {
     throw new AppError('At least one source image is required', 400, 'VALIDATION_ERROR');
   }
@@ -740,9 +740,51 @@ async function generateNanoBanana2Edit(imageInputs, prompt, opts = {}) {
 
   const json = await resp.json();
   const data = json?.data || json;
-  if (data?.status === 'completed') return await _extractSeedDreamResults(data);
+  // Rare, but real: a cached or trivial edit can come back finished on the submit call.
+  if (data?.status === 'completed') return { done: await _extractSeedDreamResults(data) };
   if (!data?.id) throw new AppError('Nano Banana 2 returned no task ID', 502, 'WAVESPEED_ERROR');
-  return await _pollSeedDreamResult(key, data.id, { maxMs: NANO2_MAX_POLL_MS, label: 'Nano Banana 2' });
+  return { taskId: data.id };
+}
+
+/**
+ * ONE look at a Nano Banana 2 prediction — no waiting.
+ *
+ * The reason this exists: generateNanoBanana2Edit below blocks for the whole render, which means
+ * the CLIENT holds an HTTP connection to the local server for ~3 minutes per image. Chromium allows
+ * 6 sockets per host over HTTP/1.1, so six renders saturate the socket pool and nothing else — not
+ * a thumbnail, not an /api call — gets through until one finishes. That, not WaveSpeed, is why
+ * concurrency was pinned at 6 (see NANO2_PARALLEL_REQUESTS): raising it just queued requests inside
+ * the browser.
+ *
+ * With submit and poll separable, the SERVER can hold the renders and the client can go back to
+ * short requests. WaveSpeed permits far more in flight than 6, and now that ceiling is reachable.
+ *
+ * Does not throw on a FAILED prediction — that is an answer, and the queue records it as one. Still
+ * throws on a broken connection or a bad key, which are not answers.
+ */
+async function pollNanoBanana2(taskId) {
+  const res = await getTaskStatus(taskId);
+  if (res.status === 'completed') return { status: 'completed', ...(await _extractSeedDreamResults(res)) };
+  if (res.status === 'failed') return { status: 'failed', error: res.error || 'unknown' };
+  return { status: 'processing' };
+}
+
+/**
+ * Submit and wait — the original blocking call, behaviour unchanged for every existing caller.
+ *
+ * `opts.onTaskId` fires the moment WaveSpeed accepts, so a caller that wants the render to survive
+ * a crash can write the id down before the wait. Without it the id lives only in this stack frame,
+ * which is how a BILLED prediction gets abandoned — the case _pollSeedDreamResult already logs at
+ * ERROR when it times out.
+ */
+async function generateNanoBanana2Edit(imageInputs, prompt, opts = {}) {
+  const key = getApiKey();
+  const sub = await submitNanoBanana2Edit(imageInputs, prompt, opts);
+  if (sub.done) return sub.done;
+  if (typeof opts.onTaskId === 'function') {
+    try { opts.onTaskId(sub.taskId); } catch { /* bookkeeping must never sink a live render */ }
+  }
+  return await _pollSeedDreamResult(key, sub.taskId, { maxMs: NANO2_MAX_POLL_MS, label: 'Nano Banana 2' });
 }
 
 async function generateSeedream5Edit(imageInputs, prompt, opts = {}) {
@@ -842,6 +884,8 @@ module.exports = {
   generateSeedDreamEdit,
   generateSeedream5Edit,
   generateNanoBanana2Edit,
+  submitNanoBanana2Edit,
+  pollNanoBanana2,
   SEEDREAM5_MODEL_ID,
   NANO2_MODEL_ID,
   MODEL_ENDPOINTS,

@@ -50,17 +50,24 @@ check('and a throw in that callback cannot sink a live render',
 
 // --- 2. THE MONEY RULE: recorded before waited on -----------------------------------------------------
 const submitIdx = rec.indexOf('await muapi.submitSeedreamEdit(');
-const markIdx = rec.indexOf('jobQueue.markSubmitted(job.id, taskId)');
-check('the worker records the task id immediately after Muapi accepts', submitIdx > -1 && markIdx > submitIdx);
+const markIdx = rec.indexOf('jobQueue.markSubmitted(job.id, sub.taskId)');
+check('the worker records the task id immediately after the provider accepts', submitIdx > -1 && markIdx > submitIdx);
 check('a send failure requeues only when nothing reached Muapi', rec.includes('jobQueue.requeueUnsent(job.id)'));
 check('and is failed outright if it cannot be requeued', /if \(!back\) jobQueue\.markFailed\(/.test(rec));
 check('orphans are swept BEFORE the first pass', rec.indexOf('resolveOrphans()') < rec.indexOf('runOnce().catch'));
-check('submitted jobs are POLLED, never resubmitted',
-  rec.includes('for (const job of jobQueue.listResumable())') && !/listResumable[\s\S]{0,400}submitSeedreamEdit/.test(rec));
+// The invariant, asserted at its source rather than by text proximity: the ONLY way submitOne
+// gets a job is claimNext, and claimNext only ever returns a row whose status is queued. So a
+// submitted job cannot reach a submit call however runOnce is later restructured.
+check('the only job a submit can reach comes from claimNext',
+  /async function submitOne\(\) \{[\s\S]{0,200}const job = jobQueue\.claimNext\(\);/.test(rec));
+check('and claimNext only ever claims a QUEUED row',
+  read('server/services/jobQueue.js').includes("WHERE status = ? ORDER BY created_at LIMIT 1")
+  && read('server/services/jobQueue.js').includes('WHERE id = ? AND status = ?'));
+check('resumable jobs go to the poller', /running\.map\(async \(job\)[\s\S]{0,200}await pollJob\(job\)/.test(rec));
 
 // --- 3. done is never recorded without a picture ---------------------------------------------------------
 check('no gallery id means FAILED, not done', rec.includes("jobQueue.markFailed(job.id, 'Saved image but the gallery returned no id')"));
-check('an empty output means failed too', rec.includes("'Seedream reported success but returned no image'"));
+check('an empty output means failed too', rec.includes("'The provider reported success but returned no image'"));
 check('markDone is only reached with an id', rec.indexOf('if (!galleryId)') < rec.indexOf('jobQueue.markDone(job.id, galleryId)'));
 
 // --- 4. one reconcile per task ------------------------------------------------------------------------------
@@ -69,7 +76,10 @@ check('markDone is only reached with an id', rec.indexOf('if (!galleryId)') < re
 check('concurrent polls share one promise', rec.includes('const inFlight = new Map()'));
 check('and the entry is always cleaned up', /\.finally\(\(\) => inFlight\.delete\(job\.task_id\)\)/.test(rec));
 check('a stale task is eventually abandoned rather than polled forever', rec.includes('STALE_AFTER_MS'));
-check('submits are throttled to one per tick — these are billed calls', rec.includes('SUBMITS_PER_TICK = 1'));
+// Replaced by a real ceiling on 2026-08-15: a per-tick budget either crawls or overshoots
+// depending on render time, whereas "keep N in flight" limits the thing that actually costs money.
+check('submits are bounded by an in-flight ceiling — these are billed calls',
+  rec.includes('const MAX_INFLIGHT =') && rec.includes('MAX_INFLIGHT - running.length'));
 check('the timer is unref\'d so it cannot hold the process open', rec.includes('if (timer.unref) timer.unref()'));
 
 // --- 5. the routes are scoped to their owner ----------------------------------------------------------------

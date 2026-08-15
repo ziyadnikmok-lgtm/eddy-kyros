@@ -154,12 +154,18 @@ function markFailed(id, message) {
  * is rendering and resending it bills twice. The guard lives here rather than at the call sites so
  * that a future caller cannot get it wrong.
  */
-function requeueUnsent(id) {
+function requeueUnsent(id, { refundAttempt = false } = {}) {
   const row = db.prepare('SELECT task_id FROM generation_jobs WHERE id = ?').get(id);
   if (!row) return false;
   if (row.task_id) return false;
-  const res = db.prepare(`UPDATE generation_jobs SET status = ?, updated_at = ? WHERE id = ? AND task_id IS NULL`)
-    .run(STATUS.QUEUED, now(), id);
+  // refundAttempt is for a rate limit: the provider REFUSED the job, so nothing is rendering and
+  // nothing is billed — and it is not the job's fault. Without the refund, three 429s in a row
+  // would burn the whole retry budget of a perfectly good job and fail it permanently, which is the
+  // opposite of what a backoff is for.
+  const res = db.prepare(`
+    UPDATE generation_jobs SET status = ?, attempts = MAX(0, attempts - ?), updated_at = ?
+    WHERE id = ? AND task_id IS NULL
+  `).run(STATUS.QUEUED, refundAttempt ? 1 : 0, now(), id);
   return res.changes === 1;
 }
 
