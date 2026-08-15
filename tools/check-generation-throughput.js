@@ -309,5 +309,34 @@ check('before returning, so the sweep can never double-file it',
   qlib.indexOf('jobsApi.markFiled(jobId)') < qlib.indexOf('images: job.images?.length'));
 check('and a failed claim costs a duplicate, not a lost picture', qlib.includes('worst case: the sweep files a duplicate'));
 
+// --- 11. AUDIT FINDINGS at 100 lanes -------------------------------------------------------------
+// Both of these only appear once batches are large, and both cost money rather than merely looking
+// wrong.
+
+// FINDING 1: the client's own wait was shorter than a large queue takes to drain. 167 jobs against
+// 100 lanes is two waves; a Nano Banana 2 render is ~3 minutes, so the tail lands around seven. Add
+// one rate-limit backoff and the last tiles would have been marked FAILED while their pictures were
+// still on the way -- and a failed-looking tile invites a regenerate, which is a second charge for
+// an image already paid for.
+const waitMs = Number((qlib.match(/WAIT_TIMEOUT_MS = (\d+) \* 60 \* 1000/) || [])[1]);
+check(`the caller's wait covers a large batch (${waitMs} min)`, waitMs >= 45);
+check('and the job is never abandoned when it does fire', qlib.includes('server keeps working'));
+
+// FINDING 2: Stop ended the client loop but left everything already enqueued for the worker to
+// submit. At a hundred lanes that is a lot of spending arriving after the button was pressed.
+const jq = read('server/services/jobQueue.js');
+check('there is a cancel for unsent work', jq.includes('function cancelQueued(userId)'));
+check('it touches QUEUED only — never work already with the provider',
+  jq.includes("WHERE user_id = ? AND status = ?") && jq.includes("STATUS.FAILED, 'Cancelled before it was sent — nothing was charged.'"));
+check('the reason says plainly that nothing was charged', jq.includes('nothing was charged'));
+check('it is exposed', routes.includes("router.post('/cancel-queued'"));
+check('and Stop calls it', eddy.includes('jobsApi.cancelQueued()'));
+check('Stop reports what it actually saved', eddy.includes('dropped, nothing charged for those'));
+
+// The rule this shares with retry and the orphan sweep: never cancel or resend anything that
+// reached the provider. Cancelling it locally does not un-bill it — it only loses the picture.
+check('cancel refuses submitted work, matching retry and the orphan sweep',
+  !/cancelQueued[\s\S]{0,400}STATUS\.SUBMITTED/.test(jq));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

@@ -275,6 +275,25 @@ function counts(userId) {
   return out;
 }
 
+/**
+ * Drop everything that has NOT been sent yet.
+ *
+ * Stop has to actually stop spending. It ends the client's loop, but jobs already on the queue keep
+ * being submitted by the worker — at a hundred lanes that is a lot of money arriving after the
+ * button was pressed.
+ *
+ * QUEUED only, and never `submitting` or `submitted`: those have either reached the provider or
+ * might have, and cancelling one locally would not un-bill it — it would only lose the picture that
+ * was paid for. Same rule as everywhere else here: fail toward the miss, never toward the loss.
+ */
+function cancelQueued(userId) {
+  const res = db.prepare(`
+    UPDATE generation_jobs SET status = ?, error = ?, updated_at = ?
+    WHERE user_id = ? AND status = ?
+  `).run(STATUS.FAILED, 'Cancelled before it was sent — nothing was charged.', now(), userId, STATUS.QUEUED);
+  return res.changes;
+}
+
 /** Everything still moving, for the UI. */
 function listActive(userId) {
   return db.prepare(`
@@ -322,6 +341,7 @@ module.exports = {
   listFailed,
   retry,
   retryAllFailed,
+  cancelQueued,
   counts,
   get,
 };

@@ -22,10 +22,21 @@ import { fileIntoLibrary, destLabel } from './libraryDestination';
 // The server polls Muapi every 6s, so asking faster than that only adds requests without learning
 // anything sooner.
 const POLL_MS = 3000;
-// A render that has not finished in this long is not going to inside this page's lifetime. The JOB
-// is not abandoned — it stays on the queue and the server keeps at it — only this await gives up,
-// and whatever lands is filed on the next load.
-const WAIT_TIMEOUT_MS = 10 * 60 * 1000;
+/**
+ * How long a caller waits before giving up on ITS OWN await. The job is never abandoned — the
+ * server keeps working and whatever lands is filed — but the page shows a tile as failed when this
+ * fires, so it must not fire during a run that is simply large.
+ *
+ * 10 minutes was too short the moment batches got big. 167 jobs against a 100-lane ceiling is two
+ * waves, and a Nano Banana 2 render is about three minutes, so the tail lands around seven. Add one
+ * rate-limit backoff and the last tiles would have been marked FAILED while their pictures were
+ * still on the way — and a failed-looking tile invites a regenerate, which is a second charge for
+ * an image already paid for.
+ *
+ * 45 minutes covers roughly a dozen waves. Waiting costs one small poll every three seconds, so a
+ * generous ceiling is close to free; a premature one costs money.
+ */
+const WAIT_TIMEOUT_MS = 45 * 60 * 1000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

@@ -24,6 +24,7 @@ import { comboKey, buildSeenKeys, splitBySeen, spendToday } from '../lib/provena
 import { poseSentence, readPoseView, readPoseExpression, readPoseTags, POSE_TAGS } from '../lib/poseText';
 import { eligiblePoses, drawPoses, describeDraw, chipCounts } from '../lib/poseRandomiser';
 import { queuedSeedreamEdit } from '../lib/generationQueue';
+import { jobs as jobsApi } from '../services/api';
 import { runPool } from '../lib/runPool';
 import { cn } from '../lib/utils';
 import { downloadBlob, stripEnabled } from '../lib/stripMetadata';
@@ -5992,6 +5993,20 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     if (!outOfCredits) await clearJobQueue(mode);
 
     if (cancelRef.current) {
+      /**
+       * Stop has to stop SPENDING, not just stop looping.
+       *
+       * Ending the pool leaves everything already enqueued for the worker to submit — at a hundred
+       * lanes that is a great deal of money arriving after the button was pressed. Only unsent work
+       * is dropped; anything already with the provider is billed either way, and cancelling it would
+       * lose a paid picture rather than save anything.
+       */
+      jobsApi.cancelQueued()
+        .then((r) => {
+          const n = (r?.data ?? r)?.cancelled || 0;
+          if (n) notify(`Stopped — ${n} not-yet-sent job${n === 1 ? '' : 's'} dropped, nothing charged for those`, 'info');
+        })
+        .catch(() => { /* the pool has stopped either way */ });
       // Cancelled is NOT failed: the unsent combos were never attempted and never charged, so they
       // must not be reported as failures (nor land in the retry panel, which prices a re-run).
       notify(`Cancelled — ${out.length} image${out.length === 1 ? '' : 's'} kept, ${Math.max(0, batch.length - attempted)} never sent`, 'success');

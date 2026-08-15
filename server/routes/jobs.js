@@ -95,6 +95,20 @@ router.post('/:id/retry', (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/**
+ * Stop: drop everything not yet sent.
+ *
+ * Only queued work is cancellable. Anything already with the provider is billed whether we keep the
+ * result or not, so cancelling it would lose a paid picture rather than save anything.
+ */
+router.post('/cancel-queued', (req, res, next) => {
+  try {
+    const userId = userIdOf(req);
+    const cancelled = jobQueue.cancelQueued(userId);
+    res.json({ success: true, data: { cancelled, counts: jobQueue.counts(userId) } });
+  } catch (err) { next(err); }
+});
+
 /** The whole pile at once. */
 router.post('/retry-failed', (req, res, next) => {
   try {
