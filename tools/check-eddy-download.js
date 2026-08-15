@@ -54,8 +54,10 @@ check('the last error is carried out of the loop instead of swallowed',
 check('the empty catch that hid this is gone', !/catch \{ \/\* skip a bad one, keep the rest \*\/ \}/.test(col));
 
 // --- 4. the single-tile path still resolves the right source -------------------------------------------
+// Reworded 2026-08-15: the const became a let so the store fallback can assign to it. The rule is
+// unchanged — the download reads the STORED source, never the downscaled grid thumbnail.
 check('the tile downloads the stored source, not the grid thumbnail',
-  col.includes('const src = thumbs[it.id] || it.url;'));
+  col.includes('let src = thumbs[it.id] || it.url;'));
 check('gridSrc is applied only at RENDER, so the download keeps full resolution',
   /src=\{gridSrc\(thumbs\[it\.id\] \|\| it\.url\)\}/.test(col) && !/gridSrc\(src\)/.test(col.split('const download =')[1] || ''));
 check('a data URL is decoded rather than fetched — Electron CSP blocks fetching data:',
@@ -117,5 +119,51 @@ check('a query string survives', abs('/api/gallery/x/image?r=9').endsWith('/imag
 check('an absolute http URL is untouched', abs('http://example.com/a.png') === 'http://example.com/a.png');
 check('https is untouched too', abs('https://i.pinimg.com/x.jpg') === 'https://i.pinimg.com/x.jpg');
 
-console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
-process.exit(fail ? 1 : 0);
+// --- 8. BASE LIBRARY: the store is the source of truth, not the screen ---------------------------
+// Owner, 2026-08-15: "kyros can not download from base library".
+//
+// Base rows are saved by EddyBasePage as { dataUrl, prompt, name } -- the picture lives in
+// IndexedDB and there is NO `url` on the row. `thumbs` is filled lazily, ~8 tiles at a time as you
+// scroll. So for a Base row that has not been pumped yet, BOTH cheap sources are empty, and the
+// code fell through to scraping the rendered <img> -- which only works for a tile currently on
+// screen and decoded.
+//
+// Net effect: "select all, download" in Base Library saved the handful that happened to be visible
+// and reported "could not read the image" for everything else, while every one of those pictures
+// was in the store the whole time. The regular Library never showed it, because its rows carry a
+// /api/gallery/<id>/image url that the fetch branch can always use.
+check('the bulk path asks the store when thumb and url are both empty',
+  col.includes('let src = thumbs[it.id] || it.url;') && /src = await store\.getImage\(it\.id\)/.test(col));
+check('the single-tile path does the same', (col.match(/src = await store\.getImage\(it\.id\)/g) || []).length === 2);
+check('neither uses a const any more — the fallback has to be able to assign',
+  !col.includes('const src = thumbs[it.id] || it.url;'));
+check('a store read that throws does not kill the download — the on-screen copy is still tried',
+  /try \{ src = await store\.getImage\(it\.id\); \} catch/.test(col));
+check('the "nothing to download" guard still fires when the store has nothing either',
+  col.includes("notify('Nothing to download on that card', 'error')"));
+check('why Base rows differ is written down where the fallback lives', /Base Library rows? (has|have) (no|neither)/.test(col));
+
+// Replay the source resolution over the two row shapes that actually exist.
+const pick = async (row, thumbs, store) => {
+  let src = thumbs[row.id] || row.url;
+  if (!src) { try { src = await store.getImage(row.id); } catch { /* ignore */ } }
+  return src || null;
+};
+const store = { getImage: async (id) => (id === 'base1' ? 'data:image/png;base64,AAA' : null) };
+(async () => {
+  const libRow = { id: 'lib1', url: '/api/gallery/xyz/image' };
+  const baseRow = { id: 'base1' };                     // no url, no thumb — the failing case
+  check('a Library row still resolves from its url without a store read',
+    (await pick(libRow, {}, store)) === '/api/gallery/xyz/image');
+  check('a Base row now resolves from the store', (await pick(baseRow, {}, store)) === 'data:image/png;base64,AAA');
+  check('a loaded thumb still wins, so nothing got slower for visible tiles',
+    (await pick(baseRow, { base1: 'data:image/png;base64,THUMB' }, store)) === 'data:image/png;base64,THUMB');
+  check('a row the store cannot serve still returns null for the guard to catch',
+    (await pick({ id: 'gone' }, {}, store)) === null);
+
+  console.log(fail ? `
+FAIL — ${fail}` : `
+PASS — ${pass}/${pass}`);
+  process.exit(fail ? 1 : 0);
+})();
+

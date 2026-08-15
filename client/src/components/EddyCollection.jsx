@@ -1450,7 +1450,14 @@ export default function EddyCollection({
    *     round trip that could itself fail.
    */
   const download = async (it) => {
-    const src = thumbs[it.id] || it.url;
+    // Same fallback as bytesForItem, and for the same reason: a Base Library row has no `url`, and
+    // its thumb is only loaded once the tile has scrolled into view. Without this, downloading a
+    // card that is present but not yet pumped reported "Nothing to download" about a picture that
+    // was sitting in the store.
+    let src = thumbs[it.id] || it.url;
+    if (!src) {
+      try { src = await store.getImage(it.id); } catch { /* handled by the guard below */ }
+    }
     if (!src) { notify('Nothing to download on that card', 'error'); return false; }
 
     // Keep it recognisable but well inside the OS limit, and never end on a separator.
@@ -1613,7 +1620,26 @@ export default function EddyCollection({
    * Returns { data, ext } or null. Never throws: the caller counts failures and names them.
    */
   const bytesForItem = async (it) => {
-    const src = thumbs[it.id] || it.url;
+    /**
+     * The STORE is the source of truth, not the screen.
+     *
+     * `thumbs` is filled lazily, about eight tiles at a time as you scroll, and `url` only exists on
+     * rows that came from the gallery. Base Library rows have neither: EddyBasePage saves them as
+     * `{ dataUrl, prompt, name }`, so the picture lives in IndexedDB and nowhere else.
+     *
+     * With both empty this used to fall through to scraping the rendered <img>, which works only for
+     * tiles currently on screen and decoded. So "select all, download" in Base Library saved the
+     * handful that happened to be visible and reported "could not read the image" for the rest —
+     * while every one of those pictures was sitting in the store the whole time (owner, 2026-08-15:
+     * "kyros can not download from base library").
+     *
+     * Asking the store closes it for every collection at once, and costs a read only when the two
+     * cheap sources are genuinely absent.
+     */
+    let src = thumbs[it.id] || it.url;
+    if (!src) {
+      try { src = await store.getImage(it.id); } catch { /* fall through to the on-screen copy */ }
+    }
     const toBytes = (b64) => {
       const bin = atob(b64);
       const out = new Uint8Array(bin.length);
