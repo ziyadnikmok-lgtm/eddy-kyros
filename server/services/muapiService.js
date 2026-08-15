@@ -308,7 +308,9 @@ async function getTaskStatus(taskId) {
 // ── Seedream 5.0 Pro Edit (image-to-image) ───────────────────────────────────
 // Ground truth from Muapi's Seedream5ProEditRequest schema — not guessed.
 const SEEDREAM_EDIT_SLUG = 'seedream-5.0-pro-edit';
-const SEEDREAM_ASPECT_RATIOS = ['1:1', '4:3', '3:4', '16:9', '9:16', '2:3', '3:2'];
+// Must stay in step with client/src/config/photoModes.js: a ratio the picker offers but this
+// list omits is silently rewritten to 1:1 below, which looks like the model ignoring you.
+const SEEDREAM_ASPECT_RATIOS = ['1:1', '21:9', '16:9', '3:2', '4:3', '3:4', '2:3', '9:16'];
 const SEEDREAM_RESOLUTIONS = ['1K', '2K'];
 const SEEDREAM_MAX_IMAGES = 10;
 const EDIT_POLL_INTERVAL_MS = 2000;
@@ -339,7 +341,12 @@ async function submitSeedreamEdit(images, prompt, opts = {}) {
     imageUrls.push(await uploadBase64(img.base64, img.mimeType || 'image/png'));
   }
 
+  // A ratio this list does not know becomes 1:1 SILENTLY, which on screen looks like the model
+  // ignoring the setting. Logged so the cause is findable rather than mysterious.
   const ratio = SEEDREAM_ASPECT_RATIOS.includes(opts.aspectRatio) ? opts.aspectRatio : '1:1';
+  if (opts.aspectRatio && ratio !== opts.aspectRatio) {
+    log.warn('muapi_unsupported_aspect', { asked: opts.aspectRatio, used: ratio, supported: SEEDREAM_ASPECT_RATIOS });
+  }
   const resolution = SEEDREAM_RESOLUTIONS.includes(opts.resolution) ? opts.resolution : '1K';
 
   const body = { prompt: prompt.trim(), images_list: imageUrls, aspect_ratio: ratio, resolution };

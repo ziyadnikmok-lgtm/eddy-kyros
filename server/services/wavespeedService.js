@@ -192,6 +192,9 @@ const IMAGE_MAX_POLL_MS = 60_000;
 
 const IMAGE_SIZE_MAP = {
   '1:1':  '1024*1024',
+  // 21:9 exactly, and both edges divisible by 64 — diffusion models are happiest on that grid, and
+  // a ratio that is only approximately right shows up as a crop nobody asked for.
+  '21:9': '1344*576',
   '4:5':  '896*1120',
   '5:4':  '1120*896',
   '16:9': '1344*768',
@@ -218,6 +221,9 @@ async function generateImage(prompt, options = {}) {
   }
 
   const size = IMAGE_SIZE_MAP[options.aspectRatio] || IMAGE_SIZE_MAP['1:1'];
+  if (options.aspectRatio && !IMAGE_SIZE_MAP[options.aspectRatio]) {
+    log.warn('wavespeed_unsupported_aspect', { asked: options.aspectRatio, used: '1:1', supported: Object.keys(IMAGE_SIZE_MAP) });
+  }
   const body = {
     prompt: prompt.trim(),
     size,
@@ -420,7 +426,11 @@ async function generateSeedDreamEdit(imageInputs, prompt, opts = {}) {
 
   log.info('seeddream_edit_start', { imageCount: uploadedUrls.length, promptLen: prompt.length });
 
+  // Same trap as the Muapi path: an unmapped ratio becomes 1:1 with no error, so it is logged.
   const size = IMAGE_SIZE_MAP[opts.aspectRatio] || IMAGE_SIZE_MAP['1:1'];
+  if (opts.aspectRatio && !IMAGE_SIZE_MAP[opts.aspectRatio]) {
+    log.warn('wavespeed_unsupported_aspect', { asked: opts.aspectRatio, used: '1:1', supported: Object.keys(IMAGE_SIZE_MAP) });
+  }
   const body = {
     images: uploadedUrls,
     prompt: prompt.trim(),
@@ -567,6 +577,9 @@ async function generateImg2Img(imageBase64, mimeType, prompt, options = {}) {
   log.info('wavespeed_img2img_uploaded', { imageUrl: imageUrl.slice(0, 80) });
 
   const size = IMAGE_SIZE_MAP[options.aspectRatio] || IMAGE_SIZE_MAP['1:1'];
+  if (options.aspectRatio && !IMAGE_SIZE_MAP[options.aspectRatio]) {
+    log.warn('wavespeed_unsupported_aspect', { asked: options.aspectRatio, used: '1:1', supported: Object.keys(IMAGE_SIZE_MAP) });
+  }
   const body = {
     image: imageUrl,
     prompt: prompt.trim(),

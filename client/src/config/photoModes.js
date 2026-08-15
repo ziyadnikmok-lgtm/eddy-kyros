@@ -117,7 +117,9 @@ export const MUAPI_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 // Seedream 5.0 Pro Edit (Muapi, image-to-image).
 // Ground truth from Muapi's OpenAPI spec (Seedream5ProEditRequest) — not guessed.
-export const SEEDREAM_ASPECT_RATIOS = ['1:1', '4:3', '3:4', '16:9', '9:16', '2:3', '3:2'];
+// 21:9 added 2026-08-15 (owner: "i need 21:9 in kyros in photo match everywhere can select").
+// Ultrawide sits at the front of the landscape run so the list still reads widest-to-tallest.
+export const SEEDREAM_ASPECT_RATIOS = ['1:1', '21:9', '16:9', '3:2', '4:3', '3:4', '2:3', '9:16'];
 export const SEEDREAM_RESOLUTIONS = ['1K', '2K'];
 export const SEEDREAM_MAX_IMAGES = 10;
 // Muapi's published rates: base per resolution + $0.003 per EXTRA image (first image is free).
