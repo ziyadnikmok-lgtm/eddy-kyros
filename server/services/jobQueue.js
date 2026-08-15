@@ -59,15 +59,16 @@ const now = () => new Date().toISOString();
  * Writes BEFORE anything is sent anywhere, which is the point: a crash between this call and the
  * submit costs nothing but a resend, because nothing has been billed.
  */
-function enqueue({ userId, feature, payload, destDb = null, destFolder = null, cardPrompt = null, cardName = null }) {
+function enqueue({ userId, feature, payload, destDb = null, destFolder = null, cardPrompt = null, cardName = null, tags = null }) {
   if (!userId) throw new Error('enqueue: userId is required');
   if (!feature) throw new Error('enqueue: feature is required');
   const id = crypto.randomUUID();
   const t = now();
   db.prepare(`
-    INSERT INTO generation_jobs (id, user_id, feature, status, payload, dest_db, dest_folder, card_prompt, card_name, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, userId, feature, STATUS.QUEUED, JSON.stringify(payload ?? {}), destDb, destFolder, cardPrompt, cardName, t, t);
+    INSERT INTO generation_jobs (id, user_id, feature, status, payload, dest_db, dest_folder, card_prompt, card_name, tags, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, userId, feature, STATUS.QUEUED, JSON.stringify(payload ?? {}), destDb, destFolder, cardPrompt, cardName,
+    Array.isArray(tags) && tags.length ? JSON.stringify(tags) : null, t, t);
   return id;
 }
 
@@ -144,12 +145,20 @@ function markSubmitted(id, taskId) {
  * were generated and billed. gallery_id keeps the first so every existing reader still works;
  * gallery_ids carries all of them.
  */
-function markDone(id, galleryIds) {
-  const ids = (Array.isArray(galleryIds) ? galleryIds : [galleryIds]).filter(Boolean);
+function markDone(id, rows) {
+  // Accepts either bare ids or full { galleryId, imageId, mimeType } rows. The rows are what let a
+  // finished job answer in the SAME shape /api/seedream/edit does, so a page can swap one call for
+  // the other rather than being rewritten around a different contract.
+  const list = (Array.isArray(rows) ? rows : [rows]).filter(Boolean)
+    .map((r) => (typeof r === 'string' ? { galleryId: r } : r))
+    .filter((r) => r.galleryId);
+  const ids = list.map((r) => r.galleryId);
   db.prepare(`
-    UPDATE generation_jobs SET status = ?, gallery_id = ?, gallery_ids = ?, error = NULL, updated_at = ?
+    UPDATE generation_jobs
+    SET status = ?, gallery_id = ?, gallery_ids = ?, result_json = ?, error = NULL, updated_at = ?
     WHERE id = ?
-  `).run(STATUS.DONE, ids[0] || null, ids.length ? JSON.stringify(ids) : null, now(), id);
+  `).run(STATUS.DONE, ids[0] || null, ids.length ? JSON.stringify(ids) : null,
+    list.length ? JSON.stringify(list) : null, now(), id);
 }
 
 function markFailed(id, message) {
@@ -287,7 +296,13 @@ function hydrate(row) {
   // Falls back to the single id for rows written before gallery_ids existed, so an older job still
   // hands the client something to file rather than nothing.
   if (!galleryIds.length && row.gallery_id) galleryIds = [row.gallery_id];
-  return { ...row, payload, galleryIds, filed: row.filed === 1 };
+  let images = [];
+  try { images = row.result_json ? JSON.parse(row.result_json) : []; } catch { images = []; }
+  // Rows written before result_json existed still answer with something usable.
+  if (!images.length) images = galleryIds.map((galleryId) => ({ galleryId }));
+  let tags = [];
+  try { tags = row.tags ? JSON.parse(row.tags) : []; } catch { tags = []; }
+  return { ...row, payload, galleryIds, images, tags, filed: row.filed === 1 };
 }
 
 module.exports = {

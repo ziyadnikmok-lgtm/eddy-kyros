@@ -27,6 +27,9 @@ function present(job) {
     // Every image the render produced. galleryId stays as the first for older clients; this is
     // what the filer iterates, so a multi-image render reaches the library in full.
     galleryIds: job.galleryIds || (job.gallery_id ? [job.gallery_id] : []),
+    // The SAME shape /api/seedream/edit answers with, so a page can swap one call for the other.
+    images: job.images || [],
+    provider: job.payload?.provider === 'wavespeed' ? 'wavespeed' : 'muapi',
     destDb: job.dest_db,
     destFolder: job.dest_folder,
     cardPrompt: job.card_prompt,
@@ -47,13 +50,13 @@ function userIdOf(req) {
 router.post('/', (req, res, next) => {
   try {
     const userId = userIdOf(req);
-    const { feature, payload, destDb, destFolder, cardPrompt, cardName } = req.body || {};
+    const { feature, payload, destDb, destFolder, cardPrompt, cardName, tags } = req.body || {};
     if (!feature) throw new AppError('"feature" is required', 400, 'VALIDATION_ERROR');
     if (!payload?.prompt) throw new AppError('"payload.prompt" is required', 400, 'VALIDATION_ERROR');
     if (!Array.isArray(payload?.images) || !payload.images.length) {
       throw new AppError('"payload.images" must hold at least one source image', 400, 'VALIDATION_ERROR');
     }
-    const id = jobQueue.enqueue({ userId, feature, payload, destDb, destFolder, cardPrompt, cardName });
+    const id = jobQueue.enqueue({ userId, feature, payload, destDb, destFolder, cardPrompt, cardName, tags });
     res.status(201).json({ success: true, data: present(jobQueue.get(id)) });
   } catch (err) { next(err); }
 });

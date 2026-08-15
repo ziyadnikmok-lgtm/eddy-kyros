@@ -77,6 +77,12 @@ try {
   if (jobCols.length > 0 && !jobCols.some((c) => c.name === 'gallery_ids')) {
     db.exec('ALTER TABLE generation_jobs ADD COLUMN gallery_ids TEXT');
   }
+  if (jobCols.length > 0 && !jobCols.some((c) => c.name === 'result_json')) {
+    db.exec('ALTER TABLE generation_jobs ADD COLUMN result_json TEXT');
+  }
+  if (jobCols.length > 0 && !jobCols.some((c) => c.name === 'tags')) {
+    db.exec('ALTER TABLE generation_jobs ADD COLUMN tags TEXT');
+  }
 } catch (e) {
   // Table not created yet; the CREATE TABLE below carries the column.
 }
@@ -240,6 +246,12 @@ db.exec(`
     -- existing readers keep working; this exists because a single render can return several
     -- images and keeping only images[0] silently threw the rest away.
     gallery_ids  TEXT,
+    -- The FULL result rows, JSON: [{ galleryId, imageId, mimeType }]. Exists so a queued job can
+    -- answer with the same shape /api/seedream/edit does, which is what lets a page swap one call
+    -- for the other instead of being rewritten around a new contract.
+    result_json  TEXT,
+    -- Gallery provenance tags, so a recovered image can be identified by character.
+    tags         TEXT,
     filed        INTEGER NOT NULL DEFAULT 0,
     attempts     INTEGER NOT NULL DEFAULT 0,
     error        TEXT,

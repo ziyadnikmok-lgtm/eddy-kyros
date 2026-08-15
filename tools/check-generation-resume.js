@@ -71,7 +71,7 @@ check('an empty output means failed too', rec.includes("'The provider reported s
 // Reworded 2026-08-15 when the save path started keeping EVERY image: the guard is now on the
 // collected list, but the rule is unchanged — nothing is marked done without at least one id.
 const guardIdx = rec.indexOf('if (!ids.length) {');
-const doneIdx = rec.indexOf('jobQueue.markDone(job.id, ids)');
+const doneIdx = rec.indexOf('jobQueue.markDone(job.id, rows)');
 check('markDone is only reached with at least one id', guardIdx > -1 && doneIdx > guardIdx);
 
 // --- 4. one reconcile per task ------------------------------------------------------------------------------

@@ -20,6 +20,7 @@ const jobQueue = require('./jobQueue');
 const muapi = require('./muapiService');
 const wavespeed = require('./wavespeedService');
 const gallery = require('./galleryManager');
+const imageStore = require('./imageStore');
 const log = require('../utils/logger');
 
 const POLL_INTERVAL_MS = 6000;
@@ -119,18 +120,44 @@ async function _saveResult(job, images) {
   // EVERY image, not just the first. A render can return several, and keeping images[0] threw the
   // rest away — pictures that were generated and billed for. The blocking route has always saved
   // all of them; the queue was the path that quietly did not.
-  const ids = [];
+  /**
+   * Mirrors what /api/seedream/edit does per image — imageStore.store AND galleryManager.save —
+   * so a queued job produces the IDENTICAL row a direct call does: { galleryId, imageId, mimeType }.
+   *
+   * That identity is the point. A page swapping seedreamApi.edit for the queued call then changes
+   * one line, instead of being rewritten around a different response contract.
+   *
+   * base64Data is deliberately NOT carried. Every consumer treats it as the fallback for when there
+   * is no server copy (`galleryId ? galleryUrl : base64 ? dataUrl : null`), and a queued job always
+   * has a galleryId — markDone refuses without one. Returning megabytes of base64 per image through
+   * a status poll would cost a great deal to be ignored.
+   */
+  const rows = [];
   for (const img of list) {
+    let imageId = null;
+    try {
+      imageId = imageStore.store({
+        basePrompt: job.card_prompt || job.payload?.prompt || '',
+        modelUsed: job.payload?.model || job.feature,
+        image: { mimeType: img.mimeType, base64Data: img.base64Data },
+        source: 'generate',
+      })?.imageId || null;
+    } catch { /* the gallery row below is what the client actually files by */ }
+
     const saved = gallery.save({
       base64Data: img.base64Data,
       mimeType: img.mimeType,
       prompt: job.card_prompt || job.payload?.prompt || 'Generated',
       source: job.feature,
       aspectRatio: job.payload?.aspectRatio || null,
+      // Provenance, so "Recover missing" can identify a stranded picture by character exactly as it
+      // does for a direct call. Without these a recovered image is unattributable.
+      tags: job.tags?.length ? job.tags : undefined,
     });
     const gid = saved?.id || saved?.galleryId || null;
-    if (gid) ids.push(gid);
+    if (gid) rows.push({ galleryId: gid, imageId, mimeType: img.mimeType });
   }
+  const ids = rows.map((r) => r.galleryId);
 
   if (!ids.length) {
     // Do NOT mark done without an id: the client files by gallery id, so a done row without one is
@@ -144,7 +171,7 @@ async function _saveResult(job, images) {
     log.error('generation_job_partial_save', { jobId: job.id, returned: list.length, saved: ids.length });
   }
 
-  jobQueue.markDone(job.id, ids);
+  jobQueue.markDone(job.id, rows);
   log.info('generation_job_done', { jobId: job.id, taskId: job.task_id, images: ids.length, galleryIds: ids });
 }
 

@@ -141,9 +141,12 @@ check('the ceiling is 100', /KYROS_MAX_INFLIGHT\) \|\| 100/.test(rec));
 // LOSS #1: a render returning several images, with only the first recorded. The blocking route has
 // always saved result.images.map(...) — the queue was the path that quietly kept one.
 check('every returned image is saved, not just the first', rec.includes('for (const img of list) {'));
-check('and all their ids are recorded', rec.includes('jobQueue.markDone(job.id, ids)'));
-check('markDone takes a list', q2.includes('function markDone(id, galleryIds)'));
+check('and all their rows are recorded', rec.includes('jobQueue.markDone(job.id, rows)'));
+check('markDone takes a list of rows', q2.includes('function markDone(id, rows)'));
 check('the first id is still written to gallery_id for older readers', q2.includes('ids[0] || null'));
+// The row shape is what makes the queued call a drop-in for seedreamApi.edit.
+check('rows carry galleryId, imageId and mimeType', rec.includes('rows.push({ galleryId: gid, imageId, mimeType: img.mimeType })'));
+check('and the job stores them', q2.includes('result_json = ?'));
 check('a partial save is logged at ERROR, never passed over in silence',
   rec.includes("log.error('generation_job_partial_save'"));
 check('the column exists for fresh databases', dbjs.includes('gallery_ids  TEXT,'));

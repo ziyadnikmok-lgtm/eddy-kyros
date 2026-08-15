@@ -49,6 +49,9 @@ export async function queuedSeedreamEdit({
   prompt,
   aspectRatio,
   resolution,
+  model,
+  provider,
+  tags,
   destDb,
   destFolder,
   cardPrompt,
@@ -57,11 +60,12 @@ export async function queuedSeedreamEdit({
 }) {
   const created = await jobsApi.enqueue({
     feature,
-    payload: { images, prompt, aspectRatio, resolution },
+    payload: { images, prompt, aspectRatio, resolution, model, provider },
     destDb,
     destFolder,
     cardPrompt,
     cardName,
+    tags,
   });
   const jobId = created?.data?.id ?? created?.id;
   if (!jobId) throw new Error('The queue did not return a job id');
@@ -78,7 +82,20 @@ export async function queuedSeedreamEdit({
       continue;   // a blip in the status check is not a failed render — ask again
     }
     if (job.status === 'done') {
-      return { jobId, galleryId: job.galleryId, url: galleryApi.imageUrl(job.galleryId) };
+      /**
+       * The SAME shape seedreamApi.edit returns, so this is a drop-in replacement rather than a new
+       * contract: `{ images: [{ galleryId, imageId, mimeType }], provider }`.
+       *
+       * base64Data is absent on purpose. Every consumer treats it as the fallback for when there is
+       * no server copy, and a queued job always has a galleryId.
+       */
+      return {
+        images: job.images?.length ? job.images : [{ galleryId: job.galleryId }],
+        provider: job.provider,
+        jobId,
+        galleryId: job.galleryId,
+        url: galleryApi.imageUrl(job.galleryId),
+      };
     }
     if (job.status === 'failed') throw new Error(job.error || 'Generation failed');
   }
