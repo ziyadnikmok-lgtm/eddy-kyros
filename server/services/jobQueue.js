@@ -209,6 +209,63 @@ function markFiled(id, userId) {
   return res.changes === 1;
 }
 
+/**
+ * Put a FAILED job back on the queue as a fresh attempt.
+ *
+ * Clears task_id as well as the error, so the worker submits it anew rather than polling a
+ * prediction that is already finished-and-failed. Attempts reset to zero — this is a deliberate
+ * human decision, not the automatic retry the cap exists to bound.
+ *
+ * WORTH KNOWING, and why it is only ever reachable by an explicit click: a job failed as an ORPHAN
+ * (interrupted between the provider accepting and the id being recorded) MIGHT already have been
+ * rendered and billed. Retrying it can pay twice for one picture. The automatic path refuses to
+ * make that call; a person looking at a missing image can.
+ *
+ * Scoped by user_id, and only from `failed` — retrying something still in flight would be a genuine
+ * double submit.
+ */
+function retry(id, userId) {
+  const res = db.prepare(`
+    UPDATE generation_jobs
+    SET status = ?, task_id = NULL, error = NULL, attempts = 0, updated_at = ?
+    WHERE id = ? AND user_id = ? AND status = ?
+  `).run(STATUS.QUEUED, now(), id, userId, STATUS.FAILED);
+  return res.changes === 1;
+}
+
+/** Every failed job, newest first — what the panel lists and what "Retry all" acts on. */
+function listFailed(userId) {
+  return db.prepare(`
+    SELECT * FROM generation_jobs WHERE user_id = ? AND status = ? ORDER BY created_at DESC
+  `).all(userId, STATUS.FAILED).map(hydrate);
+}
+
+/** One click for the whole pile. Returns how many went back on. */
+function retryAllFailed(userId) {
+  const res = db.prepare(`
+    UPDATE generation_jobs
+    SET status = ?, task_id = NULL, error = NULL, attempts = 0, updated_at = ?
+    WHERE user_id = ? AND status = ?
+  `).run(STATUS.QUEUED, now(), userId, STATUS.FAILED);
+  return res.changes;
+}
+
+/** Counts by status — the whole queue at a glance, in one query rather than five. */
+function counts(userId) {
+  const rows = db.prepare(`
+    SELECT status, COUNT(*) AS n FROM generation_jobs WHERE user_id = ? GROUP BY status
+  `).all(userId);
+  const out = { queued: 0, submitting: 0, submitted: 0, done: 0, failed: 0, unfiled: 0 };
+  for (const r of rows) if (r.status in out) out[r.status] = r.n;
+  out.unfiled = db.prepare(`
+    SELECT COUNT(*) AS n FROM generation_jobs
+    WHERE user_id = ? AND status = ? AND filed = 0 AND gallery_id IS NOT NULL
+  `).get(userId, STATUS.DONE).n;
+  // What is actually moving right now — the number that answers "is it still working".
+  out.active = out.queued + out.submitting + out.submitted;
+  return out;
+}
+
 /** Everything still moving, for the UI. */
 function listActive(userId) {
   return db.prepare(`
@@ -247,5 +304,9 @@ module.exports = {
   listUnfiled,
   markFiled,
   listActive,
+  listFailed,
+  retry,
+  retryAllFailed,
+  counts,
   get,
 };

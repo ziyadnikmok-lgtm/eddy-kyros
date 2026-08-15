@@ -179,5 +179,44 @@ check(`a burst of 100 all reach a terminal state (${done} done)`, done === 100);
 check('none stranded in flight', running === 0 && queued === 0);
 check('and none lost along the way', 100 - done - queued - running === 0);
 
+// --- 8. SEEING IT, AND RETRYING IT ------------------------------------------------------------------
+// "That mean we can see all of them, and just click retry failed" (owner, 2026-08-15). Until this
+// the queue was real but invisible: work survived a close, resumed on boot and filed itself, and
+// the only evidence was pictures appearing. At 100 lanes that is not enough — you need to know what
+// is moving and what fell over.
+const panel = read('client/src/components/GenerationQueuePanel.jsx');
+const appjs = read('client/src/App.jsx');
+
+check('the queue reports counts by status in one query', q2.includes('function counts(userId)'));
+check('including what is actively moving', q2.includes('out.active = out.queued + out.submitting + out.submitted;'));
+check('and the failures themselves, with their reasons', q2.includes('function listFailed(userId)'));
+check('the list route returns all of it', routes.includes('failed: jobQueue.listFailed(userId).map(present)') && routes.includes('counts: jobQueue.counts(userId)'));
+
+// Retry clears the task id: without that the worker would poll a prediction that is already
+// finished-and-failed and the job would fail again instantly.
+check('retry exists', q2.includes('function retry(id, userId)'));
+check('and clears the task id so the job is SENT again, not re-polled', /SET status = \?, task_id = NULL, error = NULL, attempts = 0/.test(q2));
+check('only a FAILED job can be retried — anything in flight would be a real double submit',
+  q2.includes('.run(STATUS.QUEUED, now(), id, userId, STATUS.FAILED)'));
+check('and only your own', /WHERE id = \? AND user_id = \? AND status = \?/.test(q2));
+check('there is a one-click retry for the whole pile', q2.includes('function retryAllFailed(userId)'));
+check('both are exposed', routes.includes("router.post('/:id/retry'") && routes.includes("router.post('/retry-failed'"));
+check('a retry of something that is not failed 404s like a missing one', routes.includes("throw new AppError('No failed job with that id', 404, 'NOT_FOUND')"));
+
+// The one thing a person must be told: a retry can pay twice for an orphan.
+check('the double-charge risk of a manual retry is written down',
+  q2.includes('Retrying it can pay twice for one picture'));
+
+check('the panel exists and is mounted on every page', appjs.includes('<GenerationQueuePanel className="mb-3" />'));
+check('it shows what is waiting, rendering, to file and failed',
+  panel.includes('label="waiting"') && panel.includes('label="rendering"') && panel.includes('label="to file"') && panel.includes('label="failed"'));
+check('it offers the bulk retry', panel.includes('jobsApi.retryAllFailed()'));
+check('and a per-job one', panel.includes('jobsApi.retry(id)'));
+check('failures show their REASON, not just a count', panel.includes('j.error ?') && panel.includes('j.cardName || j.feature'));
+check('it hides entirely when the queue is empty', panel.includes('if (!counts || (!counts.active && !counts.failed && !counts.unfiled)) return null;'));
+check('and polls slowly when nothing is moving', panel.includes('active ? BUSY_MS : IDLE_MS'));
+check('a failed poll keeps the last view rather than flashing an error',
+  panel.includes('// Signed out, offline, or the server is restarting.'));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

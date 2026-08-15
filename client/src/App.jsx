@@ -8,6 +8,7 @@ import { Toasts, Spinner } from './components/UI';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { PageErrorBoundary } from './components/ErrorBoundary';
 import GenerationFeedPanel, { GenerationFeedVideoWatcher } from './components/GenerationFeedPanel';
+import GenerationQueuePanel from './components/GenerationQueuePanel';
 import { keys as keysApi } from './services/api';
 import { WORKSPACES, getWorkspace, setWorkspace as persistWorkspace, workspaceEngines } from './lib/workspace';
 import { cn } from './lib/utils';
@@ -998,6 +999,10 @@ function MainApp({ onLogout, currentUser }) {
                 their own columns, so a 1152px cap there just wastes a wide monitor. Pages that
                 DO show the feed keep the cap: prose and forms are unreadable at full width. */}
             <div className={`relative ${isSelfScroll ? 'flex min-h-0 flex-1 flex-col max-w-none' : isFeedDominant || !showGenerationFeed ? 'max-w-none' : 'mx-auto max-w-6xl'}`}>
+              {/* Above the page, on every page: the queue outlives whatever tab you happen to be
+                  on, so a render started in Eddy and still going while you are in Pinterest has
+                  somewhere to show itself. Renders nothing at all when the queue is empty. */}
+              <GenerationQueuePanel className="mb-3" />
               <PageErrorBoundary pageKey={page}>
                 <Suspense fallback={<PageFallback />}>
                   <PageComponent key={page} />

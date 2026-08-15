@@ -396,6 +396,8 @@ export const jobs = {
   get: (id) => request(`/jobs/${id}`),
   list: () => request('/jobs'),
   markFiled: (id) => request(`/jobs/${id}/filed`, { method: 'POST' }),
+  retry: (id) => request(`/jobs/${id}/retry`, { method: 'POST' }),
+  retryAllFailed: () => request('/jobs/retry-failed', { method: 'POST' }),
 };
 
 export const gallery = {

@@ -67,8 +67,37 @@ router.get('/', (req, res, next) => {
         active: jobQueue.listActive(userId).map(present),
         // Finished while the app was closed and not yet in a library — the boot question.
         unfiled: jobQueue.listUnfiled(userId).map(present),
+        // Everything that went wrong, so the panel can show it and offer one click to run it again.
+        failed: jobQueue.listFailed(userId).map(present),
+        counts: jobQueue.counts(userId),
       },
     });
+  } catch (err) { next(err); }
+});
+
+/**
+ * Run a failed job again.
+ *
+ * Deliberately a POST a human has to make. A job failed as an orphan may already have been rendered
+ * and billed, so retrying it can pay twice — the automatic path refuses to make that call, and a
+ * person looking at a missing picture can.
+ */
+router.post('/:id/retry', (req, res, next) => {
+  try {
+    const userId = userIdOf(req);
+    const ok = jobQueue.retry(req.params.id, userId);
+    // Same 404 for missing, not-yours, and not-failed: nothing here should reveal which.
+    if (!ok) throw new AppError('No failed job with that id', 404, 'NOT_FOUND');
+    res.json({ success: true, data: present(jobQueue.get(req.params.id)) });
+  } catch (err) { next(err); }
+});
+
+/** The whole pile at once. */
+router.post('/retry-failed', (req, res, next) => {
+  try {
+    const userId = userIdOf(req);
+    const requeued = jobQueue.retryAllFailed(userId);
+    res.json({ success: true, data: { requeued, counts: jobQueue.counts(userId) } });
   } catch (err) { next(err); }
 });
 
