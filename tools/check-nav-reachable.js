@@ -99,5 +99,34 @@ check('Pinterest Library is directly below Pinterest',
   sections.indexOf("id: 'pinterestFeed'") < sections.indexOf("id: 'pinterestLibrary'")
   && sections.indexOf("id: 'pinterestLibrary'") - sections.indexOf("id: 'pinterestFeed'") < 400);
 
+// --- EVERY nav id must be navigable ------------------------------------------------------------
+// navigateTo() checks the id against VALID_PAGE_IDS and falls back to `generate` when it is not
+// there — silently, apart from a console warning nobody is watching. AppContext says so in its own
+// comment: "An id missing from it lands on Generate with no error, which looks exactly like a
+// broken page." That is exactly what happened to Pinterest Library: the button was there, it was
+// clickable, and clicking it bounced you to Generate (owner, 2026-08-15: "cannot click the
+// pinterest library").
+//
+// The earlier checks compared NAV_SECTIONS against the PAGES map and missed it, because the entry
+// existed in both. THIS is the list that decides whether a click goes anywhere.
+const ctx = read('client/src/context/AppContext.jsx');
+const validIds = new Set(
+  ((ctx.match(/VALID_PAGE_IDS = new Set\(\[([\s\S]*?)\]\)/) || [])[1] || '')
+    .split(',').map((s) => s.trim().replace(/['"]/g, '')).filter(Boolean),
+);
+check(`VALID_PAGE_IDS was parsed (${validIds.size} ids)`, validIds.size > 10);
+const unnavigable = [...reachable].filter((id) => !validIds.has(id));
+check(`every nav item can actually be navigated to${unnavigable.length ? ` — DEAD: ${unnavigable.join(', ')}` : ''}`,
+  unnavigable.length === 0);
+check('Pinterest Library specifically', validIds.has('pinterestLibrary'));
+
+// An item with no icon renders as bare text and reads as a section heading rather than a button —
+// which is how this one looked in the sidebar even before the click failed.
+const iconsStart = app.indexOf('const NAV_ICONS = {');
+const NL = String.fromCharCode(10);
+const icons = iconsStart > -1 ? app.slice(iconsStart, app.indexOf(NL + '};', iconsStart)) : '';
+const noIcon = [...reachable].filter((id) => !icons.includes(' ' + id + ':'));
+check(`every nav item has an icon${noIcon.length ? ` — missing: ${noIcon.join(', ')}` : ''}`, noIcon.length === 0);
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
