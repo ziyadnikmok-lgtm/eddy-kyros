@@ -11,6 +11,7 @@ import { downloadBlob, stripMetadata, stripEnabled } from '../lib/stripMetadata'
 import { isPosePromptBroken, hasPoseView, readPoseView, mergePoseView, poseSentence,
   readPoseDescription, readPoseTags, hasPoseTags, mergePoseTags } from '../lib/poseText';
 import { planPoseTagBackfill } from '../lib/poseTagBackfill';
+import { stashSourceHandoff } from '../lib/sourceHandoff';
 
 /**
  * Eddy's shared collection UI — folders on top, items below, drop/paste/upload to add.
@@ -120,6 +121,9 @@ export default function EddyCollection({
   title,
   subtitle,
   folderLabel = 'Folder',
+  // Opt-in: only collections holding SOURCE-like photos want this. A pose or an outfit card is
+  // not a Photo Match source, and an offer that makes no sense is worse than a missing one.
+  sendToPhotoMatch = false,
   withPrompt = false,
   // A second prompt on the card. Pose uses it for the motion that goes with the shot, so one
   // card holds the image, how she is positioned, and how she moves.
@@ -138,7 +142,7 @@ export default function EddyCollection({
   // Library result is finished work.
   enablePlate = false,
 }) {
-  const { notify } = useApp();
+  const { notify, navigateTo } = useApp();
   const store = useMemo(() => createEddyCollection(dbName), [dbName]);
 
   const [folders, setFolders] = useState([]);
@@ -2226,6 +2230,65 @@ export default function EddyCollection({
    * only the index entry would leave a tile with nothing behind it. Provenance travels too, so a
    * moved picture still knows what made it.
    */
+  /**
+   * Send the selection into Photo Match.
+   *
+   * Deliberately the SAME three steps PinterestFeedPage uses, in the same order, because that
+   * order is what makes it work: stash, navigate, then fire the event. Photo Match is lazy-loaded,
+   * so an event dispatched first arrives before its chunk has mounted and is dropped silently —
+   * lib/sourceHandoff exists for exactly that, and the destination consumes it ON MOUNT with no
+   * timing race. The event is still fired afterwards for a page already open; the destination
+   * dedups.
+   *
+   * The payload key is `items`. Every other sender uses it and the listeners read it; `images`
+   * arrives and does nothing.
+   *
+   * COPIES rather than moves — unlike the counterpart send. A pin used as a Photo Match source is
+   * still worth keeping in the library for the next character.
+   */
+  const sendSelectedToPhotoMatch = async () => {
+    if (!selected.length) return;
+    setSending(true);
+    const byId = new Map(items.map((i) => [i.id, i]));
+    const payload = [];
+    let missing = 0;
+    try {
+      for (const id of selected) {
+        const it = byId.get(id);
+        if (!it) { missing += 1; continue; }
+        // eslint-disable-next-line no-await-in-loop -- the store is serial anyway
+        const bytes = await bytesForItem(it);
+        if (!bytes) { missing += 1; continue; }
+        const blob = new Blob([bytes.data], { type: bytes.ext === 'jpg' ? 'image/jpeg' : `image/${bytes.ext}` });
+        // eslint-disable-next-line no-await-in-loop
+        const dataUrl = await new Promise((res, rej) => {
+          const fr = new FileReader();
+          fr.onload = () => res(fr.result);
+          fr.onerror = rej;
+          fr.readAsDataURL(blob);
+        });
+        payload.push({ dataUrl, name: `${String(it.name || it.id).replace(/[^a-z0-9._-]+/gi, '_').slice(0, 60)}.${bytes.ext}` });
+      }
+    } catch { /* whatever was collected still goes */ }
+    setSending(false);
+
+    if (!payload.length) {
+      notify('None of those could be read — nothing was sent', 'error');
+      return;
+    }
+    stashSourceHandoff('photoMatchSeedream', payload);
+    try {
+      window.sessionStorage.setItem('kyros.pendingSourceMode.photoMatchSeedream', 'add');
+    } catch { /* private mode: the destination falls back to adding, which loses nothing */ }
+    navigateTo('photoMatchSeedream');
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('kyros:use-as-photo-match-seedream-source', { detail: { items: payload } }));
+    }, 300);
+    notify(missing
+      ? `Sent ${payload.length} to Photo Match — ${missing} could not be read`
+      : `Sent ${payload.length} to Photo Match`, missing ? 'info' : 'success');
+  };
+
   const sendSelectedToCounterpart = async () => {
     if (!counterpart || !otherStore || !selected.length) return;
     setSending(true);
@@ -2792,6 +2855,15 @@ export default function EddyCollection({
           <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs" onClick={downloadSelected}>
             Download {selected.length}
           </Btn>
+          {/* Straight into Photo Match, from any image collection that opts in. COPIES rather than
+              moves: a pin used as a source is still worth keeping for the next character. */}
+          {sendToPhotoMatch && (
+            <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs !border-rose-500/40 !text-rose-200"
+              disabled={sending} onClick={sendSelectedToPhotoMatch}
+              title="Copy these into Photo Match as source photos. They stay here too.">
+              {sending ? 'Sending…' : `Send ${selected.length} to Photo Match`}
+            </Btn>
+          )}
           {/* THE OTHER LIBRARY. Sits with the selection it acts on — and with "Last hour" and
               "Last 24h" right above, which is how you grab a run you just made and move the whole
               lot across in one go (owner, 2026-08-13). Only rendered where a counterpart exists:

@@ -128,5 +128,30 @@ const icons = iconsStart > -1 ? app.slice(iconsStart, app.indexOf(NL + '};', ico
 const noIcon = [...reachable].filter((id) => !icons.includes(' ' + id + ':'));
 check(`every nav item has an icon${noIcon.length ? ` — missing: ${noIcon.join(', ')}` : ''}`, noIcon.length === 0);
 
+// --- Pinterest Library: no feed, and a working send ------------------------------------------------
+const eddyTabs = read('client/src/pages/EddyTabs.jsx');
+const coll = read('client/src/components/EddyCollection.jsx');
+
+// It holds saved pins; it generates nothing. The feed beside it is unrelated results eating a
+// third of the window from the grid you came to look at.
+check('the generation feed is hidden on Pinterest Library',
+  /FEED_HIDDEN_PAGES = new Set\(\[[\s\S]*?'pinterestLibrary'/.test(app));
+
+// The send reuses the sequence that already works on the Pinterest tab. Order is the whole thing:
+// stash -> navigate -> event. Dispatching first arrives before the lazy chunk mounts and is
+// dropped silently, which is how the original version of this lost everything.
+check('Pinterest Library opts into the send', eddyTabs.includes('sendToPhotoMatch'));
+check('it is opt-in, not on for every collection', coll.includes('sendToPhotoMatch = false,'));
+const stash = coll.indexOf("stashSourceHandoff('photoMatchSeedream'");
+const nav = coll.indexOf("navigateTo('photoMatchSeedream')");
+const evt = coll.indexOf("'kyros:use-as-photo-match-seedream-source'");
+check('it stashes BEFORE navigating', stash > -1 && nav > stash);
+check('and fires the event LAST, after the destination can be mounted', evt > nav);
+check('the payload key is `items`, which is what the listeners read', /detail: \{ items: payload \}/.test(coll));
+check('it COPIES rather than moves — a source pin is still worth keeping', !/removeItem[\s\S]{0,200}photoMatchSeedream/.test(coll));
+check('nothing readable means nothing sent, said out loud',
+  coll.includes("notify('None of those could be read — nothing was sent', 'error')"));
+check('a partial send reports what was missed', coll.includes('could not be read`'));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

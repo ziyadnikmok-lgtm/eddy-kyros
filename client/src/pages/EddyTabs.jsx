@@ -233,6 +233,7 @@ export function PinterestLibraryPage() {
         title="Pinterest Library"
         subtitle="Pins you saved from the Pinterest tab. Download them, sort them into folders, or send them on to Photo Match."
         promptLabel="pin"
+        sendToPhotoMatch
       />
     </div>
   );

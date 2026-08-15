@@ -332,6 +332,9 @@ const FEED_HIDDEN_PAGES = new Set([
   // results beside a search grid is noise, and it costs the grid a third of the window
   // (owner, 2026-08-10).
   'pinterestFeed',
+  // Pinterest Library generates nothing either — it holds pins you saved. The feed beside it is
+  // unrelated results taking a third of the window from the grid you came to look at.
+  'pinterestLibrary',
   // Photo Match grew the same inline results column Eddy has — tick, send to Library or Base
   // Library. Showing the shared feed too would put every result on screen twice, and the feed was
   // occupying the space the results column needs (owner, 2026-08-13).
