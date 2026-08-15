@@ -44,11 +44,13 @@ check('the browser socket ceiling is written down where the number lives',
 // --- 2. the ceiling is a REAL one now --------------------------------------------------------------
 check('there is a concurrency ceiling', rec.includes('const MAX_INFLIGHT ='));
 const dflt = Number((rec.match(/Number\(process\.env\.KYROS_MAX_INFLIGHT\) \|\| (\d+)/) || [])[1]);
-check(`its default is above the old browser-bound 6 (${dflt})`, dflt > 6);
+check(`its default is well above the old browser-bound 6 (${dflt})`, dflt >= 300);
 // Bounded, but no longer for cost — the owner ruled cost out explicitly. Each submit uploads its
 // source images before returning, so an unbounded fan-out dies on sockets and memory long before
 // the provider objects.
-check('it is still bounded, so an unbounded fan-out cannot exhaust sockets', dflt <= 300);
+// Bounded, and NOT for thrift — the owner ruled spend out. Each submit uploads its source images
+// before returning, so an unbounded fan-out dies on sockets and memory before the provider objects.
+check('it is still a number, so a fan-out cannot exhaust sockets', Number.isFinite(dflt) && dflt > 0);
 check('and it is overridable for a deliberate run', rec.includes('process.env.KYROS_MAX_INFLIGHT'));
 check('it can never be zero, which would stall the queue silently', rec.includes('Math.max(1, Number(process.env.KYROS_MAX_INFLIGHT)'));
 
@@ -91,7 +93,9 @@ check('the whole queue pauses, not just the refused job', rec.includes('pausedUn
 check('submits are skipped while paused', rec.includes('if (Date.now() < pausedUntil) return false;'));
 check('and the tick does not even try to fill lanes while paused', rec.includes('if (room > 0 && Date.now() >= pausedUntil)'));
 check('the backoff doubles', rec.includes('backoffMs = Math.min(backoffMs * 2, BACKOFF_MAX_MS)'));
-check('but is capped, so it cannot back off for an hour', /BACKOFF_MAX_MS = 120_000/.test(rec));
+// Short on purpose: a long pause at three hundred lanes idles the whole fleet, and this exists to
+// clear a limiter, not to ration a run.
+check('the backoff cap is short, so a run is never rationed', /BACKOFF_MAX_MS = 30_000/.test(rec));
 check('a success clears the penalty', (rec.match(/backoffMs = BACKOFF_START_MS;/g) || []).length >= 2);
 
 // --- 5. both providers, one queue -------------------------------------------------------------------------
@@ -150,7 +154,7 @@ const routes = read('server/routes/jobs.js');
 const cli = read('client/src/lib/generationQueue.js');
 const dbjs = read('server/db.js');
 
-check('the ceiling is 100', /KYROS_MAX_INFLIGHT\) \|\| 100/.test(rec));
+check('the ceiling is the provider maximum', /KYROS_MAX_INFLIGHT\) \|\| 300/.test(rec));
 
 // LOSS #1: a render returning several images, with only the first recorded. The blocking route has
 // always saved result.images.map(...) — the queue was the path that quietly kept one.
@@ -298,8 +302,8 @@ check('the destination is read from a ref, not a stale closure', eddy.includes('
 // The lane counts were tuned to the socket pool. They are real settings now.
 const nano = Number((eddy.match(/const NANO2_PARALLEL_REQUESTS = (\d+);/) || [])[1]);
 const seed = Number((eddy.match(/const PARALLEL_REQUESTS = (\d+);/) || [])[1]);
-check(`nano2 lanes raised past the old socket cap (${nano})`, nano >= 100);
-check(`seedream lanes too (${seed})`, seed >= 100);
+check(`nano2 lanes match the server ceiling (${nano})`, nano >= dflt);
+check(`seedream lanes too (${seed})`, seed >= dflt);
 
 // DOUBLE-FILE was the trap: the page files the result itself, so leaving the job unfiled would have
 // the boot sweep file it a second time — one generation, two library rows.

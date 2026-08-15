@@ -41,18 +41,20 @@ const STALE_AFTER_MS = 2 * 60 * 60 * 1000;
  *
  * Now the server holds the renders, so the ceiling is a real one and this is where it lives.
  *
- * Set to 100 on the owner's instruction (2026-08-15: "just do the 100 at once if selected 100 we
- * dont care about money just make sure in backend we will receive all the images"). Cost is
- * explicitly not the constraint here; LOSING an image is. So the ceiling is high and every path
- * that could drop a paid render is closed instead: 429s refund the attempt and pause rather than
- * failing a job, poll failures retry for two hours before giving up, and a render returning several
- * images now records all of them rather than the first.
+ * Set to WaveSpeed's own stated ceiling on the owner's instruction (2026-08-15: "we dont care about
+ * money we wanna do mass generation"). Spend is explicitly not a constraint here; LOSING an image
+ * is. So the lane count is the provider's, and every path that could drop a render is closed
+ * instead: a 429 refunds the attempt and pauses rather than failing a job, poll failures retry for
+ * two hours before giving up, and a render returning several images records all of them.
  *
- * Still a ceiling rather than "unlimited". Each submit uploads its source images before it returns,
- * so an unbounded fan-out would open thousands of uploads at once and fall over on sockets and
- * memory long before WaveSpeed objected. Raise it with KYROS_MAX_INFLIGHT.
+ * Still a number rather than "unlimited", and the reason is not caution: each submit UPLOADS its
+ * source images before it returns, so an unbounded fan-out opens thousands of uploads at once and
+ * dies on sockets and memory long before WaveSpeed objects. The upload cache keeps this cheap in
+ * practice — a character's references upload once and every later job reuses them.
+ *
+ * KYROS_MAX_INFLIGHT overrides it either way.
  */
-const MAX_INFLIGHT = Math.max(1, Number(process.env.KYROS_MAX_INFLIGHT) || 100);
+const MAX_INFLIGHT = Math.max(1, Number(process.env.KYROS_MAX_INFLIGHT) || 300);
 
 /**
  * Rate-limit backoff, global rather than per job.
@@ -60,9 +62,13 @@ const MAX_INFLIGHT = Math.max(1, Number(process.env.KYROS_MAX_INFLIGHT) || 100);
  * A 429 is a statement about the ACCOUNT, not about one prediction — so pausing only the job that
  * got refused would send the next one straight into the same wall. Submissions stop entirely until
  * the window passes, doubling to a ceiling and resetting on the first success.
+ *
+ * The ceiling is deliberately SHORT. This exists to get past a rate limit, not to ration a run: a
+ * long pause at three hundred lanes idles the whole fleet, and the queue's job is to keep the pipe
+ * full. Thirty seconds is enough for a limiter to clear and cheap to retry if it has not.
  */
-const BACKOFF_START_MS = 5_000;
-const BACKOFF_MAX_MS = 120_000;
+const BACKOFF_START_MS = 3_000;
+const BACKOFF_MAX_MS = 30_000;
 let backoffMs = BACKOFF_START_MS;
 let pausedUntil = 0;
 

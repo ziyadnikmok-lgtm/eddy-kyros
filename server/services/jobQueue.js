@@ -47,9 +47,16 @@ const STATUS = Object.freeze({
   FAILED: 'failed',
 });
 
-// A job that has been handed to Muapi may be retried at the POLL, never at the submit. This cap is
-// on submit attempts only — see claimNext.
-const MAX_SUBMIT_ATTEMPTS = 3;
+/**
+ * Submit attempts before a job is given up on. Poll retries are separate and unbounded until the
+ * stale window — see claimNext.
+ *
+ * Raised for mass runs: at three hundred lanes a job can lose its attempts to nothing but bad luck
+ * — two rate limits and one dropped connection — and a job dropped for transient reasons is a
+ * picture that simply never appears. A genuinely bad payload still fails, just after eight tries
+ * instead of three, and every attempt after a 429 is refunded anyway.
+ */
+const MAX_SUBMIT_ATTEMPTS = 8;
 
 const now = () => new Date().toISOString();
 

@@ -46,7 +46,7 @@ import { downloadBlob, stripEnabled } from '../lib/stripMetadata';
  * fan-out before. 12 keeps a 3x margin under the limiter.
  */
 // Same story as NANO2_PARALLEL_REQUESTS below: no longer bounded by the socket pool.
-const PARALLEL_REQUESTS = 100;
+const PARALLEL_REQUESTS = 300;
 
 // Vertex allows far fewer concurrent image calls than our own backend does, and going over does not
 // slow down — it 429s (RESOURCE_EXHAUSTED) and the image is LOST, because nothing in this stack
@@ -59,9 +59,10 @@ const PARALLEL_REQUESTS = 100;
 // under the Seedream lane count on purpose — these requests hold a connection for three minutes.
 // Was 6 because a render held a browser socket for three minutes and Chromium allows six per host
 // -- so this number never did anything above six. On the queue an enqueue is a short POST and the
-// wait is a cheap poll, so this is now a genuine concurrency setting. 100 matches the server's own
-// MAX_INFLIGHT; the server is the real limiter and applies its own 429 backoff.
-const NANO2_PARALLEL_REQUESTS = 100;
+// wait is a cheap poll, so this is a genuine setting now. Matched to the server's MAX_INFLIGHT so
+// the client never becomes the narrower of the two; the server is the real limiter and applies the
+// 429 backoff.
+const NANO2_PARALLEL_REQUESTS = 300;
 
 // Above the server's own 10-minute poll, so a slow job ends with the server's specific message
 // (which names the prediction id) rather than a bare client abort.
