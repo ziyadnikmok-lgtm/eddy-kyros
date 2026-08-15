@@ -89,6 +89,19 @@ export async function queuedSeedreamEdit({
        * base64Data is absent on purpose. Every consumer treats it as the fallback for when there is
        * no server copy, and a queued job always has a galleryId.
        */
+      /**
+       * Claim it before returning.
+       *
+       * The caller is alive and is about to file this picture itself, exactly as it does on the
+       * direct path. Leaving the job unfiled would have reconcileUnfiled file it a SECOND time on
+       * the next load -- one generation, two library rows. Marking it here means the recovery sweep
+       * only ever touches jobs whose page never saw the result, which is what it is for.
+       *
+       * Fire and forget: a failed mark costs a duplicate the user can delete, while waiting on it
+       * would delay every single result.
+       */
+      jobsApi.markFiled(jobId).catch(() => { /* worst case: the sweep files a duplicate */ });
+
       return {
         images: job.images?.length ? job.images : [{ galleryId: job.galleryId }],
         provider: job.provider,

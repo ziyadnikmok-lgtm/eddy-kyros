@@ -23,6 +23,7 @@ import { createPageStore } from '../lib/pageStateStore';
 import { comboKey, buildSeenKeys, splitBySeen, spendToday } from '../lib/provenance';
 import { poseSentence, readPoseView, readPoseExpression, readPoseTags, POSE_TAGS } from '../lib/poseText';
 import { eligiblePoses, drawPoses, describeDraw, chipCounts } from '../lib/poseRandomiser';
+import { queuedSeedreamEdit } from '../lib/generationQueue';
 import { runPool } from '../lib/runPool';
 import { cn } from '../lib/utils';
 import { downloadBlob, stripEnabled } from '../lib/stripMetadata';
@@ -43,7 +44,8 @@ import { downloadBlob, stripEnabled } from '../lib/stripMetadata';
  * 429s (its 09_gotchas.md), and runPool exists because this codebase has been burned by unthrottled
  * fan-out before. 12 keeps a 3x margin under the limiter.
  */
-const PARALLEL_REQUESTS = 12;
+// Same story as NANO2_PARALLEL_REQUESTS below: no longer bounded by the socket pool.
+const PARALLEL_REQUESTS = 100;
 
 // Vertex allows far fewer concurrent image calls than our own backend does, and going over does not
 // slow down — it 429s (RESOURCE_EXHAUSTED) and the image is LOST, because nothing in this stack
@@ -54,7 +56,11 @@ const PARALLEL_REQUESTS = 12;
 // throughput. Raised 3 -> 6 (owner, 2026-08-09): at 180s each, 6 lanes is only ~2 requests/minute,
 // which is nothing against the limiter, and it halves the wall-clock on a long nano run. Kept well
 // under the Seedream lane count on purpose — these requests hold a connection for three minutes.
-const NANO2_PARALLEL_REQUESTS = 6;
+// Was 6 because a render held a browser socket for three minutes and Chromium allows six per host
+// -- so this number never did anything above six. On the queue an enqueue is a short POST and the
+// wait is a cheap poll, so this is now a genuine concurrency setting. 100 matches the server's own
+// MAX_INFLIGHT; the server is the real limiter and applies its own 429 backoff.
+const NANO2_PARALLEL_REQUESTS = 100;
 
 // Above the server's own 10-minute poll, so a slow job ends with the server's specific message
 // (which names the prediction id) rather than a bare client abort.
@@ -3422,6 +3428,10 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   }, [genDestDb]);
   const genStore = genDestDb === 'eddy-base' ? baseLibStore : libraryStore;
   const genDestLabel = genDestDb === 'eddy-base' ? 'Base Library' : 'Library';
+  // Read from runEdit, which has empty deps so it stays stable across a 100-job run. Reading the
+  // state directly there would capture whatever it was when the callback was first created.
+  const genDestDbRef = useRef(genDestDb);
+  genDestDbRef.current = genDestDb;
   // Read only by the character lookup above: a folder in each IS a character.
   const charStore = useMemo(() => createEddyCollection('eddy-character'), []);
   const baseStore = useMemo(() => createEddyCollection('eddy-base'), []);
@@ -5025,6 +5035,41 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   // That is the documented, expected behaviour — "regenerate uses your current setup" — not a bug: a
   // reload has no batch snapshot to restore (closures aren't serialisable), so the live controls are
   // the only honest source. It still spends the same one-image price and follows the same path.
+  /**
+   * ONE edit call, routed through the durable queue.
+   *
+   * Same arguments and the same return shape as seedreamApi.edit -- { images, provider } -- so the
+   * hundred lines downstream that read data.images[0] are untouched. What changes is underneath:
+   * the SERVER holds the render instead of this browser holding a connection for three minutes.
+   *
+   * That connection was the real ceiling. Chromium allows six sockets per host, so six renders
+   * saturated the pool no matter what WaveSpeed would accept -- which is why raising
+   * NANO2_PARALLEL_REQUESTS never did anything. Enqueue is a short POST and the wait is a cheap
+   * poll, so a hundred can be in flight at once.
+   *
+   * The job also survives the app closing: still queued, it is sent on the next boot; already
+   * rendering, the picture is collected and filed. tags travel with it so a recovered image is
+   * still attributable to its character.
+   */
+  const runEdit = useCallback(async (body) => {
+    const model = body.model === 'nano2' ? 'nano2' : 'seedream5';
+    return queuedSeedreamEdit({
+      feature: 'eddy',
+      images: body.images,
+      prompt: body.prompt,
+      aspectRatio: body.aspectRatio,
+      resolution: body.resolution,
+      model,
+      provider: 'wavespeed',
+      tags: body.tags,
+      // Only read if the app dies before this page files the result — then the sweep needs to know
+      // which library and which character folder it belonged to.
+      destDb: genDestDbRef.current,
+      destFolder: (body.tags || []).find((t) => t && t !== 'eddy' && t !== 'edit' && t !== 'fallback') || '',
+      cardPrompt: body.prompt,
+    });
+  }, []);
+
   const generateCombo = useCallback(async (combo, { tweak = '', replaceUid = null, runCtx = null } = {}) => {
     // Character refs first, exactly as the batch builds them. From the snapshot when run() handed one
     // in; otherwise resolved now from the live controls the same way run() resolves it, so a derived
@@ -5345,14 +5390,14 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
          * been generated and billed.
          */
         const callNano2 = async () => {
-          const res = await seedreamApi.edit({
+          const res = await runEdit({
             images: payload,
             prompt,
             model: 'nano2',
             aspectRatio: ratio,
             resolution,
             tags: eddyTags(isEdit, characterName),
-          }, { timeoutMs: NANO2_CLIENT_TIMEOUT_MS });
+          });
           // Asserted INSIDE the retried call on purpose. An empty result is a failed generation, and
           // leaving the check downstream made it the one failure mode that never got a second
           // attempt — it threw after the retry wrapper had already returned.
@@ -5380,7 +5425,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
            * Tagged 'fallback' so they stay identifiable in the gallery — a picture that came from a
            * different model than the one named on the button should never be silent about it.
            */
-          data = await withRateLimitRetry(() => seedreamApi.edit({
+          data = await withRateLimitRetry(() => runEdit({
             images: payload, prompt, aspectRatio: ratio, resolution,
             tags: [...eddyTags(isEdit, characterName), 'fallback'],
           }));
@@ -5393,7 +5438,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       } else {
         // Same model, same per-image price on both paths — an edit is tagged so it is distinguishable
         // in the gallery without changing what it costs.
-        data = await withRateLimitRetry(() => seedreamApi.edit({ images: payload, prompt, aspectRatio: ratio, resolution, tags: eddyTags(isEdit, characterName) }));
+        data = await withRateLimitRetry(() => runEdit({ images: payload, prompt, aspectRatio: ratio, resolution, tags: eddyTags(isEdit, characterName) }));
       }
     } catch (err) {
       // Marked failed on the feed here (the feed card belongs to this call), then rethrown so

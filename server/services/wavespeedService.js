@@ -836,7 +836,7 @@ async function generateNanoBanana2Edit(imageInputs, prompt, opts = {}) {
   return await _pollSeedDreamResult(key, sub.taskId, { maxMs: NANO2_MAX_POLL_MS, label: 'Nano Banana 2' });
 }
 
-async function generateSeedream5Edit(imageInputs, prompt, opts = {}) {
+async function submitSeedream5Edit(imageInputs, prompt, opts = {}) {
   if (!prompt?.trim()) throw new AppError('A prompt is required', 400, 'VALIDATION_ERROR');
   if (!Array.isArray(imageInputs) || imageInputs.length === 0) {
     throw new AppError('At least one source image is required', 400, 'VALIDATION_ERROR');
@@ -910,9 +910,31 @@ async function generateSeedream5Edit(imageInputs, prompt, opts = {}) {
 
   const json = await resp.json();
   const data = json?.data || json;
-  if (data?.status === 'completed') return await _extractSeedDreamResults(data);
+  // Rare but real: a cached or trivial edit comes back finished on the submit call.
+  if (data?.status === 'completed') return { done: await _extractSeedDreamResults(data) };
   if (!data?.id) throw new AppError('Seedream returned no task ID', 502, 'WAVESPEED_ERROR');
-  return await _pollSeedDreamResult(key, data.id);
+  return { taskId: data.id };
+}
+
+/**
+ * Submit and wait — the original blocking call, unchanged for every existing caller.
+ *
+ * The split exists so the WAIT can move to the server. While submit and poll were one function
+ * there was nowhere to put a three-minute render except the caller's HTTP connection, and the
+ * browser allows six of those per host — which is what capped generation at six regardless of what
+ * WaveSpeed would accept.
+ *
+ * Polling needs nothing model-specific: _pollSeedDreamResult (and pollNanoBanana2, which wraps the
+ * same status call) reads a WaveSpeed prediction whatever model produced it.
+ */
+async function generateSeedream5Edit(imageInputs, prompt, opts = {}) {
+  const key = getApiKey();
+  const sub = await submitSeedream5Edit(imageInputs, prompt, opts);
+  if (sub.done) return sub.done;
+  if (typeof opts.onTaskId === 'function') {
+    try { opts.onTaskId(sub.taskId); } catch { /* bookkeeping must never sink a live render */ }
+  }
+  return await _pollSeedDreamResult(key, sub.taskId);
 }
 
 module.exports = {
@@ -925,6 +947,7 @@ module.exports = {
   generateImg2Img,
   generateSeedDreamEdit,
   generateSeedream5Edit,
+  submitSeedream5Edit,
   generateNanoBanana2Edit,
   submitNanoBanana2Edit,
   pollNanoBanana2,

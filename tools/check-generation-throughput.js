@@ -274,5 +274,40 @@ check('a RIFF that is NOT WebP is not mistaken for one — that would upload a .
 check('an unknown format falls through to conversion', sniff([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) === null);
 check('a truncated file cannot be read past its end', sniff([0x89, 0x50]) === null);
 
+// --- 10. THE ON-RAMP: Eddy actually uses the queue ---------------------------------------------------
+// Owner, 2026-08-15: "generate is can click 100 and it send the 100". Until this, the 100-lane
+// ceiling was real and unreachable — no page enqueued anything, so every render still held a
+// browser socket and Chromium's six-per-host cap decided everything.
+const eddy = read('client/src/pages/EddyGeneratePage.jsx');
+const wsvc = read('server/services/wavespeedService.js');
+
+check('Seedream 5 has a submit half now', wsvc.includes('async function submitSeedream5Edit('));
+check('and the blocking call is built on it', wsvc.includes('const sub = await submitSeedream5Edit(imageInputs, prompt, opts);'));
+check('it is exported for the queue', wsvc.includes('submitSeedream5Edit,'));
+check('the reconciler can reach it', rec.includes('await wavespeed.submitSeedream5Edit('));
+
+check('Eddy routes through the queue', eddy.includes("import { queuedSeedreamEdit } from '../lib/generationQueue';"));
+// Three call sites: nano2, the Seedream fallback, and plain Seedream. Two are wrapped in
+// withRateLimitRetry, so they read `() => runEdit(` rather than `await runEdit(`.
+check('all three edit call sites go through one router', (eddy.match(/runEdit\(\{/g) || []).length === 3);
+check('and none call the blocking route directly any more', !eddy.includes('seedreamApi.edit('));
+check('nano2 and seedream5 are both routed', eddy.includes("const model = body.model === 'nano2' ? 'nano2' : 'seedream5';"));
+check('tags travel with the job, so a recovered image stays attributable', eddy.includes('tags: body.tags,'));
+check('the destination is read from a ref, not a stale closure', eddy.includes('destDb: genDestDbRef.current,'));
+
+// The lane counts were tuned to the socket pool. They are real settings now.
+const nano = Number((eddy.match(/const NANO2_PARALLEL_REQUESTS = (\d+);/) || [])[1]);
+const seed = Number((eddy.match(/const PARALLEL_REQUESTS = (\d+);/) || [])[1]);
+check(`nano2 lanes raised past the old socket cap (${nano})`, nano >= 100);
+check(`seedream lanes too (${seed})`, seed >= 100);
+
+// DOUBLE-FILE was the trap: the page files the result itself, so leaving the job unfiled would have
+// the boot sweep file it a second time — one generation, two library rows.
+const qlib = read('client/src/lib/generationQueue.js');
+check('a delivered result claims its own job', qlib.includes('jobsApi.markFiled(jobId)'));
+check('before returning, so the sweep can never double-file it',
+  qlib.indexOf('jobsApi.markFiled(jobId)') < qlib.indexOf('images: job.images?.length'));
+check('and a failed claim costs a duplicate, not a lost picture', qlib.includes('worst case: the sweep files a duplicate'));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
