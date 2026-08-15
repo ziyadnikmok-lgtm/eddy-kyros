@@ -95,11 +95,25 @@ check('but is capped, so it cannot back off for an hour', /BACKOFF_MAX_MS = 120_
 check('a success clears the penalty', (rec.match(/backoffMs = BACKOFF_START_MS;/g) || []).length >= 2);
 
 // --- 5. both providers, one queue -------------------------------------------------------------------------
-check('a job knows which provider owns it', rec.includes('function providerOf(job)'));
-check('it defaults to the original provider, so old rows keep working',
-  rec.includes("return job.payload?.provider === 'wavespeed' ? 'wavespeed' : 'muapi';"));
-check('polling branches on it', /providerOf\(job\) === 'wavespeed'\s*\n\s*\? await wavespeed\.pollNanoBanana2/.test(rec));
-check('submitting branches on it', /provider === 'wavespeed'\s*\n\s*\? await wavespeed\.submitNanoBanana2Edit/.test(rec));
+check('a job knows which engine it runs on', rec.includes('function engineOf(job)'));
+// THE ONE THAT MATTERS. Images are WaveSpeed: seedreamEdit.js states "Muapi still serves
+// Seedance/Omni; only Seedream moved", and Muapi is reached only when no WaveSpeed key exists.
+// Defaulting to muapi meant every Seedream job on the queue would have run on a DIFFERENT provider
+// -- own key, own pricing -- and succeeded while doing it. No error, right-looking picture, wrong
+// account billed.
+check('an unmodelled job defaults to WaveSpeed, never Muapi',
+  rec.includes("return job.payload?.provider === 'muapi' ? 'muapi' : 'nano2';"));
+check('seedream5 is its own engine', rec.includes("if (model === 'seedream5' || model === 'seedream') return 'seedream5';"));
+check('and Muapi is only reached when explicitly asked for', rec.includes("if (model === 'muapi') return 'muapi';"));
+check('polling sends only explicit Muapi jobs to Muapi', rec.includes("engineOf(job) === 'muapi'"));
+check('everything else polls WaveSpeed, which is model-agnostic', rec.includes('await wavespeed.pollNanoBanana2(job.task_id)'));
+check('submitting routes seedream5 to WaveSpeed', rec.includes('await wavespeed.submitSeedream5Edit('));
+check('and nano2 to Nano Banana 2', rec.includes('await wavespeed.submitNanoBanana2Edit('));
+// A missing split must never fall through to another provider. Silently running Seedream work on
+// Muapi -- different key, different price -- is far worse than a job that stops and says so.
+check('a missing Seedream 5 submit FAILS the job rather than switching provider',
+  rec.includes("typeof wavespeed.submitSeedream5Edit !== 'function'")
+  && rec.includes('not run on another provider.'));
 check('one save path for both, including the instant-cache case',
   rec.includes('async function _saveResult(job, images)') && rec.includes('await _saveResult(job, sub.done.images)'));
 check('and it still refuses to mark done without a gallery id',

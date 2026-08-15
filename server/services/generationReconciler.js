@@ -83,15 +83,35 @@ function pollJob(job) {
   return p;
 }
 
-/** Which provider owns a job — recorded in the payload at enqueue, defaulting to the original one. */
-function providerOf(job) {
-  return job.payload?.provider === 'wavespeed' ? 'wavespeed' : 'muapi';
+/**
+ * Which engine a job runs on.
+ *
+ * IMAGES ARE WAVESPEED. seedreamEdit.js says it plainly -- "Muapi still serves Seedance/Omni; only
+ * Seedream moved" -- and Muapi is reached only when no WaveSpeed key is configured. So the two live
+ * image engines are Nano Banana 2 and Seedream 5 Pro, both on WaveSpeed.
+ *
+ * This defaulted to muapi, which was backwards: with a WaveSpeed key present -- the normal case --
+ * every Seedream job on the queue would have gone to a DIFFERENT PROVIDER, with its own key and its
+ * own pricing, and succeeded while doing it. That is the worst shape of bug: no error, right-looking
+ * picture, wrong account billed.
+ *
+ * 'nano2' | 'seedream5' | 'muapi'. Jobs enqueued before this carry no model and are read as nano2,
+ * which is what the queue actually ran at the time.
+ */
+function engineOf(job) {
+  const model = job.payload?.model;
+  if (model === 'seedream5' || model === 'seedream') return 'seedream5';
+  if (model === 'muapi') return 'muapi';
+  if (model === 'nano2') return 'nano2';
+  // No model recorded: older rows, all of which ran on Nano Banana 2.
+  return job.payload?.provider === 'muapi' ? 'muapi' : 'nano2';
 }
 
 async function _pollJob(job) {
-  const res = providerOf(job) === 'wavespeed'
-    ? await wavespeed.pollNanoBanana2(job.task_id)
-    : await muapi.pollSeedreamEdit(job.task_id);
+  // pollNanoBanana2 is model-agnostic -- it reads a WaveSpeed prediction, whichever model made it.
+  const res = engineOf(job) === 'muapi'
+    ? await muapi.pollSeedreamEdit(job.task_id)
+    : await wavespeed.pollNanoBanana2(job.task_id);
   if (res.status === 'processing') return false;
 
   if (res.status === 'failed') {
@@ -193,13 +213,28 @@ async function submitOne() {
   if (Date.now() < pausedUntil) return false;      // backing off — do not add to the pile
   const job = jobQueue.claimNext();
   if (!job) return false;
-  const provider = providerOf(job);
+  const engine = engineOf(job);
   try {
     const images = job.payload?.images || [];
     const opts = { aspectRatio: job.payload?.aspectRatio, resolution: job.payload?.resolution };
-    const sub = provider === 'wavespeed'
-      ? await wavespeed.submitNanoBanana2Edit(images, job.payload?.prompt || '', opts)
-      : await muapi.submitSeedreamEdit(images, job.payload?.prompt || '', opts);
+    let sub;
+    if (engine === 'seedream5') {
+      /**
+       * Seedream 5 Pro on WaveSpeed. If the submit half has not been split out yet, FAIL the job
+       * rather than fall through to Muapi: silently running someone's Seedream work on a different
+       * provider -- different key, different price -- is far worse than a job that stops and says so.
+       */
+      if (typeof wavespeed.submitSeedream5Edit !== 'function') {
+        jobQueue.markFailed(job.id, 'Seedream 5 is not available on the queue yet (submitSeedream5Edit missing) — not run on another provider.');
+        log.error('generation_seedream5_unavailable', { jobId: job.id });
+        return true;
+      }
+      sub = await wavespeed.submitSeedream5Edit(images, job.payload?.prompt || '', opts);
+    } else if (engine === 'muapi') {
+      sub = await muapi.submitSeedreamEdit(images, job.payload?.prompt || '', opts);
+    } else {
+      sub = await wavespeed.submitNanoBanana2Edit(images, job.payload?.prompt || '', opts);
+    }
 
     // WaveSpeed can answer a cached edit as already finished. File it here rather than making the
     // poller wait for a task that will never exist.
@@ -211,7 +246,7 @@ async function submitOne() {
 
     jobQueue.markSubmitted(job.id, sub.taskId);
     backoffMs = BACKOFF_START_MS;                  // a success clears the penalty
-    log.info('generation_job_submitted', { jobId: job.id, taskId: sub.taskId, provider });
+    log.info('generation_job_submitted', { jobId: job.id, taskId: sub.taskId, engine });
   } catch (err) {
     if (isRateLimit(err)) {
       // The provider refused it: nothing is rendering, nothing is billed, and it is not this job's
@@ -219,7 +254,7 @@ async function submitOne() {
       // job into the same wall.
       jobQueue.requeueUnsent(job.id, { refundAttempt: true });
       pausedUntil = Date.now() + backoffMs;
-      log.warn('generation_rate_limited', { provider, backoffMs, until: new Date(pausedUntil).toISOString() });
+      log.warn('generation_rate_limited', { engine, backoffMs, until: new Date(pausedUntil).toISOString() });
       backoffMs = Math.min(backoffMs * 2, BACKOFF_MAX_MS);
       return false;
     }
@@ -228,7 +263,7 @@ async function submitOne() {
     // refuses anyway if a task_id somehow got recorded, which is the guard that matters.
     const back = jobQueue.requeueUnsent(job.id);
     if (!back) jobQueue.markFailed(job.id, err.message || 'Submit failed');
-    log.warn('generation_job_submit_failed', { jobId: job.id, provider, error: err.message, requeued: back });
+    log.warn('generation_job_submit_failed', { jobId: job.id, engine, error: err.message, requeued: back });
   }
   return true;
 }
