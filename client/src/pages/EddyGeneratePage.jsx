@@ -3326,6 +3326,15 @@ function _getRunSnap() {
   return _runSnap;
 }
 
+/**
+ * Base photos already filed into "used" this session.
+ *
+ * A single base photo is normally used across every combo in a run — twenty poses means twenty
+ * successful generations naming the same basePhotoId. Without this, that is twenty index reads and
+ * twenty writes for one move that only needs doing once.
+ */
+const _movedBases = new Set();
+
 const _cache = {
   baseImage: '', faceImage: '', characterName: '', pickedOutfits: [], pickedPoses: [], pickedBases: [], pickedBasePhotos: [], outfitRotation: true, instruction: '',
   // Randomiser settings, so switching tabs does not reset the number you just typed. Safe to
@@ -5574,6 +5583,32 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           throw new Error(filed?.failed
             ? 'Browser storage is full - the picture is in the gallery but not in Eddy Library'
             : 'Eddy Library did not accept the row');
+        }
+
+        /**
+         * The base photo has now genuinely been used — file it under "used".
+         *
+         * AFTER the result lands, not when the photo is ticked. Moving on selection would file base
+         * photos you picked and then abandoned, and "used" would stop meaning anything.
+         *
+         * "used" is created as a CHILD of the folder the photo is already in, so Grace's used shots
+         * stay under Grace. A single flat "used" would throw away the by-character grouping that is
+         * the whole organisation of Base Library.
+         *
+         * Bookkeeping only: any failure here is swallowed. The picture exists and is billed, and
+         * losing it over a folder move would be absurd.
+         */
+        if (combo?.basePhotoId && !_movedBases.has(combo.basePhotoId)) {
+          _movedBases.add(combo.basePhotoId);
+          try {
+            const row = (await baseStore.listItems()).find((i) => i.id === combo.basePhotoId);
+            if (row) {
+              const parentId = row.folderId || null;
+              const used = await baseStore.ensureFolder('used', parentId);
+              // Already there — nothing to do, and re-moving would churn the index for nothing.
+              if (used?.id && row.folderId !== used.id) await baseStore.moveItem(row.id, used.id);
+            }
+          } catch { /* a folder move must never cost a generated picture */ }
         }
       }
     } catch (err) {
