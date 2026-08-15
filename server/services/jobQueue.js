@@ -38,6 +38,7 @@
  */
 const crypto = require('crypto');
 const db = require('../db');
+const jobBlobs = require('./jobBlobs');
 
 const STATUS = Object.freeze({
   QUEUED: 'queued',
@@ -71,10 +72,15 @@ function enqueue({ userId, feature, payload, destDb = null, destFolder = null, c
   if (!feature) throw new Error('enqueue: feature is required');
   const id = crypto.randomUUID();
   const t = now();
+  // The input pictures go to disk and the row keeps a reference. Inline base64 here is what took a
+  // hundred-lane run's database to 479 MB; at three hundred lanes it is gigabytes. See jobBlobs.
+  const stored = payload && Array.isArray(payload.images)
+    ? { ...payload, images: jobBlobs.store(payload.images) }
+    : payload;
   db.prepare(`
     INSERT INTO generation_jobs (id, user_id, feature, status, payload, dest_db, dest_folder, card_prompt, card_name, tags, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, userId, feature, STATUS.QUEUED, JSON.stringify(payload ?? {}), destDb, destFolder, cardPrompt, cardName,
+  `).run(id, userId, feature, STATUS.QUEUED, JSON.stringify(stored ?? {}), destDb, destFolder, cardPrompt, cardName,
     Array.isArray(tags) && tags.length ? JSON.stringify(tags) : null, t, t);
   return id;
 }
@@ -313,6 +319,23 @@ function get(id) {
   return row ? hydrate(row) : null;
 }
 
+/**
+ * Delete the stored input pictures that no job references any more.
+ *
+ * Derived, never bookkept: the live set is read off the rows themselves, so a crash at any moment
+ * cannot leave it wrong. The cost is one pass over every row's payload, which is why this runs at
+ * boot and not on the hot path — and the payloads are references now, so the pass is cheap.
+ */
+function sweepBlobs() {
+  const live = new Set();
+  for (const row of db.prepare('SELECT payload FROM generation_jobs').all()) {
+    let payload = null;
+    try { payload = JSON.parse(row.payload); } catch { continue; }
+    for (const name of jobBlobs.refsIn(payload)) live.add(name);
+  }
+  return jobBlobs.sweep(live);
+}
+
 /** JSON back out of the text column, and `filed` back to a boolean. */
 function hydrate(row) {
   let payload = {};
@@ -351,4 +374,5 @@ module.exports = {
   cancelQueued,
   counts,
   get,
+  sweepBlobs,
 };

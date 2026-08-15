@@ -17,6 +17,7 @@
  * browser. The server gets the job to `done` with a gallery id and the client files it on load.
  */
 const jobQueue = require('./jobQueue');
+const jobBlobs = require('./jobBlobs');
 const muapi = require('./muapiService');
 const wavespeed = require('./wavespeedService');
 const gallery = require('./galleryManager');
@@ -221,7 +222,9 @@ async function submitOne() {
   if (!job) return false;
   const engine = engineOf(job);
   try {
-    const images = job.payload?.images || [];
+    // The row holds references; the bytes are read here, at the last possible moment, so a queue
+    // three hundred deep is three hundred small rows rather than gigabytes held in memory.
+    const images = jobBlobs.load(job.payload?.images || []);
     const opts = { aspectRatio: job.payload?.aspectRatio, resolution: job.payload?.resolution };
     let sub;
     if (engine === 'seedream5') {
@@ -337,6 +340,15 @@ function startGenerationReconciler() {
     if (orphans) log.warn('generation_jobs_orphaned', { count: orphans });
   } catch (err) {
     log.warn('generation_orphan_sweep_failed', { error: err.message });
+  }
+  // Collect the input pictures of jobs that no longer exist. At boot specifically: nothing is
+  // mid-send yet, so every reference in the database is one this pass can see. Failing it is not
+  // worth refusing to start over — the cost of skipping is disk, not correctness.
+  try {
+    const { removed, bytes } = jobQueue.sweepBlobs();
+    if (removed) log.info('generation_blobs_swept', { removed, mb: +(bytes / 1048576).toFixed(1) });
+  } catch (err) {
+    log.warn('generation_blob_sweep_failed', { error: err.message });
   }
   // Immediate pass so a run interrupted by a close, an update or a crash is picked up at startup
   // rather than waiting for the first tick.
