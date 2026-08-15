@@ -230,5 +230,23 @@ check('a tight budget sheds everything optional and still keeps the lock', (() =
 check('the caller passes its real budget, minus the chips it appends after',
   src.includes('budget: Math.max(600, (engine === ') && src.includes('- extra.trim().length - 8)'));
 
+// --- exact recreate is the DEFAULT (owner, 2026-08-15: "exact recreate always toggle on") --------
+// Off, the prompt tells the model "a new photo of her in that scene, NOT a retouch" — loose on
+// purpose, because that looseness is what stops a faceswap, and the cost is a rebuilt scene rather
+// than a preserved one. On, the same rebuild applies to the PERSON while the scene is pinned.
+check('exactRecreate defaults ON', /exactRecreate: true/.test(src));
+check('and it is not silently overridden by a stored value — only sources/characterIds/extra persist',
+  src.includes("store.get('sources', []), store.get('characterIds', null), store.get('extra', '')")
+  && !/store\.set\('exactRecreate'/.test(src));
+
+const onParts = buildMatchInstruction({ characterName: 'Grace', refCount: 5, masterPrompt: '', sourceFaceBlurred: true, exactRecreate: true, budget: 3000 });
+const offParts = buildMatchInstruction({ characterName: 'Grace', refCount: 5, masterPrompt: '', sourceFaceBlurred: true, exactRecreate: false, budget: 3000 });
+check('ON pins the scene explicitly', /Reproduce image \d+ exactly — same background, pose, props, framing, lighting, outfit/.test(onParts));
+check('and drops the looser "not a retouch" line that replaces it', !/not a retouch of image/.test(onParts));
+check('OFF still carries the looser line, so the toggle really is the difference', /not a retouch of image/.test(offParts));
+// The anti-faceswap rebuild must survive BOTH ways — pinning the scene must never pin the person.
+check('the person is still rebuilt from scratch with exact recreate on', /REBUILD, DO NOT EDIT/.test(onParts));
+check('and the identity lock is still there', onParts.includes('FINAL — HIGHEST PRIORITY'));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

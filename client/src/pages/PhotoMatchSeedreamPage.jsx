@@ -419,7 +419,21 @@ function parseDataUrl(dataUrl) {
 }
 
 
-const _cache = { extra: '', aspectRatio: 'auto', resolution: '1K', exactRecreate: false, varyBackground: false, nsfw: false, blurSource: true, faceless: false };
+/**
+ * exactRecreate defaults ON (owner, 2026-08-15: "exact recreate always toggle on").
+ *
+ * WHY IT MATTERS MORE THAN IT LOOKS: off, the prompt says "a new photo of Grace in image N's scene,
+ * NOT a retouch" — deliberately loose, because that looseness is what stops a faceswap. The cost is
+ * that the scene gets rebuilt rather than preserved, which reads as "it did not recreate the same
+ * photo". On, that one line is replaced by "Reproduce image N exactly — same background, pose,
+ * props, framing, lighting, outfit — but the person in it is rebuilt entirely as Grace", which
+ * keeps the anti-faceswap rebuild of the PERSON while pinning everything around her.
+ *
+ * Lives here rather than in the page's disk snapshot (which holds only sources, characterIds and
+ * extra), so this default is what every fresh start actually gets — there is no stored `false` to
+ * override it.
+ */
+const _cache = { extra: '', aspectRatio: 'auto', resolution: '1K', exactRecreate: true, varyBackground: false, nsfw: false, blurSource: true, faceless: false };
 // Images are too big for _cache/localStorage — IndexedDB so they survive a reload.
 /**
  * Retry a generation that came back rate-limited.
