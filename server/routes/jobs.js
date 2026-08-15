@@ -13,33 +13,9 @@
  */
 const express = require('express');
 const jobQueue = require('../services/jobQueue');
-const jobBlobs = require('../services/jobBlobs');
 const { AppError } = require('../middleware/errorHandler');
 
 const router = express.Router();
-
-/**
- * POST /api/jobs/blobs — park source images once, get their hashes back.
- *
- * A run reuses the same base photo and face for every combo. Sending them with each job put a copy
- * of a ~9.8 MB image in every row of the queue table; uploading once and referencing by hash is what
- * makes three hundred jobs in flight cost a few hundred bytes of payload instead of gigabytes.
- *
- * Idempotent by construction: the hash IS the content, so re-uploading the same bytes returns the
- * same ref and writes nothing.
- */
-router.post('/blobs', (req, res, next) => {
-  try {
-    const images = Array.isArray(req.body?.images) ? req.body.images : [];
-    if (!images.length) throw new AppError('images required', 400, 'VALIDATION_ERROR');
-    if (images.length > 64) throw new AppError('too many images in one call', 400, 'VALIDATION_ERROR');
-    const refs = images.map((img) => jobBlobs.put(img?.base64, img?.mimeType));
-    res.json({ success: true, data: { refs } });
-  } catch (err) {
-    next(err);
-  }
-});
-
 
 /** The shape the client sees. The payload is deliberately NOT returned — it holds the source images. */
 function present(job) {

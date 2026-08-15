@@ -1,106 +1,150 @@
 /**
- * Content-addressed store for the SOURCE images a queued job renders from.
+ * The images a queued job is waiting to send, kept OUT of the database row.
  *
- * WHY THIS EXISTS. Job payloads used to carry their images as base64, and the payload is written to
- * SQLite. Eddy sends the same ~9.8 MB base photo with every combo in a run, so 27 queued jobs took
- * saas.db from 248 KB to 479 MB in ten minutes (2026-08-15). The database, its WAL, the renderer
- * and the server each held those bytes; the app hit 2.9 GB, the CPU pegged, and its own status
- * checks to WaveSpeed timed out at 30s. Nothing finished, and it looked like a network fault.
+ * WHY: a job's payload carries its input pictures as base64 data URLs. Written straight into the
+ * row that is exactly what it sounds like — a whole SQLite row per picture, several megabytes of
+ * it, and nothing ever deletes it. One hundred-lane run took the database to 479 MB. At three
+ * hundred lanes the same run writes gigabytes, into a file that also holds every user account.
  *
- * With this, a pass uploads each DISTINCT image once and every job references it by hash. A
- * 48-image run stops sending 48 copies of one photo and sends one, so the payload in the row is a
- * few hundred bytes and 50 in flight is unremarkable rather than fatal.
+ * TWO THINGS FIX IT, and the second one matters more than the first:
  *
- * Content addressing is what makes it safe to share: the name IS the sha256 of the bytes, so two
- * jobs referencing one hash cannot disagree about what it holds, and re-uploading is a no-op.
+ *   1. Raw bytes on disk instead of base64 in a row. base64 is 4 bytes per 3, so this alone is a
+ *      third off, and it moves the bulk out of the file that gets backed up and WAL-checkpointed.
+ *
+ *   2. CONTENT ADDRESSING. A batch is the same base photo and the same outfit against N poses —
+ *      so the SAME picture is in every single job of that run. Naming each file after the sha256
+ *      of its bytes means the second job through stores nothing at all; it just points at the file
+ *      the first one wrote. A 300-job run holds one base, one outfit and 300 poses instead of 900
+ *      pictures. That is the difference between ~20 MB and ~1.3 GB.
+ *
+ * The row keeps a `blob:<sha256>.<ext>` reference, about forty bytes.
+ *
+ * DELIBERATELY NOT REFCOUNTED. A refcount is a number that leaks the first time a crash lands
+ * between two writes, and a leaked refcount either deletes a picture a job still needs or keeps
+ * every file forever — silently, both of them. Instead nothing is deleted on the hot path at all;
+ * `sweep` asks the queue which references are still live and removes the files nobody names. It is
+ * derived from the truth rather than maintained alongside it, so a crash cannot corrupt it.
  */
-const crypto = require('node:crypto');
-const fs = require('node:fs');
-const path = require('node:path');
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
-const { getDataDir } = require('../paths');
-const log = require('../utils/logger');
+/** data:image/png;base64,AAAA... — the shape the client sends. */
+const DATA_URL = /^data:image\/([\w.+-]+);base64,([\s\S]+)$/;
+const REF = /^blob:([A-Za-z0-9]+)\.([A-Za-z0-9]+)$/;
 
-// Long enough to outlive any queued render (the reconciler abandons a job well before this), short
-// enough that a machine generating all day does not accumulate source images forever.
-const TTL_MS = 24 * 60 * 60 * 1000;
-
-function dir() {
-  const d = path.join(getDataDir(), 'jobblobs');
-  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
-  return d;
-}
-
-const isHash = (ref) => typeof ref === 'string' && /^[a-f0-9]{64}$/.test(ref);
+let _dir = null;
 
 /**
- * Store one image and return its hash. Storing the same bytes twice writes nothing the second time.
+ * Where the blobs live: beside the database, so one backup or one wipe covers both and a job can
+ * never reference a file that a half-restored install has lost.
+ *
+ * Resolved lazily. Requiring the database at module load would drag better-sqlite3 into every
+ * process that touches this file, including the check suites, which run under plain node where
+ * that native module cannot load at all.
  */
-function put(base64, mimeType) {
-  const raw = String(base64 || '').replace(/^data:[^;]+;base64,/, '');
-  if (!raw) throw new Error('jobBlobs.put: empty image');
-  const hash = crypto.createHash('sha256').update(raw).digest('hex');
-  const file = path.join(dir(), `${hash}.json`);
-  if (!fs.existsSync(file)) {
-    // Written to a temp name and renamed, so a reader can never observe a half-written blob — the
-    // failure mode would be a job rendering from a truncated image.
-    const tmp = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify({ mimeType: mimeType || 'image/png', base64: raw }));
-    fs.renameSync(tmp, file);
+function blobDir() {
+  if (_dir) return _dir;
+  if (process.env.KYROS_BLOB_DIR) {
+    _dir = process.env.KYROS_BLOB_DIR;
   } else {
-    // Touched so a blob still in use survives the sweep below.
-    try { const t = new Date(); fs.utimesSync(file, t, t); } catch { /* not fatal */ }
+    // eslint-disable-next-line global-require
+    const db = require('../db');
+    _dir = path.join(path.dirname(db.name), 'job-blobs');
   }
-  return hash;
+  fs.mkdirSync(_dir, { recursive: true });
+  return _dir;
 }
 
-/** Read one back. Returns null rather than throwing — a caller decides what a missing source means. */
-function get(ref) {
-  if (!isHash(ref)) return null;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(dir(), `${ref}.json`), 'utf8'));
-    return parsed?.base64 ? { base64: parsed.base64, mimeType: parsed.mimeType || 'image/png' } : null;
-  } catch {
-    return null;
-  }
-}
+const extOf = (mime) => (mime.toLowerCase() === 'jpeg' ? 'jpg' : mime.toLowerCase().replace(/[^a-z0-9]/g, ''));
+const mimeOf = (ext) => (ext === 'jpg' ? 'jpeg' : ext);
 
 /**
- * Turn a payload's image list into what the provider needs.
- *
- * Accepts both shapes on purpose: { ref } for anything enqueued since this existed, and a plain
- * { base64 } for rows written before it. A ref that cannot be read throws by NAME, because
- * rendering a job with one of its source images silently missing produces a wrong picture that
- * still costs money — far worse than failing the job.
+ * Data URLs in, references out. Anything that is not a data URL — an http URL, a reference that has
+ * already been through here — passes through untouched, so this is safe to call twice.
  */
-function resolve(images) {
-  return (Array.isArray(images) ? images : []).map((img, i) => {
-    if (img?.base64) return img;
-    if (img?.ref) {
-      const hit = get(img.ref);
-      if (!hit) throw new Error(`source image ${i + 1} (${String(img.ref).slice(0, 12)}…) is no longer available`);
-      return hit;
+function store(images) {
+  if (!Array.isArray(images)) return images;
+  const dir = blobDir();
+  return images.map((img) => {
+    if (typeof img !== 'string') return img;
+    const m = img.match(DATA_URL);
+    if (!m) return img;
+
+    const bytes = Buffer.from(m[2], 'base64');
+    if (!bytes.length) return img;   // not decodable — leave it alone rather than store nothing
+
+    const ext = extOf(m[1]) || 'png';
+    const name = `${crypto.createHash('sha256').update(bytes).digest('hex')}.${ext}`;
+    const file = path.join(dir, name);
+    // The name IS the hash of the contents, so an existing file is byte-identical by construction.
+    // Skipping the write is the whole saving: the 2nd..300th job of a batch write nothing.
+    if (!fs.existsSync(file)) {
+      // Write to a unique temp name first, then rename. Two lanes storing the same picture at the
+      // same instant would otherwise interleave inside one file and leave a corrupt image that
+      // still has the right name — the worst possible outcome, since the hash then lies.
+      const tmp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+      fs.writeFileSync(tmp, bytes);
+      try { fs.renameSync(tmp, file); } catch { fs.rmSync(tmp, { force: true }); }
     }
-    throw new Error(`source image ${i + 1} has neither bytes nor a reference`);
+    return `blob:${name}`;
   });
 }
 
-/** Drop blobs nothing has touched for TTL_MS. Called at boot; cheap because the directory is flat. */
-function sweep() {
-  let removed = 0;
-  let bytes = 0;
-  try {
-    const now = Date.now();
-    for (const name of fs.readdirSync(dir())) {
-      const file = path.join(dir(), name);
-      try {
-        const st = fs.statSync(file);
-        if (now - st.mtimeMs > TTL_MS) { bytes += st.size; fs.unlinkSync(file); removed += 1; }
-      } catch { /* raced with another sweep — fine */ }
-    }
-  } catch { /* directory missing is not an error */ }
-  if (removed) log.info('job_blobs_swept', { removed, mb: Math.round(bytes / 1048576) });
-  return removed;
+/**
+ * References back to data URLs, for the moment of sending.
+ *
+ * A missing blob THROWS rather than dropping the image from the list. Sending an edit with two of
+ * its three inputs does not fail — it renders a confidently wrong picture and charges for it. A
+ * job that stops and says the file is gone is the cheaper of the two by a wide margin.
+ */
+function load(refs) {
+  if (!Array.isArray(refs)) return refs;
+  const dir = blobDir();
+  return refs.map((ref) => {
+    if (typeof ref !== 'string') return ref;
+    const m = ref.match(REF);
+    if (!m) return ref;
+    const file = path.join(dir, `${m[1]}.${m[2]}`);
+    if (!fs.existsSync(file)) throw new Error(`Input image is missing from the blob store (${ref})`);
+    return `data:image/${mimeOf(m[2])};base64,${fs.readFileSync(file).toString('base64')}`;
+  });
 }
 
-module.exports = { put, get, resolve, sweep };
+/** Every reference a payload names, for sweep to collect. */
+function refsIn(payload) {
+  const out = [];
+  for (const img of payload?.images || []) {
+    if (typeof img === 'string' && REF.test(img)) out.push(img.slice('blob:'.length));
+  }
+  return out;
+}
+
+/**
+ * Delete the files no live job names. `live` is the set of filenames still referenced — the caller
+ * derives it from the queue, because knowing that is the queue's job and not this file's.
+ *
+ * Returns what it removed so a caller can log a real number instead of a claim.
+ */
+function sweep(live) {
+  const dir = blobDir();
+  const keep = live instanceof Set ? live : new Set(live || []);
+  let removed = 0;
+  let bytes = 0;
+  for (const name of fs.readdirSync(dir)) {
+    if (keep.has(name)) continue;
+    const file = path.join(dir, name);
+    try {
+      // A .tmp from a crashed write has no live reference either, so this collects those too —
+      // but only once it is old enough that it cannot be a write happening right now.
+      const st = fs.statSync(file);
+      if (name.endsWith('.tmp') && Date.now() - st.mtimeMs < 60_000) continue;
+      fs.rmSync(file, { force: true });
+      removed += 1;
+      bytes += st.size;
+    } catch { /* a file that vanished under us is already the outcome we wanted */ }
+  }
+  return { removed, bytes };
+}
+
+module.exports = { store, load, refsIn, sweep };

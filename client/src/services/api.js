@@ -393,9 +393,6 @@ export const images = {
  */
 export const jobs = {
   enqueue: (body) => request('/jobs', { method: 'POST', body }),
-  // Park source images once and get content hashes back, so every job in a run references them
-  // instead of carrying its own copy. See server/services/jobBlobs.js for why that matters.
-  blobs: (images) => request('/jobs/blobs', { method: 'POST', body: { images } }),
   get: (id) => request(`/jobs/${id}`),
   list: () => request('/jobs'),
   markFiled: (id) => request(`/jobs/${id}/filed`, { method: 'POST' }),
@@ -405,19 +402,7 @@ export const jobs = {
 };
 
 export const gallery = {
-  /**
-   * The whole listing by default; `{ fields: 'slim' }` for id + tags + createdAt only, and `{ tag }`
-   * to filter server-side.
-   *
-   * Slim exists because the full response is 8.9 MB on the owner's machine — 7.7 MB of it prompt
-   * text — and the Library's recovery sweep only ever wanted the ids (2026-08-15).
-   */
-  list: (params = {}) => {
-    const qs = new URLSearchParams(
-      Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ''),
-    ).toString();
-    return request(`/gallery${qs ? `?${qs}` : ''}`);
-  },
+  list: () => request('/gallery'),
   upload: async (file, fields = {}) => {
     const formData = new FormData();
     formData.append('file', file);

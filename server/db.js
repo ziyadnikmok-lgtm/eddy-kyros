@@ -83,6 +83,44 @@ try {
   if (jobCols.length > 0 && !jobCols.some((c) => c.name === 'tags')) {
     db.exec('ALTER TABLE generation_jobs ADD COLUMN tags TEXT');
   }
+
+  /**
+   * One-time repair for rows written BEFORE jobBlobs existed.
+   *
+   * Payloads used to carry their source images as base64. Eddy sends a ~9.8 MB base photo with
+   * every combo, so a single run took this database from 248 KB to 479 MB (2026-08-15) and starved
+   * the app until its own network calls to WaveSpeed timed out at 30s — which read like a network
+   * fault and was not one. jobBlobs stops it happening again, but it cannot shrink what is already
+   * written, and SQLite never returns space to the filesystem without VACUUM.
+   *
+   * Only rows PAST submission are touched: a queued job still needs its images to be sent at all.
+   * VACUUM rewrites the whole file, so it runs only when there is real space to reclaim.
+   */
+  if (jobCols.length > 0) {
+    const fat = db.prepare(`
+      SELECT COUNT(*) AS n FROM generation_jobs
+      WHERE status != 'queued' AND payload IS NOT NULL AND LENGTH(payload) > 100000
+    `).get();
+    if (fat && fat.n > 0) {
+      const rows = db.prepare(`
+        SELECT id, payload FROM generation_jobs
+        WHERE status != 'queued' AND payload IS NOT NULL AND LENGTH(payload) > 100000
+      `).all();
+      const upd = db.prepare('UPDATE generation_jobs SET payload = ? WHERE id = ?');
+      let freed = 0;
+      for (const r of rows) {
+        try {
+          const p = JSON.parse(r.payload);
+          const { images, ...rest } = p;
+          const slim = JSON.stringify({ ...rest, imageCount: Array.isArray(images) ? images.length : 0 });
+          freed += r.payload.length - slim.length;
+          upd.run(slim, r.id);
+        } catch { /* leave anything unparseable exactly as it is */ }
+      }
+      db.exec('VACUUM');
+      console.log(`[db] reclaimed ~${Math.round(freed / 1048576)}MB of inline job images from ${rows.length} rows`);
+    }
+  }
 } catch (e) {
   // Table not created yet; the CREATE TABLE below carries the column.
 }

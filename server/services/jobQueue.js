@@ -38,6 +38,7 @@
  */
 const crypto = require('crypto');
 const db = require('../db');
+const jobBlobs = require('./jobBlobs');
 
 const STATUS = Object.freeze({
   QUEUED: 'queued',
@@ -71,10 +72,15 @@ function enqueue({ userId, feature, payload, destDb = null, destFolder = null, c
   if (!feature) throw new Error('enqueue: feature is required');
   const id = crypto.randomUUID();
   const t = now();
+  // The input pictures go to disk and the row keeps a reference. Inline base64 here is what took a
+  // hundred-lane run's database to 479 MB; at three hundred lanes it is gigabytes. See jobBlobs.
+  const stored = payload && Array.isArray(payload.images)
+    ? { ...payload, images: jobBlobs.store(payload.images) }
+    : payload;
   db.prepare(`
     INSERT INTO generation_jobs (id, user_id, feature, status, payload, dest_db, dest_folder, card_prompt, card_name, tags, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, userId, feature, STATUS.QUEUED, JSON.stringify(payload ?? {}), destDb, destFolder, cardPrompt, cardName,
+  `).run(id, userId, feature, STATUS.QUEUED, JSON.stringify(stored ?? {}), destDb, destFolder, cardPrompt, cardName,
     Array.isArray(tags) && tags.length ? JSON.stringify(tags) : null, t, t);
   return id;
 }
@@ -138,32 +144,10 @@ function resolveOrphans() {
  * From here the job must never be re-submitted, only re-polled — a resend is a second charge for a
  * picture that is already being rendered.
  */
-/**
- * DROP THE SOURCE IMAGES once the provider has the job.
- *
- * The payload holds them as base64 and this row is permanent, so a queue that keeps them keeps a
- * copy of every input image forever. Eddy sends one ~9.8 MB base photo with every combo: 27 queued
- * jobs took saas.db from 248 KB to 479 MB in ten minutes (2026-08-15). The database, its WAL, the
- * renderer and the server all held those bytes at once; the app reached 2.9 GB, the CPU pegged, and
- * its own status checks to WaveSpeed began timing out at 30s. Nothing completed, and it read like a
- * network fault when it was self-inflicted. At 300 lanes the same run would write gigabytes.
- *
- * The images are needed only up to submission — after that the task_id IS the job. requeueUnsent
- * refuses to touch a row carrying a task_id, so no resume path needs what is dropped here.
- */
 function markSubmitted(id, taskId) {
   if (!taskId) throw new Error('markSubmitted: a taskId is required — without it the job cannot be resumed');
-  const row = db.prepare('SELECT payload FROM generation_jobs WHERE id = ?').get(id);
-  let slim = row?.payload ?? null;
-  try {
-    const p = row?.payload ? JSON.parse(row.payload) : {};
-    // Keep everything that describes the RESULT — the saver reads prompt, aspectRatio, model and
-    // tags — and drop only the images, which are the sole large field.
-    const { images, ...rest } = p;
-    slim = JSON.stringify({ ...rest, imageCount: Array.isArray(images) ? images.length : 0 });
-  } catch { /* unparseable: leave it rather than lose the record */ }
-  db.prepare(`UPDATE generation_jobs SET status = ?, task_id = ?, payload = ?, updated_at = ? WHERE id = ?`)
-    .run(STATUS.SUBMITTED, taskId, slim, now(), id);
+  db.prepare(`UPDATE generation_jobs SET status = ?, task_id = ?, updated_at = ? WHERE id = ?`)
+    .run(STATUS.SUBMITTED, taskId, now(), id);
 }
 
 /**
@@ -335,6 +319,23 @@ function get(id) {
   return row ? hydrate(row) : null;
 }
 
+/**
+ * Delete the stored input pictures that no job references any more.
+ *
+ * Derived, never bookkept: the live set is read off the rows themselves, so a crash at any moment
+ * cannot leave it wrong. The cost is one pass over every row's payload, which is why this runs at
+ * boot and not on the hot path — and the payloads are references now, so the pass is cheap.
+ */
+function sweepBlobs() {
+  const live = new Set();
+  for (const row of db.prepare('SELECT payload FROM generation_jobs').all()) {
+    let payload = null;
+    try { payload = JSON.parse(row.payload); } catch { continue; }
+    for (const name of jobBlobs.refsIn(payload)) live.add(name);
+  }
+  return jobBlobs.sweep(live);
+}
+
 /** JSON back out of the text column, and `filed` back to a boolean. */
 function hydrate(row) {
   let payload = {};
@@ -373,4 +374,5 @@ module.exports = {
   cancelQueued,
   counts,
   get,
+  sweepBlobs,
 };

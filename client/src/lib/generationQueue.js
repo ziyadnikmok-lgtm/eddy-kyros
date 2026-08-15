@@ -40,56 +40,6 @@ const WAIT_TIMEOUT_MS = 45 * 60 * 1000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-
-/**
- * Send each distinct source image ONCE per session, and reference it by content hash after that.
- *
- * A run reuses the same base photo and face for every combo, so a 48-image pass shipped the same
- * ~9.8 MB photo 48 times — into the request, into the job row, into SQLite. That took saas.db from
- * 248 KB to 479 MB and starved the app until its own network calls timed out. At 300 lanes the same
- * run writes gigabytes, so this matters more the wider the fan-out gets.
- *
- * Keyed by a hash of the BYTES, not by any id the caller supplies, so two combos holding separately
- * decoded copies of one photo still collapse to a single upload. Uploading is idempotent
- * server-side, so a duplicate in flight costs one request and nothing else.
- *
- * On any failure the original base64 is returned untouched: a heavy request is a far better outcome
- * than a generation that does not happen.
- */
-const _refCache = new Map();
-
-async function _imageKey(base64) {
-  // A bounded slice plus the length, not the whole image: hashing 10 MB, 48 times, is its own
-  // stall. A collision would need two images sharing a prefix, a suffix AND a byte count.
-  const head = base64.length > 262144 ? base64.slice(0, 262144) + base64.slice(-1024) : base64;
-  const bin = atob(head);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('') + ':' + base64.length;
-}
-
-async function blobRefs(images) {
-  const list = Array.isArray(images) ? images : [];
-  if (!list.length) return [];
-  try {
-    const keys = await Promise.all(list.map((img) => (img?.base64 ? _imageKey(img.base64) : null)));
-    const missing = [];
-    keys.forEach((k, i) => { if (k && !_refCache.has(k)) missing.push(i); });
-    if (missing.length) {
-      const r = await jobsApi.blobs(missing.map((i) => ({ base64: list[i].base64, mimeType: list[i].mimeType })));
-      const refs = (r?.data ?? r)?.refs || [];
-      if (refs.length !== missing.length) throw new Error('blob upload returned the wrong number of refs');
-      missing.forEach((idx, n) => _refCache.set(keys[idx], refs[n]));
-    }
-    return list.map((img, i) => (keys[i] && _refCache.has(keys[i])
-      ? { ref: _refCache.get(keys[i]), mimeType: img.mimeType }
-      : img));
-  } catch {
-    return list;   // fall back to sending the bytes — heavy, but it still generates
-  }
-}
-
 export class QueuedJobStillRunning extends Error {
   constructor(jobId) {
     super('Still rendering — it will finish in the background and land in your library.');
@@ -121,7 +71,7 @@ export async function queuedSeedreamEdit({
 }) {
   const created = await jobsApi.enqueue({
     feature,
-    payload: { images: await blobRefs(images), prompt, aspectRatio, resolution, model, provider },
+    payload: { images, prompt, aspectRatio, resolution, model, provider },
     destDb,
     destFolder,
     cardPrompt,
