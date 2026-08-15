@@ -40,13 +40,18 @@ const STALE_AFTER_MS = 2 * 60 * 60 * 1000;
  *
  * Now the server holds the renders, so the ceiling is a real one and this is where it lives.
  *
- * NOT set to 300. That is what the provider permits, not what is wise to fire in one click: at
- * $0.07–0.105 an image, 300 concurrent is $21–31 committed before anything can be cancelled, and
- * the friend's pipeline reports 429s from about 30 workers up (their 09_gotchas.md). 24 is ~4x the
- * old ceiling, comfortably under where 429s were seen, and the backoff below handles the rest.
- * Override with KYROS_MAX_INFLIGHT to go higher deliberately.
+ * Set to 100 on the owner's instruction (2026-08-15: "just do the 100 at once if selected 100 we
+ * dont care about money just make sure in backend we will receive all the images"). Cost is
+ * explicitly not the constraint here; LOSING an image is. So the ceiling is high and every path
+ * that could drop a paid render is closed instead: 429s refund the attempt and pause rather than
+ * failing a job, poll failures retry for two hours before giving up, and a render returning several
+ * images now records all of them rather than the first.
+ *
+ * Still a ceiling rather than "unlimited". Each submit uploads its source images before it returns,
+ * so an unbounded fan-out would open thousands of uploads at once and fall over on sockets and
+ * memory long before WaveSpeed objected. Raise it with KYROS_MAX_INFLIGHT.
  */
-const MAX_INFLIGHT = Math.max(1, Number(process.env.KYROS_MAX_INFLIGHT) || 24);
+const MAX_INFLIGHT = Math.max(1, Number(process.env.KYROS_MAX_INFLIGHT) || 100);
 
 /**
  * Rate-limit backoff, global rather than per job.
@@ -105,29 +110,42 @@ async function _pollJob(job) {
  * already complete — two ways in, one way to record it.
  */
 async function _saveResult(job, images) {
-  const first = (images || [])[0];
-  if (!first) {
+  const list = Array.isArray(images) ? images.filter(Boolean) : [];
+  if (!list.length) {
     jobQueue.markFailed(job.id, 'The provider reported success but returned no image');
     return;
   }
 
-  const saved = gallery.save({
-    base64Data: first.base64Data,
-    mimeType: first.mimeType,
-    prompt: job.card_prompt || job.payload?.prompt || 'Generated',
-    source: job.feature,
-    aspectRatio: job.payload?.aspectRatio || null,
-  });
-  const galleryId = saved?.id || saved?.galleryId || null;
-  if (!galleryId) {
+  // EVERY image, not just the first. A render can return several, and keeping images[0] threw the
+  // rest away — pictures that were generated and billed for. The blocking route has always saved
+  // all of them; the queue was the path that quietly did not.
+  const ids = [];
+  for (const img of list) {
+    const saved = gallery.save({
+      base64Data: img.base64Data,
+      mimeType: img.mimeType,
+      prompt: job.card_prompt || job.payload?.prompt || 'Generated',
+      source: job.feature,
+      aspectRatio: job.payload?.aspectRatio || null,
+    });
+    const gid = saved?.id || saved?.galleryId || null;
+    if (gid) ids.push(gid);
+  }
+
+  if (!ids.length) {
     // Do NOT mark done without an id: the client files by gallery id, so a done row without one is
     // a picture nobody can ever reach. Failing says so out loud instead.
     jobQueue.markFailed(job.id, 'Saved image but the gallery returned no id');
     return;
   }
+  if (ids.length < list.length) {
+    // Partial is still a success — the images that landed are real — but it must not pass silently,
+    // because the difference is pictures that were paid for and are now nowhere.
+    log.error('generation_job_partial_save', { jobId: job.id, returned: list.length, saved: ids.length });
+  }
 
-  jobQueue.markDone(job.id, galleryId);
-  log.info('generation_job_done', { jobId: job.id, taskId: job.task_id, galleryId });
+  jobQueue.markDone(job.id, ids);
+  log.info('generation_job_done', { jobId: job.id, taskId: job.task_id, images: ids.length, galleryIds: ids });
 }
 
 /**
@@ -212,6 +230,15 @@ async function runOnce() {
     try {
       await pollJob(job);
     } catch (err) {
+      // At 100 lanes the STATUS calls are their own burst, and a 429 on a poll must never be read
+      // as a dead job: the render is fine, we simply asked too often. Back off the whole tick and
+      // leave it submitted.
+      if (isRateLimit(err)) {
+        pausedUntil = Date.now() + backoffMs;
+        backoffMs = Math.min(backoffMs * 2, BACKOFF_MAX_MS);
+        log.warn('generation_poll_rate_limited', { jobId: job.id, backoffMs });
+        return;
+      }
       // A blip must not kill the job — leave it submitted and try again next tick. Only give up
       // once it is clearly never coming back, so the UI stops claiming it is still rendering.
       if (age > STALE_AFTER_MS) {

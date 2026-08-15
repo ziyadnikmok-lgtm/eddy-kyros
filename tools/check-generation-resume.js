@@ -68,7 +68,11 @@ check('resumable jobs go to the poller', /running\.map\(async \(job\)[\s\S]{0,20
 // --- 3. done is never recorded without a picture ---------------------------------------------------------
 check('no gallery id means FAILED, not done', rec.includes("jobQueue.markFailed(job.id, 'Saved image but the gallery returned no id')"));
 check('an empty output means failed too', rec.includes("'The provider reported success but returned no image'"));
-check('markDone is only reached with an id', rec.indexOf('if (!galleryId)') < rec.indexOf('jobQueue.markDone(job.id, galleryId)'));
+// Reworded 2026-08-15 when the save path started keeping EVERY image: the guard is now on the
+// collected list, but the rule is unchanged — nothing is marked done without at least one id.
+const guardIdx = rec.indexOf('if (!ids.length) {');
+const doneIdx = rec.indexOf('jobQueue.markDone(job.id, ids)');
+check('markDone is only reached with at least one id', guardIdx > -1 && doneIdx > guardIdx);
 
 // --- 4. one reconcile per task ------------------------------------------------------------------------------
 // The video side records what this costs when it is missing: two passes both see "not done", both

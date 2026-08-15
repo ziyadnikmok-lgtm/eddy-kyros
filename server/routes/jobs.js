@@ -24,6 +24,9 @@ function present(job) {
     feature: job.feature,
     status: job.status,
     galleryId: job.gallery_id,
+    // Every image the render produced. galleryId stays as the first for older clients; this is
+    // what the filer iterates, so a multi-image render reaches the library in full.
+    galleryIds: job.galleryIds || (job.gallery_id ? [job.gallery_id] : []),
     destDb: job.dest_db,
     destFolder: job.dest_folder,
     cardPrompt: job.card_prompt,

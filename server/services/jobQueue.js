@@ -136,10 +136,20 @@ function markSubmitted(id, taskId) {
     .run(STATUS.SUBMITTED, taskId, now(), id);
 }
 
-/** The image exists in the gallery. Not yet in any library — that is the client's job. */
-function markDone(id, galleryId) {
-  db.prepare(`UPDATE generation_jobs SET status = ?, gallery_id = ?, error = NULL, updated_at = ? WHERE id = ?`)
-    .run(STATUS.DONE, galleryId || null, now(), id);
+/**
+ * The images exist in the gallery. Not yet in any library — that is the client's job.
+ *
+ * Takes a LIST. A single render can return several images (the blocking route has always saved
+ * `result.images.map(...)`), and recording only the first quietly discarded the rest — images that
+ * were generated and billed. gallery_id keeps the first so every existing reader still works;
+ * gallery_ids carries all of them.
+ */
+function markDone(id, galleryIds) {
+  const ids = (Array.isArray(galleryIds) ? galleryIds : [galleryIds]).filter(Boolean);
+  db.prepare(`
+    UPDATE generation_jobs SET status = ?, gallery_id = ?, gallery_ids = ?, error = NULL, updated_at = ?
+    WHERE id = ?
+  `).run(STATUS.DONE, ids[0] || null, ids.length ? JSON.stringify(ids) : null, now(), id);
 }
 
 function markFailed(id, message) {
@@ -215,7 +225,12 @@ function get(id) {
 function hydrate(row) {
   let payload = {};
   try { payload = JSON.parse(row.payload); } catch { /* a corrupt payload must not take the queue down */ }
-  return { ...row, payload, filed: row.filed === 1 };
+  let galleryIds = [];
+  try { galleryIds = row.gallery_ids ? JSON.parse(row.gallery_ids) : []; } catch { galleryIds = []; }
+  // Falls back to the single id for rows written before gallery_ids existed, so an older job still
+  // hands the client something to file rather than nothing.
+  if (!galleryIds.length && row.gallery_id) galleryIds = [row.gallery_id];
+  return { ...row, payload, galleryIds, filed: row.filed === 1 };
 }
 
 module.exports = {

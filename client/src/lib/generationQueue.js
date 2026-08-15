@@ -111,18 +111,27 @@ export async function reconcileUnfiled() {
   let filed = 0;
   let failed = 0;
   for (const job of list) {
-    if (!job.galleryId) continue;
+    // EVERY image, not just the first: one render can return several, and filing only galleryId
+    // would leave the rest sitting in the gallery, paid for and in no library.
+    const ids = job.galleryIds?.length ? job.galleryIds : (job.galleryId ? [job.galleryId] : []);
+    if (!ids.length) continue;
     try {
       const store = createEddyCollection(job.destDb || 'eddy-library');
-      // eslint-disable-next-line no-await-in-loop
-      await fileIntoLibrary(store, {
-        url: galleryApi.imageUrl(job.galleryId),
-        prompt: job.cardPrompt || 'Recovered generation',
-        name: job.cardName || `recovered-${job.id.slice(0, 8)}`,
-      }, { folder: job.destFolder || '', label: destLabel(job.destDb) });
+      for (const [i, gid] of ids.entries()) {
+        // eslint-disable-next-line no-await-in-loop
+        await fileIntoLibrary(store, {
+          url: galleryApi.imageUrl(gid),
+          prompt: job.cardPrompt || 'Recovered generation',
+          // Suffixed only from the second image on, so the single-image case keeps its exact name.
+          name: (job.cardName || `recovered-${job.id.slice(0, 8)}`) + (i ? `-${i + 1}` : ''),
+        }, { folder: job.destFolder || '', label: destLabel(job.destDb) });
+        filed += 1;
+      }
+      // Marked filed only after ALL of them landed. If image 3 of 4 throws, the job stays unfiled
+      // and the next load retries the whole set — a duplicate is visible and deletable, a picture
+      // that never arrived is not.
       // eslint-disable-next-line no-await-in-loop
       await jobsApi.markFiled(job.id);
-      filed += 1;
     } catch {
       // Left unfiled on purpose — the next load tries again.
       failed += 1;

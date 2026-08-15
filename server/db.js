@@ -69,6 +69,18 @@ try {
   // Users table may not exist yet; CREATE TABLE below will handle it
 }
 
+// generation_jobs gained gallery_ids on 2026-08-15: one render can return several images, and the
+// queue was recording only the first. CREATE TABLE IF NOT EXISTS never alters an existing table,
+// so a database made yesterday needs this.
+try {
+  const jobCols = db.pragma('table_info(generation_jobs)');
+  if (jobCols.length > 0 && !jobCols.some((c) => c.name === 'gallery_ids')) {
+    db.exec('ALTER TABLE generation_jobs ADD COLUMN gallery_ids TEXT');
+  }
+} catch (e) {
+  // Table not created yet; the CREATE TABLE below carries the column.
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id         TEXT PRIMARY KEY,
@@ -224,6 +236,10 @@ db.exec(`
     card_prompt  TEXT,
     card_name    TEXT,
     gallery_id   TEXT,
+    -- Every gallery id this job produced, JSON. gallery_id above stays as the FIRST one so
+    -- existing readers keep working; this exists because a single render can return several
+    -- images and keeping only images[0] silently threw the rest away.
+    gallery_ids  TEXT,
     filed        INTEGER NOT NULL DEFAULT 0,
     attempts     INTEGER NOT NULL DEFAULT 0,
     error        TEXT,

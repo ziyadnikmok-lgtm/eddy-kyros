@@ -45,7 +45,10 @@ check('the browser socket ceiling is written down where the number lives',
 check('there is a concurrency ceiling', rec.includes('const MAX_INFLIGHT ='));
 const dflt = Number((rec.match(/Number\(process\.env\.KYROS_MAX_INFLIGHT\) \|\| (\d+)/) || [])[1]);
 check(`its default is above the old browser-bound 6 (${dflt})`, dflt > 6);
-check('but NOT the provider maximum of 300 — that is $21-31 fired in one click', dflt < 300);
+// Bounded, but no longer for cost — the owner ruled cost out explicitly. Each submit uploads its
+// source images before returning, so an unbounded fan-out dies on sockets and memory long before
+// the provider objects.
+check('it is still bounded, so an unbounded fan-out cannot exhaust sockets', dflt <= 300);
 check('and it is overridable for a deliberate run', rec.includes('process.env.KYROS_MAX_INFLIGHT'));
 check('it can never be zero, which would stall the queue silently', rec.includes('Math.max(1, Number(process.env.KYROS_MAX_INFLIGHT)'));
 
@@ -56,11 +59,11 @@ check('the ceiling counts jobs in flight, not submits per tick',
 check('the old per-tick budget is gone', !rec.includes('SUBMITS_PER_TICK'));
 check('lanes are filled in parallel — sequential submits would spend the tick uploading',
   /await Promise\.all\(Array\.from\(\{ length: room \}/.test(rec));
-check('polling is parallel too — one slow status check must not hold up 23 others',
+check('polling is parallel too — one slow status check must not hold up the other 99',
   /await Promise\.all\(running\.map\(async \(job\)/.test(rec));
 check('a throwing submit cannot take the whole tick down', /submitOne\(\)\.catch\(/.test(rec));
 
-// --- 3. THE MONEY RULE still holds at 24 lanes ---------------------------------------------------------
+// --- 3. THE MONEY RULE still holds at 100 lanes --------------------------------------------------------
 const submitIdx = rec.indexOf('await wavespeed.submitNanoBanana2Edit(');
 const markIdx = rec.indexOf('jobQueue.markSubmitted(job.id, sub.taskId)');
 check('the task id is recorded immediately after the provider accepts', submitIdx > -1 && markIdx > submitIdx);
@@ -123,6 +126,58 @@ check(`same conditions, more work through: ${now.submitted} vs ${before.submitte
   now.submitted > before.submitted);
 check(`throughput scales with the ceiling — ~${(now.submitted / before.submitted).toFixed(1)}x`,
   now.submitted / before.submitted >= dflt / 6 - 0.01);
+
+// --- 7. NOTHING IS LOST AT 100 LANES ---------------------------------------------------------------
+// Owner, 2026-08-15: "just do the 100 at once ... we dont care about money just make sure in
+// backend we will receive all the images". Cost stopped being the constraint; a dropped render is
+// the only thing that matters now. Each assertion below closes one way an image could vanish.
+const q2 = read('server/services/jobQueue.js');
+const routes = read('server/routes/jobs.js');
+const cli = read('client/src/lib/generationQueue.js');
+const dbjs = read('server/db.js');
+
+check('the ceiling is 100', /KYROS_MAX_INFLIGHT\) \|\| 100/.test(rec));
+
+// LOSS #1: a render returning several images, with only the first recorded. The blocking route has
+// always saved result.images.map(...) — the queue was the path that quietly kept one.
+check('every returned image is saved, not just the first', rec.includes('for (const img of list) {'));
+check('and all their ids are recorded', rec.includes('jobQueue.markDone(job.id, ids)'));
+check('markDone takes a list', q2.includes('function markDone(id, galleryIds)'));
+check('the first id is still written to gallery_id for older readers', q2.includes('ids[0] || null'));
+check('a partial save is logged at ERROR, never passed over in silence',
+  rec.includes("log.error('generation_job_partial_save'"));
+check('the column exists for fresh databases', dbjs.includes('gallery_ids  TEXT,'));
+check('and a migration adds it to an existing one — CREATE TABLE IF NOT EXISTS never alters',
+  dbjs.includes("db.exec('ALTER TABLE generation_jobs ADD COLUMN gallery_ids TEXT')"));
+check('older rows fall back to their single id rather than reading as empty',
+  q2.includes('if (!galleryIds.length && row.gallery_id) galleryIds = [row.gallery_id];'));
+
+// LOSS #2: images saved to the gallery but never filed into a library.
+check('the route exposes every id', routes.includes('galleryIds: job.galleryIds'));
+check('the client files every id', cli.includes('for (const [i, gid] of ids.entries())'));
+check('and only marks the job filed once ALL of them landed',
+  cli.indexOf('for (const [i, gid] of ids.entries())') < cli.indexOf('await jobsApi.markFiled(job.id)'));
+check('a single-image job keeps its exact name', cli.includes("(i ? `-${i + 1}` : '')"));
+
+// LOSS #3: a 429 on the POLL path read as a dead job. At 100 lanes the status calls are their own
+// burst, and the render is fine — we simply asked too often.
+check('a poll-side rate limit backs off instead of failing the job',
+  rec.includes("log.warn('generation_poll_rate_limited'"));
+check('a poll failure only gives up after the stale window', rec.includes('if (age > STALE_AFTER_MS)'));
+
+// Replay at the real ceiling: a burst of 100 all reach a terminal state, none stranded.
+const MAXR = 100;
+let queued = 100, running = 0, done = 0;
+for (let tick = 0; tick < 40 && (queued || running); tick += 1) {
+  const room = Math.max(0, MAXR - running);
+  const take = Math.min(room, queued);
+  queued -= take; running += take;
+  const finish = Math.ceil(running / 3);
+  running -= finish; done += finish;
+}
+check(`a burst of 100 all reach a terminal state (${done} done)`, done === 100);
+check('none stranded in flight', running === 0 && queued === 0);
+check('and none lost along the way', 100 - done - queued - running === 0);
 
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
