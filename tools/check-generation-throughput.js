@@ -218,5 +218,44 @@ check('and polls slowly when nothing is moving', panel.includes('active ? BUSY_M
 check('a failed poll keeps the last view rather than flashing an error',
   panel.includes('// Signed out, offline, or the server is restarting.'));
 
+// --- 9. NO NEEDLESS RE-ENCODE ON THE WAY TO WAVESPEED -------------------------------------------------
+// Owner, 2026-08-15: "i feel like it not the same we had in gemini". Part of the answer was that
+// every input — identity references included — was pushed through sharp().jpeg({ quality: 95 })
+// before upload. Nothing required it: no comment gave a reason, and WaveSpeed accepts PNG, JPEG and
+// WebP. It cost a lossy generation of loss on exactly the photos whose job is to pin down a face,
+// and the Gemini path being compared against never paid it — it sent the original bytes inline.
+check('there is one shared preparer for uploads', ws.includes('async function _prepareUpload(raw)'));
+check('PNG passes through untouched', ws.includes("return { buf, ext: '.png' };"));
+check('JPEG passes through untouched', ws.includes("return { buf, ext: '.jpg' };"));
+check('WebP passes through untouched', ws.includes("return { buf, ext: '.webp' };"));
+check('anything else is still converted — an unknown container is worse than a re-encode',
+  ws.includes("const converted = await sharp(buf).jpeg({ quality: 95 }).toBuffer();"));
+check('and that conversion is logged, so it is never invisible', ws.includes("log.info('wavespeed_input_converted'"));
+check('the format is sniffed from magic bytes, not the declared mimeType',
+  ws.includes('const is = (sig, at = 0) => sig.every((b, i) => buf[at + i] === b);'));
+check('nano2 uses it', ws.includes("return await _uploadPrepared(raw, 'nb2');"));
+check('seedream5 uses it too', ws.includes("return await _uploadPrepared(raw, 'sd5');"));
+check('neither re-encodes on its own any more',
+  !ws.includes("const jpegBuf = await sharp(Buffer.from(raw, 'base64')).jpeg({ quality: 95 }).toBuffer();"));
+check('the temp file always gets cleaned up', ws.includes('try { fs.unlinkSync(tempPath); } catch {}'));
+
+// The sniffer, run for real rather than asserted about.
+const sniff = (bytes) => {
+  const buf = Buffer.from(bytes);
+  const is = (sig, at = 0) => sig.every((b, i) => buf[at + i] === b);
+  if (buf.length > 8 && is([0x89, 0x50, 0x4e, 0x47])) return '.png';
+  if (buf.length > 3 && is([0xff, 0xd8, 0xff])) return '.jpg';
+  if (buf.length > 12 && is([0x52, 0x49, 0x46, 0x46]) && is([0x57, 0x45, 0x42, 0x50], 8)) return '.webp';
+  return null;
+};
+check('a PNG signature is recognised', sniff([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]) === '.png');
+check('a JPEG signature is recognised', sniff([0xff, 0xd8, 0xff, 0xe0, 0, 0]) === '.jpg');
+check('a WebP signature is recognised',
+  sniff([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0x57, 0x45, 0x42, 0x50, 0]) === '.webp');
+check('a RIFF that is NOT WebP is not mistaken for one — that would upload a .webp that is not one',
+  sniff([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0x41, 0x56, 0x49, 0x20, 0]) === null);
+check('an unknown format falls through to conversion', sniff([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) === null);
+check('a truncated file cannot be read past its end', sniff([0x89, 0x50]) === null);
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

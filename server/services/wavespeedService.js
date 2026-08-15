@@ -350,6 +350,49 @@ const SEEDDREAM_MAX_POLL_MS = 240_000;
  * @param {string} [opts.aspectRatio]  e.g. '4:5'
  * @returns {{ images: Array<{base64Data: string, mimeType: string}>, modelUsed: string }}
  */
+/**
+ * Prepare one input image for upload — WITHOUT a needless re-encode.
+ *
+ * Every input used to go through sharp().jpeg({ quality: 95 }) on the way out, identity references
+ * included. Nothing required that: no comment gave a reason, and WaveSpeed accepts PNG, JPEG and
+ * WebP directly. What it cost was a lossy generation of loss on the very photos whose whole job is
+ * to pin down a face — and the Gemini path this is compared against never paid it, because it sent
+ * the original bytes inline (owner, 2026-08-15: "i feel like it not the same we had in gemini").
+ *
+ * So: if the bytes are already a format the API takes, they go up untouched. Anything else still
+ * gets converted, because an unknown container is worse than a re-encode.
+ *
+ * Sniffed from magic bytes rather than trusting the declared mimeType — a mislabelled PNG would
+ * otherwise be uploaded with the wrong extension and rejected.
+ *
+ * Cheap despite the larger PNGs: uploads are cached by content hash, so a character's references
+ * upload once and are reused by every combo in the run.
+ */
+async function _prepareUpload(raw) {
+  const buf = Buffer.from(raw, 'base64');
+  const is = (sig, at = 0) => sig.every((b, i) => buf[at + i] === b);
+  if (buf.length > 8 && is([0x89, 0x50, 0x4e, 0x47])) return { buf, ext: '.png' };
+  if (buf.length > 3 && is([0xff, 0xd8, 0xff])) return { buf, ext: '.jpg' };
+  if (buf.length > 12 && is([0x52, 0x49, 0x46, 0x46]) && is([0x57, 0x45, 0x42, 0x50], 8)) return { buf, ext: '.webp' };
+
+  const sharp = require('sharp');
+  const converted = await sharp(buf).jpeg({ quality: 95 }).toBuffer();
+  log.info('wavespeed_input_converted', { fromBytes: buf.length, toBytes: converted.length });
+  return { buf: converted, ext: '.jpg' };
+}
+
+/** Write prepared bytes to a temp file, upload, and always clean up. */
+async function _uploadPrepared(raw, tag) {
+  const { buf, ext } = await _prepareUpload(raw);
+  const tempPath = path.join(os.tmpdir(), `ws-${tag}-${crypto.randomUUID()}${ext}`);
+  try {
+    fs.writeFileSync(tempPath, buf);
+    return await uploadFile(tempPath);
+  } finally {
+    try { fs.unlinkSync(tempPath); } catch {}
+  }
+}
+
 async function generateSeedDreamEdit(imageInputs, prompt, opts = {}) {
   if (!prompt?.trim()) throw new AppError('A prompt is required', 400, 'VALIDATION_ERROR');
   if (!Array.isArray(imageInputs) || imageInputs.length === 0) {
@@ -682,14 +725,7 @@ async function submitNanoBanana2Edit(imageInputs, prompt, opts = {}) {
     const cached = _cachedUpload(hash);
     if (cached) return cached;
     const pending = (async () => {
-      const jpegBuf = await sharp(Buffer.from(raw, 'base64')).jpeg({ quality: 95 }).toBuffer();
-      const tempPath = path.join(os.tmpdir(), `ws-nb2-${crypto.randomUUID()}.jpg`);
-      try {
-        fs.writeFileSync(tempPath, jpegBuf);
-        return await uploadFile(tempPath);
-      } finally {
-        try { fs.unlinkSync(tempPath); } catch {}
-      }
+      return await _uploadPrepared(raw, 'nb2');
     })();
     _rememberUpload(hash, pending);
     try {
@@ -812,14 +848,7 @@ async function generateSeedream5Edit(imageInputs, prompt, opts = {}) {
     // Cache the PROMISE, not the finished URL. With six combos starting together they all miss
     // at once and each re-encodes and re-uploads the same photo before the first one lands.
     const pending = (async () => {
-      const jpegBuf = await sharp(Buffer.from(raw, 'base64')).jpeg({ quality: 95 }).toBuffer();
-      const tempPath = path.join(os.tmpdir(), `ws-sd5-${crypto.randomUUID()}.jpg`);
-      try {
-        fs.writeFileSync(tempPath, jpegBuf);
-        return await uploadFile(tempPath);
-      } finally {
-        try { fs.unlinkSync(tempPath); } catch {}
-      }
+      return await _uploadPrepared(raw, 'sd5');
     })();
     _rememberUpload(hash, pending);
     try {
