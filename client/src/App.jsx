@@ -82,6 +82,7 @@ const EddyMaxNanoPage = lazy(async () => {
   return { default: () => <Page mode="maxNano" /> };
 });
 const VideoLibraryPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.VideoLibraryPage })));
+const PinterestLibraryPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.PinterestLibraryPage })));
 const EddyCharacterPage = lazy(() => import('./pages/EddyCharacterPage'));
 const NsfwGeneratePage = lazy(() => import('./pages/NsfwGeneratePage'));
 const ImageEditorPage = lazy(() => import('./pages/ImageEditorPage'));
@@ -272,6 +273,9 @@ const NAV_SECTIONS = [
       // Pinterest belongs here, not under Seedream: this section is where source material is
       // FETCHED from, and generating with it is a separate step further down (owner, 2026-08-10).
       { id: 'pinterestFeed', label: 'Pinterest' },
+      // Directly under the tab that fills it — the saved pins are the output of Pinterest,
+      // so looking for them anywhere else is a detour.
+      { id: 'pinterestLibrary', label: 'Pinterest Library' },
       { id: 'instagramFrames', label: 'Frame Grabber' },
       { id: 'frameLibrary', label: 'Frame Library' },
       { id: 'instagramReel', label: 'Instagram' },
@@ -542,6 +546,7 @@ const PAGES = {
   eddyBase: EddyBasePage,
   eddyBaseLibrary: EddyBaseLibraryPage,
   videoLibrary: VideoLibraryPage,
+  pinterestLibrary: PinterestLibraryPage,
   eddyCharacter: EddyCharacterPage,
   auto: AutoGeneratorPage,
   imageEditor: ImageEditorPage,

@@ -67,7 +67,7 @@ check('and it is not ALSO left in a dead section — one id, one entry',
 // The pages the owner actually works in, each one reachable.
 for (const id of ['eddy', 'eddyMaxNano', 'eddyMaxOutfit', 'photoMatchSeedream', 'seedanceVideo',
   'seedanceOmni', 'videoLibrary', 'videoGallery', 'sceneRecreateSeedream', 'poseRemixSeedream',
-  'seedreamEdit', 'outfitSwapSeedream', 'pinterestFeed']) {
+  'seedreamEdit', 'outfitSwapSeedream', 'pinterestFeed', 'pinterestLibrary']) {
   check(`reachable: ${id}`, reachable.has(id));
 }
 
@@ -91,6 +91,13 @@ const pageMap = pageMapStart > -1 ? app.slice(pageMapStart, app.indexOf('\n};', 
 const missing = [...reachable].filter((id) => !new RegExp(`\\b${id}:`).test(pageMap));
 check(`every reachable nav id maps to a component${missing.length ? ` — missing: ${missing.join(', ')}` : ''}`,
   missing.length === 0);
+
+// --- Pinterest Library sits under the tab that fills it ------------------------------------------
+// Saved pins are the OUTPUT of the Pinterest tab. Anywhere else is a detour, and the last time a
+// library ended up far from its source (Video Library vs Video Gallery) it cost a bug report.
+check('Pinterest Library is directly below Pinterest',
+  sections.indexOf("id: 'pinterestFeed'") < sections.indexOf("id: 'pinterestLibrary'")
+  && sections.indexOf("id: 'pinterestLibrary'") - sections.indexOf("id: 'pinterestFeed'") < 400);
 
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

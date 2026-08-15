@@ -219,6 +219,25 @@ export function EddyBaseLibraryPage() {
   );
 }
 
+/**
+ * Pinterest Library — pins you ticked on the Pinterest tab, kept.
+ *
+ * Same EddyCollection every other library uses, so folders, download, blur and "send to" all come
+ * for free. Rows land as { dataUrl, name }, the same shape Base Library uses.
+ */
+export function PinterestLibraryPage() {
+  return (
+    <div className="w-full space-y-4">
+      <EddyCollection
+        dbName="eddy-pinterest"
+        title="Pinterest Library"
+        subtitle="Pins you saved from the Pinterest tab. Download them, sort them into folders, or send them on to Photo Match."
+        promptLabel="pin"
+      />
+    </div>
+  );
+}
+
 export function EddyEnvironmentPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   return (

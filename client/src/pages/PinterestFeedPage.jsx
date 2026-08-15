@@ -15,6 +15,7 @@ import { createPortal } from 'react-dom';
 import { pinterestFeed } from '../services/api';
 import { createPageStore } from '../lib/pageStateStore';
 import { stashSourceHandoff } from '../lib/sourceHandoff';
+import { createEddyCollection } from '../lib/eddyCollectionStore';
 import { interleave, topSeeds } from '../lib/pinterestMix';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Spinner, Badge } from '../components/UI';
@@ -25,6 +26,15 @@ const store = createPageStore('pinterest-feed-v1');
 /** Where a selection can be sent. Every one of these listeners already exists — the Library uses
  *  the same events — so this is the established handoff rather than a new one. */
 const DESTINATIONS = [
+  /**
+   * A destination with a `collection` FILES the pins instead of handing them to a page.
+   *
+   * Everything above the send is identical either way — the pins are already downloaded, decoded
+   * and checked by the time a destination is consulted — so keeping them is one branch at the end
+   * rather than a second pipeline (owner, 2026-08-15: "each image from pinterest you select it send
+   * to like a pinterest library for download them and save").
+   */
+  { id: 'pinterestLibrary', label: 'Pinterest Library', collection: 'eddy-pinterest' },
   { id: 'photoMatchSeedream', label: 'Photo Match', event: 'kyros:use-as-photo-match-seedream-source' },
   { id: 'sceneRecreateSeedream', label: 'Scene Recreate', event: 'kyros:use-as-scene-recreate-seedream-source' },
   { id: 'poseRemixSeedream', label: 'Pose Remix', event: 'kyros:use-as-pose-remix-seedream-source' },
@@ -558,6 +568,39 @@ export default function PinterestFeedPage() {
      * listeners read, and getting it wrong was the other half of why nothing arrived.
      */
     const itemsPayload = images.map((im) => ({ dataUrl: im.dataUrl, name: im.name }));
+
+    /**
+     * FILE them, rather than hand them to a page.
+     *
+     * The rows are { dataUrl, name } — the same shape Base Library uses — so they are downloadable,
+     * folderable and sendable to any other collection the moment they land, with no new UI of their
+     * own beyond the page that renders them.
+     */
+    if (target.collection) {
+      const store = createEddyCollection(target.collection);
+      let filed = 0;
+      try {
+        const stored = await store.addItems(itemsPayload, null);
+        filed = Array.isArray(stored) ? stored.length : 0;
+      } catch { filed = 0; }
+      // addItems signals a storage failure by RETURNING AN EMPTY ARRAY rather than throwing, so a
+      // full disk would otherwise read as a clean send and the pins would be untickedered for good.
+      if (!filed) {
+        notify('Browser storage is full — nothing was filed, your picks are still selected', 'error');
+        return;
+      }
+      const keptIds = new Set(chosen.filter((p) => !failed.includes(p.id)).map((p) => p.id));
+      setSeen((cur) => new Set([...cur, ...chosen.filter((p) => keptIds.has(p.id)).map((p) => p.orig)]));
+      setPicked((cur) => cur.filter((p) => !keptIds.has(p.id)));
+      notify(
+        failed.length
+          ? `Saved ${filed} to Pinterest Library — ${failed.length} still selected, press Send again to retry`
+          : `Saved ${filed} to Pinterest Library`,
+        failed.length ? 'error' : 'success',
+      );
+      return;
+    }
+
     stashSourceHandoff(target.id, itemsPayload);
     // REPLACE or ADD. Replacing is the common case -- a new scene means a new set -- but appending
     // is what you want when building one batch out of several searches.
