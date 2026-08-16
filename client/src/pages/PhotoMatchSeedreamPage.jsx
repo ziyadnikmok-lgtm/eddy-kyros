@@ -1219,7 +1219,18 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     }
   }, [destStore, destLabel]);
 
-  const runOne = async (source, charRefs, ratio, prompt) => {
+  /**
+   * whoName: HER name, for THIS job — never read the page's shared `charName`.
+   *
+   * A multi-character batch sends the right reference images per job (`charRefs` already comes in
+   * as `item.who.refs`), so the PICTURE was always correct. But filing used the outer `charName`,
+   * which is `chars.find(c => c.id === characterIds[0])` — the FIRST character in the whole run,
+   * full stop. Every job in a Grace+Natalia batch filed under whichever of the two happened to be
+   * first, so the other one's results landed in the wrong woman's Library folder — visible on the
+   * running tile (which already used `who.name` for its label) and wrong only in the one place it
+   * actually mattered (owner, 2026-08-16: "i see other models in another model folder").
+   */
+  const runOne = async (source, charRefs, ratio, prompt, whoName) => {
     const jobId = source.id;
     const feedId = `photomatch-sd-${jobId}`;
     pushPending({ id: feedId, prompt: 'Photo Match (Seedream)', imageModel: 'Seedream 5.0 Pro Edit', aspectRatio: ratio, resolutionTier: resolution });
@@ -1240,6 +1251,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
        * destDb and the character folder ride along so that a run interrupted by the app closing is
        * filed into the same place it would have gone, rather than needing to be found by hand.
        */
+      const jobWho = (whoName || '').trim();
       let claimedJobId = null;
       const data = await withRateLimitRetry(() => queuedSeedreamEdit({
         feature: FEATURE,
@@ -1254,10 +1266,10 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         provider: 'wavespeed',
         // Her name travels with the generation so "Recover missing" can file a stranded Photo
         // Match picture into the right folder, exactly as it does for Eddy's.
-        tags: charName.trim() ? ['eddy', charName.trim()] : ['eddy'],
+        tags: jobWho ? ['eddy', jobWho] : ['eddy'],
         destDb: destDbRef.current,
-        destFolder: charName.trim() || 'Photo Match',
-        cardPrompt: `Photo Match - ${charName.trim() || 'no character'}`,
+        destFolder: jobWho || 'Photo Match',
+        cardPrompt: `Photo Match - ${jobWho || 'no character'}`,
         onJobId: (id) => { claimedJobId = id; _awaiting.add(id); },
       })).finally(() => { if (claimedJobId) _awaiting.delete(claimedJobId); });
 
@@ -1340,7 +1352,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
        * Shared with the resume-on-open and the retry, so a picture recovered after a page change is
        * filed identically to one watched all the way through.
        */
-      await filePicture(first, charName, prompt);
+      await filePicture(first, jobWho, prompt);
     } catch (err) {
       // A FILING miss is not a failed match: the picture exists, is billed, and is on the feed.
       // Marking the job failed would tell the owner to re-run something that already succeeded.
@@ -1546,7 +1558,8 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         const item = queue.shift();
         if (!item) return;
         await runOne({ ...item.src, id: `${item.src.id}::${item.who.id}::${runStamp}` },
-          item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length, item.src));
+          item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length, item.src),
+          item.who.name);
       }
     });
     await Promise.all(workers);

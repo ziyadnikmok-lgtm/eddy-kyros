@@ -170,7 +170,11 @@ check('filing is one shared function', pmPage.includes('const filePicture = useC
 // CHANGED 2026-08-16: the PROMPT travels with the picture now. The library row carried only the
 // label 'Photo Match - <her>', so the instruction that actually made the image — every chip, every
 // lock, the identity rules — was gone once the run ended and Copy had nothing to copy.
-check('the live run uses it, and passes the prompt it sent', pmPage.includes('await filePicture(first, charName, prompt);'));
+// Pinned `charName` — the page's single shared character, always `characterIds[0]`. Fixed
+// 2026-08-16: a multi-character batch generated correctly (charRefs was always per-job) but every
+// result filed under whichever character was first, because filing read that shared value instead
+// of the name that came with THIS job. `jobWho` is the per-job replacement.
+check('the live run uses it, and passes the prompt it sent', pmPage.includes('await filePicture(first, jobWho, prompt);'));
 check('the resume uses it', pmPage.includes("await filePicture(first, j.destFolder || '', j.cardPrompt || '');"));
 check('and no inline copy was left behind', !pmPage.includes("ensureFolder(who || 'Photo Match')"));
 

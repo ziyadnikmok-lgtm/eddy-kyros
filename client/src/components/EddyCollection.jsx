@@ -1439,6 +1439,31 @@ export default function EddyCollection({
   const markBroken = useCallback((id) => {
     setBrokenIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
   }, []);
+  /**
+   * RETRY BEFORE DECLARING AN IMAGE GONE — a single onError is not proof of that.
+   *
+   * A restart files a wave of rows and paints their tiles in the same instant the local server
+   * is still coming up; the img fetches raced the boot and every one of them 404'd for a picture
+   * that was sitting right there on disk the whole time. Six hundred and some tiles went straight
+   * to "Image not on this machine" — next to a "Remove missing" button that DELETES the row — over
+   * a startup race, not a missing picture (2026-08-16). That is exactly the shape this file's own
+   * CLAUDE.md warns about: unknown must never be read as "no".
+   *
+   * A ref, not state — a retry must not re-render the whole grid on every attempt the way bumping
+   * brokenIds would. Two retries with backoff; only the third failure is treated as real.
+   */
+  const retryCountsRef = useRef(new Map());
+  const handleImgError = useCallback((id, e) => {
+    const n = (retryCountsRef.current.get(id) || 0) + 1;
+    retryCountsRef.current.set(id, n);
+    if (n <= 2) {
+      const img = e.currentTarget;
+      const base = img.src.split('?_retry=')[0];
+      setTimeout(() => { img.src = `${base}?_retry=${n}`; }, 500 * n);
+      return;
+    }
+    markBroken(id);
+  }, [markBroken]);
   // Cleared on refresh so a fixed or re-added image is not stuck looking broken.
   useEffect(() => { setBrokenIds(new Set()); }, [items]);
 
@@ -3082,8 +3107,9 @@ export default function EddyCollection({
                      */
                     loading="lazy"
                     decoding="async"
-                    // A 404 on a gallery URL is otherwise indistinguishable from a very slow load.
-                    onError={() => markBroken(it.id)}
+                    // A 404 on a gallery URL is otherwise indistinguishable from a very slow load —
+                    // handleImgError retries twice before treating it as real.
+                    onError={(e) => handleImgError(it.id, e)}
                     // contain, not cover, on prompt cards: a pose is judged by the whole body,
                     // and h-28 + cover cropped every image down to a thin band of its middle.
                     style={withPrompt ? { maxHeight: imgH } : undefined}

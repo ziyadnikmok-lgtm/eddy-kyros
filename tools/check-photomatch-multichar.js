@@ -37,7 +37,9 @@ check('refs are resolved per character, not once',
 check('each character gets her OWN prompt', g.includes('const promptFor = (who, refCount, source) => {'));
 check('the prompt names THAT character', g.includes('characterName: who.name,'));
 check('and states HER ref count, not a shared one', /refCount,\s*\n\s*masterPrompt:/.test(g));
-check('the run sends her own refs', g.includes('item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length, item.src))'));
+// Pinned the exact trailing `))` of this call, so passing whoName as a fifth argument (2026-08-16,
+// the filing fix below) failed it while the refs it guards were still exactly right.
+check('the run sends her own refs', g.includes('item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length, item.src)'));
 check('masterPrompt is applied only where it is actually known',
   g.includes('masterPrompt: who.id === characterId ? charDetail?.masterPrompt : undefined,'));
 check('and that limit is written down, not silent', /a silently-missing master prompt would look/.test(g));
@@ -117,6 +119,38 @@ check('12 lanes over 30 jobs runs all 30', drain(Array.from({ length: 30 }, (_, 
 check('and spawns 12 workers, not 30', drain(Array.from({ length: 30 }, (_, i) => i), 12).count === 12);
 check('3 jobs spawn 3 workers, not 12', drain([1, 2, 3], 12).count === 3);
 check('no job is run twice', new Set(drain(Array.from({ length: 30 }, (_, i) => i), 12).seen).size === 30);
+
+// --- filing uses THIS job's character, never the page's shared one -----------------------------
+//
+// A multi-character batch always sent the right reference images per job — `charRefs` is
+// `item.who.refs` — so the PICTURE was never wrong. Filing was: it read the page's single
+// `charName` (chars.find by characterIds[0], the FIRST character in the whole run) instead of the
+// name carried alongside the refs it had just used. A Grace+Natalia batch generated correctly and
+// filed every result under whichever of the two happened to be first (owner, 2026-08-16: "i see
+// other models in another model folder"). The running tile already used `who.name` for its own
+// label — only the Library write disagreed with what was on screen.
+check('runOne takes the job\'s character name as its own parameter',
+  /const runOne = async \(source, charRefs, ratio, prompt, whoName\)/.test(g));
+check('the call site passes THIS item\'s name, not the page-level one',
+  /await runOne\(\{[\s\S]{0,200}item\.who\.name\)/.test(g));
+check('enqueue tags/destFolder/cardPrompt are built from the per-job name',
+  g.includes('const jobWho = (whoName || \'\').trim();')
+  && /tags: jobWho \? \['eddy', jobWho\] : \['eddy'\]/.test(g)
+  && g.includes("destFolder: jobWho || 'Photo Match'"));
+check('and the actual Library write uses it too — this is the line that was wrong',
+  g.includes('await filePicture(first, jobWho, prompt);'));
+// The bug would have looked exactly like this: two jobs sharing one outer name regardless of whose
+// refs each carried.
+{
+  const jobs = [{ id: 'g1', who: 'Grace' }, { id: 'n1', who: 'Natalia' }, { id: 'g2', who: 'Grace' }];
+  const outerCharName = jobs[0].who; // what the OLD code effectively used for every job
+  const filedBroken = jobs.map(() => outerCharName);
+  const filedFixed = jobs.map((j) => j.who);
+  check('the old shape really would cross-file (regression sanity check)',
+    filedBroken.some((f, i) => f !== jobs[i].who));
+  check('the fixed shape files each job under its own character',
+    filedFixed.every((f, i) => f === jobs[i].who));
+}
 
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
