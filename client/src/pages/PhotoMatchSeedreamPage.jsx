@@ -873,10 +873,42 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     (async () => {
       try {
         const [f, i] = await Promise.all([charStore.listFolders(), charStore.listItems()]);
-        const map = {};
-        await Promise.all(i.map(async (it) => { map[it.id] = it.url || await charStore.getImage(it.id); }));
         if (!alive) return;
-        setChars(f); setCharItems(i); setCharThumbs(map);
+        /**
+         * THE LIST FIRST, THE PICTURES AFTER — and only the ones actually on screen.
+         *
+         * This loaded EVERY image of EVERY character as a full data URL before rendering anything,
+         * and character references are multi-megabyte photos. Six characters with a few each is
+         * tens of megabytes decoded into base64 in the browser, on a page that shows one small
+         * tile per character (owner, 2026-08-16: the character section takes ages on his MacBook).
+         *
+         * The tiles need ONE picture each — her base photo, or her earliest. The rest are identity
+         * evidence, needed only when a run actually starts, and handleMatch already falls back to
+         * charStore.getImage for anything not in this map. So they are fetched at the moment they
+         * are used instead of at page open.
+         *
+         * Names and folders are set BEFORE the pictures are read, so the picker draws immediately
+         * and fills in, rather than showing nothing until the slowest image has decoded.
+         */
+        setChars(f); setCharItems(i);
+
+        const leadOf = (folderId) => {
+          const mine = i.filter((it) => it.folderId === folderId && it.role !== 'scene');
+          return mine.find((it) => it.role === 'base')
+            || [...mine].sort((x, y) => (x.createdAt || 0) - (y.createdAt || 0))[0];
+        };
+        // A pair character has no images of its own — its tile shows one of its members'.
+        const leads = f.map((folder) => {
+          const kids = f.filter((c) => (c.parentId || null) === folder.id);
+          return leadOf(kids.length ? kids[0].id : folder.id);
+        }).filter(Boolean);
+
+        const map = {};
+        await Promise.all(leads.map(async (it) => {
+          map[it.id] = it.url || await charStore.getImage(it.id);
+        }));
+        if (!alive) return;
+        setCharThumbs(map);
       } catch { /* an unreadable collection shows the empty state, not a broken page */ }
     })();
     return () => { alive = false; };

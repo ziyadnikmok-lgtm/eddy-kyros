@@ -136,5 +136,24 @@ check('one character still behaves exactly as before', g.includes("String(who?.n
 check('one folder per character, whatever the case',
   fsRead('client/src/lib/eddyCollectionStore.js').includes('Case-INSENSITIVE match'));
 
+// --- the character picker must not decode the whole collection to draw six tiles ----------------
+//
+// It loaded EVERY image of EVERY character as a full data URL before rendering anything, and
+// character references are multi-megabyte photos — tens of megabytes decoded into base64 in the
+// browser for a strip of small tiles (owner, 2026-08-16: the character section takes ages on a
+// MacBook).
+check('names and folders are set before any picture is read',
+  g.indexOf('setChars(f); setCharItems(i);') < g.indexOf('const leads = f.map('));
+check('only one picture per character is loaded', g.includes('const leads = f.map((folder) =>'));
+check('and it is the one the tile actually shows — her base, else her earliest',
+  g.includes("return mine.find((it) => it.role === 'base')"));
+// A pair character owns no images; its tile borrows a member's.
+check('a pair character falls back to a member for its tile', g.includes('kids.length ? kids[0].id : folder.id'));
+// The rest are identity evidence, needed only when a run starts — and the run already falls back
+// to the store for anything not preloaded, so nothing is lost by deferring them.
+check('the run still resolves every reference, preloaded or not',
+  g.includes('const full = charThumbs[r.id] || await charStore.getImage(r.id);'));
+check('a SCENE image is not picked as the tile either', g.includes("it.role !== 'scene'"));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
