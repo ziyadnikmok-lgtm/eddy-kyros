@@ -251,5 +251,33 @@ check('OFF still carries the looser line, so the toggle really is the difference
 check('the person is still rebuilt from scratch with exact recreate on', /REBUILD, DO NOT EDIT/.test(onParts));
 check('and the identity lock is still there', onParts.includes('FINAL — HIGHEST PRIORITY'));
 
+// --- the blur flag must describe THIS photo, not the switch --------------------------------------
+//
+// blurSource is 'try to blur'. The detector misses turned and partly-hidden faces — the amber
+// 'FACE - TAP' badge is exactly that — so runs with the switch on still ship sharp faces regularly.
+// Reading the switch announced a blur that was not there AND said nothing about the real, well-lit
+// face still in the frame, which is the one the model then kept (owner, 2026-08-16).
+check('the flag comes from the photo, not the toggle', src.includes('sourceFaceBlurred: !!source?.blurred,'));
+check('the old page-level read is gone', !src.includes('sourceFaceBlurred: blurSource,'));
+const unblurred = buildMatchInstruction({ ...BASE, sourceFaceBlurred: false });
+const blurred = buildMatchInstruction({ ...BASE, sourceFaceBlurred: true });
+check('an unblurred source is named as carrying a rival face', /belongs to a DIFFERENT woman/.test(unblurred));
+check('and it is not claimed to be blurred', !/deliberately blurred/.test(unblurred));
+check('a blurred source still gets the blur note', /deliberately blurred/.test(blurred));
+check('and is not also told there is a visible face', !/belongs to a DIFFERENT woman./.test(blurred.split('deliberately blurred')[1] || ''));
+// A faceless run says the face is out of shot entirely, so neither line applies.
+check('a faceless run gets neither', (() => {
+  const f = buildMatchInstruction({ ...BASE, faceless: true, sourceFaceBlurred: false });
+  return !/belongs to a DIFFERENT woman/.test(f) && !/deliberately blurred/.test(f);
+})());
+
+// --- her BODY, not only her face -------------------------------------------------------------------
+// The original failure this page was built around: a faceswap onto the stand-in's body.
+check('the identity list names the whole body, part by part',
+  /torso, waist, hips, legs, height and build/.test(unblurred));
+check("the stand-in's body shape is forbidden", /body shape/.test(unblurred));
+check('no blending of bodies, not just faces', /not her face and not her body/.test(unblurred));
+check('and the final lock says whole body', /face, hair, skin and whole body/.test(unblurred));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

@@ -11,7 +11,7 @@ import { consumeSourceHandoff } from '../lib/sourceHandoff';
 import { detectAspectRatio } from '../lib/detectAspectRatio';
 import { NSFW_PRESETS, nudeState, NUDE_LINE } from '../lib/nsfwPresets';
 import { createPageStore } from '../lib/pageStateStore';
-import { queuedSeedreamEdit, waitForQueuedJob } from '../lib/generationQueue';
+import { queuedSeedreamEdit, waitForQueuedJob, reconcileUnfiled } from '../lib/generationQueue';
 import { cn } from '../lib/utils';
 import { autoBlurFace } from '../lib/autoBlurFace';
 import { detectFacePico } from '../lib/detectFacePico';
@@ -255,6 +255,43 @@ function liteJob(j) {
  * ~40KB instead of the several megabytes a phone photo runs to. Failure is non-fatal: without it
  * the tile still shows the RESULT, which is the half that matters.
  */
+/**
+ * IDENTITY REFERENCES, SHRUNK FOR THE WIRE.
+ *
+ * A character reference straight out of the collection is a full-size PNG — measured at ~2 MB
+ * each here. Three of them is 6 MB of base64 going to the provider on EVERY image in a batch, and
+ * it is most of the wait: a measured 3-reference run took 31.5s, of which the render itself was
+ * about 8.
+ *
+ * 1024px on the long edge at high quality is far more detail than any of these models uses for a
+ * face — they downsample on arrival regardless — and it takes that 6 MB to roughly 0.6.
+ *
+ * DELIBERATELY NOT APPLIED TO THE SOURCE PHOTO. The references are evidence of WHO she is and are
+ * never reproduced pixel-for-pixel; the source is the thing Exact recreate copies, so its detail
+ * is the output's detail. Shrinking that would trade scene fidelity for upload time, which is the
+ * wrong trade on the one page whose job is reproducing a photograph.
+ */
+function shrinkForUpload(dataUrl, max = 1024, quality = 0.92) {
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.onload = () => {
+        // Already small enough: hand it back untouched rather than re-encoding it lossily.
+        if (Math.max(img.naturalWidth, img.naturalHeight) <= max) { resolve(dataUrl); return; }
+        const scale = max / Math.max(img.naturalWidth, img.naturalHeight);
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL('image/jpeg', quality));
+      };
+      // A reference that will not decode is sent as it came: slower, but never dropped.
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    } catch { resolve(dataUrl); }
+  });
+}
+
 function shrinkForStorage(dataUrl, max = 360) {
   return new Promise((resolve) => {
     try {
@@ -410,6 +447,15 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
   ];
 
   if (sourceFaceBlurred && !faceless) parts.push(`${src}'s face is deliberately blurred — do not reproduce the blur or invent a face from it; render ${pair ? 'each of their faces' : who + "'s face"} sharply from ${ownRefs}.`);
+  /**
+   * AN UNBLURRED SOURCE HAS A RIVAL FACE IN IT.
+   *
+   * Blurring is best-effort — the detector misses turned and partly-hidden faces — so a run with
+   * the switch on still ships sharp faces regularly. Those are the photos where identity fails,
+   * because the model has a complete, well-lit face right there and every reason to keep it.
+   * Naming it as the wrong woman's costs one sentence and speaks to the exact temptation.
+   */
+  if (!sourceFaceBlurred && !faceless) parts.push(`The face visible in ${src} belongs to a DIFFERENT woman. It is the one thing in that photograph you must NOT keep — not its shape, not its features, not a softened version of it.`);
   if (!exactRecreate && varyBackground) parts.push(`Shift the lighting and mood slightly — same place, a different moment.`);
   if (addGenericNudeLine) parts.push(NUDE_LINE);
   if (masterPrompt?.trim()) parts.push(`${who}: ${masterPrompt.trim()}`);
@@ -545,12 +591,13 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
   if (budget > 0) {
     const droppable = ['Photorealistic —', `${src}'s face is deliberately blurred`, `${who}: `, 'CAMERA:',
       ...(pair ? ['EYES TO CAMERA:', 'MAKEUP:'] : []),
-      // HER BUILD goes last, and only in the one combination that still does not fit: a pair,
-      // exact recreate, her outfit, eyes to camera, a blurred source AND a 200-character master
-      // prompt. It loses to the FINAL lock because a build line without an identity lock is a
-      // correctly-proportioned stranger, while an identity lock without a build line is her at
-      // whatever size her references show — which is the default behaviour anyway.
-      ...(buildText ? [buildText.slice(0, 24)] : [])];
+      // HER BUILD, then the rival-face warning — in that order, because they are not worth the
+      // same. Asked to keep only one, 'do not copy the stand-in's face' beats 'she has a very
+      // large bust': a build line without identity is a correctly-proportioned stranger, while
+      // an identity that holds at whatever size her references show is the default behaviour
+      // anyway. Both survive every ordinary run; only a pair with every flag on reaches here.
+      ...(buildText ? [buildText.slice(0, 24)] : []),
+      'The face visible in'];
     for (const marker of droppable) {
       if (joined().length <= budget) break;
       const i = parts.findIndex((t) => typeof t === 'string' && t.startsWith(marker));
@@ -1068,14 +1115,28 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
       const faceFound = !!(await detectFacePico(dataUrl, { aggressive: true }).catch(() => null));
       let blurred = false;
       if (blurSourceRef.current) {
-        const out = await autoBlurFace(dataUrl);
+        /**
+         * TWO PASSES, AUTOMATICALLY — the second is what 'Blur all faces' was doing by hand.
+         *
+         * The first pass uses pico's confident threshold, which misses turned, tilted and partly
+         * hidden faces. Those arrived with the amber 'FACE - TAP' badge and stayed sharp until
+         * someone noticed and pressed the button — and a sharp rival face in the source is the
+         * single most reliable way to lose the character (owner, 2026-08-16: 'i want it to be
+         * automatic').
+         *
+         * The aggressive pass is the SAME code the button already ran, so this is not a new
+         * detector with new failure modes — it is the existing retry, taken automatically. It
+         * costs a second local scan and no network at all.
+         */
+        let out = await autoBlurFace(dataUrl);
+        if (!out.blurred) out = await autoBlurFace(dataUrl, { aggressive: true });
         dataUrl = out.dataUrl;
         blurred = out.blurred;
         if (!out.blurred) missed += 1;
       }
       return { id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, dataUrl, blurred, backView: !faceFound };
     }));
-    if (missed) notify(`${missed} photo(s): no face found to blur — use "Blur all" or click a photo to blur by hand`, 'error');
+    if (missed) notify(`${missed} photo(s): no face found even on the second pass — click a photo to blur by hand`, 'error');
     setSources((prev) => [...prev, ...added]);
   }, [sources.length, notify]);
 
@@ -1220,17 +1281,21 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
   }, [destStore, destLabel]);
 
   /**
-   * whoName: HER name, for THIS job — never read the page's shared `charName`.
+   * WHOSE PICTURE THIS IS — passed in, not read off the page's shared `charName`.
    *
-   * A multi-character batch sends the right reference images per job (`charRefs` already comes in
-   * as `item.who.refs`), so the PICTURE was always correct. But filing used the outer `charName`,
-   * which is `chars.find(c => c.id === characterIds[0])` — the FIRST character in the whole run,
-   * full stop. Every job in a Grace+Natalia batch filed under whichever of the two happened to be
-   * first, so the other one's results landed in the wrong woman's Library folder — visible on the
-   * running tile (which already used `who.name` for its label) and wrong only in the one place it
-   * actually mattered (owner, 2026-08-16: "i see other models in another model folder").
+   * A multi-character batch always sent the right reference images per job (`charRefs` is
+   * `item.who.refs`), so the PICTURE was always correct. But filing read the component-level
+   * `charName` — `chars.find(c => c.id === characterIds[0])`, the HEAD of the ticked list — so
+   * every job in a run filed under whichever character happened to be first, regardless of whose
+   * refs it actually used. A Grace+Natalia batch generated correctly and filed everything under
+   * one of the two; a Grace+Mia+Chloe batch tagged all three 'Grace'. Visible on the running tile
+   * (which already used `who.name` for its own label) and wrong only in the one place it actually
+   * mattered — the Library write (owner, 2026-08-16: "i see other models in another model folder").
+   *
+   * Falls back to charName so a single-character run behaves exactly as before.
    */
-  const runOne = async (source, charRefs, ratio, prompt, whoName) => {
+  const runOne = async (source, charRefs, ratio, prompt, who) => {
+    const whoName = String(who?.name || charName || '').trim();
     const jobId = source.id;
     const feedId = `photomatch-sd-${jobId}`;
     pushPending({ id: feedId, prompt: 'Photo Match (Seedream)', imageModel: 'Seedream 5.0 Pro Edit', aspectRatio: ratio, resolutionTier: resolution });
@@ -1251,7 +1316,6 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
        * destDb and the character folder ride along so that a run interrupted by the app closing is
        * filed into the same place it would have gone, rather than needing to be found by hand.
        */
-      const jobWho = (whoName || '').trim();
       let claimedJobId = null;
       const data = await withRateLimitRetry(() => queuedSeedreamEdit({
         feature: FEATURE,
@@ -1266,10 +1330,10 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         provider: 'wavespeed',
         // Her name travels with the generation so "Recover missing" can file a stranded Photo
         // Match picture into the right folder, exactly as it does for Eddy's.
-        tags: jobWho ? ['eddy', jobWho] : ['eddy'],
+        tags: whoName ? ['eddy', whoName] : ['eddy'],
         destDb: destDbRef.current,
-        destFolder: jobWho || 'Photo Match',
-        cardPrompt: `Photo Match - ${jobWho || 'no character'}`,
+        destFolder: whoName || 'Photo Match',
+        cardPrompt: `Photo Match - ${whoName || 'no character'}`,
         onJobId: (id) => { claimedJobId = id; _awaiting.add(id); },
       })).finally(() => { if (claimedJobId) _awaiting.delete(claimedJobId); });
 
@@ -1352,7 +1416,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
        * Shared with the resume-on-open and the retry, so a picture recovered after a page change is
        * filed identically to one watched all the way through.
        */
-      await filePicture(first, jobWho, prompt);
+      await filePicture(first, whoName, prompt);
     } catch (err) {
       // A FILING miss is not a failed match: the picture exists, is billed, and is on the feed.
       // Marking the job failed would tell the owner to re-run something that already succeeded.
@@ -1395,7 +1459,10 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     for (const cid of characterIds) {
       const refs = [];
       for (const r of refsForCharacter(cid).slice(0, MAX_CHAR_IMAGES)) {
-        const dataUrl = charThumbs[r.id] || await charStore.getImage(r.id);
+        const full = charThumbs[r.id] || await charStore.getImage(r.id);
+        // Shrunk before it goes anywhere — see shrinkForUpload. This is the single biggest lever
+        // on how long a run takes, and it costs nothing an identity reference needs.
+        const dataUrl = full ? await shrinkForUpload(full) : null;
         const img = dataUrl ? parseDataUrl(dataUrl) : null;
         if (img) refs.push(img);
       }
@@ -1455,7 +1522,11 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         buildText: (BUILD_OPTIONS.find((b) => b.value === build) || {})[backView ? 'backText' : 'text'] || '',
         wantsNude,
         addGenericNudeLine,
-        sourceFaceBlurred: blurSource,
+        // The flag is whether THIS photo's face actually got blurred, not whether the switch is
+        // on. The detector misses faces — the amber 'FACE - TAP' badge is exactly that case — and
+        // reading the switch announced a blur that was not there while saying nothing about the
+        // real face still in the frame.
+        sourceFaceBlurred: !!source?.blurred,
         // A back shot IS a faceless shot — there is no face to match and inventing one is the
         // failure. backView adds what faceless alone does not say: which way she is facing, and
         // that she stays that way.
@@ -1558,8 +1629,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         const item = queue.shift();
         if (!item) return;
         await runOne({ ...item.src, id: `${item.src.id}::${item.who.id}::${runStamp}` },
-          item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length, item.src),
-          item.who.name);
+          item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length, item.src), item.who);
       }
     });
     await Promise.all(workers);
@@ -1752,6 +1822,43 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
    * been rendered and billed, so the automatic path refuses to make that call and a person looking
    * at a missing picture can.
    */
+  /**
+   * PULL BACK WHAT FINISHED WHILE THE APP WAS AWAY.
+   *
+   * A render that completes while Kyros is closed, updating or reloading reaches `done` on the
+   * server with a gallery id, and waits there UNFILED — the libraries are IndexedDB in this
+   * browser, so only the client can put it in one. reconcileUnfiled files exactly those, and has
+   * run at app boot for a while, which is no help at all if the app is already open when you
+   * notice something missing (owner, 2026-08-16: 'u updated app and i lost grace one').
+   *
+   * Nothing is ever lost to this — the picture is in the gallery and paid for either way. What was
+   * missing was a way to ask for it without restarting.
+   */
+  const [recovering, setRecovering] = useState(false);
+  const [unfiledCount, setUnfiledCount] = useState(0);
+  const refreshUnfiled = useCallback(async () => {
+    try {
+      const r = await jobsApi.list();
+      const list = r?.data ?? r;
+      setUnfiledCount((list?.unfiled || []).length);
+    } catch { /* signed out or offline — the button simply does not appear */ }
+  }, []);
+  useEffect(() => { if (jobsRestored) refreshUnfiled(); }, [jobsRestored, refreshUnfiled]);
+  const recoverLost = useCallback(async () => {
+    setRecovering(true);
+    try {
+      // Files EVERY unfiled job, whichever page made it, each into the destination its own run
+      // chose — the same call the app makes at boot.
+      const { filed, failed } = await reconcileUnfiled();
+      if (filed) notify(`Recovered ${filed} picture${filed === 1 ? '' : 's'} into ${destLabel} ✨`, 'success');
+      else if (failed) notify(`${failed} could not be filed — browser storage may be full`, 'error');
+      else notify('Nothing was waiting — everything already landed', 'info');
+      await refreshUnfiled();
+    } catch (err) {
+      notify(err?.message || 'Could not recover', 'error');
+    } finally { setRecovering(false); }
+  }, [notify, destLabel, refreshUnfiled]);
+
   const failedJobs = jobs.filter((j) => j.status === 'failed' && j.jobId);
   const retryFailed = useCallback(async () => {
     const targets = jobs.filter((j) => j.status === 'failed' && j.jobId);
@@ -2347,9 +2454,10 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
           {isNB2 && (
             <p className="mb-2 text-[0.625rem] leading-relaxed text-amber-300/80">
               Fails over to <span className="font-semibold">Seedream 5.0 Pro (WaveSpeed)</span> after {NB2_ATTEMPTS} failed
-              tries — so a picture the bypass refuses still gets made. Those come back marked
-              <span className="font-semibold"> (fallback)</span> and are billed at Seedream&rsquo;s rate
-              (<span className="font-mono">${seedreamCost(resolution, imagesPerJob).toFixed(3)}</span>), not this one.
+              tries — so a picture the bypass refuses still gets made. Those render at
+              <span className="font-semibold">2K</span> whatever is set above, come back marked
+              <span className="font-semibold"> (fallback)</span>, and are billed at Seedream&rsquo;s 2K rate
+              (<span className="font-mono">${seedreamCost('2K', imagesPerJob).toFixed(3)}</span>), not this one.
             </p>
           )}
           <p className="text-[0.625rem] text-zinc-600">
@@ -2446,6 +2554,13 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
                 {/* The server has had a retry endpoint since the queue was built; the page simply
                     never offered it, so recovering one failed picture meant re-running the whole
                     batch. Only shown when there is something to retry. */}
+                {unfiledCount > 0 && (
+                  <button type="button" onClick={recoverLost} disabled={recovering}
+                    title="Pictures that finished while the app was closed or reloading. They are in the gallery already — this puts them into your library."
+                    className="rounded-full border border-emerald-500/50 bg-emerald-500/10 px-2.5 py-0.5 text-[0.625rem] font-semibold text-emerald-300 hover:border-emerald-400 cursor-pointer disabled:opacity-50">
+                    {recovering ? 'Recovering…' : `Recover ${unfiledCount} lost`}
+                  </button>
+                )}
                 {failedJobs.length > 0 && (
                   <button type="button" onClick={retryFailed}
                     className="rounded-full border border-red-500/50 bg-red-500/10 px-2.5 py-0.5 text-[0.625rem] font-semibold text-red-300 hover:border-red-400 cursor-pointer">

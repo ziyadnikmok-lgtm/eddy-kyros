@@ -12,6 +12,8 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const g = fs.readFileSync(path.join(ROOT, 'client/src/pages/PhotoMatchSeedreamPage.jsx'), 'utf8').replace(/\r\n/g, '\n');
 
+// This suite reads the page straight into `g`; the folder-case assertion below needs a second file.
+const fsRead = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
 let pass = 0, fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };
 
@@ -37,9 +39,7 @@ check('refs are resolved per character, not once',
 check('each character gets her OWN prompt', g.includes('const promptFor = (who, refCount, source) => {'));
 check('the prompt names THAT character', g.includes('characterName: who.name,'));
 check('and states HER ref count, not a shared one', /refCount,\s*\n\s*masterPrompt:/.test(g));
-// Pinned the exact trailing `))` of this call, so passing whoName as a fifth argument (2026-08-16,
-// the filing fix below) failed it while the refs it guards were still exactly right.
-check('the run sends her own refs', g.includes('item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length, item.src)'));
+check('the run sends her own refs', g.includes('item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length, item.src), item.who)'));
 check('masterPrompt is applied only where it is actually known',
   g.includes('masterPrompt: who.id === characterId ? charDetail?.masterPrompt : undefined,'));
 check('and that limit is written down, not silent', /a silently-missing master prompt would look/.test(g));
@@ -120,25 +120,23 @@ check('and spawns 12 workers, not 30', drain(Array.from({ length: 30 }, (_, i) =
 check('3 jobs spawn 3 workers, not 12', drain([1, 2, 3], 12).count === 3);
 check('no job is run twice', new Set(drain(Array.from({ length: 30 }, (_, i) => i), 12).seen).size === 30);
 
-// --- filing uses THIS job's character, never the page's shared one -----------------------------
+// --- each picture is filed under ITS character, not the first one ticked ---------------------------
 //
-// A multi-character batch always sent the right reference images per job — `charRefs` is
-// `item.who.refs` — so the PICTURE was never wrong. Filing was: it read the page's single
-// `charName` (chars.find by characterIds[0], the FIRST character in the whole run) instead of the
-// name carried alongside the refs it had just used. A Grace+Natalia batch generated correctly and
-// filed every result under whichever of the two happened to be first (owner, 2026-08-16: "i see
-// other models in another model folder"). The running tile already used `who.name` for its own
-// label — only the Library write disagreed with what was on screen.
-check('runOne takes the job\'s character name as its own parameter',
-  /const runOne = async \(source, charRefs, ratio, prompt, whoName\)/.test(g));
-check('the call site passes THIS item\'s name, not the page-level one',
-  /await runOne\(\{[\s\S]{0,200}item\.who\.name\)/.test(g));
-check('enqueue tags/destFolder/cardPrompt are built from the per-job name',
-  g.includes('const jobWho = (whoName || \'\').trim();')
-  && /tags: jobWho \? \['eddy', jobWho\] : \['eddy'\]/.test(g)
-  && g.includes("destFolder: jobWho || 'Photo Match'"));
-check('and the actual Library write uses it too — this is the line that was wrong',
-  g.includes('await filePicture(first, jobWho, prompt);'));
+// runOne is called once per SOURCE x CHARACTER but read the component-level charName, which is the
+// HEAD of the ticked list. A run with Grace, Mia and Chloe tagged every picture 'Grace' and filed
+// all three into Grace's folder — two women's work under a third woman's name, findable only by eye.
+// Independently found and fixed twice the same day (owner, 2026-08-16: "i see other models in
+// another model folder"); this is the merged version, reconciled rather than picking a side.
+check('runOne is told whose picture it is', g.includes('const runOne = async (source, charRefs, ratio, prompt, who)'));
+check('and the call site passes her', g.includes('promptFor(item.who, item.who.refs.length, item.src), item.who);'));
+check('the tag is hers', g.includes("tags: whoName ? ['eddy', whoName] : ['eddy'],"));
+check('the destination folder is hers', g.includes("destFolder: whoName || 'Photo Match',"));
+check('and so is the row it files', g.includes('await filePicture(first, whoName, prompt);'));
+// A single-character run must be unchanged: whoName falls back to charName.
+check('one character still behaves exactly as before', g.includes("String(who?.name || charName || '').trim()"));
+// The folder itself is matched case-insensitively now, so recovery cannot make a shadow folder.
+check('one folder per character, whatever the case',
+  fsRead('client/src/lib/eddyCollectionStore.js').includes('Case-INSENSITIVE match'));
 // The bug would have looked exactly like this: two jobs sharing one outer name regardless of whose
 // refs each carried.
 {

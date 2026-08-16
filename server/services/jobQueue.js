@@ -221,7 +221,7 @@ function requeueUnsent(id, { refundAttempt = false } = {}) {
  * The tag rides along so a picture that came from a different model than the one on the button is
  * never silent about it.
  */
-function switchEngine(id, model, { tag = null } = {}) {
+function switchEngine(id, model, { tag = null, patch = null } = {}) {
   const row = db.prepare('SELECT task_id, payload, tags FROM generation_jobs WHERE id = ?').get(id);
   if (!row) return false;
   if (row.task_id) return false;
@@ -229,6 +229,10 @@ function switchEngine(id, model, { tag = null } = {}) {
   let payload = {};
   try { payload = JSON.parse(row.payload) || {}; } catch { return false; }
   payload.model = model;
+  // Anything else the new engine needs — the fallback raises the resolution, because once you are
+  // paying Seedream's rate the difference between its 1K and its 2K is small and the picture is
+  // the point (owner, 2026-08-16).
+  if (patch && typeof patch === 'object') Object.assign(payload, patch);
 
   let tags = [];
   try { tags = row.tags ? JSON.parse(row.tags) : []; } catch { tags = []; }

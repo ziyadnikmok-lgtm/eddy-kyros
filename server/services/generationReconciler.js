@@ -302,6 +302,15 @@ function isTerminalForFallback(err) {
 const rateLimitHits = new Map();
 const NB2_RATE_LIMIT_TOLERANCE = 5;
 
+/**
+ * A FALLBACK ALWAYS RENDERS AT 2K.
+ *
+ * The job is already going to be billed at Seedream's rate, and the gap between its 1K and its 2K
+ * is a few cents — while the gap in the picture is not. A fallback is also the run you were least
+ * likely to get at all, so it is worth having at full size (owner, 2026-08-16).
+ */
+const FALLBACK_PATCH = { resolution: '2K' };
+
 /** A refusal that means "try again later", not "this job is bad". */
 function isRateLimit(err) {
   return err?.status === 429
@@ -439,7 +448,7 @@ async function submitOne() {
       if (engine === 'nanobypass') {
         const hits = (rateLimitHits.get(job.id) || 0) + 1;
         rateLimitHits.set(job.id, hits);
-        if (hits >= NB2_RATE_LIMIT_TOLERANCE && jobQueue.switchEngine(job.id, 'seedream5', { tag: 'fallback' })) {
+        if (hits >= NB2_RATE_LIMIT_TOLERANCE && jobQueue.switchEngine(job.id, 'seedream5', { tag: 'fallback', patch: FALLBACK_PATCH })) {
           rateLimitHits.delete(job.id);
           log.warn('generation_nb2_fallback_rate_limited', { jobId: job.id, hits });
           return true;
@@ -474,7 +483,7 @@ async function submitOne() {
      * engineOf reads that, so the job cannot bounce back to the bypass and loop.
      */
     if (engine === 'nanobypass' && job.attempts >= NB2_ATTEMPTS && !isTerminalForFallback(err)) {
-      if (jobQueue.switchEngine(job.id, 'seedream5', { tag: 'fallback' })) {
+      if (jobQueue.switchEngine(job.id, 'seedream5', { tag: 'fallback', patch: FALLBACK_PATCH })) {
         log.warn('generation_nb2_fallback', { jobId: job.id, attempts: job.attempts, error: err.message });
         return true;
       }
