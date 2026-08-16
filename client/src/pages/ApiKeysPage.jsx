@@ -231,9 +231,20 @@ export default function ApiKeysPage() {
   const handleAdd = () => run(async () => {
     if (!apiKey.trim()) { notify('Please paste your Gemini API key', 'error'); return; }
     const autoName = keyList.length === 0 ? 'Gemini Key' : `Gemini Key ${keyList.length + 1}`;
-    await keysApi.add(autoName, apiKey.trim());
+    const added = await keysApi.add(autoName, apiKey.trim());
     setApiKey('');
-    notify('Key added', 'success');
+    /**
+     * The key IS saved either way — this says whether Google confirmed it.
+     *
+     * Adding a key verifies it against Google first, and that call used to be able to fail on the
+     * network rather than on the key: behind a VPN or a dropped connection the save was refused
+     * outright with a 500. It now stores the key and says it went in unverified, so the difference
+     * between "Google refused this key" and "we could not ask Google" is visible rather than
+     * flattened into one failure.
+     */
+    const warning = (added?.data ?? added)?.warning;
+    if (warning) notify(warning, 'error');
+    else notify('Key added', 'success');
     await load();
   });
 

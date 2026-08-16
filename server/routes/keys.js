@@ -5,6 +5,7 @@ const geminiService = require('../services/geminiService');
 const { AppError } = require('../middleware/errorHandler');
 const { sharedHttpsAgent } = require('../utils/httpAgent');
 const { requireAdmin } = require('../middleware/requireAuth');
+const log = require('../utils/logger');
 
 const router = express.Router();
 const HEALTH_TIMEOUT_MS = Number.parseInt(process.env.KEY_HEALTH_TIMEOUT_MS, 10) || 12000;
@@ -26,13 +27,36 @@ function sanitizeErrorMessage(err) {
 
 async function validateGeminiApiKey(apiKey) {
   const key = String(apiKey || '').trim();
-  const response = await withTimeout(
-    fetch('https://generativelanguage.googleapis.com/v1beta/models', {
-      headers: { 'x-goog-api-key': key },
-    }),
-    HEALTH_TIMEOUT_MS,
-    'Gemini API key validation'
-  );
+  let response;
+  try {
+    response = await withTimeout(
+      fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+        headers: { 'x-goog-api-key': key },
+      }),
+      HEALTH_TIMEOUT_MS,
+      'Gemini API key validation'
+    );
+  } catch (err) {
+    /**
+     * WE COULD NOT REACH GOOGLE — which says nothing about the key.
+     *
+     * fetch() throws a bare `TypeError: fetch failed` for a dropped connection, a DNS miss, a VPN
+     * or proxy in the way, or a TLS problem. Unhandled, that reached the error handler as a 500
+     * TYPE_ERROR and the key was never saved: a valid key, refused, with a message naming neither
+     * the cause nor anything to do about it (owner, 2026-08-16 — same key that had already
+     * generated images from another machine an hour earlier).
+     *
+     * Marked rather than rethrown as a refusal, because the caller has to tell these apart: Google
+     * ANSWERING "this key is invalid" is proof, and Google being unreachable is not.
+     */
+    const unreachable = new AppError(
+      'Could not reach Google to verify the key — check your connection, VPN or proxy.',
+      503,
+      'GEMINI_UNREACHABLE',
+    );
+    unreachable.cause = err?.message;
+    throw unreachable;
+  }
   if (response.ok) return;
 
   let message = 'Gemini API key is invalid. Copy the full key from Google AI Studio.';
@@ -244,11 +268,31 @@ router.post('/', async (req, res, next) => {
       throw new AppError('"apiKey" must be 200 characters or fewer', 400, 'VALIDATION_ERROR');
     }
 
-    await validateGeminiApiKey(apiKey);
+    /**
+     * A REFUSAL BLOCKS THE SAVE. BEING OFFLINE DOES NOT.
+     *
+     * Verifying first is right — it catches a truncated paste before it becomes a batch of failed
+     * renders. But it made the save depend on the network, so a laptop behind a VPN could not add a
+     * key it already owned, and the only feedback was a 500.
+     *
+     * Google saying "invalid" is evidence and still rejects. Google being unreachable is not
+     * evidence of anything, so the key is stored and the answer says plainly it went in unverified
+     * — which the next generation will confirm or deny anyway.
+     */
+    let verified = true;
+    let warning = null;
+    try {
+      await validateGeminiApiKey(apiKey);
+    } catch (err) {
+      if (err?.code !== 'GEMINI_UNREACHABLE') throw err;
+      verified = false;
+      warning = `${err.message} The key was saved without being verified.`;
+      log.warn('gemini_key_unverified', { reason: err.cause || err.message });
+    }
 
     const result = apiKeyManager.addKey(name, apiKey);
     invalidateHealthCache();
-    res.status(201).json({ success: true, data: result });
+    res.status(201).json({ success: true, data: { ...result, verified, warning } });
   } catch (err) {
     next(err);
   }
