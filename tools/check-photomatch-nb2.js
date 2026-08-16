@@ -323,5 +323,21 @@ check('and checked before the backoff and the fallback',
 check("the job fails with the provider's own wording, which names the top-up",
   rec.includes("jobQueue.markFailed(job.id, err.message || 'Balance too low"));
 
+// --- a configuration problem must not look like a broken fallback ----------------------------------
+//
+// getApiKey() throws NO_WAVESPEED_KEY with a message saying where to add one — and no list in the
+// queue knew that code, so the job was requeued and retried eight times before failing as 'Gave up
+// after 8 attempts'. From outside that is indistinguishable from the fallback being broken: the
+// picture never arrives and nothing names a key (owner, 2026-08-16).
+check('configuration failures are terminal', rec.includes('const TERMINAL_SUBMIT_CODES = new Set(['));
+check('including a missing WaveSpeed key', rec.includes("'NO_WAVESPEED_KEY'"));
+check('a rejected key, and a spent budget', rec.includes("'INVALID_API_KEY'") && rec.includes("'BUDGET_EXCEEDED'"));
+check("the job fails with the provider's own message",
+  rec.includes('jobQueue.markFailed(job.id, err.message || `Cannot run this job'));
+// Checked alongside the credit case and before the retry logic: eight identical attempts prove
+// nothing, and the message they end on names neither the cause nor the fix.
+check('and it is checked before the backoff and the fallback',
+  rec.indexOf('TERMINAL_SUBMIT_CODES.has(err?.code)') < rec.indexOf('if (isRateLimit(err)) {'));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

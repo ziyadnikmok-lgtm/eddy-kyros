@@ -43,3 +43,18 @@ source, carried over from her references, or invented. An absolute is also far h
 model out of than a comparison between two photographs.
 
 Nothing else changed.
+
+# And again on 2026-08-16 (third time) — the skin instruction
+
+The photoreal line was mostly a list of things NOT to do:
+
+> Photorealistic — real pores, hair strands, fabric, slight asymmetry; no plastic or CGI look.
+
+A negative leaves the model to pick what to do instead, and what it picks is the smooth,
+evenly-lit, retouched look that reads as AI at a glance. It now names positives — pore texture,
+stray hairs, uneven specular (shiny where oily, matte elsewhere), blemishes kept rather than
+retouched — and 2K is the default resolution.
+
+Kept under 300 characters on purpose. It is still the FIRST paragraph dropped at the cap, because
+it improves a picture that is already of the right woman while the identity lock decides whether
+she is. A 640-character first attempt was dropped on every single run, which is worse than useless.

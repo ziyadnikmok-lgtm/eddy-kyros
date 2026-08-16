@@ -537,7 +537,23 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
 
   parts.push(LIGHTING_LINE);
 
-  parts.push(`Photorealistic — real pores, hair strands, fabric, slight asymmetry; no plastic or CGI look.`);
+  /**
+   * WHAT A REAL PHOTOGRAPH OF SKIN LOOKS LIKE, named rather than gestured at.
+   *
+   * This was 'Photorealistic — real pores, hair strands, fabric, slight asymmetry; no plastic or
+   * CGI look', which is mostly a list of things NOT to do. A negative leaves the model to choose
+   * what to do instead, and what it chooses is the smooth, evenly-lit, retouched look that reads
+   * as AI at a glance (owner, 2026-08-16: 'scale up the quality of skin and image').
+   *
+   * So it now names the things a camera actually records — pore texture that varies by area,
+   * fine hairs, the shine of real oil rather than an even sheen, and the small asymmetries a
+   * retoucher would remove. Those are positive targets, and they are what separates a photograph
+   * from a render.
+   *
+   * Still the FIRST thing dropped at the length cap: it improves a picture that is already of the
+   * right woman, and the identity lock decides whether she is. Ordinary runs never reach that.
+   */
+  parts.push(`SKIN AND DETAIL: real pore texture, stray hairs, uneven specular — shiny where oily, matte elsewhere, never one even sheen. Keep freckles, moles and uneven tone. Sharp micro-contrast; no smoothing, no wax skin, no airbrush.`);
 
   /**
    * HER BUILD, immediately before the identity lock.
@@ -582,7 +598,7 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
    * Optional paragraphs come out WHOLE instead, cheapest first, until it fits. The caller's slice
    * stays as a backstop, but everything load-bearing has already been protected.
    *
-   * Droppable, in order: photoreal boilerplate, the blur note, the master prompt, the camera
+   * Droppable, in order: the skin/detail paragraph, the blur note, the master prompt, the camera
    * paragraph. Never droppable: who is who, REBUILD, the two lists, MAKEUP, OUTFIT, FORBIDDEN,
    * NO BLENDING, EYES TO CAMERA, the lighting line, and the FINAL lock.
    *
@@ -601,7 +617,7 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
   const SEP = '\n\n';
   const joined = () => parts.join(SEP);
   if (budget > 0) {
-    const droppable = ['Photorealistic —', `${src}'s face is deliberately blurred`, `${who}: `, 'CAMERA:',
+    const droppable = ['SKIN AND DETAIL', `${src}'s face is deliberately blurred`, `${who}: `, 'CAMERA:',
       ...(pair ? ['EYES TO CAMERA:', 'MAKEUP:'] : []),
       // HER BUILD, then the rival-face warning — in that order, because they are not worth the
       // same. Asked to keep only one, 'do not copy the stand-in's face' beats 'she has a very
@@ -731,7 +747,7 @@ function parseDataUrl(dataUrl) {
  */
 const _awaiting = new Set();
 
-const _cache = { extra: '', aspectRatio: 'auto', resolution: '1K', build: 'verylarge', exactRecreate: true, varyBackground: false, nsfw: false, blurSource: true, faceless: false };
+const _cache = { extra: '', aspectRatio: 'auto', resolution: '2K', build: 'verylarge', exactRecreate: true, varyBackground: false, nsfw: false, blurSource: true, faceless: false };
 // Images are too big for _cache/localStorage — IndexedDB so they survive a reload.
 /**
  * Retry a generation that came back rate-limited.

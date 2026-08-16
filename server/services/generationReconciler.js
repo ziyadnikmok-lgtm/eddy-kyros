@@ -330,6 +330,26 @@ function isOutOfCredit(err) {
   return /insufficients+credit|out of credits|top up|balance too low|billing/i.test(err?.message || '');
 }
 
+/**
+ * CONFIGURATION PROBLEMS, which every retry reproduces exactly.
+ *
+ * A missing WaveSpeed key throws NO_WAVESPEED_KEY with a message that says where to add one —
+ * and none of the queue's lists knew that code, so the job was requeued and retried eight times
+ * before failing as 'Gave up after 8 attempts'. From outside that is indistinguishable from the
+ * fallback being broken: the picture never arrives and nothing names a key (owner, 2026-08-16:
+ * 'the wavespeed fall back is not working').
+ *
+ * These are the codes where the SECOND attempt cannot differ from the first. Ported from the
+ * list EddyGeneratePage has carried for months, plus the key-store's own throws — the queue had
+ * simply never been given it.
+ */
+const TERMINAL_SUBMIT_CODES = new Set([
+  'NO_WAVESPEED_KEY', 'WAVESPEED_KEY_REQUIRED', 'INVALID_API_KEY', 'INVALID_MODEL',
+  'VALIDATION_ERROR', 'NO_ACTIVE_KEY', 'KEY_CORRUPTED', 'GEMINI_KEY_REQUIRED',
+  // The key store's own cap. Retrying cannot lower a spend total, and the message states it.
+  'BUDGET_EXCEEDED',
+]);
+
 /** A refusal that means "try again later", not "this job is bad". */
 function isRateLimit(err) {
   return err?.status === 429
@@ -468,6 +488,18 @@ async function submitOne() {
       jobQueue.markFailed(job.id, err.message || 'Balance too low — top up your provider account.');
       rateLimitHits.delete(job.id);
       log.error('generation_out_of_credit', { jobId: job.id, engine, error: err.message });
+      return true;
+    }
+    /**
+     * A configuration problem fails now, with the provider's own wording.
+     *
+     * Checked with the credit case and for the same reason: eight identical attempts prove
+     * nothing, and the message they end on names neither the cause nor the fix.
+     */
+    if (TERMINAL_SUBMIT_CODES.has(err?.code)) {
+      jobQueue.markFailed(job.id, err.message || `Cannot run this job (${err.code})`);
+      rateLimitHits.delete(job.id);
+      log.error('generation_terminal_config', { jobId: job.id, engine, code: err.code, error: err.message });
       return true;
     }
     if (isRateLimit(err)) {

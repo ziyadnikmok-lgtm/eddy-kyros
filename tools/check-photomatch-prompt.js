@@ -78,7 +78,19 @@ const worst = buildMatchInstruction({
 });
 check(`the everyday prompt fits (${p.length} chars)`, p.length <= BUDGET);
 check(`the worst case still fits (${worst.length} chars)`, worst.length <= BUDGET);
-check('and there is headroom left for the appended chips', BUDGET - worst.length > 250);
+// CHANGED 2026-08-16: this was `BUDGET - worst.length > 250`, a fixed margin standing in for "the
+// chips will fit". That was never the mechanism — promptFor passes the builder a REDUCED budget
+// (BUDGET minus the chip text) and the builder drops whole paragraphs to fit inside it. The margin
+// only ever worked while the prompt happened to be short enough, and it went red when the skin
+// instruction landed even though nothing was actually at risk. Asserted against the real behaviour
+// now: give it a chips-sized reduction and the two together must still fit.
+const CHIPS = 'x'.repeat(400);
+const withChips = buildMatchInstruction({
+  ...BASE, refCount: 4, exactRecreate: true, varyBackground: true, wantsNude: true,
+  addGenericNudeLine: true, masterPrompt: 'x'.repeat(200), budget: BUDGET - CHIPS.length - 8,
+});
+check(`the builder makes room for the chips when told to (${withChips.length} + ${CHIPS.length})`,
+  withChips.length + CHIPS.length + 2 <= BUDGET);
 
 // --- it must read as a REBUILD, not a face swap (owner, 2026-08-13) ---------------------------------
 // "It's like a faceswap but we want to recreate the same image with our model." It was: the prompt
@@ -284,6 +296,32 @@ check('the identity list names the whole body, part by part',
 check("the stand-in's body shape is forbidden", /body shape/.test(unblurred));
 check('no blending of bodies, not just faces', /not her face and not her body/.test(unblurred));
 check('and the final lock says whole body', /face, hair, skin and whole body/.test(unblurred));
+
+// --- quality: 2K by default, and a POSITIVE skin instruction ---------------------------------------
+//
+// The old line was 'Photorealistic — real pores, hair strands, fabric, slight asymmetry; no plastic
+// or CGI look' — mostly a list of things NOT to do. A negative leaves the model to choose what to do
+// instead, and what it chooses is the smooth, evenly-lit, retouched look that reads as AI at a
+// glance (owner, 2026-08-16: 'scale up the quality of skin and image').
+check('the skin instruction names what to render, not only what to avoid',
+  /SKIN AND DETAIL: real pore texture, stray hairs, uneven specular/.test(src));
+check('including the specular detail that separates a photo from a render',
+  /shiny where oily, matte elsewhere, never one even sheen/.test(src));
+check('and blemishes are kept rather than retouched', /Keep freckles, moles and uneven tone/.test(src));
+check('2K is the default resolution', /const _cache = {[^}]*resolution: '2K'/.test(src));
+
+// It stays the FIRST thing dropped at the cap — it improves a picture that is already of the right
+// woman, and the identity lock decides whether she is. So it must be short enough to survive an
+// ordinary run, which is what made the first attempt useless: at 640 characters it was dropped every
+// single time.
+check('the droppable marker follows the paragraph name',
+  src.includes("const droppable = ['SKIN AND DETAIL',"));
+check('and it is short enough to survive a normal run', (() => {
+  const start = src.indexOf('parts.push(`SKIN AND DETAIL:');
+  if (start < 0) return false;
+  const end = src.indexOf('`);', start);
+  return end > start && (end - start) < 300;
+})());
 
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
