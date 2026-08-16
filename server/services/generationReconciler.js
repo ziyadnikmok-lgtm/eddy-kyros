@@ -241,7 +241,10 @@ const NB2_ATTEMPTS = 3;
  * run on Seedream and the tab would look healthy while the bypass was dead. A key problem has to be
  * visible, so it fails with a reason that names it.
  */
-const NB2_TERMINAL_CODES = new Set(['VALIDATION_ERROR', 'GEMINI_KEY_REQUIRED']);
+// NO_ACTIVE_KEY and KEY_CORRUPTED are apiKeyManager's own throws. They are handled before the call
+// now, but listed here as belt and braces: a key problem must never be answered by silently moving
+// the work to a different provider on a different account.
+const NB2_TERMINAL_CODES = new Set(['VALIDATION_ERROR', 'GEMINI_KEY_REQUIRED', 'NO_ACTIVE_KEY', 'KEY_CORRUPTED']);
 function isTerminalForFallback(err) {
   if (NB2_TERMINAL_CODES.has(err?.code)) return true;
   if (err?.status === 401 || err?.status === 403) return true;
@@ -316,10 +319,35 @@ async function submitOne() {
        * ceiling is for, and why this belongs on the queue rather than in the browser: a page doing
        * it directly would be capped at six by Chromium's per-host socket limit.
        */
-      const apiKey = apiKeys.getActiveKey?.();
+      /**
+       * THE KEY, and both ways it can be absent — neither of which may reach the catch below.
+       *
+       * getActiveKey THROWS when no key is set (NO_ACTIVE_KEY) rather than returning null. Read
+       * without this try, that throw skipped the check underneath it, landed in the outer catch as
+       * an ordinary submit failure, and after three attempts handed the job to Seedream. So with no
+       * Gemini key at all, every NB2 job would have quietly run on WaveSpeed while the tab looked
+       * healthy — precisely the outcome the terminal-code list exists to prevent.
+       *
+       * It returns NULL, separately, when Vertex is the selected backend: auth then comes from a
+       * service account and there is no key string to send. The bypass talks to
+       * generativelanguage.googleapis.com directly and cannot use those credentials, so that is a
+       * real limitation and is named as one — reported as "no key", it would send someone hunting
+       * for a key they already have.
+       */
+      let apiKey = null;
+      try {
+        apiKey = apiKeys.getActiveKey?.() || null;
+      } catch (keyErr) {
+        jobQueue.markFailed(job.id, `Photo Match NB2 needs a Gemini API key — ${keyErr.message}`);
+        log.error('generation_nb2_no_key', { jobId: job.id, error: keyErr.message });
+        return true;
+      }
       if (!apiKey) {
-        jobQueue.markFailed(job.id, 'Nano Bypass needs a Gemini API key — add one under API Keys.');
-        log.error('generation_nb2_no_key', { jobId: job.id });
+        const onVertex = !!apiKeys.shouldUseVertexBackend?.();
+        jobQueue.markFailed(job.id, onVertex
+          ? 'Photo Match NB2 needs a direct Gemini API key. Vertex credentials are selected, and the bypass calls Google\'s API directly rather than through Vertex — add a Gemini key under API Keys, or use Photo Match SD.'
+          : 'Photo Match NB2 needs a Gemini API key — add one under API Keys.');
+        log.error('generation_nb2_no_key', { jobId: job.id, onVertex });
         return true;
       }
       sub = {

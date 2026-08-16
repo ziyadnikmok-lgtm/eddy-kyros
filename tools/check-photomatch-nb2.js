@@ -82,7 +82,20 @@ check('it returns the shape the queue files', svc.includes('return { images: [{ 
 
 // --- the queue ------------------------------------------------------------------------------------------
 check('the bypass completes in one step, through the existing done door', rec.includes('done: await nanoBypass.editRaw({'));
-check('no key means a clear failure, not a crashed worker', rec.includes('Nano Bypass needs a Gemini API key'));
+// getActiveKey THROWS when no key is set rather than returning null. Read without a try, that throw
+// skipped the check under it, reached the outer catch as an ordinary submit failure, and after three
+// attempts handed the job to Seedream — so with NO Gemini key every NB2 job ran on WaveSpeed while
+// the tab looked healthy. The one outcome the terminal list exists to prevent.
+check('a throwing key lookup cannot leak into the fallback path',
+  /try \{\s*apiKey = apiKeys\.getActiveKey\?\.\(\) \|\| null;\s*\} catch \(keyErr\) \{/.test(rec));
+check('and it fails the job with the reason', rec.includes('Photo Match NB2 needs a Gemini API key — ${keyErr.message}'));
+check('key errors are terminal, so a key problem never moves work to another account',
+  rec.includes("'NO_ACTIVE_KEY', 'KEY_CORRUPTED'"));
+// Vertex returns null rather than throwing: auth is a service account and there is no key string.
+// The bypass calls Google directly and cannot use those credentials — reported as "no key" it would
+// send someone hunting for a key they already have.
+check('Vertex is named as its own case, not reported as a missing key',
+  rec.includes('apiKeys.shouldUseVertexBackend?.()') && /Vertex credentials are selected/.test(rec));
 check('resolution is translated to the size the bypass speaks',
   rec.includes("imageSize: job.payload?.resolution === '1K' ? '1K' : '2K',"));
 // A rate limit must be retried; a rejected payload must not. Without the status the queue cannot
@@ -124,7 +137,7 @@ check('the new engine gets a fresh attempt budget', /function switchEngine[\s\S]
 
 // A configuration problem fails the same way on every engine, so swapping is a wasted call.
 check('terminal failures do not trigger a pointless swap', rec.includes('isTerminalForFallback(err)'));
-check('a bad payload is terminal', rec.includes("NB2_TERMINAL_CODES = new Set(['VALIDATION_ERROR', 'GEMINI_KEY_REQUIRED'])"));
+check('a bad payload is terminal', rec.includes("'VALIDATION_ERROR', 'GEMINI_KEY_REQUIRED'"));
 // The subtle one: Seedream bills a DIFFERENT key, so a dead Gemini key WOULD fall back successfully
 // — and then every NB2 job runs on Seedream while the tab looks healthy. Fail visibly instead.
 check('a rejected Gemini key fails visibly rather than hiding behind Seedream',
