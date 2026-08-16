@@ -311,6 +311,25 @@ const NB2_RATE_LIMIT_TOLERANCE = 5;
  */
 const FALLBACK_PATCH = { resolution: '2K' };
 
+/**
+ * THE ACCOUNT IS EMPTY — which is not a transient failure and must not be treated as one.
+ *
+ * Both providers say so plainly: WaveSpeed answers 400 'insufficient credit' and muapi answers
+ * 402, and both are already turned into AppError(402, 'INSUFFICIENT_CREDITS') with a message that
+ * names the top-up. The queue then ignored all of that, requeued, and retried up to eight times
+ * before failing with 'Gave up after 8 attempts' — a message that says nothing about the actual
+ * problem. On a three-hundred image batch that is 2,400 requests to an account that cannot pay for
+ * one of them (owner, 2026-08-16: 'should fail and say balance low').
+ *
+ * The message check is there because the same condition arrives worded differently depending on
+ * which call refused: an upload, a submit, and a poll do not all normalise to the same code.
+ */
+function isOutOfCredit(err) {
+  if (err?.code === 'INSUFFICIENT_CREDITS') return true;
+  if (err?.status === 402 || err?.statusCode === 402) return true;
+  return /insufficients+credit|out of credits|top up|balance too low|billing/i.test(err?.message || '');
+}
+
 /** A refusal that means "try again later", not "this job is bad". */
 function isRateLimit(err) {
   return err?.status === 429
@@ -434,6 +453,23 @@ async function submitOne() {
     backoffMs = BACKOFF_START_MS;                  // a success clears the penalty
     log.info('generation_job_submitted', { jobId: job.id, taskId: sub.taskId, engine });
   } catch (err) {
+    /**
+     * Out of credit is TERMINAL, and it is checked before everything else.
+     *
+     * Not a rate limit (waiting does not add money), not a retry (the next attempt fails
+     * identically), and not a fallback — Seedream is billed to the very account that just said
+     * no, so moving the job there buys a second refusal. The provider's own wording is kept
+     * because it already names which account and where to top it up.
+     *
+     * Every queued job fails the same way within a tick or two, which is the point: one glance at
+     * the panel says 'balance', and 'Retry N failed' picks them all back up after a top-up.
+     */
+    if (isOutOfCredit(err)) {
+      jobQueue.markFailed(job.id, err.message || 'Balance too low — top up your provider account.');
+      rateLimitHits.delete(job.id);
+      log.error('generation_out_of_credit', { jobId: job.id, engine, error: err.message });
+      return true;
+    }
     if (isRateLimit(err)) {
       /**
        * The provider refused it: nothing is rendering, nothing is billed, and it is not this job's

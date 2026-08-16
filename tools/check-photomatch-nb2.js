@@ -296,5 +296,32 @@ check('the source sent is the blurred copy', pm.includes('dataUrl = out.dataUrl;
 // And an unfinished tile must not read as a finished result that came back unchanged.
 check('an in-progress tile is labelled as the source', pm.includes('Your source · rendering'));
 
+// --- the loose blur pass must not blur a body part -----------------------------------------------
+//
+// The aggressive pass drops pico's score threshold from 50 to 15 — that is how it finds turned and
+// partly-hidden faces, and also how it starts reporting hips and backsides. Padded 25% on every
+// side, one false positive smears a third of the photograph (owner, 2026-08-16).
+const blur = read('client/src/lib/autoBlurFace.js');
+check('a loose match that is too large is rejected', blur.includes('MAX_LOOSE_FACE_FRACTION'));
+check('and only on the loose pass — the confident one keeps its judgement',
+  blur.includes('if (aggressive && (found.w > MAX_LOOSE_FACE_FRACTION'));
+// Rejected, not shrunk: a box that size is not a face in the wrong place, it is not a face.
+check('it reports not-blurred rather than blurring the wrong region',
+  blur.includes("reason: 'loose match was too large to be a face'"));
+
+// --- an empty account fails immediately, and says so ------------------------------------------------
+// Both providers already answer with INSUFFICIENT_CREDITS and a message naming the top-up. The queue
+// ignored it, requeued, and retried eight times before failing with 'Gave up after 8 attempts' — on
+// a 300-image batch, 2,400 requests to an account that cannot pay for one of them.
+check('out of credit is recognised', rec.includes('function isOutOfCredit(err) {'));
+check('by code, by status, and by wording', rec.includes("err?.code === 'INSUFFICIENT_CREDITS'")
+  && rec.includes('err?.status === 402') && /insufficient..s+credit|out of credits/.test(rec));
+// Checked FIRST: it is not a rate limit (waiting does not add money) and not a fallback (Seedream
+// bills the very account that just refused).
+check('and checked before the backoff and the fallback',
+  rec.indexOf('if (isOutOfCredit(err)) {') < rec.indexOf('if (isRateLimit(err)) {'));
+check("the job fails with the provider's own wording, which names the top-up",
+  rec.includes("jobQueue.markFailed(job.id, err.message || 'Balance too low"));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

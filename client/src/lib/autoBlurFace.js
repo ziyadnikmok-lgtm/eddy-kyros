@@ -13,10 +13,32 @@ import { detectFacePico } from './detectFacePico';
  * Electron build, and the vision model, which costs a request per image and hits quota.
  *
  */
+/**
+ * How big a detection may be before it is obviously not a face.
+ *
+ * The aggressive pass drops pico's score threshold from 50 to 15, which is how it finds turned and
+ * partly-hidden faces — and also how it starts reporting body parts. Padded by 25% on every side, a
+ * false positive on a hip or a backside blurs a third of the photograph (owner, 2026-08-16: 'he
+ * blured the ass too').
+ *
+ * A face occupies well under half the frame in any photograph that also shows a body, and these are
+ * always photographs of a person in a scene. Anything larger is rejected on the LOOSE pass only —
+ * the confident pass keeps its own judgement, because a legitimate head-and-shoulders crop can fill
+ * the frame and that one is not guessing.
+ */
+const MAX_LOOSE_FACE_FRACTION = 0.4;
+
 export async function autoBlurFace(dataUrl, { aggressive = false } = {}) {
   try {
     const found = await detectFacePico(dataUrl, { aggressive });
     if (!found) return { dataUrl, blurred: false, reason: 'no face found' };
+    // Rejected rather than shrunk: a box this size is not a face in the wrong place, it is not a
+    // face. Reported as not-blurred so the amber badge shows and it can be blurred by hand — which
+    // is the honest outcome, and far better than handing back a photo with the wrong third of it
+    // smeared.
+    if (aggressive && (found.w > MAX_LOOSE_FACE_FRACTION || found.h > MAX_LOOSE_FACE_FRACTION)) {
+      return { dataUrl, blurred: false, reason: 'loose match was too large to be a face' };
+    }
     const box = pad(found);
     return { dataUrl: await blurRegion(dataUrl, box), blurred: true };
   } catch (err) {
