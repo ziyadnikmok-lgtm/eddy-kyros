@@ -118,5 +118,21 @@ for (const [name, o] of Object.entries(COMBOS)) {
   check(`identity lock survives: ${name}`, out.includes('FINAL — HIGHEST PRIORITY'));
 }
 
+// --- the default (owner, 2026-08-16) ----------------------------------------------------------------
+// 'Very large', not 'From her photos'. A default is a statement about the usual case, and the usual
+// case here is a character who IS built that way — starting neutral meant re-picking it every run
+// and losing it on every restart.
+check('the build defaults to Very large', /const _cache = {[^}]*build: 'verylarge'/.test(src));
+check('and the state agrees, so a fresh session starts there too',
+  src.includes("useState(_cache.build || 'verylarge')"));
+// It is still a standing fact, not a change: the default must not disarm the locks it names.
+check('defaulting it does not turn it into a chip', !buildBlock.includes('bodyChange'));
+// And the neutral option still exists and still emits nothing.
+check("'From her photos' is still available and still silent",
+  /{ value: 'auto', label: '[^']+', text: '', backText: '' }/.test(src));
+// The BUILDER's own default is untouched — buildText defaults to '' — so the pinned prompt hashes
+// still describe the no-build case, which is what they are for.
+check('the builder still defaults to no build line', src.includes("buildText = '' }"));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

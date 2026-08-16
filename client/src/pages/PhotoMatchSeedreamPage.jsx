@@ -711,7 +711,7 @@ function parseDataUrl(dataUrl) {
  */
 const _awaiting = new Set();
 
-const _cache = { extra: '', aspectRatio: 'auto', resolution: '1K', build: 'auto', exactRecreate: true, varyBackground: false, nsfw: false, blurSource: true, faceless: false };
+const _cache = { extra: '', aspectRatio: 'auto', resolution: '1K', build: 'verylarge', exactRecreate: true, varyBackground: false, nsfw: false, blurSource: true, faceless: false };
 // Images are too big for _cache/localStorage — IndexedDB so they survive a reload.
 /**
  * Retry a generation that came back rate-limited.
@@ -906,7 +906,19 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
   const [manualBlurId, setManualBlurId] = useState(null);  // source id being hand-blurred, or null
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [resolution, setResolution] = useState(_cache.resolution);
-  const [build, setBuild] = useState(_cache.build || 'auto');
+  /**
+   * DEFAULTS TO 'Very large' (owner, 2026-08-16), not to 'From her photos'.
+   *
+   * A default is a statement about the usual case, and here the usual case is a character who IS
+   * built that way — starting neutral meant re-picking it on every run and losing it on every
+   * restart. It changes nothing about how the option behaves: it still names the size the
+   * preservation locks are holding rather than asking for a change, so it does not stand them
+   * down the way a Body chip does, and a back-facing source still gets the variant that only
+   * describes what the camera can see.
+   *
+   * 'From her photos' remains one click away and still emits nothing at all.
+   */
+  const [build, setBuild] = useState(_cache.build || 'verylarge');
   // 'seedream' | 'nano2'. Both go through the same /api/seedream/edit route and the same
   // WaveSpeed key -- `model` is the only thing that differs -- so a result gets the same
   // imageStore write, gallery row and tagging either way.
@@ -2444,8 +2456,8 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
               value={build} onChange={(e) => setBuild(e.target.value)} />
             <p className="mt-1 text-[0.625rem] leading-relaxed text-zinc-600">
               {build === 'auto'
-                ? 'Her figure comes from her reference photos, held against the source.'
-                : 'Names the build the identity lock is holding — this is what she looks like, not a change to her. A back-facing source gets the version that only describes what the camera can see.'}
+                ? 'Her figure comes from her reference photos alone, with nothing said about it.'
+                : 'Names the build the identity lock is holding — this is what she looks like, not a change to her. A back-facing source gets the version that only describes what the camera can see. It still needs a reference photo showing her body to hold against the source.'}
             </p>
           </div>
           {/* WHERE THE RESULTS GO. Set before Generate, because moving a batch of thirty after the
