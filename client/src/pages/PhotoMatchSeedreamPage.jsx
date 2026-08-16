@@ -1296,6 +1296,13 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         ? `Photo Match - ${name || 'no character'}\n\n${usedPrompt}`
         : `Photo Match - ${name || 'no character'}`,
       name: `photomatch-${Date.now()}`,
+      // WHOSE PICTURE, on the row itself — not only in the folder name.
+      //
+      // The bulk 'Send to Library' button has always written this; the live run never did, so a
+      // picture filed as it was made carried no character and one moved by hand did. A folder can
+      // be renamed or the row dragged elsewhere, and then the only record of who she is has gone.
+      // charName is in the collection's allowlist, so it survives the write.
+      ...(name ? { charName: name } : {}),
     }], dest);
     // addItems reports a storage failure by RETURNING an empty array rather than throwing.
     if (!Array.isArray(filed) || filed.length === 0) {
