@@ -197,5 +197,12 @@ check('the fallback marker survives a reload', pm.includes('fellBack: !!j.fellBa
 check('a fallen-back image is priced as Seedream, not as the bypass', pm.includes('const spent = ranOn === \'nb2\''));
 check('the session total uses it', pm.includes('setSessionSpend((s) => s + spent);'));
 
+// 6. And the fallback is stated BEFORE the run. The badge on a finished tile only tells you once
+//    the money is spent; the engine row is where a different engine at a different price belongs.
+check('the NB2 tab says it fails over to Seedream, up front', /Fails over to.*Seedream 5\.0 Pro \(WaveSpeed\)/s.test(pm));
+check('and names the number of tries from the shared constant', pm.includes('after {NB2_ATTEMPTS} failed'));
+check('and quotes the price it would actually cost', pm.includes('seedreamCost(resolution, imagesPerJob).toFixed(3)'));
+check('only on the NB2 tab', /\{isNB2 && \(\s*<p className="mb-2 text-\[0\.625rem\] leading-relaxed text-amber-300\/80">/.test(pm));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

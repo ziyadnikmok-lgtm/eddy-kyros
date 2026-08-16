@@ -2056,6 +2056,18 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
               </button>
             ))}
           </div>
+          {/* The fallback, stated BEFORE the run rather than discovered afterwards.
+              A picture on this tab can come back from a different engine at a different price, and
+              the engine row is where that belongs — the badge on a finished tile only tells you
+              once the money is spent (owner, 2026-08-16). */}
+          {isNB2 && (
+            <p className="mb-2 text-[0.625rem] leading-relaxed text-amber-300/80">
+              Fails over to <span className="font-semibold">Seedream 5.0 Pro (WaveSpeed)</span> after {NB2_ATTEMPTS} failed
+              tries — so a picture the bypass refuses still gets made. Those come back marked
+              <span className="font-semibold"> (fallback)</span> and are billed at Seedream&rsquo;s rate
+              (<span className="font-mono">${seedreamCost(resolution, imagesPerJob).toFixed(3)}</span>), not this one.
+            </p>
+          )}
           <p className="text-[0.625rem] text-zinc-600">
             {imagesPerJob} image{imagesPerJob > 1 ? 's' : ''} per match → <span className="text-zinc-400 font-mono">${costPerJob.toFixed(3)}</span> each
             {runCount > 1 && (
