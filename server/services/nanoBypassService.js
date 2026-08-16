@@ -15,6 +15,7 @@
  * The route now imports these and behaves exactly as before — nothing about the Nano Bypass page
  * changes.
  */
+const crypto = require('crypto');
 const { AppError } = require('../middleware/errorHandler');
 
 /**
@@ -196,6 +197,31 @@ async function editRaw({ apiKey, images, prompt, aspectRatio, imageSize = '2K', 
 
   const b64 = await callGemini(apiKey, modelId, parts, aspectRatio !== 'auto' ? aspectRatio : undefined, imageSize, temperature);
   if (!b64) throw new AppError('Nano Bypass returned no image', 502, 'NANO_BYPASS_NO_IMAGE');
+
+  /**
+   * DID IT JUST HAND BACK WHAT WE SENT?
+   *
+   * An edit model can satisfy "reproduce this photograph exactly" the lazy way — by returning the
+   * photograph. It is a real failure mode on this API, and the worst kind: the job succeeds, the
+   * picture files, the tile goes green, and what you have is your own source photo with the blurred
+   * face still in it, sitting in the library under the character's name.
+   *
+   * Byte-identical is the whole test. A genuine render is never bit-for-bit one of its inputs — even
+   * an exact recreate re-encodes every pixel — so this cannot fire on good work. Cheap too: one
+   * hash per input, against bytes already in memory.
+   *
+   * Thrown rather than returned, so the queue treats it as a failed attempt: it retries, and after
+   * NB2_ATTEMPTS hands the job to Seedream, which is exactly what you want when this engine has
+   * decided to echo.
+   */
+  const outHash = crypto.createHash('sha256').update(Buffer.from(b64, 'base64')).digest('hex');
+  for (const p of parts) {
+    if (!p.inlineData?.data) continue;
+    if (crypto.createHash('sha256').update(Buffer.from(p.inlineData.data, 'base64')).digest('hex') === outHash) {
+      throw new AppError('Nano Bypass returned one of the input images unchanged rather than a new render.', 502, 'NANO_BYPASS_ECHO');
+    }
+  }
+
   return { images: [{ base64Data: b64, mimeType: 'image/png' }] };
 }
 
