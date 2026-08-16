@@ -376,7 +376,9 @@ check('the tile only compares when asked', pm.includes('showCompare && (job.resu
 // copy first and falls back to bytes only when there is none.
 check('otherwise it shows the RESULT, not the source', pm.includes('resultSrc(job)'));
 check('and it prefers the server copy over inline bytes', pm.includes('function resultSrc(j)'));
-check('and the tile says what made it', pm.includes("job.engine && ` · ${job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}`"));
+// CHANGED 2026-08-16: NB2 is a third engine, and the tile badge is the only place a finished
+// picture says which one produced it.
+check('and the tile says what made it', pm.includes("job.engine && ` · ${job.engine === 'nb2' ? 'NB2' : job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}`"));
 
 // --- two gestures: tick the tile, click the picture (owner, 2026-08-13) ------------------------------
 // "I can click on the side and it selects, but clicking the image opens it — same as the code we

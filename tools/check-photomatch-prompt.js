@@ -93,7 +93,10 @@ check(`the prompt no longer talks only about the face (${faceWords} face / ${bod
 
 // --- the cap is Seedream's, not Nano's --------------------------------------------------------------
 check('Nano gets its own budget', src.includes('const NANO2_PROMPT_BUDGET = 8000;'));
-check('and the trim picks by engine', src.includes("const budget = engine === 'nano2' ? NANO2_PROMPT_BUDGET : SEEDREAM_PROMPT_BUDGET;"));
+// CHANGED 2026-08-16: phrased by the engine that HAS the cap rather than the one that does not.
+// The 3,000 limit is ByteDance's, and Seedream is the only engine behind ByteDance — both Nano
+// paths (WaveSpeed and the Gemini bypass) are uncapped, so naming Seedream is the durable form.
+check('and the trim picks by engine', src.includes("const budget = engine === 'seedream' ? SEEDREAM_PROMPT_BUDGET : NANO2_PROMPT_BUDGET;"));
 check('the reason is recorded — WaveSpeed documents no cap for nano',
   /WaveSpeed documents no prompt-length cap/.test(src));
 check('and the trim notice no longer blames Seedream on a Nano run',

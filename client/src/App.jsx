@@ -64,6 +64,7 @@ const SeedreamEditPage = lazy(() => import('./pages/SeedreamEditPage'));
 const SeedreamGeneratePage = lazy(() => import('./pages/SeedreamGeneratePage'));
 const OutfitSwapSeedreamPage = lazy(() => import('./pages/OutfitSwapSeedreamPage'));
 const PhotoMatchSeedreamPage = lazy(() => import('./pages/PhotoMatchSeedreamPage'));
+const PhotoMatchNB2Page = lazy(() => import('./pages/PhotoMatchNB2Page'));
 const PinterestFeedPage = lazy(() => import('./pages/PinterestFeedPage'));
 const SceneRecreateSeedreamPage = lazy(() => import('./pages/SceneRecreateSeedreamPage'));
 const PoseRemixSeedreamPage = lazy(() => import('./pages/PoseRemixSeedreamPage'));
@@ -113,6 +114,7 @@ const NAV_ICONS = {
   seedreamGenerate: IconMagicWandSparkle,
   outfitSwapSeedream: IconLayers,
   photoMatchSeedream: IconCrosshairs,
+  photoMatchNB2: IconCrosshairs,
   pinterestFeed: IconCrosshairs,
   pinterestLibrary: IconGrid2,
   sceneRecreateSeedream: IconCamera,
@@ -171,6 +173,9 @@ const NAV_COLORS = {
   seedreamGenerate: ['#fda4af', '#e11d48'],
   outfitSwapSeedream: ['#f9a8d4', '#c026d3'],
   photoMatchSeedream: ['#f0abfc', '#a21caf'],
+  // A different colour from Photo Match SD on purpose: the two tabs look identical inside, and
+  // the nav is the only place you can tell which engine you are about to spend on.
+  photoMatchNB2: ['#fde68a', '#b45309'],
   pinterestFeed: ['#fca5a5', '#b91c1c'],
   pinterestLibrary: ['#fca5a5', '#7f1d1d'],
   sceneRecreateSeedream: ['#67e8f9', '#0891b2'],
@@ -245,6 +250,7 @@ const NAV_SECTIONS = [
       // Gemini, cost real time twice on 2026-08-13: a bug report and a fix landed on different
       // pages. The name says which is which (owner).
       { id: 'photoMatchSeedream', label: 'Photo Match SD' },
+      { id: 'photoMatchNB2', label: 'Photo Match NB2' },
       { id: 'sceneRecreateSeedream', label: 'Scene Recreate' },
       { id: 'poseRemixSeedream', label: 'Pose Remix' },
     ],
@@ -339,6 +345,7 @@ const FEED_HIDDEN_PAGES = new Set([
   // Library. Showing the shared feed too would put every result on screen twice, and the feed was
   // occupying the space the results column needs (owner, 2026-08-13).
   'photoMatchSeedream',
+  'photoMatchNB2',
   // Eddy Generate grew its own inline results area (select tiles, shared instruction,
   // Regenerate, Generate video). Showing the shared feed too put every result on screen twice.
   // Both ids route to EddyGeneratePage, so both must be listed or the panel returns via /eddy.
@@ -395,6 +402,7 @@ const SELF_SCROLL_PAGES = new Set([
   // own. Without this the page scrolls as one document and watching a match land scrolls the form
   // away — which is the whole reason Eddy stopped doing that.
   'photoMatchSeedream',
+  'photoMatchNB2',
   // Mirrors EddyGeneratePage's two-column shell (fixed left setup column, flex-1 right results
   // column, both independently scrollable) — same layout, same need for a bounded height.
   'instagramReel',
@@ -461,6 +469,7 @@ const PAGE_DESCRIPTIONS = {
   seedreamGenerate: "Pick your character, type a prompt — Seedream 5.0 Pro generates a new photo of her.",
   outfitSwapSeedream: 'Put the outfit from image 2 onto the person in image 1 — via Seedream 5.0 Pro (no Gemini)',
   photoMatchSeedream: 'Photo Match SD — paste any photo and rebuild it with your character, on Seedream 5.0 Pro or Nano Banana 2',
+  photoMatchNB2: 'Photo Match NB2 — the same page on Nano Banana 2 through our bypass, straight to Google with your Gemini key',
   pinterestFeed: 'Search Pinterest, tick the shots you want, send them straight into Photo Match',
   pinterestLibrary: 'Pins you saved from the Pinterest tab — download them, sort them, or send them on',
   sceneRecreateSeedream: 'Put your character in a scene and remix it — new background, outfit, lighting — via Seedream 5.0 Pro',
@@ -538,6 +547,7 @@ const PAGES = {
   seedreamGenerate: SeedreamGeneratePage,
   outfitSwapSeedream: OutfitSwapSeedreamPage,
   photoMatchSeedream: PhotoMatchSeedreamPage,
+  photoMatchNB2: PhotoMatchNB2Page,
   pinterestFeed: PinterestFeedPage,
   sceneRecreateSeedream: SceneRecreateSeedreamPage,
   poseRemixSeedream: PoseRemixSeedreamPage,

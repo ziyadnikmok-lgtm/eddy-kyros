@@ -596,7 +596,15 @@ async function withRateLimitRetry(fn, { attempts = 4, baseDelayMs = 4000 } = {})
   }
 }
 
-const store = createPageStore('kyros-photo-match-seedream-state');
+/**
+ * One store per variant. NB2 is a second tab of the SAME page, and sharing this key would mean the
+ * two tabs fought over one set of sources, characters and chips — pick a character on one and it
+ * moves on the other.
+ */
+const STORES = {
+  sd: createPageStore('kyros-photo-match-seedream-state'),
+  nb2: createPageStore('kyros-photo-match-nb2-state'),
+};
 
 /**
  * WaveSpeed's published per-image rate for nano-banana-2, by resolution. Kept beside Seedream's
@@ -609,7 +617,34 @@ const NANO2_COST = { '1K': 0.07, '2K': 0.105 };
 // client aborting first throws away an image that has already been generated and billed.
 const NANO2_CLIENT_TIMEOUT_MS = 11 * 60_000;
 
-export default function PhotoMatchSeedreamPage() {
+/**
+ * Google's own rate for gemini-3.1-flash-image. Separate from NANO2_COST because it is the same
+ * model bought from a different counter: WaveSpeed resells it with a margin, this is direct.
+ */
+const NB2_COST = { '1K': 0.04, '2K': 0.06 };
+
+/**
+ * PHOTO MATCH, TWICE — one component, two tabs.
+ *
+ *   variant 'sd'  -> Photo Match SD, Seedream 5.0 Pro or Nano Banana 2, both via WaveSpeed
+ *   variant 'nb2' -> Photo Match NB2, Nano Banana 2 through OUR BYPASS on Google's own API
+ *
+ * NB2 exists because the model is the same but the gatekeeper is not: bought through a reseller you
+ * inherit the reseller's refusals on top of Google's, and this page's whole job is rebuilding a
+ * photo with a specific woman in it. The bypass goes straight to generativelanguage.googleapis.com
+ * with the Gemini key, safety at BLOCK_ONLY_HIGH, and a retry ladder that drops safetySettings
+ * altogether on the last attempt.
+ *
+ * A PROP RATHER THAN A COPIED FILE, deliberately. This page is the twins cast, the back-view
+ * detection, the pose/mood/lighting chips, the blur pipeline, the library destinations and a prompt
+ * builder tuned over months against real failures. Duplicating it would mean every one of those
+ * fixed twice from now on, and the copies quietly disagreeing about which is right. The differences
+ * between the two tabs are genuinely small — which engine, which budget, which price — so they are
+ * conditionals, not a second file.
+ */
+export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
+  const isNB2 = variant === 'nb2';
+  const store = STORES[isNB2 ? 'nb2' : 'sd'];
   const { notify } = useApp();
 
   /**
@@ -714,7 +749,10 @@ export default function PhotoMatchSeedreamPage() {
   // 'seedream' | 'nano2'. Both go through the same /api/seedream/edit route and the same
   // WaveSpeed key -- `model` is the only thing that differs -- so a result gets the same
   // imageStore write, gallery row and tagging either way.
-  const [engine, setEngine] = useState(_cache.engine || 'seedream');
+  const [engineSD, setEngine] = useState(_cache.engine || 'seedream');
+  // NB2's tab has exactly one engine -- the bypass -- so its toggle is not a choice there. The SD
+  // tab keeps its Seedream / Nano Banana 2 pair. Everything downstream still reads one `engine`.
+  const engine = isNB2 ? 'nb2' : engineSD;
 
   const [galleryImages, setGalleryImages] = useState([]);
   const [galleryLoading, setGalleryLoading] = useState(false);
@@ -757,7 +795,7 @@ export default function PhotoMatchSeedreamPage() {
   useEffect(() => { if (restored) store.set('extra', extra); }, [extra, restored]);
 
   useEffect(() => { _cache.extra = extra; }, [extra]);
-  useEffect(() => { _cache.engine = engine; }, [engine]);
+  useEffect(() => { _cache.engine = engineSD; }, [engineSD]);
   useEffect(() => { _cache.nsfw = nsfw; }, [nsfw]);
   useEffect(() => { _cache.blurSource = blurSource; }, [blurSource]);
   useEffect(() => { _cache.faceless = faceless; }, [faceless]);
@@ -878,9 +916,11 @@ export default function PhotoMatchSeedreamPage() {
   const imagesPerJob = 1 + charImagesUsed;
   // Priced per ENGINE. Showing Seedream's rate while Nano Banana 2 runs would misstate the bill
   // on the one control where spend is agreed.
-  const costPerJob = engine === 'nano2'
-    ? (NANO2_COST[resolution] ?? NANO2_COST['1K'])
-    : seedreamCost(resolution, imagesPerJob);
+  const costPerJob = isNB2
+    ? (NB2_COST[resolution] ?? NB2_COST['1K'])
+    : engine === 'nano2'
+      ? (NANO2_COST[resolution] ?? NANO2_COST['1K'])
+      : seedreamCost(resolution, imagesPerJob);
   /**
    * The run is photos x CHARACTERS. Ticking a second woman doubles the bill, and the price on the
    * button is where that has to be visible -- it is the one number agreed before spending.
@@ -1044,7 +1084,7 @@ export default function PhotoMatchSeedreamPage() {
         prompt,
         aspectRatio: ratio,
         resolution,
-        model: engine === 'nano2' ? 'nano2' : 'seedream5',
+        model: isNB2 ? 'nb2' : engine === 'nano2' ? 'nano2' : 'seedream5',
         provider: 'wavespeed',
         // Her name travels with the generation so "Recover missing" can file a stranded Photo
         // Match picture into the right folder, exactly as it does for Eddy's.
@@ -1055,13 +1095,13 @@ export default function PhotoMatchSeedreamPage() {
       }));
 
       const first = (data.images || [])[0];
-      if (!first) throw new Error(`${engine === 'nano2' ? 'Nano Banana 2' : 'Seedream'} returned no image`);
+      if (!first) throw new Error(`${isNB2 ? 'Nano Banana 2 (bypass)' : engine === 'nano2' ? 'Nano Banana 2' : 'Seedream'} returned no image`);
 
       resolvePending(feedId, {
         galleryId: first.galleryId,
         imageId: first.imageId,
-        prompt: engine === 'nano2' ? 'Photo Match (Nano Banana 2)' : 'Photo Match (Seedream)',
-        imageModel: engine === 'nano2' ? 'Nano Banana 2 (WaveSpeed)' : 'Seedream 5.0 Pro Edit',
+        prompt: isNB2 ? 'Photo Match NB2 (bypass)' : engine === 'nano2' ? 'Photo Match (Nano Banana 2)' : 'Photo Match (Seedream)',
+        imageModel: isNB2 ? 'Nano Banana 2 (Gemini bypass)' : engine === 'nano2' ? 'Nano Banana 2 (WaveSpeed)' : 'Seedream 5.0 Pro Edit',
         aspectRatio: ratio,
         resolutionTier: resolution,
         mimeType: first.mimeType,
@@ -1225,7 +1265,7 @@ export default function PhotoMatchSeedreamPage() {
          * having its tail sliced off. The chips are appended AFTER it and are what the remaining
          * space is for — `extra` is measured here rather than guessed.
          */
-        budget: Math.max(600, (engine === 'nano2' ? NANO2_PROMPT_BUDGET : SEEDREAM_PROMPT_BUDGET) - extra.trim().length - 8),
+        budget: Math.max(600, (engine === 'seedream' ? SEEDREAM_PROMPT_BUDGET : NANO2_PROMPT_BUDGET) - extra.trim().length - 8),
         refCount,
         masterPrompt: who.id === characterId ? charDetail?.masterPrompt : undefined,
         exactRecreate,
@@ -1238,7 +1278,7 @@ export default function PhotoMatchSeedreamPage() {
       let out = extra.trim() ? `${base}\n\n${extra.trim()}` : base;
       // Per engine: Seedream's cap is real and fatal, Nano's does not exist. Trimming a Nano prompt
       // to Seedream's limit threw away chips for nothing.
-      const budget = engine === 'nano2' ? NANO2_PROMPT_BUDGET : SEEDREAM_PROMPT_BUDGET;
+      const budget = engine === 'seedream' ? SEEDREAM_PROMPT_BUDGET : NANO2_PROMPT_BUDGET;
       if (out.length > budget) {
         // Seedream 422s on an over-long prompt and the whole batch dies. The base instruction
         // is what makes identity work, so the extra text is what gives.
@@ -1263,7 +1303,7 @@ export default function PhotoMatchSeedreamPage() {
      * would see whichever finished last rather than all three.
      */
     const work = perChar.flatMap((who) => sources.map((src) => ({ src, who })));
-    if (trimmed) notify(`Instructions trimmed to ${engine === 'nano2' ? NANO2_PROMPT_BUDGET : SEEDREAM_PROMPT_BUDGET} characters — the model rejects longer prompts`, 'error');
+    if (trimmed) notify(`Instructions trimmed to ${engine === 'seedream' ? SEEDREAM_PROMPT_BUDGET : NANO2_PROMPT_BUDGET} characters — the model rejects longer prompts`, 'error');
 
     setRunning(true);
     /**
@@ -1956,7 +1996,7 @@ export default function PhotoMatchSeedreamPage() {
           {/* ENGINE. Both models sit behind the same WaveSpeed key and the same route, so this
               changes one field in the request and the price quoted above it -- nothing else. */}
           <div className="mb-2 flex gap-2 rounded-xl border border-white/[0.07] bg-white/[0.02] p-1">
-            {[['seedream', 'Seedream 5.0 Pro'], ['nano2', 'Nano Banana 2']].map(([id, label]) => (
+            {(isNB2 ? [['nb2', 'Nano Banana 2 — bypass']] : [['seedream', 'Seedream 5.0 Pro'], ['nano2', 'Nano Banana 2']]).map(([id, label]) => (
               <button key={id} type="button" onClick={() => setEngine(id)} aria-pressed={engine === id}
                 className={cn('flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer',
                   engine === id ? 'bg-rose-500/20 text-rose-300' : 'text-zinc-500 hover:text-zinc-300')}>
@@ -2143,7 +2183,7 @@ export default function PhotoMatchSeedreamPage() {
                         {job.charName ? `${job.charName} · ` : ''}in {job.filedDb === 'eddy-base' ? 'Base Library' : 'Library'}
                         {/* WHAT MADE IT. Two engines, two modes and a faceless switch produce very
                             different pictures, and a week later the tile is the only record. */}
-                        {job.engine && ` · ${job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}`}
+                        {job.engine && ` · ${job.engine === 'nb2' ? 'NB2' : job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}`}
                         {job.resolution && ` ${job.resolution}`}
                         {job.mode === 'exact' && ' · exact'}
                         {job.faceless && ' · faceless'}
@@ -2198,7 +2238,7 @@ export default function PhotoMatchSeedreamPage() {
 
             <div className="absolute left-4 top-4 rounded-lg bg-black/70 px-3 py-1.5 text-xs text-zinc-300">
               {job.charName || 'Photo Match'}
-              {job.engine && <span className="text-zinc-500"> · {job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}</span>}
+              {job.engine && <span className="text-zinc-500"> · {job.engine === 'nb2' ? 'NB2' : job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}</span>}
               {job.resolution && <span className="text-zinc-500"> {job.resolution}</span>}
               <span className="text-zinc-500"> · {i + 1} of {lightboxList.length}</span>
             </div>

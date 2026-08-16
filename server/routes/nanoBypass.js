@@ -3,6 +3,10 @@ const galleryManager = require('../services/galleryManager');
 const apiKeyManager = require('../services/apiKeyManager');
 const referenceManager = require('../services/referenceManager');
 const geminiBackend = require('../services/geminiBackend');
+// Lifted into a service so the generation queue can reach the bypass as well — a queue worker
+// cannot POST to its own HTTP route. These are the same functions; nothing here behaves
+// differently, and the Nano Bypass page is untouched.
+const { MODEL_IDS, estimateBase64Bytes, callGemini } = require('../services/nanoBypassService');
 const { AppError } = require('../middleware/errorHandler');
 const { requirePlanCapacity } = require('../middleware/planLimits');
 const { logUsageEvent, startGenerationRun, finishGenerationRun } = require('../services/eventLogger');
@@ -15,104 +19,6 @@ const VALID_IMAGE_SIZES = ['1K', '2K'];
 const VALID_MODELS = ['flash'];
 const MAX_TOTAL_IMAGE_BYTES = 60 * 1024 * 1024;
 const MAX_TOTAL_IMAGE_MB = Math.round(MAX_TOTAL_IMAGE_BYTES / 1024 / 1024);
-
-const MODEL_IDS = {
-  // No "-preview" suffix: the Vertex backend's allow-list (geminiVertexService.ALLOWED_IMAGE_MODELS)
-  // is `gemini-3.1-flash-image`, and resolveImageModel() throws "Unsupported image model" on the old
-  // preview id — which is exactly the Nano Bypass error this fixes.
-  flash: 'gemini-3.1-flash-image',
-};
-
-const SAFETY_SETTINGS = [
-  { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
-  { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
-  { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-  { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
-  { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_ONLY_HIGH' },
-];
-
-function estimateBase64Bytes(value) {
-  const clean = String(value || '').replace(/\s/g, '');
-  const padding = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0;
-  return Math.max(0, Math.floor((clean.length * 3) / 4) - padding);
-}
-
-function extractImageFromResponse(data) {
-  const candidates = data?.candidates || [];
-  if (!candidates.length) return null;
-  const parts = candidates[0]?.content?.parts || [];
-  for (const part of parts) {
-    if (part.thought) continue;
-    if (part.inlineData?.data) return part.inlineData.data;
-  }
-  return null;
-}
-
-async function callGemini(apiKey, modelId, parts, aspectRatio, imageSize, temperature) {
-  const imageConfig = {};
-  if (aspectRatio && aspectRatio !== 'auto') imageConfig.aspectRatio = aspectRatio;
-  if (imageSize) imageConfig.imageSize = imageSize;
-
-  const genConfig = {
-    responseModalities: ['TEXT', 'IMAGE'],
-    temperature: temperature ?? 1.0,
-  };
-  if (Object.keys(imageConfig).length) genConfig.imageConfig = imageConfig;
-
-  const payload = {
-    contents: [{ parts }],
-    generationConfig: genConfig,
-    safetySettings: SAFETY_SETTINGS,
-  };
-
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
-
-  // Up to 3 attempts with progressive simplification (mirrors the ComfyUI node logic)
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    let body = payload;
-    if (attempt === 2) {
-      body = { ...payload, generationConfig: { responseModalities: ['IMAGE'], temperature: temperature ?? 1.0 } };
-    } else if (attempt === 3) {
-      body = { ...payload, generationConfig: { responseModalities: ['IMAGE'], temperature: 0.8 } };
-      delete body.safetySettings;
-    }
-
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(180_000),
-    });
-
-    if (!resp.ok && resp.status >= 500 && attempt < 3) {
-      await new Promise((r) => setTimeout(r, 1000 * attempt));
-      continue;
-    }
-
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => '');
-      throw new AppError(`Gemini API error (${resp.status}): ${text.slice(0, 200)}`, 502, 'NANO_BYPASS_ERROR');
-    }
-
-    const data = await resp.json();
-    const b64 = extractImageFromResponse(data);
-    if (b64) return b64;
-
-    // Last attempt — surface a useful error
-    if (attempt === 3) {
-      const finishReason = data?.candidates?.[0]?.finishReason || 'UNKNOWN';
-      const textParts = (data?.candidates?.[0]?.content?.parts || [])
-        .filter((p) => !p.thought && p.text)
-        .map((p) => p.text)
-        .join(' ');
-      throw new AppError(
-        `Nano Bypass returned no image (reason: ${finishReason})${textParts ? ` — ${textParts.slice(0, 200)}` : ''}`,
-        502,
-        'NANO_BYPASS_NO_IMAGE'
-      );
-    }
-  }
-}
 
 // POST /api/nano-bypass/edit
 router.post('/edit', express.json({ limit: '100mb' }), requirePlanCapacity(), async (req, res, next) => {

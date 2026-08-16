@@ -18,6 +18,8 @@
  */
 const jobQueue = require('./jobQueue');
 const jobBlobs = require('./jobBlobs');
+const nanoBypass = require('./nanoBypassService');
+const apiKeys = require('./apiKeyManager');
 const muapi = require('./muapiService');
 const wavespeed = require('./wavespeedService');
 const gallery = require('./galleryManager');
@@ -109,6 +111,9 @@ function engineOf(job) {
   const model = job.payload?.model;
   if (model === 'seedream5' || model === 'seedream') return 'seedream5';
   if (model === 'muapi') return 'muapi';
+  // Nano Banana 2 on Google's own API instead of through WaveSpeed — same model, but only Google's
+  // refusals rather than a reseller's on top. Reached with the Gemini key. See nanoBypassService.
+  if (model === 'nb2') return 'nanobypass';
   if (model === 'nano2') return 'nano2';
   // No model recorded: older rows, all of which ran on Nano Banana 2.
   return job.payload?.provider === 'muapi' ? 'muapi' : 'nano2';
@@ -239,6 +244,33 @@ async function submitOne() {
         return true;
       }
       sub = await wavespeed.submitSeedream5Edit(images, job.payload?.prompt || '', opts);
+    } else if (engine === 'nanobypass') {
+      /**
+       * The bypass finishes IN ONE STEP — there is no task id to poll, because Google's API returns
+       * the picture on the same request. `sub.done` is the existing door for exactly this: WaveSpeed
+       * uses it to hand back a cached edit that is already complete. So a synchronous provider needs
+       * no new state, no new poller, and no special case anywhere downstream.
+       *
+       * The cost is that this call holds its worker for up to three minutes. That is what the lane
+       * ceiling is for, and why this belongs on the queue rather than in the browser: a page doing
+       * it directly would be capped at six by Chromium's per-host socket limit.
+       */
+      const apiKey = apiKeys.getActiveKey?.();
+      if (!apiKey) {
+        jobQueue.markFailed(job.id, 'Nano Bypass needs a Gemini API key — add one under API Keys.');
+        log.error('generation_nb2_no_key', { jobId: job.id });
+        return true;
+      }
+      sub = {
+        done: await nanoBypass.editRaw({
+          apiKey,
+          images,
+          prompt: job.payload?.prompt || '',
+          aspectRatio: opts.aspectRatio,
+          // The page speaks in 1K/2K, same vocabulary the bypass route takes.
+          imageSize: job.payload?.resolution === '1K' ? '1K' : '2K',
+        }),
+      };
     } else if (engine === 'muapi') {
       sub = await muapi.submitSeedreamEdit(images, job.payload?.prompt || '', opts);
     } else {
