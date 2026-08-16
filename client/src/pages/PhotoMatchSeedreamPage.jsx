@@ -132,7 +132,11 @@ const LIGHTING_LINE = 'Lighting: Lighting is soft and diffused lighting, glowing
  * IndexedDB the way it once blew localStorage. The source photo is kept only as a small JPEG for
  * the before/after slider, because the full-size source is the biggest thing on the page.
  */
-const resultsStore = createPageStore('photomatch-results-v1');
+const RESULT_STORES = {
+  // The SD tab keeps the original key, so nobody's existing panel empties on upgrade.
+  sd: createPageStore('photomatch-results-v1'),
+  nb2: createPageStore('photomatch-nb2-results-v1'),
+};
 
 /**
  * The picture behind a tile, wherever the tile came from.
@@ -175,6 +179,7 @@ function liteJob(j) {
     // restored, and a Seedream picture then sat on the NB2 tab looking like an ordinary run —
     // exactly the silence the marker exists to break.
     fellBack: !!j.fellBack,
+    cost: typeof j.cost === 'number' ? j.cost : null,
     resolution: j.resolution || '',
     mode: j.mode || '',
     faceless: !!j.faceless,
@@ -658,6 +663,9 @@ const NB2_ATTEMPTS = 3;
 export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
   const isNB2 = variant === 'nb2';
   const store = STORES[isNB2 ? 'nb2' : 'sd'];
+  // Its own panel too. Shared, the NB2 tab opened showing Seedream and Nano 2 pictures it had
+  // never made — and every one of them priced at the bypass's rate.
+  const resultsStore = RESULT_STORES[isNB2 ? 'nb2' : 'sd'];
   const { notify } = useApp();
 
   /**
@@ -1161,6 +1169,10 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
           // WHEN and HOW, so "the last 30" and "the last hour" mean something after a reload, and
           // so a tile can say what made it rather than leaving you to remember.
           doneAt: Date.now(),
+          // What THIS picture cost, recorded once. Read off the live controls instead, a tile
+          // quoted whatever the engine and resolution are now — so a Seedream fallback showed
+          // the bypass's price, and nudging the resolution toggle repriced finished work.
+          cost: spent,
           engine: ranOn,
           fellBack,
           resolution,
@@ -2206,7 +2218,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
                         appears once per woman and the thumbnails are identical -- without the name
                         the only way to tell them apart is to open each one. */}
                     {job.charName && <span className="text-[0.625rem] font-semibold text-rose-300">{job.charName}</span>}
-                    {job.status === 'done' && <span className="text-[0.625rem] text-zinc-600 font-mono">${costPerJob.toFixed(3)}</span>}
+                    {job.status === 'done' && typeof job.cost === 'number' && <span className="text-[0.625rem] text-zinc-600 font-mono">${job.cost.toFixed(3)}</span>}
                   </div>
 
                   {job.status === 'done' && (job.result || urlOfJob(job)) ? (

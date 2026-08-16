@@ -204,5 +204,20 @@ check('and names the number of tries from the shared constant', pm.includes('aft
 check('and quotes the price it would actually cost', pm.includes('seedreamCost(resolution, imagesPerJob).toFixed(3)'));
 check('only on the NB2 tab', /\{isNB2 && \(\s*<p className="mb-2 text-\[0\.625rem\] leading-relaxed text-amber-300\/80">/.test(pm));
 
+// 7. The two tabs must not share a results panel. Shared, NB2 opened full of Photo Match SD's
+//    history — tiles reading SEEDREAM and NANO 2 on a page whose only engine is the bypass.
+check('each tab keeps its own results panel', pm.includes("nb2: createPageStore('photomatch-nb2-results-v1')"));
+check('and the SD tab keeps the key it had, so no panel empties on upgrade',
+  pm.includes("sd: createPageStore('photomatch-results-v1')"));
+check('the panel is selected by variant', pm.includes("const resultsStore = RESULT_STORES[isNB2 ? 'nb2' : 'sd'];"));
+
+// 8. A tile priced from the LIVE controls quotes whatever the engine and resolution are NOW — so a
+//    Seedream fallback showed the bypass's rate, and moving the resolution toggle repriced work
+//    that was already finished and paid for.
+check('a tile records what it actually cost', pm.includes('cost: spent,'));
+check('and renders that, not the current controls', pm.includes('job.cost.toFixed(3)'));
+check('which survives a reload', pm.includes("cost: typeof j.cost === 'number' ? j.cost : null,"));
+check('no tile still reads the live price', !/job\.status === 'done' && <span[^>]*>\$\{costPerJob/.test(pm));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
