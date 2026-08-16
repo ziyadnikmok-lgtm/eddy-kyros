@@ -188,11 +188,42 @@ function shrinkForStorage(dataUrl, max = 360) {
   });
 }
 
-export function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRecreate, varyBackground, allowExpressionChange, allowHairChange, allowBodyChange, allowLightingChange, faceless, wantsNude, addGenericNudeLine, sourceFaceBlurred, outfitFromChar = false, lookAtCamera = false, budget = 0 }) {
-  const who = characterName || 'the character';
+/**
+ * A PAIR CHARACTER puts two named women in ONE photograph.
+ *
+ * `cast` is [{ name, from, to }] — who, and which image indexes are hers. One entry is the ordinary
+ * single-character prompt and every string below renders exactly as it always has; the plural forms
+ * only appear at two. That equality is pinned by check-photomatch-twins.js against hashes taken
+ * before this existed, because the single path is what every run uses and it must not drift.
+ *
+ * The pronouns are not cosmetic. This prompt says "she" and "her" about fifteen times, and leaving
+ * them singular while naming two women is the most direct way to get ONE woman out — the model
+ * follows the grammar, which outnumbers the names. So `she`/`her` switch with the count.
+ */
+export function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRecreate, varyBackground, allowExpressionChange, allowHairChange, allowBodyChange, allowLightingChange, faceless, wantsNude, addGenericNudeLine, sourceFaceBlurred, outfitFromChar = false, lookAtCamera = false, budget = 0, cast = null }) {
+  const who = (cast && cast.length > 1)
+    ? cast.map((c) => c.name).slice(0, -1).join(', ') + ' and ' + cast[cast.length - 1].name
+    : (characterName || 'the character');
+  const pair = !!(cast && cast.length > 1);
+  // Verb-agreeing pairs, so a sentence reads correctly either way rather than being two sentences.
+  const she = pair ? 'they' : 'she';
+  const her = pair ? 'their' : 'her';
+  const hers = pair ? 'them' : 'her';
+  const person = pair ? 'the people' : 'the person';
+  const count = cast ? cast.length : 1;
+  const countWord = ['', 'one', 'two', 'three', 'four', 'five'][count] || String(count);
+  const woman = pair ? 'the women' : 'the woman';
   const n = Math.max(1, refCount);
   const refs = n > 1 ? `images 1-${n}` : 'image 1';
   const src = `image ${n + 1}`;
+  // Per-woman where it must be per-woman, plural everywhere else. 'her own reference images' in a
+  // sentence whose subject is two women reads as ONE woman's images and invites exactly the
+  // averaging the pair rules exist to stop.
+  //
+  // Declared HERE, below `refs`, not with the other pronouns above: `const` is not hoisted, so
+  // reading refs from up there throws at call time, not at build time — the page would load and
+  // every generate would fail. This is what tools/check-tdz-deps.js exists for.
+  const ownRefs = pair ? 'their own reference images' : refs;
 
   // Identity comes from the refs. Each allow* flag drops its clause so a preset that overrides
   // that attribute (hair/body) doesn't fight the base prompt. Hair/body default ON = from refs.
@@ -233,7 +264,28 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
 
   const parts = [
     // Roles by image index, stated up front and hard.
-    `${refs} = ${who} = the ONLY source for the person. ${src} = a photograph of a DIFFERENT woman, used ONLY for its scene — NEVER an identity reference.`,
+    pair
+      // Which images are WHOSE. Without this the model has one undifferentiated pile of faces and
+      // averages them into a single woman used twice — the exact failure NO BLENDING guards, but
+      // between the two characters rather than against the stand-in.
+      ? `${cast.map((c) => `${c.from === c.to ? `image ${c.from}` : `images ${c.from}-${c.to}`} = ${c.name}`).join('. ')}. Those are the ONLY source for the people. ${src} = a photograph of DIFFERENT people, used ONLY for its scene — NEVER an identity reference.`
+      : `${refs} = ${who} = the ONLY source for the person. ${src} = a photograph of a DIFFERENT woman, used ONLY for its scene — NEVER an identity reference.`,
+    /**
+     * HOW MANY COME OUT, WHO THEY ARE, AND THAT THEY ARE NOT EACH OTHER — one paragraph.
+     *
+     * Two failures, one root: the model takes the count from the scene (one woman in, one woman
+     * out, the second character silently dropped) and, given two piles of reference faces, averages
+     * them into one look worn twice. Both are "it ignored the twins" to anyone looking at the
+     * result.
+     *
+     * The source is sometimes one woman and sometimes two (owner, 2026-08-16). Stating the count as
+     * a fixed fact and covering both shapes in one sentence means no counting, no detection, and no
+     * second code path.
+     *
+     * Written tight ON PURPOSE. It is not droppable — it IS the feature — so every character it
+     * spends is one the identity lock in the tail cannot have, against ByteDance's ~3,000 cap.
+     */
+    ...(pair ? [`EXACTLY ${countWord.toUpperCase()} WOMEN IN THE OUTPUT: ${who} — ${countWord} different people, never one face used twice. If ${src} shows one woman, she is removed and ${count === 2 ? 'both' : 'all ' + countWord} of them stand in that scene, widening the crop to fit them; if it shows ${countWord}, each becomes a different one of ${hers}.`] : []),
     /**
      * REBUILD, NOT EDIT — and it has to be said before anything else.
      *
@@ -248,19 +300,31 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
      * given and repaint a region, and "do not reuse the pixels" is the one phrasing that speaks to
      * that directly.
      */
-    `REBUILD, DO NOT EDIT: produce a NEW photograph of ${who} in ${src}'s scene. Do NOT reuse the pixels of the woman in ${src} or repaint a face onto her — she is not in the output. A body from ${src} with only the face changed is WRONG.`,
+    `REBUILD, DO NOT EDIT: produce a NEW photograph of ${who} in ${src}'s scene. Do NOT reuse the pixels of ${pair ? 'anyone' : 'the woman'} in ${src} or repaint a face onto ${hers} — ${pair ? 'they are' : 'she is'} not in the output. A body from ${src} with only the face changed is WRONG.`,
     exactRecreate
-      ? `Reproduce ${src} exactly — same background, pose, props, framing, lighting${(wantsNude || outfitFromRefs) ? '' : ', outfit'} — but the person in it is rebuilt entirely as ${who}${wantsNude ? ', and remove her clothing as instructed below' : ''}${outfitFromRefs ? `, wearing HER outfit from ${refs} rather than the one in ${src}` : ''}.`
+      // Exact recreate and a pair pull against each other: two bodies do not fit one body's
+      // silhouette, so demanding the identical framing while adding a second woman is a
+      // contradiction and the model resolves it by dropping one of them. For a pair the lock holds
+      // the scene, and lets the frame move.
+      ? (pair
+        ? `Reproduce ${src}'s scene exactly — same background, props, lighting, mood, camera angle and style${(wantsNude || outfitFromRefs) ? '' : ', and the same kind of outfit'} — but the people in it are rebuilt entirely as ${who}${wantsNude ? ', and remove their clothing as instructed below' : ''}${outfitFromRefs ? `, each wearing HER OWN outfit from her own reference images rather than anything in ${src}` : ''}. Framing and pose may adjust only as far as fitting ${countWord} women into the shot requires.`
+        : `Reproduce ${src} exactly — same background, pose, props, framing, lighting${(wantsNude || outfitFromRefs) ? '' : ', outfit'} — but the person in it is rebuilt entirely as ${who}${wantsNude ? ', and remove her clothing as instructed below' : ''}${outfitFromRefs ? `, wearing HER outfit from ${refs} rather than the one in ${src}` : ''}.`)
       : `A new photo of ${who} in ${src}'s scene, not a retouch of ${src}.`,
-    `From ${refs}, match exactly: ${identity}. Where ${src} disagrees, ${refs} win.`,
+    // For a pair this must say HER OWN images, not the pooled range: "match from images 1-8" invites
+    // the model to average eight photos of two different women into one look worn by both.
+    pair
+      ? `Match each woman to HER OWN reference images — never the other's, never an average of the two: ${identity}. Where ${src} disagrees, the reference images win.`
+      : `From ${refs}, match exactly: ${identity}. Where ${src} disagrees, ${refs} win.`,
     `From ${src}: ${scene}.`,
     // #4 — camera as its own instruction. Seedream copies the pose but defaults to a flattering
     // eye-level portrait crop unless the SHOT itself is pinned; this is what "same camera angle"
     // in Eddy needed spelled out separately from framing.
-    `CAMERA: reproduce ${src}'s exact shot — same angle, lens height, distance and crop. Whatever shot it is (low, high, over-the-shoulder, close-up, wide) it stays that shot; do NOT re-frame to a standard eye-level portrait.`,
+    pair
+      ? `CAMERA: same angle, lens height and shot type as ${src} — low stays low, over-the-shoulder stays over-the-shoulder. Only the crop may widen, and only as far as fitting ${countWord} women requires; never re-frame to a standard eye-level portrait.`
+      : `CAMERA: reproduce ${src}'s exact shot — same angle, lens height, distance and crop. Whatever shot it is (low, high, over-the-shoulder, close-up, wide) it stays that shot; do NOT re-frame to a standard eye-level portrait.`,
   ];
 
-  if (sourceFaceBlurred && !faceless) parts.push(`${src}'s face is deliberately blurred — do not reproduce the blur or invent a face from it; render ${who}'s face sharply from ${refs}.`);
+  if (sourceFaceBlurred && !faceless) parts.push(`${src}'s face is deliberately blurred — do not reproduce the blur or invent a face from it; render ${pair ? 'each of their faces' : who + "'s face"} sharply from ${ownRefs}.`);
   if (!exactRecreate && varyBackground) parts.push(`Shift the lighting and mood slightly — same place, a different moment.`);
   if (addGenericNudeLine) parts.push(NUDE_LINE);
   if (masterPrompt?.trim()) parts.push(`${who}: ${masterPrompt.trim()}`);
@@ -284,13 +348,28 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
    *    months.
    */
   if (!faceless) {
-    parts.push(`MAKEUP: exactly as in ${refs} — lips, eyes, lashes, brows. Keep a bold or dark lip if she wears one; do not soften it, do not ADD makeup she is not wearing, and never take it from ${src}.`);
+    parts.push(`MAKEUP: ${pair ? 'each exactly as in her own reference images' : 'exactly as in ' + refs} — lips, eyes, lashes, brows. Keep a bold or dark lip if ${she} ${pair ? 'wear' : 'wears'} one; do not soften it, do not ADD makeup ${she} ${pair ? 'are' : 'is'} not wearing, and never take it from ${src}.`);
   }
   if (outfitFromRefs) {
-    parts.push(`OUTFIT: she wears HER OWN clothing from ${refs} — same garments, colours, cut, fabric, length. Do NOT dress her in what the woman in ${src} wears; that outfit is not in the output. Everything else still comes from ${src}.`);
+    parts.push(`OUTFIT: ${she} ${pair ? 'each wear their' : 'wears HER'} OWN clothing from ${ownRefs} — same garments, colours, cut, fabric, length. Do NOT dress ${hers} in what ${pair ? 'anyone' : 'the woman'} in ${src} wears; that outfit is not in the output. Everything else still comes from ${src}.`);
   }
-  parts.push(`FORBIDDEN from ${src}: its face, facial structure, eyes, nose, mouth, jaw, hair colour, skin tone${allowBodyChange ? '' : ', body shape'}${outfitFromRefs ? ', its clothing' : ''}, and any tattoo, ink or skin marking. ${who} has only the tattoos visible in ${refs}.`);
-  parts.push(`NO BLENDING: do not mix, merge or average ${who} with the person in ${src} — not her face and not her body. Every part of the person in the output is 100% ${refs}, not a midpoint between the two women.`);
+  parts.push(`FORBIDDEN from ${src}: its face, facial structure, eyes, nose, mouth, jaw, hair colour, skin tone${allowBodyChange ? '' : ', body shape'}${outfitFromRefs ? ', its clothing' : ''}, and any tattoo, ink or skin marking. ${who} ${pair ? 'have' : 'has'} only the tattoos visible in ${ownRefs}.`);
+  parts.push(`NO BLENDING: do not mix, merge or average ${who} with ${person} in ${src} — not ${her} ${pair ? 'faces' : 'face'} and not ${her} ${pair ? 'bodies' : 'body'}. Every part of ${person} in the output is 100% ${pair ? 'from ' + ownRefs : refs}, not a midpoint between the ${pair ? 'women in the two photographs' : 'two women'}.`);
+  if (pair) {
+    /**
+     * The pair's own blending rule, restated where it counts.
+     *
+     * NO BLENDING above guards each woman against the STAND-IN. Nothing guards them against EACH
+     * OTHER — two sets of reference faces in one request is precisely the input that makes an edit
+     * model average them into one look worn twice, which reads as "it ignored the twins".
+     *
+     * The full rule is stated in the count paragraph at the top; this is the tail reminder, and it
+     * is here because Seedream weights the tail hardest — the same reason the identity lock lives
+     * down here. Short by necessity: the pair prompt runs close to the length cap, and a long
+     * restatement would push the FINAL lock out.
+     */
+    parts.push(`${who} are ${countWord} DIFFERENT women — different faces, never one face used twice.`);
+  }
 
   /**
    * EYES TO CAMERA. Off by default — the source's gaze is part of the shot being reproduced, and
@@ -299,7 +378,7 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
    * instructions cancel and the model does neither (owner, 2026-08-13).
    */
   if (lookAtCamera && !faceless) {
-    parts.push(`EYES TO CAMERA: she looks straight into the lens, both eyes visible and meeting the viewer. Keep the pose and body angle from ${src} — only the head and gaze turn to the camera.`);
+    parts.push(`EYES TO CAMERA: ${she} ${pair ? 'look' : 'looks'} straight into the lens, both eyes visible and meeting the viewer. Keep the pose and body angle from ${src} — only the ${pair ? 'heads and gazes turn' : 'head and gaze turn'} to the camera.`);
   }
 
   /**
@@ -319,19 +398,19 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
   if (faceless) {
     // Faceless output: the face must NOT appear, so the usual "must be recognisably her" guarantee
     // is wrong here and would fight the composition. Identity rides on body/hair instead.
-    parts.push(`FINAL — HIGHEST PRIORITY, overrides everything above: her face is intentionally OUT of the shot — cropped above the shoulders, turned away, or hidden by hair/hand/angle so no recognisable face is visible. Do NOT invent or show a face. Her body, hair, skin and proportions still come from ${refs}${allowBodyChange ? '' : ' at their true size — never averaged or shrunk toward ' + src}.`);
+    parts.push(`FINAL — HIGHEST PRIORITY, overrides everything above: ${her} ${pair ? 'faces are' : 'face is'} intentionally OUT of the shot — cropped above the shoulders, turned away, or hidden by hair/hand/angle so no recognisable face is visible. Do NOT invent or show a face. ${pair ? 'Their bodies, hair, skin and proportions' : 'Her body, hair, skin and proportions'} still come from ${ownRefs}${allowBodyChange ? '' : ' at their true size — never averaged or shrunk toward ' + src}.`);
   } else {
     const finalLock = [
-      `FINAL — HIGHEST PRIORITY, overrides everything above: render the person from scratch as ${who} from ${refs} — face, hair, skin and whole body. The woman in ${src} is an anonymous stand-in: discard her entirely, face and figure alike, and when in doubt copy ${refs}.`,
+      `FINAL — HIGHEST PRIORITY, overrides everything above: render ${person} from scratch as ${who} from ${ownRefs} — ${pair ? 'faces' : 'face'}, hair, skin and whole ${pair ? 'bodies' : 'body'}${pair ? `, ${countWord} distinct women in the frame` : ''}. ${pair ? 'The women' : 'The woman'} in ${src} ${pair ? 'are anonymous stand-ins: discard them' : 'is an anonymous stand-in: discard her'} entirely, ${pair ? 'faces' : 'face'} and ${pair ? 'figures' : 'figure'} alike, and when in doubt copy ${pair ? 'the reference images' : refs}.`,
       // Body/chest: pinned to the refs UNLESS a size chip is driving it (then the chip, appended
       // after this whole prompt, wins and re-pinning here would fight it).
       allowBodyChange
         ? null
         : (wantsNude
-          ? `Her body, figure and chest come from ${refs} at their true size — never averaged or shrunk toward ${src}.`
+          ? `${pair ? 'Each of their bodies, figures and chests come from her own reference images' : 'Her body, figure and chest come from ' + refs} at their true ${pair ? 'sizes' : 'size'} — never averaged${pair ? ', never matched to each other' : ''} or shrunk toward ${src}.`
           : (outfitFromRefs
-            ? `Her body, figure and chest come from ${refs} at their true size, and her own outfit sits on her exactly as it does there.`
-            : `Her body, figure and chest come from ${refs} at their true size; the ${src} outfit stretches to fit HER — a tighter pull from a larger chest is correct, not an error.`)),
+            ? `${pair ? 'Each of their bodies, figures and chests come from her own reference images' : 'Her body, figure and chest come from ' + refs} at their true ${pair ? 'sizes' : 'size'}, and ${pair ? 'each of their own outfits sits on her' : 'her own outfit sits on her'} exactly as it does there.`
+            : `${pair ? 'Each of their bodies, figures and chests come from her own reference images' : 'Her body, figure and chest come from ' + refs} at their true ${pair ? 'sizes' : 'size'}; the ${src} outfit stretches to fit ${pair ? 'EACH OF THEM' : 'HER'} — a tighter pull from a larger chest is correct, not an error.`)),
     ].filter(Boolean);
     parts.push(finalLock.join(' '));
   }
@@ -350,11 +429,24 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
    * Droppable, in order: photoreal boilerplate, the blur note, the master prompt, the camera
    * paragraph. Never droppable: who is who, REBUILD, the two lists, MAKEUP, OUTFIT, FORBIDDEN,
    * NO BLENDING, EYES TO CAMERA, the lighting line, and the FINAL lock.
+   *
+   * A PAIR NEEDS TWO MORE, because it starts ~700 characters up on a single character: it names two
+   * women, splits the image ranges between them, and states the count. Measured with everything on
+   * — exact recreate + her outfit + eyes to camera + a blurred source + a 200-character master
+   * prompt — a pair lands at 3,280 with every droppable above already gone.
+   *
+   * So EYES TO CAMERA and then MAKEUP become droppable, but ONLY for a pair and ONLY after the four
+   * above. Both are real losses and neither is chosen lightly: eyes-to-camera is a chip the user
+   * ticked, and MAKEUP guards a bug that was actually shipped ("it adds makeup"). They lose to the
+   * FINAL lock because a sliced identity guarantee means the wrong women come out of every image in
+   * the batch, which is not recoverable by a retry. Ordinary pair runs never reach this — exact
+   * recreate on a pair measures 2,989 and drops nothing.
    */
   const SEP = '\n\n';
   const joined = () => parts.join(SEP);
   if (budget > 0) {
-    const droppable = ['Photorealistic —', `${src}'s face is deliberately blurred`, `${who}: `, 'CAMERA:'];
+    const droppable = ['Photorealistic —', `${src}'s face is deliberately blurred`, `${who}: `, 'CAMERA:',
+      ...(pair ? ['EYES TO CAMERA:', 'MAKEUP:'] : [])];
     for (const marker of droppable) {
       if (joined().length <= budget) break;
       const i = parts.findIndex((t) => typeof t === 'string' && t.startsWith(marker));
@@ -678,12 +770,69 @@ export default function PhotoMatchSeedreamPage() {
   // Pulled out so the run loop can resolve refs for EVERY ticked character, not just the head.
   // Same ordering rule for all of them -- base face first -- because the model treats the leading
   // image as the primary subject.
-  const refsForCharacter = useCallback((id) => {
-    if (!id) return [];
+  /** The photos filed directly in one folder, best identity image first. */
+  const ownItems = useCallback((id) => {
     const mine = charItems.filter((i) => i.folderId === id);
     const rank = (i) => (i.role === 'base' ? 0 : i.role === 'body' ? 1 : 2);
     return [...mine].sort((a, b) => rank(a) - rank(b) || (a.createdAt || 0) - (b.createdAt || 0));
   }, [charItems]);
+
+  /**
+   * A CHARACTER WITH SUBFOLDERS IS A PAIR — two named women who come out in ONE photograph.
+   *
+   * Nothing new is stored to say so. Character folders have had `parentId` since subfolders
+   * existed, the picker already lists every folder, and a parent holding only subfolders was
+   * previously DEAD here — refsForCharacter read images filed directly in the folder, found none,
+   * and the run stopped with "no identity image could be loaded". So this claims a shape that was
+   * broken rather than overriding anything anyone uses.
+   *
+   *   Arya & Rosary        <- tick this, get both women in one photo
+   *      +- Arya           <- tick alone, ordinary single-character run, unchanged
+   *      +- Rosary
+   *
+   * Ticking two separate top-level characters still makes two SEPARATE photos, which is the
+   * compare-a-scene-across-characters behaviour this page was built with.
+   */
+  const membersOf = useCallback((id) => (id ? chars.filter((c) => (c.parentId || null) === id) : []), [chars]);
+
+  /**
+   * The identity images, flattened in member order so each woman occupies a contiguous run of
+   * image slots — which is what lets the prompt say "images 1-4 = Arya, images 5-8 = Rosary".
+   *
+   * The nine slots (Seedream takes ten images and the source claims one) are split evenly. Four
+   * photos each is fewer than a single character gets, and that is the trade: two identities in
+   * one request cost half the evidence apiece.
+   */
+  const refsForCharacter = useCallback((id) => {
+    if (!id) return [];
+    const members = membersOf(id);
+    if (!members.length) return ownItems(id);
+    const per = Math.max(1, Math.floor(MAX_CHAR_IMAGES / members.length));
+    return members.flatMap((m) => ownItems(m.id).slice(0, per));
+  }, [ownItems, membersOf]);
+
+  /**
+   * Who is in the frame and which image indexes are hers — null for an ordinary character, so the
+   * prompt builder takes its single-character path and every existing run is untouched.
+   *
+   * Counted from the images that will ACTUALLY be sent, not from the split, because a member whose
+   * folder holds two photos contributes two — assuming the even split here would mislabel every
+   * range after the first and hand Rosary's images to Arya.
+   */
+  const castOf = useCallback((id) => {
+    const members = membersOf(id);
+    if (members.length < 2) return null;
+    const per = Math.max(1, Math.floor(MAX_CHAR_IMAGES / members.length));
+    const cast = [];
+    let at = 1;
+    for (const m of members) {
+      const n = ownItems(m.id).slice(0, per).length;
+      if (!n) continue;                       // an empty member is skipped, not left naming nothing
+      cast.push({ name: m.name, from: at, to: at + n - 1 });
+      at += n;
+    }
+    return cast.length > 1 ? cast : null;     // one usable member is just that character
+  }, [membersOf, ownItems]);
   const eddyRefs = useMemo(() => refsForCharacter(characterId), [refsForCharacter, characterId]);
   const charName = chars.find((c) => c.id === characterId)?.name || '';
   // NOT filtered by isActive: references are created with isActive:false by default
@@ -973,7 +1122,10 @@ export default function PhotoMatchSeedreamPage() {
         if (img) refs.push(img);
       }
       const name = chars.find((c) => c.id === cid)?.name || '';
-      if (refs.length) perChar.push({ id: cid, name, refs });
+      // `cast` set = this ticked character is a pair, and it stays ONE entry here. That is the whole
+      // change to the run: the cross product below is untouched, so a pair produces one job per
+      // source photo (both women in it) instead of one per woman.
+      if (refs.length) perChar.push({ id: cid, name, refs, cast: castOf(cid) });
       else unloadable.push(name || cid);
     }
     if (!perChar.length) { notify('No character identity images could be loaded — add a primary image to this character', 'error'); return; }
@@ -1008,6 +1160,10 @@ export default function PhotoMatchSeedreamPage() {
     const promptFor = (who, refCount) => {
       const base = buildMatchInstruction({
         characterName: who.name,
+        // Set only for a pair. The builder names the women from this and ignores characterName —
+        // which is the FOLDER's name ("Arya & Rosary", or whatever it was called) and is not
+        // something to put in a prompt.
+        cast: who.cast,
         wantsNude,
         addGenericNudeLine,
         sourceFaceBlurred: blurSource,
@@ -1083,6 +1239,10 @@ export default function PhotoMatchSeedreamPage() {
       // Shown on the tile so a mixed batch says WHOSE result each one is. Recorded for EVERY run,
       // not just a multi-character one: it decides which folder the picture is filed under later,
       // and a blank name there is how a batch ends up in the wrong woman's folder.
+      // Deliberately the FOLDER's name, for a pair as much as for one woman: this is not only a
+      // label, it decides which library folder the picture is filed under. Joining the members into
+      // "Arya + Rosary" would file a pair's results into a folder the user never created, sitting
+      // beside the one they did.
       charName: who.name || '',
     }));
     setJobs((prev) => [...fresh, ...prev]);
@@ -1533,7 +1693,11 @@ export default function PhotoMatchSeedreamPage() {
                 <p className="text-xs text-zinc-500">Her saved reference photos are sent as the identity to hold.</p>
                 <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
                   {chars.map((c) => {
-                    const mine = charItems.filter((i) => i.folderId === c.id);
+                    // A pair folder holds no images itself — its women are its subfolders. Reading
+                    // only its own items showed "No photo" on a character that works perfectly,
+                    // which reads as broken. refsForCharacter already resolves either shape.
+                    const members = membersOf(c.id);
+                    const mine = members.length ? refsForCharacter(c.id) : charItems.filter((i) => i.folderId === c.id);
                     const lead = mine.find((i) => i.role === 'base') || [...mine].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
                     return (
                       <button key={c.id} type="button"
@@ -1555,6 +1719,13 @@ export default function PhotoMatchSeedreamPage() {
                         <span className={cn('block px-2 py-1.5 text-xs font-semibold',
                           characterIds.includes(c.id) ? 'bg-rose-500/15 text-rose-300' : 'bg-white/[0.02] text-zinc-400')}>
                           {c.name} <span className="text-zinc-600">{mine.length}</span>
+                          {members.length > 1 && (
+                            // Says what will happen before it is paid for: this tile is more than
+                            // one woman, and the names are the ones the prompt will use.
+                            <span className="block truncate font-normal text-emerald-400/90">
+                              {members.length} in one photo · {members.map((m) => m.name).join(' + ')}
+                            </span>
+                          )}
                         </span>
                       </button>
                     );
@@ -1562,9 +1733,11 @@ export default function PhotoMatchSeedreamPage() {
                 </div>
               {characterId && (
                 <p className="text-[0.625rem] text-zinc-600 leading-relaxed">
-                  {characterIds.length > 1
-                    ? <>Each source photo is generated once per character — {characterIds.length} runs of every photo. Each run sends that character&rsquo;s own photos first, then the source.</>
-                    : <>Sends all {charImagesUsed} of {charName || 'this character'}&rsquo;s photo{charImagesUsed === 1 ? '' : 's'} first, then the source photo — Seedream keeps whoever is in image 1, and identity comes only from those.</>}
+                  {membersOf(characterId).length > 1
+                    ? <>{membersOf(characterId).map((m) => m.name).join(' and ')} come out TOGETHER in one photo — one render per source, not one each. A source with one woman is re-staged to fit them both; a source that already has two gives one to each.</>
+                    : characterIds.length > 1
+                      ? <>Each source photo is generated once per character — {characterIds.length} runs of every photo. Each run sends that character&rsquo;s own photos first, then the source.</>
+                      : <>Sends all {charImagesUsed} of {charName || 'this character'}&rsquo;s photo{charImagesUsed === 1 ? '' : 's'} first, then the source photo — Seedream keeps whoever is in image 1, and identity comes only from those.</>}
                   {charImagesUsed === 1 && (
                     <span className="block mt-1 text-yellow-400/90">
                       Only one photo of her is on file. One identity image against the source photo is a weak
