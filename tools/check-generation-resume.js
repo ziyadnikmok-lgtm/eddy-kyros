@@ -170,7 +170,9 @@ check('filing is one shared function', pmPage.includes('const filePicture = useC
 // CHANGED 2026-08-16: the PROMPT travels with the picture now. The library row carried only the
 // label 'Photo Match - <her>', so the instruction that actually made the image — every chip, every
 // lock, the identity rules — was gone once the run ended and Copy had nothing to copy.
-check('the live run uses it, and passes the prompt it sent', pmPage.includes('await filePicture(first, charName, prompt);'));
+// CHANGED 2026-08-16: filed under WHOSE picture it is, not the head of the ticked list — runOne
+// runs once per source x character and was reading the page-level charName for all of them.
+check('the live run uses it, and passes the prompt it sent', pmPage.includes('await filePicture(first, whoName, prompt);'));
 check('the resume uses it', pmPage.includes("await filePicture(first, j.destFolder || '', j.cardPrompt || '');"));
 check('and no inline copy was left behind', !pmPage.includes("ensureFolder(who || 'Photo Match')"));
 

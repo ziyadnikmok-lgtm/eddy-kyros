@@ -365,7 +365,9 @@ check('and no longer calls the blocking route', !pm.includes('seedreamApi.edit('
 // CHANGED 2026-08-16: a third engine. Photo Match NB2 is the same component with variant="nb2",
 // running Nano Banana 2 through our bypass on Google's own API instead of WaveSpeed's resale of it.
 check('all three engines are named', pm.includes("model: isNB2 ? 'nb2' : engine === 'nano2' ? 'nano2' : 'seedream5',"));
-check('tags travel, so a recovered match stays attributable', pm.includes("tags: charName.trim() ? ['eddy', charName.trim()] : ['eddy'],"));
+// CHANGED 2026-08-16: the tag is the character THIS job is for. Read off the page it was always
+// the first character ticked, so a three-character run tagged every picture with one name.
+check('tags travel, so a recovered match stays attributable', pm.includes("tags: whoName ? ['eddy', whoName] : ['eddy'],"));
 check('the destination is read from a ref, not a stale closure', pm.includes('destDb: destDbRef.current,'));
 const lanes = (pm.match(/LANES = \{ seedream: (\d+), nano2: (\d+) \}/) || []);
 check(`its lanes match the server ceiling (${lanes[1]}/${lanes[2]})`, Number(lanes[1]) >= 300 && Number(lanes[2]) >= 300);

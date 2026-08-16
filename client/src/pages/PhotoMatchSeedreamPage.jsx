@@ -1256,7 +1256,18 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     }
   }, [destStore, destLabel]);
 
-  const runOne = async (source, charRefs, ratio, prompt) => {
+  /**
+   * WHOSE PICTURE THIS IS — passed in, not read off the page.
+   *
+   * runOne is called once per SOURCE x CHARACTER, but it was reading the component-level
+   * charName, which is the HEAD of the ticked list. So a run with Grace, Mia and Chloe tagged
+   * every picture 'Grace' and filed all three into Grace's folder — the other two women's work
+   * landed under her name, and the only way to find it was by eye.
+   *
+   * Falls back to charName so a single-character run behaves exactly as before.
+   */
+  const runOne = async (source, charRefs, ratio, prompt, who) => {
+    const whoName = String(who?.name || charName || '').trim();
     const jobId = source.id;
     const feedId = `photomatch-sd-${jobId}`;
     pushPending({ id: feedId, prompt: 'Photo Match (Seedream)', imageModel: 'Seedream 5.0 Pro Edit', aspectRatio: ratio, resolutionTier: resolution });
@@ -1291,10 +1302,10 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         provider: 'wavespeed',
         // Her name travels with the generation so "Recover missing" can file a stranded Photo
         // Match picture into the right folder, exactly as it does for Eddy's.
-        tags: charName.trim() ? ['eddy', charName.trim()] : ['eddy'],
+        tags: whoName ? ['eddy', whoName] : ['eddy'],
         destDb: destDbRef.current,
-        destFolder: charName.trim() || 'Photo Match',
-        cardPrompt: `Photo Match - ${charName.trim() || 'no character'}`,
+        destFolder: whoName || 'Photo Match',
+        cardPrompt: `Photo Match - ${whoName || 'no character'}`,
         onJobId: (id) => { claimedJobId = id; _awaiting.add(id); },
       })).finally(() => { if (claimedJobId) _awaiting.delete(claimedJobId); });
 
@@ -1377,7 +1388,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
        * Shared with the resume-on-open and the retry, so a picture recovered after a page change is
        * filed identically to one watched all the way through.
        */
-      await filePicture(first, charName, prompt);
+      await filePicture(first, whoName, prompt);
     } catch (err) {
       // A FILING miss is not a failed match: the picture exists, is billed, and is on the feed.
       // Marking the job failed would tell the owner to re-run something that already succeeded.
@@ -1586,7 +1597,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         const item = queue.shift();
         if (!item) return;
         await runOne({ ...item.src, id: `${item.src.id}::${item.who.id}::${runStamp}` },
-          item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length, item.src));
+          item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length, item.src), item.who);
       }
     });
     await Promise.all(workers);
