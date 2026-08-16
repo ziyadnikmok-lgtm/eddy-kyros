@@ -255,6 +255,43 @@ function liteJob(j) {
  * ~40KB instead of the several megabytes a phone photo runs to. Failure is non-fatal: without it
  * the tile still shows the RESULT, which is the half that matters.
  */
+/**
+ * IDENTITY REFERENCES, SHRUNK FOR THE WIRE.
+ *
+ * A character reference straight out of the collection is a full-size PNG — measured at ~2 MB
+ * each here. Three of them is 6 MB of base64 going to the provider on EVERY image in a batch, and
+ * it is most of the wait: a measured 3-reference run took 31.5s, of which the render itself was
+ * about 8.
+ *
+ * 1024px on the long edge at high quality is far more detail than any of these models uses for a
+ * face — they downsample on arrival regardless — and it takes that 6 MB to roughly 0.6.
+ *
+ * DELIBERATELY NOT APPLIED TO THE SOURCE PHOTO. The references are evidence of WHO she is and are
+ * never reproduced pixel-for-pixel; the source is the thing Exact recreate copies, so its detail
+ * is the output's detail. Shrinking that would trade scene fidelity for upload time, which is the
+ * wrong trade on the one page whose job is reproducing a photograph.
+ */
+function shrinkForUpload(dataUrl, max = 1024, quality = 0.92) {
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.onload = () => {
+        // Already small enough: hand it back untouched rather than re-encoding it lossily.
+        if (Math.max(img.naturalWidth, img.naturalHeight) <= max) { resolve(dataUrl); return; }
+        const scale = max / Math.max(img.naturalWidth, img.naturalHeight);
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL('image/jpeg', quality));
+      };
+      // A reference that will not decode is sent as it came: slower, but never dropped.
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    } catch { resolve(dataUrl); }
+  });
+}
+
 function shrinkForStorage(dataUrl, max = 360) {
   return new Promise((resolve) => {
     try {
@@ -1383,7 +1420,10 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     for (const cid of characterIds) {
       const refs = [];
       for (const r of refsForCharacter(cid).slice(0, MAX_CHAR_IMAGES)) {
-        const dataUrl = charThumbs[r.id] || await charStore.getImage(r.id);
+        const full = charThumbs[r.id] || await charStore.getImage(r.id);
+        // Shrunk before it goes anywhere — see shrinkForUpload. This is the single biggest lever
+        // on how long a run takes, and it costs nothing an identity reference needs.
+        const dataUrl = full ? await shrinkForUpload(full) : null;
         const img = dataUrl ? parseDataUrl(dataUrl) : null;
         if (img) refs.push(img);
       }
