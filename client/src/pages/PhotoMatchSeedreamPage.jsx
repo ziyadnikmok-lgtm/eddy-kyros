@@ -997,7 +997,18 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
   // image as the primary subject.
   /** The photos filed directly in one folder, best identity image first. */
   const ownItems = useCallback((id) => {
-    const mine = charItems.filter((i) => i.folderId === id);
+    /**
+     * A SCENE image is not identity, and was being sent as if it were.
+     *
+     * The Characters page lets an image be tagged SCENE — 'the picture whose background and
+     * setting should be reused'. It is a location, and it may not contain her at all. Photo Match
+     * was passing it in with her face photos, telling the model 'this is also her', which is
+     * evidence pointing away from the character on the one page whose whole job is holding one.
+     *
+     * Photo Match takes its scene from the SOURCE photo, so it has no use for a scene reference
+     * at all.
+     */
+    const mine = charItems.filter((i) => i.folderId === id && i.role !== 'scene');
     const rank = (i) => (i.role === 'base' ? 0 : i.role === 'body' ? 1 : 2);
     return [...mine].sort((a, b) => rank(a) - rank(b) || (a.createdAt || 0) - (b.createdAt || 0));
   }, [charItems]);
@@ -1281,16 +1292,12 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
   }, [destStore, destLabel]);
 
   /**
-   * WHOSE PICTURE THIS IS — passed in, not read off the page's shared `charName`.
+   * WHOSE PICTURE THIS IS — passed in, not read off the page.
    *
-   * A multi-character batch always sent the right reference images per job (`charRefs` is
-   * `item.who.refs`), so the PICTURE was always correct. But filing read the component-level
-   * `charName` — `chars.find(c => c.id === characterIds[0])`, the HEAD of the ticked list — so
-   * every job in a run filed under whichever character happened to be first, regardless of whose
-   * refs it actually used. A Grace+Natalia batch generated correctly and filed everything under
-   * one of the two; a Grace+Mia+Chloe batch tagged all three 'Grace'. Visible on the running tile
-   * (which already used `who.name` for its own label) and wrong only in the one place it actually
-   * mattered — the Library write (owner, 2026-08-16: "i see other models in another model folder").
+   * runOne is called once per SOURCE x CHARACTER, but it was reading the component-level
+   * charName, which is the HEAD of the ticked list. So a run with Grace, Mia and Chloe tagged
+   * every picture 'Grace' and filed all three into Grace's folder — the other two women's work
+   * landed under her name, and the only way to find it was by eye.
    *
    * Falls back to charName so a single-character run behaves exactly as before.
    */
@@ -2275,6 +2282,18 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
                       contest and her face may not carry — add more photos on the Characters page.
                     </span>
                   )}
+                  {/* HER FIGURE IS EVIDENCE, NOT INSTRUCTIONS — measured, not assumed.
+                      Tested on 2026-08-16 against a slim character and a fuller-figured source: the
+                      output kept the SOURCE's build through Exact recreate on, Exact recreate off,
+                      a 520-character body lock, and Her build set explicitly. Three renders, no
+                      change. What the model had was a clear body in the source and none in her
+                      references — and no amount of text beats that. The one thing that does is a
+                      reference photo showing her figure. */}
+                  <span className="block mt-1 text-zinc-500">
+                    For her FIGURE to carry, at least one of her reference photos has to show her
+                    body — a face-only set gives the model nothing to hold against the source, and no
+                    wording makes up for it.
+                  </span>
                   {charTruncated && (
                     <span className="block mt-1 text-yellow-400/90">
                       Only {charImagesUsed} of {charImageCount} character images fit — Seedream caps at {SEEDREAM_MAX_IMAGES} total and the source takes one slot.

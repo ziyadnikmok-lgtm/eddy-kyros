@@ -125,8 +125,6 @@ check('no job is run twice', new Set(drain(Array.from({ length: 30 }, (_, i) => 
 // runOne is called once per SOURCE x CHARACTER but read the component-level charName, which is the
 // HEAD of the ticked list. A run with Grace, Mia and Chloe tagged every picture 'Grace' and filed
 // all three into Grace's folder — two women's work under a third woman's name, findable only by eye.
-// Independently found and fixed twice the same day (owner, 2026-08-16: "i see other models in
-// another model folder"); this is the merged version, reconciled rather than picking a side.
 check('runOne is told whose picture it is', g.includes('const runOne = async (source, charRefs, ratio, prompt, who)'));
 check('and the call site passes her', g.includes('promptFor(item.who, item.who.refs.length, item.src), item.who);'));
 check('the tag is hers', g.includes("tags: whoName ? ['eddy', whoName] : ['eddy'],"));
@@ -137,18 +135,6 @@ check('one character still behaves exactly as before', g.includes("String(who?.n
 // The folder itself is matched case-insensitively now, so recovery cannot make a shadow folder.
 check('one folder per character, whatever the case',
   fsRead('client/src/lib/eddyCollectionStore.js').includes('Case-INSENSITIVE match'));
-// The bug would have looked exactly like this: two jobs sharing one outer name regardless of whose
-// refs each carried.
-{
-  const jobs = [{ id: 'g1', who: 'Grace' }, { id: 'n1', who: 'Natalia' }, { id: 'g2', who: 'Grace' }];
-  const outerCharName = jobs[0].who; // what the OLD code effectively used for every job
-  const filedBroken = jobs.map(() => outerCharName);
-  const filedFixed = jobs.map((j) => j.who);
-  check('the old shape really would cross-file (regression sanity check)',
-    filedBroken.some((f, i) => f !== jobs[i].who));
-  check('the fixed shape files each job under its own character',
-    filedFixed.every((f, i) => f === jobs[i].who));
-}
 
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
