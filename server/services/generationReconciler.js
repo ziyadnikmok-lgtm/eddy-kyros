@@ -214,6 +214,67 @@ async function _saveResult(job, images) {
  * id that id is written down — BEFORE the render is waited on. A crash after this point is
  * recoverable. A crash before it leaves an orphan, which resolveOrphans fails rather than resends.
  */
+/**
+ * Tries on the bypass before the job is handed to Seedream 5 Pro instead.
+ *
+ * Three, not more, because each one is expensive in TIME rather than money: a single call runs
+ * Google's own three-rung retry ladder inside it, each rung with a 180-second ceiling. Three queue
+ * attempts is therefore up to nine API calls before the engine swap. That is fine across 300 lanes
+ * and would be painful as a serial number.
+ *
+ * Rate limits do not count against it — those are refunded before this is consulted, the same way
+ * they are for every other engine.
+ */
+const NB2_ATTEMPTS = 3;
+
+/**
+ * Failures that will fail identically no matter which engine runs them, so an engine swap is a
+ * wasted call rather than a second chance.
+ *
+ * Everything here is a CONFIGURATION or REQUEST problem, not a generation problem. A content
+ * refusal is deliberately NOT in this list: that is exactly the case worth swapping for, because
+ * the two guards draw the line in different places — the owner's note on 2026-08-09 is that the
+ * images nano refuses are often ones Seedream passes.
+ *
+ * A dead or unpaid GEMINI key is terminal here even though Seedream bills a DIFFERENT key and would
+ * therefore succeed. Falling back would work, and that is the problem: every NB2 job would quietly
+ * run on Seedream and the tab would look healthy while the bypass was dead. A key problem has to be
+ * visible, so it fails with a reason that names it.
+ */
+const NB2_TERMINAL_CODES = new Set(['VALIDATION_ERROR', 'GEMINI_KEY_REQUIRED']);
+function isTerminalForFallback(err) {
+  if (NB2_TERMINAL_CODES.has(err?.code)) return true;
+  if (err?.status === 401 || err?.status === 403) return true;
+  /**
+   * A DEAD KEY ARRIVES AS 400, NOT 401. generativelanguage.googleapis.com answers a revoked or
+   * mistyped key with 400 INVALID_ARGUMENT and "API key not valid. Please pass a valid API key."
+   * Checking only 401 meant the exact case this list was written for slipped through: every job
+   * would burn three attempts and then quietly run on Seedream, one toast, tab looking healthy.
+   *
+   * Matched on the message rather than on 400 alone, because 400 also covers ordinary request
+   * problems — an aspect ratio or an image Google dislikes and Seedream may not — and those are
+   * worth the second engine.
+   */
+  if (err?.status === 400 && /api key not valid|api_key_invalid|invalid_argument.*api key/i.test(err?.message || '')) return true;
+  return false;
+}
+
+/**
+ * Consecutive rate limits per job, in memory.
+ *
+ * WHY IT EXISTS: a 429 refunds the attempt — correctly, since the provider refused and it is not
+ * the job's fault — which means `attempts` never grows and a rate-limited job can never reach the
+ * fallback. Gemini reports an exhausted daily quota as 429 for hours, so the single most likely
+ * reason the bypass "cannot finish" was also the one case the fallback could not serve: those jobs
+ * would retry forever instead of being handed to an engine that would take them.
+ *
+ * In memory rather than a column because losing the count on restart costs nothing — the job simply
+ * gets its patience back — and a migration to store a number that is meaningless an hour later is
+ * not worth the schema.
+ */
+const rateLimitHits = new Map();
+const NB2_RATE_LIMIT_TOLERANCE = 5;
+
 /** A refusal that means "try again later", not "this job is bad". */
 function isRateLimit(err) {
   return err?.status === 429
@@ -277,10 +338,30 @@ async function submitOne() {
       sub = await wavespeed.submitNanoBanana2Edit(images, job.payload?.prompt || '', opts);
     }
 
-    // WaveSpeed can answer a cached edit as already finished. File it here rather than making the
-    // poller wait for a task that will never exist.
+    /**
+     * WaveSpeed can answer a cached edit as already finished, and the bypass ALWAYS does. File it
+     * here rather than making the poller wait for a task that will never exist.
+     *
+     * SAVED IN ITS OWN TRY, and this is not tidiness — it is the duplicate-charge guard.
+     *
+     * By this line the provider has produced the picture and billed for it. _saveResult writes a
+     * file and persists the gallery, either of which can throw (a full disk, a locked file, three
+     * hundred lanes writing at once). Left inside the outer try, that throw reaches the catch below,
+     * which reads every failure as "the send did not land" — so it requeues, and for a bypass job it
+     * now hands the SAME already-paid picture to Seedream. One image, two providers, two bills, and
+     * no error anyone would connect to a disk problem.
+     *
+     * A save failure is terminal instead. The picture is in the gallery or it is not; either way it
+     * has been paid for once and must not be made again. Fail toward the visible miss.
+     */
     if (sub.done) {
-      await _saveResult(job, sub.done.images);
+      try {
+        await _saveResult(job, sub.done.images);
+      } catch (saveErr) {
+        jobQueue.markFailed(job.id, `Generated, but could not be saved: ${saveErr.message}`);
+        log.error('generation_save_failed', { jobId: job.id, engine, error: saveErr.message });
+      }
+      rateLimitHits.delete(job.id);
       backoffMs = BACKOFF_START_MS;
       return true;
     }
@@ -290,14 +371,58 @@ async function submitOne() {
     log.info('generation_job_submitted', { jobId: job.id, taskId: sub.taskId, engine });
   } catch (err) {
     if (isRateLimit(err)) {
-      // The provider refused it: nothing is rendering, nothing is billed, and it is not this job's
-      // fault — so the attempt is refunded and the whole queue pauses rather than marching the next
-      // job into the same wall.
+      /**
+       * The provider refused it: nothing is rendering, nothing is billed, and it is not this job's
+       * fault — so the attempt is refunded and the queue backs off rather than marching the next
+       * job into the same wall.
+       *
+       * But a refunded attempt never grows, so on its own this is an infinite wait: Gemini reports
+       * a spent daily quota as 429 for hours. A bypass job that keeps being refused is counted
+       * separately here and handed to Seedream once its patience runs out — the fallback exists for
+       * "the bypass cannot finish this", and a quota wall is the commonest form of that.
+       */
+      if (engine === 'nanobypass') {
+        const hits = (rateLimitHits.get(job.id) || 0) + 1;
+        rateLimitHits.set(job.id, hits);
+        if (hits >= NB2_RATE_LIMIT_TOLERANCE && jobQueue.switchEngine(job.id, 'seedream5', { tag: 'fallback' })) {
+          rateLimitHits.delete(job.id);
+          log.warn('generation_nb2_fallback_rate_limited', { jobId: job.id, hits });
+          return true;
+        }
+      }
       jobQueue.requeueUnsent(job.id, { refundAttempt: true });
+      /**
+       * KNOWN LIMITATION: this clock is global, so a rate limit on one engine also holds back jobs
+       * bound for the others — a Gemini quota wall pausing Seedream work on a different account's
+       * key. It is bounded (30s at most per pause) and the counter above stops it compounding into
+       * an indefinite stall, which is what actually mattered.
+       *
+       * Not made per-engine here on purpose: the pause is consulted BEFORE a job is claimed, and
+       * the engine is only known after, so per-engine pausing means teaching claimNext to skip
+       * paused engines. Claiming-then-requeueing instead would just move the stall — the oldest
+       * paused job would be picked, put back and picked again, blocking the queue head. That is a
+       * change to the claim logic and belongs in its own commit, not bolted onto a fallback.
+       */
       pausedUntil = Date.now() + backoffMs;
       log.warn('generation_rate_limited', { engine, backoffMs, until: new Date(pausedUntil).toISOString() });
       backoffMs = Math.min(backoffMs * 2, BACKOFF_MAX_MS);
       return false;
+    }
+    /**
+     * THE BYPASS RAN OUT OF TRIES — give the job to Seedream rather than to the bin.
+     *
+     * `job.attempts` is already this attempt (claimNext counts it before handing the job over), so
+     * at NB2_ATTEMPTS the third try has just failed. A rate limit never reaches here — it returned
+     * above with the attempt refunded — so this counts real failures only.
+     *
+     * The swap is one-way by construction: switchEngine rewrites payload.model to seedream5, and
+     * engineOf reads that, so the job cannot bounce back to the bypass and loop.
+     */
+    if (engine === 'nanobypass' && job.attempts >= NB2_ATTEMPTS && !isTerminalForFallback(err)) {
+      if (jobQueue.switchEngine(job.id, 'seedream5', { tag: 'fallback' })) {
+        log.warn('generation_nb2_fallback', { jobId: job.id, attempts: job.attempts, error: err.message });
+        return true;
+      }
     }
     // A definite send failure — the provider refused, or the connection never landed — means
     // nothing is rendering and nothing was billed, so this is safe to put back. requeueUnsent

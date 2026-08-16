@@ -378,7 +378,10 @@ check('otherwise it shows the RESULT, not the source', pm.includes('resultSrc(jo
 check('and it prefers the server copy over inline bytes', pm.includes('function resultSrc(j)'));
 // CHANGED 2026-08-16: NB2 is a third engine, and the tile badge is the only place a finished
 // picture says which one produced it.
-check('and the tile says what made it', pm.includes("job.engine && ` · ${job.engine === 'nb2' ? 'NB2' : job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}`"));
+// CHANGED 2026-08-16: the badge also marks a FALLBACK. An NB2 job the bypass cannot finish is
+// handed to Seedream by the queue, and without the marker that picture looks like an ordinary
+// Seedream run — there would be no way to tell the bypass was failing.
+check('and the tile says what made it', pm.includes("job.engine && ` · ${job.engine === 'nb2' ? 'NB2' : job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}${job.fellBack ? ' (fallback)' : ''}`"));
 
 // --- two gestures: tick the tile, click the picture (owner, 2026-08-13) ------------------------------
 // "I can click on the side and it selects, but clicking the image opens it — same as the code we

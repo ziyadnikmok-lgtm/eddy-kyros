@@ -37,6 +37,11 @@ mem.exec('CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY)');
 mem.exec(schema);
 mem.prepare('INSERT INTO users (id) VALUES (?), (?)').run('user-1', 'user-2');
 
+// The blob store writes input images beside the database. Pointed at a temp directory here so
+// this suite never touches the real one — and so it does not depend on the stubbed db exposing a
+// file path, which an in-memory one has no reason to have.
+process.env.KYROS_BLOB_DIR = fs.mkdtempSync(path.join(require('os').tmpdir(), 'kyros-queue-blobs-'));
+
 // Stand in for server/db.js so jobQueue talks to the in-memory database.
 const dbPath = require.resolve(path.join(ROOT, 'server/db.js'));
 require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: mem, children: [], paths: [] };
@@ -176,6 +181,42 @@ mem.prepare("UPDATE generation_jobs SET payload = '{not json' WHERE id = ?").run
 check('a corrupt payload hydrates to {} instead of throwing',
   (() => { try { return JSON.stringify(q.get(q2).payload) === '{}'; } catch { return false; } })());
 check('and the job is still claimable', (() => { const c = q.claimNext(); return c && c.id === q2; })());
+
+// --- switchEngine: the same job, a different model ---------------------------------------------------
+//
+// Nano Banana 2 through the bypass has one content guard, and a guard that refuses a picture
+// refuses it every time — so retrying the same engine forever turns a refusal into a hole in the
+// batch. Seedream draws that line somewhere else. This is the machinery of that second chance, and
+// it is driven for real here rather than grepped for, because every one of its guards is about
+// money: a second charge, or a lost picture.
+const sw1 = add({ payload: { prompt: 'p', model: 'nb2', images: ['blob:abc.png'] }, tags: ['eddy', 'Grace'] });
+q.claimNext();                                     // burn an attempt, exactly as a failed try does
+q.claimNext.call(null);                            // (no-op guard: the queue may be empty)
+const swapped = q.switchEngine(sw1, 'seedream5', { tag: 'fallback' });
+const after = q.get(sw1);
+check('switchEngine reports success', swapped === true);
+check('the model is rewritten, which is what routes the next attempt', after.payload.model === 'seedream5');
+check('the job is queued again', after.status === q.STATUS.QUEUED);
+// The new engine must not inherit the old one's failures, or a bad minute on the bypass fails a
+// Seedream job that never ran.
+check('and starts with a fresh attempt budget', after.attempts === 0);
+check('the tag rides along, so the picture is never silent about which model made it',
+  after.tags.includes('fallback'));
+check('existing tags survive', after.tags.includes('eddy') && after.tags.includes('Grace'));
+// The input images are references into the blob store; losing them here would fail the job on a
+// missing input rather than running it on the other engine.
+check('the input images survive the swap', JSON.stringify(after.payload.images) === JSON.stringify(['blob:abc.png']));
+
+// THE GUARD THAT MATTERS: a job the provider already has was billed. Re-running it elsewhere buys a
+// second charge and a duplicate — the same rule as requeueUnsent.
+const sw2 = add({ payload: { prompt: 'p', model: 'nb2' } });
+q.claimNext();
+q.markSubmitted(sw2, 'task-xyz');
+check('a job the provider already has is NEVER switched', q.switchEngine(sw2, 'seedream5') === false);
+check('and it keeps its engine', q.get(sw2).payload.model === 'nb2');
+check('and stays submitted', q.get(sw2).status === q.STATUS.SUBMITTED);
+
+check('an unknown id is refused rather than throwing', q.switchEngine('no-such-job', 'seedream5') === false);
 
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

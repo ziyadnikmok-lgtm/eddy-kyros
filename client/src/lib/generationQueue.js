@@ -116,6 +116,17 @@ export async function queuedSeedreamEdit({
       return {
         images: job.images?.length ? job.images : [{ galleryId: job.galleryId }],
         provider: job.provider,
+        /**
+         * WHICH ENGINE ACTUALLY MADE IT, which is not always the one that was asked for.
+         *
+         * A Nano Banana 2 bypass job that exhausts its tries is handed to Seedream 5 Pro by the
+         * queue (generationReconciler, NB2_ATTEMPTS). Without reading the model back, the caller
+         * would keep labelling the tile with the engine it requested, and a picture Seedream made
+         * would sit in the panel claiming to be NB2 — the same shape of quiet lie as a green tick
+         * with no proof behind it.
+         */
+        model: job.model,
+        fellBack: (job.tags || []).includes('fallback'),
         jobId,
         galleryId: job.galleryId,
         url: galleryApi.imageUrl(job.galleryId),

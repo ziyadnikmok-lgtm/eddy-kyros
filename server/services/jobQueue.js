@@ -202,6 +202,46 @@ function requeueUnsent(id, { refundAttempt = false } = {}) {
 }
 
 /**
+ * Hand a job to a DIFFERENT engine and put it back on the queue.
+ *
+ * WHY: Nano Banana 2 through the bypass is one model with one content guard, and a guard that
+ * refuses a picture refuses it every time — so retrying the same engine forever converts a refusal
+ * into a hole in the batch. Seedream 5 Pro draws that line somewhere else, and the owner's
+ * observation on 2026-08-09 is that the images nano refuses are often ones Seedream passes. Trying
+ * the other engine is the difference between a missing picture and a picture.
+ *
+ * ATTEMPTS RESET TO ZERO, deliberately. The new engine gets its own budget: arriving with the
+ * previous one's failures already counted would let a single bad minute on the bypass fail a
+ * Seedream job that never ran.
+ *
+ * REFUSES IF A TASK ID EXISTS, same guard as requeueUnsent and for the same reason — a job the
+ * provider is already rendering has been billed, and re-running it elsewhere buys a second charge
+ * and a duplicate.
+ *
+ * The tag rides along so a picture that came from a different model than the one on the button is
+ * never silent about it.
+ */
+function switchEngine(id, model, { tag = null } = {}) {
+  const row = db.prepare('SELECT task_id, payload, tags FROM generation_jobs WHERE id = ?').get(id);
+  if (!row) return false;
+  if (row.task_id) return false;
+
+  let payload = {};
+  try { payload = JSON.parse(row.payload) || {}; } catch { return false; }
+  payload.model = model;
+
+  let tags = [];
+  try { tags = row.tags ? JSON.parse(row.tags) : []; } catch { tags = []; }
+  if (tag && !tags.includes(tag)) tags = [...tags, tag];
+
+  const res = db.prepare(`
+    UPDATE generation_jobs SET status = ?, payload = ?, tags = ?, attempts = 0, error = NULL, updated_at = ?
+    WHERE id = ? AND task_id IS NULL
+  `).run(STATUS.QUEUED, JSON.stringify(payload), tags.length ? JSON.stringify(tags) : null, now(), id);
+  return res.changes === 1;
+}
+
+/**
  * What the boot sweep has to deal with: jobs Muapi is already rendering.
  *
  * These are re-polled, never re-sent. Anything left `queued` needs no sweep at all — the worker
@@ -375,4 +415,5 @@ module.exports = {
   counts,
   get,
   sweepBlobs,
+  switchEngine,
 };

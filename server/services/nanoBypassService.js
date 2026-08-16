@@ -97,9 +97,16 @@ async function callGemini(apiKey, modelId, parts, aspectRatio, imageSize, temper
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
       const err = new AppError(`Gemini API error (${resp.status}): ${text.slice(0, 200)}`, 502, 'NANO_BYPASS_ERROR');
-      // The queue has to tell "come back later" apart from "this job is bad": a rate limit must be
-      // retried, a rejected payload must not be. Without this every 429 burns an attempt and a
-      // busy minute quietly fails a batch.
+      /**
+       * The queue has to tell "come back later" apart from "this job is bad": a rate limit must be
+       * retried and refunded, a rejected payload must not be. Without this a busy minute quietly
+       * eats the retry budget of perfectly good jobs.
+       *
+       * `status`, NOT `statusCode`. AppError's constructor sets statusCode, and that is what the
+       * error handler answers the HTTP request with — writing there would change what the Nano
+       * Bypass page receives for an unrelated reason. This adds a field beside it, read only by
+       * the queue.
+       */
       err.status = resp.status;
       throw err;
     }

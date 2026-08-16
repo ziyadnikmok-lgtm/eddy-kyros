@@ -106,5 +106,96 @@ check('and both layout lists include it', (app.match(/^ {2}'photoMatchNB2',$/gm)
 check('its nav colour differs from Photo Match SD, so the tabs are tellable apart',
   /photoMatchNB2: \['#/.test(app) && !app.includes("photoMatchNB2: ['#f0abfc', '#a21caf']"));
 
+// --- three tries, then Seedream ---------------------------------------------------------------------
+// A content guard that refuses a picture refuses it every time, so retrying the same engine forever
+// turns a refusal into a hole in the batch. Seedream draws that line somewhere else.
+const jq = read('server/services/jobQueue.js');
+check('the bypass gets a fixed number of tries', /const NB2_ATTEMPTS = (\d+);/.test(rec));
+check('and then the job is handed to Seedream', rec.includes("jobQueue.switchEngine(job.id, 'seedream5', { tag: 'fallback' })"));
+check('only after the tries are spent', rec.includes("engine === 'nanobypass' && job.attempts >= NB2_ATTEMPTS"));
+
+// The swap must be one-way. switchEngine rewrites payload.model, and engineOf reads payload.model,
+// so a fallen-back job cannot be routed to the bypass again — no loop.
+check('switchEngine rewrites the model, which is what engineOf reads',
+  jq.includes('payload.model = model;') && rec.includes("const model = job.payload?.model;"));
+check('and refuses if the provider already has it — that would be a second charge',
+  /function switchEngine[\s\S]*?if \(row\.task_id\) return false;/.test(jq));
+check('the new engine gets a fresh attempt budget', /function switchEngine[\s\S]*?attempts = 0/.test(jq));
+
+// A configuration problem fails the same way on every engine, so swapping is a wasted call.
+check('terminal failures do not trigger a pointless swap', rec.includes('isTerminalForFallback(err)'));
+check('a bad payload is terminal', rec.includes("NB2_TERMINAL_CODES = new Set(['VALIDATION_ERROR', 'GEMINI_KEY_REQUIRED'])"));
+// The subtle one: Seedream bills a DIFFERENT key, so a dead Gemini key WOULD fall back successfully
+// — and then every NB2 job runs on Seedream while the tab looks healthy. Fail visibly instead.
+check('a rejected Gemini key fails visibly rather than hiding behind Seedream',
+  rec.includes('err?.status === 401') && /every NB2 job would quietly\s*\*? *run on Seedream/.test(rec));
+// A content refusal is NOT terminal: that is the case worth swapping for.
+check('a content refusal still gets the other engine', !rec.includes('NANO_BYPASS_NO_IMAGE\', \'VALIDATION_ERROR'));
+// Rate limits are refunded before this is reached, so they cannot eat the budget of a good job.
+check('a rate limit is refunded before the count is consulted',
+  rec.indexOf('requeueUnsent(job.id, { refundAttempt: true })') < rec.indexOf('job.attempts >= NB2_ATTEMPTS'));
+
+// --- and the page must not lie about which engine made the picture --------------------------------------
+const gq = read('client/src/lib/generationQueue.js');
+const jobsRoute = read('server/routes/jobs.js');
+// The route strips `payload` on purpose (it holds the source images), so reading job.payload.model
+// on the client would have been silently dead — undefined every time, and the tile would keep the
+// engine it asked for. The model and tags are surfaced explicitly instead.
+check('the API surfaces which model ran', jobsRoute.includes('model: job.payload?.model || null,'));
+check('and the tags, which carry the fallback marker', jobsRoute.includes('tags: job.tags || [],'));
+check('the queue reads the surfaced field, not the stripped payload',
+  gq.includes('model: job.model,') && !gq.includes('model: job.payload?.model,'));
+check('and whether it fell back', gq.includes("fellBack: (job.tags || []).includes('fallback'),"));
+check('the page reads the engine back rather than assuming', pm.includes("const ranOn = data.model === 'seedream5'"));
+check('the tile records what ran, not what was asked for', pm.includes('engine: ranOn,'));
+check('and marks the swap', pm.includes("job.fellBack ? ' (fallback)' : ''"));
+check('the gallery entry says fallback too', pm.includes('fellBack ? `${engineLabel} (fallback)` : engineLabel'));
+
+// One notification per RUN. On a 200-image batch with the bypass down, per-picture is 200 toasts.
+check('the warning fires once per run', pm.includes('warnedFallback.current = true;'));
+// Declared above the function that reads it — the use-before-define this file has been bitten by.
+check('and its ref is declared before the code that uses it',
+  pm.indexOf('const warnedFallback = useRef(false);') < pm.indexOf('const runOne = async (source'));
+
+// The message states a number, so the number has to be the real one.
+const serverAttempts = (rec.match(/const NB2_ATTEMPTS = (\d+);/) || [])[1];
+const clientAttempts = (pm.match(/const NB2_ATTEMPTS = (\d+);/) || [])[1];
+check(`the count in the message matches the server's (${serverAttempts})`, serverAttempts && serverAttempts === clientAttempts);
+check('no phantom identifier in the message', !pm.includes('NB2_ATTEMPTS_LABEL'));
+
+// --- the four things a review caught, pinned so they cannot come back -----------------------------
+//
+// 1. DOUBLE CHARGE. By the time _saveResult runs, the provider has produced the picture and billed
+//    for it. Left inside the outer try, a disk or gallery error there reads as "the send failed" —
+//    so the job is requeued, and for a bypass job handed to Seedream: one image, two providers,
+//    two bills, and an error nobody would connect to a full disk.
+check('a save failure cannot re-render an already-paid picture',
+  /try \{\s*await _saveResult\(job, sub\.done\.images\);\s*\} catch \(saveErr\) \{/.test(rec));
+check('and it fails the job with a reason that says what happened',
+  rec.includes('Generated, but could not be saved:'));
+
+// 2. A dead Gemini key arrives as 400 INVALID_ARGUMENT, not 401. Checking only 401 meant the exact
+//    case the terminal list was written for slipped through — every job burning three attempts and
+//    then quietly running on Seedream while the tab looked healthy.
+check('a revoked key (400, not 401) is recognised as terminal', /api key not valid\|api_key_invalid/.test(rec));
+check('but an ordinary 400 still gets the other engine', rec.includes("err?.status === 400 &&"));
+
+// 3. A refunded attempt never grows, so a rate-limited job could never reach the fallback — and
+//    Gemini reports a spent daily quota as 429 for hours. That made the commonest reason the bypass
+//    "cannot finish" the one case the fallback could not serve.
+check('rate limits are counted so a quota wall still reaches the fallback',
+  rec.includes('const rateLimitHits = new Map();') && rec.includes('hits >= NB2_RATE_LIMIT_TOLERANCE'));
+check('and the counter is released when the job leaves', rec.includes('rateLimitHits.delete(job.id);'));
+check('the global pause limitation is written down rather than left to be rediscovered',
+  /KNOWN LIMITATION: this clock is global/.test(rec));
+
+// 4. liteJob is the PERSISTED shape and drops anything not named. Without this the fallback marker
+//    lasted until the next reload, after which a Seedream picture sat on the NB2 panel looking like
+//    an ordinary run.
+check('the fallback marker survives a reload', pm.includes('fellBack: !!j.fellBack,'));
+// 5. And the money follows the engine that actually ran.
+check('a fallen-back image is priced as Seedream, not as the bypass', pm.includes('const spent = ranOn === \'nb2\''));
+check('the session total uses it', pm.includes('setSessionSpend((s) => s + spent);'));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

@@ -171,6 +171,10 @@ function liteJob(j) {
     url: j.url || '',
     doneAt: j.doneAt || 0,
     engine: j.engine || '',
+    // Survives a reload. Dropped here, the '(fallback)' marker lasted only until the panel was
+    // restored, and a Seedream picture then sat on the NB2 tab looking like an ordinary run —
+    // exactly the silence the marker exists to break.
+    fellBack: !!j.fellBack,
     resolution: j.resolution || '',
     mode: j.mode || '',
     faceless: !!j.faceless,
@@ -624,6 +628,15 @@ const NANO2_CLIENT_TIMEOUT_MS = 11 * 60_000;
 const NB2_COST = { '1K': 0.04, '2K': 0.06 };
 
 /**
+ * Tries on the bypass before the queue hands the job to Seedream 5 Pro.
+ *
+ * MIRRORS generationReconciler.NB2_ATTEMPTS, which is where the decision is actually made — this
+ * copy exists only so the message can say a number. check-photomatch-nb2.js asserts the two
+ * match, because a message that states the wrong count is worse than one that states none.
+ */
+const NB2_ATTEMPTS = 3;
+
+/**
  * PHOTO MATCH, TWICE — one component, two tabs.
  *
  *   variant 'sd'  -> Photo Match SD, Seedream 5.0 Pro or Nano Banana 2, both via WaveSpeed
@@ -1057,6 +1070,15 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
   };
 
   // ── run ────────────────────────────────────────────────────────────────────
+  /**
+   * Said ONCE per run, not once per picture. On a 200-image batch with the bypass refusing
+   * everything, one notification per image is two hundred toasts carrying one fact.
+   *
+   * Declared ABOVE runOne, which reads it — the same use-before-define this file carries a
+   * warning about on runIdsRef.
+   */
+  const warnedFallback = useRef(false);
+
   const runOne = async (source, charRefs, ratio, prompt) => {
     const jobId = source.id;
     const feedId = `photomatch-sd-${jobId}`;
@@ -1094,6 +1116,18 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         cardPrompt: `Photo Match - ${charName.trim() || 'no character'}`,
       }));
 
+      /**
+       * The engine that actually produced it, read back from the queue rather than assumed.
+       *
+       * An NB2 job the bypass could not finish is handed to Seedream 5 Pro by the reconciler
+       * (NB2_ATTEMPTS). Keeping the requested engine on the tile would leave a Seedream picture
+       * claiming to be NB2 — the same shape of quiet lie as a tick with no proof behind it.
+       */
+      const ranOn = data.model === 'seedream5' ? 'seedream' : data.model === 'nano2' ? 'nano2' : data.model === 'nb2' ? 'nb2' : engine;
+      const fellBack = !!data.fellBack || (isNB2 && ranOn !== 'nb2');
+      const engineLabel = ranOn === 'nb2' ? 'Nano Banana 2 (Gemini bypass)'
+        : ranOn === 'nano2' ? 'Nano Banana 2 (WaveSpeed)' : 'Seedream 5.0 Pro Edit';
+
       const first = (data.images || [])[0];
       if (!first) throw new Error(`${isNB2 ? 'Nano Banana 2 (bypass)' : engine === 'nano2' ? 'Nano Banana 2' : 'Seedream'} returned no image`);
 
@@ -1101,7 +1135,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         galleryId: first.galleryId,
         imageId: first.imageId,
         prompt: isNB2 ? 'Photo Match NB2 (bypass)' : engine === 'nano2' ? 'Photo Match (Nano Banana 2)' : 'Photo Match (Seedream)',
-        imageModel: isNB2 ? 'Nano Banana 2 (Gemini bypass)' : engine === 'nano2' ? 'Nano Banana 2 (WaveSpeed)' : 'Seedream 5.0 Pro Edit',
+        imageModel: fellBack ? `${engineLabel} (fallback)` : engineLabel,
         aspectRatio: ratio,
         resolutionTier: resolution,
         mimeType: first.mimeType,
@@ -1111,6 +1145,10 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
       // moves pictures between Library and Base Library, and it cannot find a row without them.
       // A small JPEG of the source, so the before/after slider still works after a reload. Awaited
       // before the tile flips to done so the persisted row is complete the first time it is written.
+      if (fellBack && !warnedFallback.current) {
+        warnedFallback.current = true;
+        notify(`Nano Banana 2 could not finish an image after ${NB2_ATTEMPTS} tries — Seedream 5.0 Pro did it instead. Those are marked "fallback".`, 'error');
+      }
       const thumbSmall = await shrinkForStorage(source.dataUrl);
       setJobs((prev) => prev.map((j) => (j.id === jobId
         ? {
@@ -1123,13 +1161,24 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
           // WHEN and HOW, so "the last 30" and "the last hour" mean something after a reload, and
           // so a tile can say what made it rather than leaving you to remember.
           doneAt: Date.now(),
-          engine,
+          engine: ranOn,
+          fellBack,
           resolution,
           mode: exactRecreate ? 'exact' : 'scene',
           faceless,
         }
         : j)));
-      setSessionSpend((s) => s + costPerJob);
+      /**
+       * Priced by what RAN, not by what was asked for. A fallen-back image is a Seedream render
+       * on the WaveSpeed key, and charging it at the bypass's rate under-reports the session by
+       * roughly forty percent — on the one readout that is supposed to be the honest total.
+       */
+      const spent = ranOn === 'nb2'
+        ? (NB2_COST[resolution] ?? NB2_COST['1K'])
+        : ranOn === 'nano2'
+          ? (NANO2_COST[resolution] ?? NANO2_COST['1K'])
+          : seedreamCost(resolution, imagesPerJob);
+      setSessionSpend((s) => s + spent);
 
       /**
        * INTO EDDY'S LIBRARY, under her name -- the same place, and the same shape, a generation from
@@ -1179,6 +1228,9 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
   const handleMatch = async () => {
     if (!sources.length) { notify('Add at least one source photo', 'error'); return; }
     if (!characterIds.length) { notify('Pick the character whose identity to use', 'error'); return; }
+    // Once per RUN, which means clearing it when a run starts. A ref set once and never reset is
+    // once per page LOAD — the second batch of the session would fall back in silence.
+    warnedFallback.current = false;
 
     // Without identity images Seedream can only fall back on the source photo's face — the exact
     // failure this page exists to prevent. Fail loudly instead of quietly producing the stand-in.
@@ -2183,7 +2235,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
                         {job.charName ? `${job.charName} · ` : ''}in {job.filedDb === 'eddy-base' ? 'Base Library' : 'Library'}
                         {/* WHAT MADE IT. Two engines, two modes and a faceless switch produce very
                             different pictures, and a week later the tile is the only record. */}
-                        {job.engine && ` · ${job.engine === 'nb2' ? 'NB2' : job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}`}
+                        {job.engine && ` · ${job.engine === 'nb2' ? 'NB2' : job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}${job.fellBack ? ' (fallback)' : ''}`}
                         {job.resolution && ` ${job.resolution}`}
                         {job.mode === 'exact' && ' · exact'}
                         {job.faceless && ' · faceless'}
@@ -2238,7 +2290,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
 
             <div className="absolute left-4 top-4 rounded-lg bg-black/70 px-3 py-1.5 text-xs text-zinc-300">
               {job.charName || 'Photo Match'}
-              {job.engine && <span className="text-zinc-500"> · {job.engine === 'nb2' ? 'NB2' : job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}</span>}
+              {job.engine && <span className="text-zinc-500"> · {job.engine === 'nb2' ? 'NB2' : job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}{job.fellBack ? ' (fallback)' : ''}</span>}
               {job.resolution && <span className="text-zinc-500"> {job.resolution}</span>}
               <span className="text-zinc-500"> · {i + 1} of {lightboxList.length}</span>
             </div>

@@ -30,6 +30,16 @@ function present(job) {
     // The SAME shape /api/seedream/edit answers with, so a page can swap one call for the other.
     images: job.images || [],
     provider: job.payload?.provider === 'wavespeed' ? 'wavespeed' : 'muapi',
+    /**
+     * WHICH MODEL ACTUALLY RAN IT — one short string out of the payload, never the payload itself.
+     *
+     * The queue can change this mid-job: a Nano Banana 2 bypass render that exhausts its tries is
+     * handed to Seedream 5 Pro (generationReconciler, NB2_ATTEMPTS). Without this the page keeps
+     * labelling the tile with the engine it ASKED for, and a Seedream picture sits in the panel
+     * claiming to be NB2. `tags` carries the 'fallback' marker for the same reason.
+     */
+    model: job.payload?.model || null,
+    tags: job.tags || [],
     destDb: job.dest_db,
     destFolder: job.dest_folder,
     cardPrompt: job.card_prompt,
