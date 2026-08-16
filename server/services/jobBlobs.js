@@ -67,6 +67,36 @@ function store(images) {
   if (!Array.isArray(images)) return images;
   const dir = blobDir();
   return images.map((img) => {
+    /**
+     * THE SHAPE THE APP ACTUALLY SENDS IS AN OBJECT, not a data URL.
+     *
+     * `parseDataUrl()` in EddyGeneratePage returns `{ mimeType, base64 }`, and that object travels
+     * all the way into `payload.images`. This function only understood strings, so every real
+     * image hit the `typeof img !== 'string'` bail below and was returned untouched — no file
+     * written, no error raised, and the full base64 stringified straight into the job row. That is
+     * how saas.db reached 800 MB in under an hour while the blob directory stayed empty
+     * (2026-08-15). A pass-through that silently does nothing is the most expensive kind.
+     *
+     * Normalised here rather than at the call sites: this is the one place that knows what a
+     * stored image looks like, and the queue has two independent producers.
+     */
+    const asObject = img && typeof img === 'object' && typeof img.base64 === 'string'
+      ? { base64: img.base64.replace(/^data:[^;]+;base64,/, ''), mimeType: img.mimeType || 'image/png' }
+      : null;
+    if (asObject) {
+      const bytes = Buffer.from(asObject.base64, 'base64');
+      if (!bytes.length) return img;
+      const ext = extOf(asObject.mimeType.replace(/^image\//, '')) || 'png';
+      const name = `${crypto.createHash('sha256').update(bytes).digest('hex')}.${ext}`;
+      const file = path.join(dir, name);
+      if (!fs.existsSync(file)) {
+        const tmp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+        fs.writeFileSync(tmp, bytes);
+        try { fs.renameSync(tmp, file); } catch { fs.rmSync(tmp, { force: true }); }
+      }
+      return `blob:${name}`;
+    }
+
     if (typeof img !== 'string') return img;
     const m = img.match(DATA_URL);
     if (!m) return img;
@@ -107,15 +137,33 @@ function load(refs) {
     if (!m) return ref;
     const file = path.join(dir, `${m[1]}.${m[2]}`);
     if (!fs.existsSync(file)) throw new Error(`Input image is missing from the blob store (${ref})`);
-    return `data:image/${mimeOf(m[2])};base64,${fs.readFileSync(file).toString('base64')}`;
+    /**
+     * Objects out, NOT data-URL strings.
+     *
+     * Both providers destructure what they are given — `imageInputs.map(({ base64 }) => …)` in
+     * wavespeedService — so a string arrives as `base64 === undefined` and throws on the first
+     * `.match`. Returning the same `{ base64, mimeType }` shape the client sent means the round
+     * trip through the blob store is invisible to everything downstream, which is the only way a
+     * job that was stored can be sent identically to one that was not.
+     */
+    return { base64: fs.readFileSync(file).toString('base64'), mimeType: `image/${mimeOf(m[2])}` };
   });
 }
 
-/** Every reference a payload names, for sweep to collect. */
+/**
+ * Every reference a payload names, for sweep to collect.
+ *
+ * Reads BOTH shapes. sweepBlobs derives its keep-set from this alone, so a reference it fails to
+ * see is a file it deletes while a queued job still needs it — turning a disk-space fix into every
+ * queued job failing at send with "Input image is missing from the blob store".
+ */
 function refsIn(payload) {
   const out = [];
   for (const img of payload?.images || []) {
     if (typeof img === 'string' && REF.test(img)) out.push(img.slice('blob:'.length));
+    else if (img && typeof img === 'object' && typeof img.ref === 'string' && REF.test(img.ref)) {
+      out.push(img.ref.slice('blob:'.length));
+    }
   }
   return out;
 }

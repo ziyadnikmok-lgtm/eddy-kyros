@@ -5650,7 +5650,26 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           try {
             const row = (await baseStore.listItems()).find((i) => i.id === combo.basePhotoId);
             if (row) {
-              const parentId = row.folderId || null;
+              /**
+               * The parent is the nearest ancestor NOT named "used" — never the row's raw current
+               * folder.
+               *
+               * `_movedBases` is in-memory and empty again after every reload, so a base already
+               * filed under "Chloe > used" that gets touched by a later page load reran this whole
+               * block with `row.folderId` pointing at "used" itself. `ensureFolder('used',
+               * usedFolderId)` then made a SECOND "used" as a child of the first, and repeated
+               * reloads nested it six deep before anyone noticed (owner, 2026-08-16). Walking up
+               * past any folder literally named "used" always lands back on the real character
+               * folder, so this is correct however many times it runs and however nested the row
+               * currently sits — no dependency on `_movedBases` surviving a reload.
+               */
+              const folders = await baseStore.listFolders();
+              let parentId = row.folderId || null;
+              while (parentId) {
+                const cur = folders.find((f) => f.id === parentId);
+                if (!cur || String(cur.name).trim().toLowerCase() !== 'used') break;
+                parentId = cur.parentId || null;
+              }
               const used = await baseStore.ensureFolder('used', parentId);
               // Already there — nothing to do, and re-moving would churn the index for nothing.
               if (used?.id && row.folderId !== used.id) await baseStore.moveItem(row.id, used.id);

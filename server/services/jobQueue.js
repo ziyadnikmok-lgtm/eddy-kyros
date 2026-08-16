@@ -272,6 +272,21 @@ function retryAllFailed(userId) {
   return res.changes;
 }
 
+/**
+ * Discard failed jobs instead of retrying them.
+ *
+ * Scoped to FAILED only, by the same WHERE clause retryAllFailed uses — this can never touch a
+ * queued, submitting, submitted, or done row, so it cannot cancel live work or lose a delivered
+ * picture. A failed job never reached a provider that would bill it (jobQueue never resends
+ * anything with a task_id — see the ORPHAN WINDOW note at the top of this file), so deleting one
+ * discards nothing that was ever paid for.
+ */
+function deleteAllFailed(userId) {
+  const res = db.prepare(`DELETE FROM generation_jobs WHERE user_id = ? AND status = ?`)
+    .run(userId, STATUS.FAILED);
+  return res.changes;
+}
+
 /** Counts by status — the whole queue at a glance, in one query rather than five. */
 function counts(userId) {
   const rows = db.prepare(`
@@ -371,6 +386,7 @@ module.exports = {
   listFailed,
   retry,
   retryAllFailed,
+  deleteAllFailed,
   cancelQueued,
   counts,
   get,

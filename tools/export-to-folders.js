@@ -84,6 +84,17 @@ function readablePrompt(raw) {
  * "import-12" tells you nothing; the first few words of the prompt tell you what the picture is.
  */
 function nameFor(row, i) {
+  /**
+   * A CHARACTER card names itself, and that name beats everything else.
+   *
+   * Character exports carry `character: "Arya"` and no title at all, so all sixteen came out as
+   * item-1..item-16 — sixteen faces and not one of them saying whose it was, which is the single
+   * thing that export is for (owner, 2026-08-15). Checked before title on purpose: when a card
+   * knows who it is, nothing derived from a prompt is going to beat that.
+   */
+  const character = safeName(row.character, '').trim();
+  if (character) return character;
+
   // Strip an extension the title is already carrying, or "image.png" becomes "image.png.jpg".
   const title = safeName(row.title, '').replace(/\.(png|jpe?g|webp|gif|bmp)$/i, '').trim();
   // A title that is only a placeholder is worse than no title: "image", "import-12", "untitled 3"

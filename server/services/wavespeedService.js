@@ -682,7 +682,15 @@ const UPLOAD_CACHE_MAX = 200;
 function _cachedUpload(hash) {
   const hit = _uploadCache.get(hash);
   if (!hit) return null;
-  if (Date.now() - hit.at > UPLOAD_CACHE_TTL_MS) { _uploadCache.delete(hash); return null; }
+  // SINGLE-USE, on purpose (2026-08-15 root cause): this cache used to be handed out to every job
+  // that shared an image, so a batch reusing the same pose/outfit photo across dozens of jobs gave
+  // MANY separate WaveSpeed tasks the identical media URL. WaveSpeed's uploaded media only tolerates
+  // one real fetch — whichever task's worker got there first succeeded, every other task sharing
+  // that URL failed with "Could not download the input ... 403", and a retry just handed out the
+  // same already-dead URL again, so it failed identically forever. Evicting on read means at most
+  // one caller ever receives a given URL; every other caller misses and uploads its own fresh copy.
+  _uploadCache.delete(hash);
+  if (Date.now() - hit.at > UPLOAD_CACHE_TTL_MS) return null;
   return hit.url;   // may be a pending promise — await handles both
 }
 

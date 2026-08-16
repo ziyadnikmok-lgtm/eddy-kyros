@@ -59,7 +59,16 @@ function RecoverFromGallery({ onDone }) {
     setBusy(true);
     try {
       const store = createEddyCollection('eddy-library');
-      const res = await galleryApi.list();
+      /**
+       * SLIM, AND FILTERED SERVER-SIDE.
+       *
+       * This sweep only ever asks "which gallery ids am I missing?" — it needs identifiers and the
+       * character tag, nothing else. The full listing is 8.9 MB on the owner's machine, 7.7 MB of
+       * it prompt text, built and parsed on every single visit to the Library to answer that
+       * (2026-08-15). Slim is about 130 KB. The prompt for anything actually missing is fetched
+       * per image below, which is normally none at all.
+       */
+      const res = await galleryApi.list({ fields: 'slim', tag: 'eddy' });
       const all = Array.isArray(res) ? res : (res?.images || res?.gallery || []);
       const mine = all.filter((g) => (g.tags || []).includes('eddy'));
 
@@ -82,6 +91,35 @@ function RecoverFromGallery({ onDone }) {
       // Tags the server always writes; anything left is the caller's own marker, not a character.
       const ENGINE_TAGS = new Set(['seedream-5-pro-edit', 'nano-banana-2', 'wavespeed', 'muapi']);
       const ROUTE_TAGS = new Set(['eddy', 'edit', 'base', 'pose', 'plate', 'fallback']);
+
+      /**
+       * The prompts, for the missing ones only, eight requests at a time.
+       *
+       * The slim listing above carries no prompt, and a Library row without one is unsearchable —
+       * the prompt is the only thing telling two pictures of the same woman in the same room apart.
+       * Fetching them here costs one small request per RECOVERED image, where the old shape paid
+       * 8.9 MB per VISIT whether anything was missing or not.
+       */
+      const prompts = new Map();
+      for (let i = 0; i < missing.length; i += 8) {
+        // eslint-disable-next-line no-await-in-loop -- bounded concurrency, deliberately
+        const got = await Promise.all(missing.slice(i, i + 8).map(async (g) => {
+          try {
+            const one = await galleryApi.get(g.id);
+            return [g.id, (one?.data || one)?.prompt || ''];
+          } catch { return [g.id, '']; }   // a picture with no prompt still beats a lost picture
+        }));
+        for (const [id, p] of got) prompts.set(id, p);
+      }
+
+      /**
+       * One write per FOLDER, not one per picture.
+       *
+       * Every addItems call rewrites the whole index, and that index is 12 MB of prompt text on the
+       * owner's machine. Recovering 50 images one at a time is 50 rewrites of 12 MB — the reason a
+       * recovery after a crash could take longer than the generation did.
+       */
+      const byFolder = new Map();
       for (const g of missing) {
         const tags = g.tags || [];
         const character = tags.find((t) => !ENGINE_TAGS.has(t) && !ROUTE_TAGS.has(t));
@@ -104,7 +142,16 @@ function RecoverFromGallery({ onDone }) {
         const folderId = character ? (await store.ensureFolder(character))?.id : null;
         // The floor. Never null: "in the wrong folder" is recoverable by dragging, "nowhere" is not.
         const dest = folderId || (await store.ensureFolder('Eddy'))?.id || null;
-        await store.addItems([{ url: galleryApi.imageUrl(g.id), prompt: g.prompt || '', name: `${character || 'eddy'}-${g.id}` }], dest);
+        if (!byFolder.has(dest)) byFolder.set(dest, []);
+        byFolder.get(dest).push({
+          url: galleryApi.imageUrl(g.id),
+          prompt: prompts.get(g.id) || '',
+          name: `${character || 'eddy'}-${g.id}`,
+        });
+      }
+      for (const [dest, rows] of byFolder) {
+        // eslint-disable-next-line no-await-in-loop -- writes are serialized by the store anyway
+        await store.addItems(rows, dest);
       }
       notify(`Recovered ${missing.length} image${missing.length === 1 ? '' : 's'}`, 'success');
       onDone?.();
@@ -125,11 +172,26 @@ function RecoverFromGallery({ onDone }) {
    *
    * Safe to run unattended: it dedupes on the gallery id already in each row's URL, so a picture
    * that IS filed is never filed twice, and it only ever adds.
+   *
+   * AFTER THE GRID, though. It is housekeeping — nobody opens the Library to watch it run — and
+   * starting it on mount put a network fetch, a JSON parse and an index read in front of the
+   * pictures the page exists to show. requestIdleCallback waits for the first paint to be done
+   * with; the timeout is the floor, so a busy renderer cannot postpone it forever.
    */
   useEffect(() => {
-    if (sweptRef.current) return;
+    if (sweptRef.current) return undefined;
     sweptRef.current = true;
-    run({ quiet: true });
+    let cancelled = false;
+    const start = () => { if (!cancelled) run({ quiet: true }); };
+    const useIdle = typeof requestIdleCallback === 'function';
+    const handle = useIdle ? requestIdleCallback(start, { timeout: 3000 }) : setTimeout(start, 800);
+    return () => {
+      cancelled = true;
+      if (useIdle) cancelIdleCallback(handle); else clearTimeout(handle);
+      // Re-arm. Leaving the guard set would mean a sweep that was cancelled before it ever ran
+      // never runs at all — which is exactly what a StrictMode double-mount does.
+      sweptRef.current = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per mount, by design
   }, []);
 

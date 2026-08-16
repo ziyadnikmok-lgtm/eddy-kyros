@@ -47,13 +47,20 @@ Every path in this table is asserted to exist by `tools/check-claude-md.js`. Add
 is real: a wrong path here sends the next session somewhere that does not exist, which is how six
 Mac paths survived in this file for months.
 
+**Backticks in this table mean "this exists on the machine reading it".** The check looks up every
+backticked cell, so a path true on only ONE of the two machines must be written WITHOUT them. Two
+rows -- App root and the userdata junction -- named the owner's D: paths in backticks, so the suite
+was red on Eddy's checkout for a reason that was never a bug there: nothing was broken, the doc was
+just describing somebody else's disk (2026-08-15). A suite that is red where nothing is wrong is a
+suite people learn to ignore.
+
 | What | Path |
 |------|------|
-| App root | `D:\Kyros\app` -- a real directory on the D: SSD, NOT a junction. The old Desktop copy is gone; anything pointing at it is stale. |
+| App root | The checkout this file sits in. Two machines hold one: D:\Kyros\app on the owner's box, c:\Users\ADMIN\eddy-kyros on Eddy's. Deliberately NOT in backticks -- see the note under this table. Every `tools/check-*.js` derives the root from its own location, so nothing hard-codes either. |
 | Server | `server/` |
 | Client source | `client/src/` |
 | Client build | `client/dist/` |
-| User data (local) | `%APPDATA%\ai-content-studio` -- junction to `D:\Kyros\userdata` |
+| User data (local) | `%APPDATA%\ai-content-studio` -- on the owner's box a junction to D:\Kyros\userdata (unbackticked: that target exists on one machine only). |
 | User data (web) | `server/userdata/{userId}/` |
 | Restart the app | `tools\restart-kyros.ps1` (builds first) |
 | Checks | `tools/check-*.js` -- run ALL of them before any push |
@@ -532,6 +539,87 @@ than pattern-matching it — pattern checks passed while three real bugs shipped
 **Nothing here has been verified by generating a real image.** Every claim in this file is about code
 behaviour. The app is Electron + browser IndexedDB; a generation triggered outside it does not touch
 the Library. On-screen verification is the owner's, and it has caught what the checks did not.
+
+---
+
+## RUNS ARE DRIVEN FOR HIM, NOT CLICKED BY HIM (owner, 2026-08-15)
+
+He says the run; you make it happen. *"Do Grace, these two outfit subfolders, front and back poses
+only."* He still opens Kyros sometimes, but the default is now that he does not have to.
+
+Four things that are not negotiable, each because it went wrong:
+
+1. **Read the image count back before spending.** Eddy is a CROSS PRODUCT — outfits x poses. Five
+   outfits and forty poses is two hundred images, not forty. It is his money.
+2. **Never guess a folder or tag name.** The real ones are in the collection export, not in your
+   head. A run against a wrong name wastes the whole batch. Current outfit folders are listed in
+   `C:\Users\ADMIN\Downloads\Kyros\outfits`; poses have NO folders and are chosen by view.
+3. **The pose randomiser chips EXCLUDE.** "Front only" means ticking `back` AND `close-up`.
+4. **Clean the metadata on every output.** Strip, then stamp the iPhone 17 Pro Max EXIF —
+   `client/src/lib/stripMetadata.js`, guarded by `tools/check-exif-iphone.js`. Verified on the
+   exported files: 352 of 352 carried it.
+
+Results go to BOTH places, organised by model in each — not one or the other:
+
+1. the **Kyros Library**, in that model's own folder. This is what makes them appear in the app.
+2. `C:\Users\ADMIN\Downloads\Kyros Output content\<Model>\` as files, cleaned and stamped.
+
+**Read `C:\Users\ADMIN\Downloads\Kyros\how it works\` before a run**, and after any context
+compaction. It holds the prompt recipe (image order, what each reference may contribute), a real
+4,000-character prompt exactly as it went to WaveSpeed, and the before/after checklist. It sits
+beside the models, outfits and poses it describes so it survives a session ending. The code is
+still the truth for the PROMPT; that folder is the truth for the FOLDER NAMES.
+
+### Verify the OUTPUT, never the input
+
+The single most expensive lesson of 2026-08-15. 633 images were generated off the wrong base photo
+because the check confirmed what had been WRITTEN into IndexedDB rather than what the generator
+actually USED. `pickedBasePhotos` silently overrides the main-photo slot
+(`EddyGeneratePage.jsx`, `const bp = pickedBasePhotos.length ? pickedBasePhotos : [null]`), so the
+slot was right and the run was wrong.
+
+Check `basePhotoId` on the DELIVERED Library rows. And treat the Generate button's own count as the
+honest read-back: refuse to click unless it quotes exactly the number of poses set up.
+
+### Never read "no answer" as "no"
+
+Three separate failures the same day, one shape. A busy-check returned false when the CDP call
+ITSELF failed, so a dead probe looked like an idle queue and the driver reloaded on top of a live
+batch. A page-thrown ReferenceError produced `''`, which sailed through an `/error/` test. A poll
+exception was swallowed until a job went stale, so ten finished, billed images were discarded on
+every tick with nothing in the log.
+
+Unknown means BUSY. Unknown means FAILED. Assert that a result contains what it should, not merely
+that it lacks the word error — and log a swallowed error every time it happens, not once it is
+too late to matter.
+
+### Source images do not go in the database
+
+Job payloads are written to SQLite. A ~9.8 MB base photo sent with every combo took `saas.db` from
+248 KB to 479 MB in ten minutes; the app reached 2.9 GB, the CPU pegged, and its own status checks
+to WaveSpeed timed out — which reads exactly like a network fault and is not one. `jobBlobs` stores
+each distinct image once by content hash. If you ever see the app slow and the network "failing",
+check the size of `saas.db` first.
+
+### A stored image is EITHER an inline data URL OR a bare server path — never assume which
+
+Every collection (Base Library, Character, Pose, Outfit) stores a row's picture one of two ways:
+`img:<id>` holding a `data:image/...;base64,...` string, or the row's own `.url` field holding a
+bare server path like `/api/gallery/<id>/image`. Nothing marks which one a given row uses, and it
+is not a per-model quirk — it is per ROW. **Every model but Grace stores her base as a server
+path**, and Grace only differs because her base was imported by hand and written inline.
+
+Code that reads an image directly from IndexedDB and only recognises the `data:` shape will get
+`null` for the other shape, silently — no error at the read site. That `null` then has to travel
+all the way to whatever destructures `{ base64 }` before it fails, so the crash lands far from its
+cause and every job in the batch fails identically. 20 of 20 Natalia images failed exactly this
+way (2026-08-15): `Cannot destructure property 'base64' of 'object null'`, every one at the same
+instant, none of them billed only because it died before reaching WaveSpeed.
+
+**Any code path that reads a Kyros collection image directly must handle both shapes** — resolve a
+bare server path by fetching it (same-origin, `credentials: 'include'`) and converting the blob to
+a data URL, exactly the way it would read an inline one. Do this once, in one shared place; do not
+special-case it per model or per collection, because the shape is not tied to either.
 
 ---
 

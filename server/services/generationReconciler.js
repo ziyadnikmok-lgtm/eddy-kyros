@@ -277,15 +277,25 @@ async function submitOne() {
   return true;
 }
 
+// How many submissions may START in the same tick, distinct from MAX_INFLIGHT (how many may be
+// RENDERING at once). Each submitOne() upload-cache entry is now single-use (2026-08-16 fix for
+// the CloudFront-403 bug — a cached URL used to be handed to every job sharing an image, which is
+// what caused it), so a big batch that reuses the same pose/outfit photos across many jobs no
+// longer gets to skip re-uploading them. Firing all of `room` (up to MAX_INFLIGHT) at once then
+// means up to MAX_INFLIGHT x 4 images uploading in the same instant — observed taking down the
+// local process's own outbound connections (mass "operation was aborted due to timeout" on the
+// upload call, not on WaveSpeed's side). This does not lower the render ceiling, only how fast new
+// submissions ramp up toward it — ticks 6s apart still reach MAX_INFLIGHT within a few ticks.
+const SUBMIT_BURST_CAP = 20;
+
 async function runOnce() {
   // Everything the provider is already rendering. The ceiling counts THESE, not submissions per
   // tick: a tick every 6s with a fixed budget would either crawl or overshoot depending on how long
   // renders take, whereas "keep N in flight" is the thing actually being limited.
   const running = jobQueue.listResumable();
 
-  // Fill the free lanes, in parallel. Sequential submits at 24 lanes would spend most of a tick
-  // just talking to the provider — each submit uploads the source images first.
-  const room = Math.max(0, MAX_INFLIGHT - running.length);
+  // Fill the free lanes, in parallel, but no faster than SUBMIT_BURST_CAP per tick — see above.
+  const room = Math.min(SUBMIT_BURST_CAP, Math.max(0, MAX_INFLIGHT - running.length));
   if (room > 0 && Date.now() >= pausedUntil) {
     await Promise.all(Array.from({ length: room }, () => submitOne().catch((err) => {
       log.warn('generation_submit_threw', { error: err?.message });

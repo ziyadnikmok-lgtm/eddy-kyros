@@ -398,6 +398,7 @@ export const jobs = {
   markFiled: (id) => request(`/jobs/${id}/filed`, { method: 'POST' }),
   retry: (id) => request(`/jobs/${id}/retry`, { method: 'POST' }),
   retryAllFailed: () => request('/jobs/retry-failed', { method: 'POST' }),
+  deleteAllFailed: () => request('/jobs/failed', { method: 'DELETE' }),
   cancelQueued: () => request('/jobs/cancel-queued', { method: 'POST' }),
 };
 

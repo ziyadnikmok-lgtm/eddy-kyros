@@ -1442,16 +1442,55 @@ export default function EddyCollection({
   // Cleared on refresh so a fixed or re-added image is not stuck looking broken.
   useEffect(() => { setBrokenIds(new Set()); }, [items]);
 
+  /**
+   * Clear out the rows whose picture is genuinely not here — ASKING THE SERVER, not the tile.
+   *
+   * The badge on a card comes from an <img> that failed to load, and an image can fail to load for
+   * reasons that have nothing to do with the file: a request aborted while a hundred and twenty
+   * tiles fought over six connections, a thumbnail that took 75 ms to build on a busy process, a
+   * scroll that unmounted the tile mid-flight. Deleting on that signal would throw away good work
+   * to fix a display problem.
+   *
+   * The gallery listing is the authority: it is pruned against what is actually on disk, so an id
+   * missing from it is a picture this machine does not have and never will. One slim request
+   * settles every row at once — no per-card probing.
+   *
+   * Only ever removes rows that point at a gallery id. A prompt-only card (Pose, Outfit) has no
+   * URL and is untouched; so is anything holding its own bytes, which needs no server at all.
+   */
   const removeBroken = async () => {
-    const doomed = visible.filter((i) => brokenIds.has(i.id));
-    if (!doomed.length) return;
-    if (!window.confirm(`Remove ${doomed.length} card${doomed.length === 1 ? '' : 's'} whose image cannot be loaded? The cards go, nothing else is deleted.`)) return;
-    for (const it of doomed) {
-      // eslint-disable-next-line no-await-in-loop -- serialized store
-      try { await store.removeItem(it.id); } catch { /* keep going */ }
+    const GALLERY_ID = /\/gallery\/([^/?#]+)\/(?:image|thumb)/;
+    const candidates = items
+      .map((i) => ({ it: i, gid: (GALLERY_ID.exec(i.url || '') || [])[1] }))
+      .filter(({ it, gid }) => gid && !thumbs[it.id]);
+    if (!candidates.length) { notify('Nothing here points at a missing picture', 'success'); return; }
+
+    let alive;
+    try {
+      const res = await galleryApi.list({ fields: 'slim' });
+      const rows = Array.isArray(res) ? res : (res?.images || res?.gallery || []);
+      alive = new Set(rows.map((g) => String(g.id)));
+      // An empty listing means the gallery could not be read, not that every picture is gone.
+      // Without this, one bad response would offer to delete the entire Library.
+      if (!alive.size) throw new Error('the gallery listing came back empty');
+    } catch (err) {
+      notify(`Not removing anything — could not check the gallery (${err.message})`, 'error');
+      return;
     }
+
+    const doomed = candidates.filter(({ gid }) => !alive.has(gid)).map(({ it }) => it);
+    const falseAlarms = [...brokenIds].filter((id) => !doomed.some((d) => d.id === id)).length;
+    if (!doomed.length) {
+      notify(falseAlarms
+        ? `Every picture is on this machine — those ${falseAlarms} tiles just failed to load. Reload the page.`
+        : 'Every picture is on this machine', 'success');
+      return;
+    }
+    if (!window.confirm(`${doomed.length} card${doomed.length === 1 ? '' : 's'} point at a picture that is not on this machine, across the whole collection. Remove them? The cards go, nothing in the gallery is deleted.`)) return;
+
+    const removed = await store.removeItems(doomed.map((i) => i.id));
     await refresh();
-    notify(`Removed ${doomed.length} unloadable card${doomed.length === 1 ? '' : 's'}`, 'success');
+    notify(`Removed ${removed} card${removed === 1 ? '' : 's'}${falseAlarms ? ` — ${falseAlarms} other tile${falseAlarms === 1 ? '' : 's'} failed to load but the picture IS here` : ''}`, 'success');
   };
 
   const [dragFolder, setDragFolder] = useState(null);
@@ -2728,9 +2767,16 @@ export default function EddyCollection({
                 {selected.length ? `Export ${selected.length}` : 'Export all'}
               </Btn>
             )}
-            {brokenIds.size > 0 && (
+            {/*
+              Offered whenever the collection holds server-backed rows, NOT only once a tile has
+              failed on screen. The dead rows arrive in blocks — a folder of 94 came in one export
+              — and requiring each one to render and fail first meant scrolling the whole
+              collection to be allowed to clean it up. What it actually removes is decided by the
+              gallery, not by this button (see removeBroken).
+            */}
+            {items.some((i) => i.url) && (
               <Btn variant="secondary" className="!rounded-lg !py-2 !px-4 !text-sm !border-amber-500/40 !text-amber-200" onClick={removeBroken}>
-                Remove {visible.filter((i) => brokenIds.has(i.id)).length} unloadable
+                {brokenIds.size > 0 ? `Remove missing (${brokenIds.size} shown)` : 'Remove missing'}
               </Btn>
             )}
             {/* The top-toolbar "Save N to Downloads" was REMOVED. It did the same job as Download

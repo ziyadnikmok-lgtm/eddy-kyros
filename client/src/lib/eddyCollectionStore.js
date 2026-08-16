@@ -315,6 +315,36 @@ export function createEddyCollection(dbName) {
       return added;
     },
 
+    /**
+     * Remove MANY rows in one index write.
+     *
+     * removeItem rewrites the whole index per call, and that index is 12 MB of prompt text on the
+     * owner's machine — so clearing 94 dead rows was 94 rewrites of 12 MB, each one a chance to
+     * land out of order. The index goes once; the image keys are blanked afterwards, because a
+     * blank picture behind a row nothing lists is harmless, while a row left in the index with its
+     * bytes gone is a tile that can never load.
+     */
+    _removeItems: async function(ids) {
+      const doomed = new Set(ids);
+      if (!doomed.size) return 0;
+      const index = await impl.listItems();
+      const next = index.filter((i) => !doomed.has(i.id));
+      const removed = index.length - next.length;
+      if (!removed) return 0;
+      await write('index', next);
+      for (const id of doomed) {
+        // eslint-disable-next-line no-await-in-loop -- one transaction each, after the index is safe
+        await store.set(`img:${id}`, '');
+        // eslint-disable-next-line no-await-in-loop
+        await store.set(`img:${id}:alt`, '');
+        // eslint-disable-next-line no-await-in-loop
+        await store.set(`img:${id}:back`, '');
+        // eslint-disable-next-line no-await-in-loop
+        await store.set(`img:${id}:preplate`, '');
+      }
+      return removed;
+    },
+
     _removeItem: async function(id) {
       const index = await impl.listItems();
       await write('index', index.filter((i) => i.id !== id));
@@ -461,6 +491,7 @@ export function createEddyCollection(dbName) {
     setFolderParent: (...a) => serialize(() => impl._setFolderParent.apply(impl, a)),
     addItems: (...a) => serialize(() => impl._addItems.apply(impl, a)),
     removeItem: (...a) => serialize(() => impl._removeItem.apply(impl, a)),
+    removeItems: (...a) => serialize(() => impl._removeItems.apply(impl, a)),
     updateItem: (...a) => serialize(() => impl._updateItem.apply(impl, a)),
     updateItems: (...a) => serialize(() => impl._updateItems.apply(impl, a)),
     moveItem: (...a) => serialize(() => impl._moveItem.apply(impl, a)),

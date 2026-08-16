@@ -118,6 +118,15 @@ router.post('/retry-failed', (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/** Discard failed jobs instead of retrying them — same scope as retry-failed, opposite action. */
+router.delete('/failed', (req, res, next) => {
+  try {
+    const userId = userIdOf(req);
+    const removed = jobQueue.deleteAllFailed(userId);
+    res.json({ success: true, data: { removed, counts: jobQueue.counts(userId) } });
+  } catch (err) { next(err); }
+});
+
 router.get('/:id', (req, res, next) => {
   try {
     const userId = userIdOf(req);

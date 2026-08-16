@@ -56,8 +56,21 @@ check('it can never be zero, which would stall the queue silently', rec.includes
 
 // It counts what is IN FLIGHT, not submissions per tick. A per-tick budget either crawls or
 // overshoots depending on render time; "keep N running" is the thing actually being limited.
+//
+// room is now MIN'd with SUBMIT_BURST_CAP too (2026-08-16) — a real second constraint, not a
+// revival of the old per-tick budget: it caps how fast NEW submissions ramp up, not how many may
+// render at once. Added after per-job upload caching went single-use (the CloudFront-403 fix,
+// same day) meant a big batch reusing one pose/outfit photo across many jobs stopped skipping
+// re-uploads, and firing all of `room` at once could mean MAX_INFLIGHT x 4 images uploading in the
+// same instant — enough to take down the process's own outbound connections. Pinning the exact
+// old expression here would fail on that fix the same way it just did; check for both constraints
+// instead of the literal line.
 check('the ceiling counts jobs in flight, not submits per tick',
-  rec.includes('const room = Math.max(0, MAX_INFLIGHT - running.length);'));
+  rec.includes('MAX_INFLIGHT - running.length'));
+check('submissions are also capped per tick, separately from the render ceiling',
+  rec.includes('SUBMIT_BURST_CAP') && /Math\.min\(SUBMIT_BURST_CAP,/.test(rec));
+check('the burst cap does not lower the render ceiling, only ramp speed',
+  rec.includes('does not lower the render ceiling'));
 check('the old per-tick budget is gone', !rec.includes('SUBMITS_PER_TICK'));
 check('lanes are filled in parallel — sequential submits would spend the tick uploading',
   /await Promise\.all\(Array\.from\(\{ length: room \}/.test(rec));

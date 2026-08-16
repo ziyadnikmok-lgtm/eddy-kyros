@@ -38,7 +38,31 @@ check('both pictures were written', files().length === 2);
 // --- and the bytes come back EXACTLY ---------------------------------------------------------------
 // A lossy round trip would send a corrupted image to a paid API and charge for the result.
 const back = blobs.load(refs);
-check('load returns the original data URL, byte for byte', back[0] === BASE && back[1] === OUTFIT);
+/**
+ * load() must return the shape the PROVIDER destructures, which is `{ base64, mimeType }` —
+ * wavespeedService does `imageInputs.map(({ base64 }) => …)` at three call sites.
+ *
+ * This asserted a data-URL STRING, which no consumer can use: `base64` would be undefined and the
+ * upload throws on the first `.match`. It passed only because load() had never actually run on
+ * this app's data — store() bailed on the object shape the client sends, so nothing was ever
+ * stored to load back (2026-08-15). A check can agree with the code and still describe a contract
+ * that would fail the moment it was exercised.
+ */
+const asDataUrl = (o) => `data:${o.mimeType};base64,${o.base64}`;
+check('load returns the bytes, byte for byte', asDataUrl(back[0]) === BASE && asDataUrl(back[1]) === OUTFIT);
+check('and returns objects the provider can destructure, not strings',
+  typeof back[0] === 'object' && typeof back[0].base64 === 'string' && typeof back[0].mimeType === 'string');
+
+// The shape the app actually sends — objects, not data URLs — must round trip.
+{
+  const objs = [{ base64: BASE.split(',')[1], mimeType: 'image/png' }];
+  const stored = blobs.store(objs);
+  check('store() accepts the { base64, mimeType } shape the client sends',
+    typeof stored[0] === 'string' && stored[0].startsWith('blob:'));
+  const loaded = blobs.load(stored);
+  check('and it round trips byte for byte', loaded[0].base64 === objs[0].base64);
+  check('refsIn sees a ref carried on an object', blobs.refsIn({ images: [{ ref: stored[0] }] }).length === 1);
+}
 
 // --- the point of the whole file: a batch stores one copy ---------------------------------------------
 // 300 jobs, each with the same base + same outfit + its own pose.
