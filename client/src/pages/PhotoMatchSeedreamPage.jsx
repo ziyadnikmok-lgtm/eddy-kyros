@@ -14,6 +14,7 @@ import { createPageStore } from '../lib/pageStateStore';
 import { queuedSeedreamEdit } from '../lib/generationQueue';
 import { cn } from '../lib/utils';
 import { autoBlurFace } from '../lib/autoBlurFace';
+import { detectFacePico } from '../lib/detectFacePico';
 import ManualBlurModal from '../components/ManualBlurModal';
 
 const ASPECT_OPTIONS = [{ value: 'auto', label: 'Auto (match source)' }, ...SEEDREAM_ASPECT_RATIOS.map((r) => ({ value: r, label: r }))];
@@ -91,6 +92,26 @@ const SEEDREAM_PROMPT_BUDGET = 3000;
  * a runaway prompt cannot be sent unbounded; the real prompt is a third of it.
  */
 const NANO2_PROMPT_BUDGET = 8000;
+
+/**
+ * A SOURCE SHOT FROM BEHIND, and the failure it exists to stop.
+ *
+ * The rest of this prompt demands a face: "match exactly: face, head shape, jaw", "render her face
+ * sharply", "faces, hair, skin and whole body". Against a back-facing photo that is an instruction
+ * to produce something the photo does not contain, and the model resolves it the only way it can —
+ * it turns her around. The pose the photo was chosen for is gone.
+ *
+ * Owner, 2026-08-16: "sometimes face won't appear in the source image and we want that, or model
+ * face don't appear too." No face in, no face out.
+ *
+ * SHORTER THAN EDDY'S ON PURPOSE. EddyGeneratePage's BACK_VIEW_BODY_SCOPE says the same thing at
+ * ~700 characters, most of it scoping bust and outfit wording that belongs to Eddy's prompt and
+ * does not exist here. Photo Match runs against ByteDance's ~3,000-character cap with a pair
+ * already at 2,989, so importing that paragraph would push the identity lock out of the prompt to
+ * restate rules this page never wrote. The load-bearing sentence — do not rotate her — is kept
+ * verbatim in spirit, and the opening marker matches Eddy's so both read as one rule.
+ */
+const BACK_VIEW_LINE = (src) => `BACK VIEW — HER FACING DIRECTION IS FIXED: ${src} is shot from BEHIND. Her back and shoulders face the camera, exactly as it shows. Do NOT turn, twist, rotate or re-angle her toward the camera, do NOT bring her face or chest into frame, and do NOT change the pose to make either visible.`;
 
 /**
  * The house lighting, on every Photo Match prompt (owner, 2026-08-13). Verbatim, because it was
@@ -200,7 +221,7 @@ function shrinkForStorage(dataUrl, max = 360) {
  * them singular while naming two women is the most direct way to get ONE woman out — the model
  * follows the grammar, which outnumbers the names. So `she`/`her` switch with the count.
  */
-export function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRecreate, varyBackground, allowExpressionChange, allowHairChange, allowBodyChange, allowLightingChange, faceless, wantsNude, addGenericNudeLine, sourceFaceBlurred, outfitFromChar = false, lookAtCamera = false, budget = 0, cast = null }) {
+export function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRecreate, varyBackground, allowExpressionChange, allowHairChange, allowBodyChange, allowLightingChange, faceless, wantsNude, addGenericNudeLine, sourceFaceBlurred, outfitFromChar = false, lookAtCamera = false, budget = 0, cast = null, backView = false }) {
   const who = (cast && cast.length > 1)
     ? cast.map((c) => c.name).slice(0, -1).join(', ') + ' and ' + cast[cast.length - 1].name
     : (characterName || 'the character');
@@ -388,6 +409,10 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
    * weights the tail most heavily, so a Lighting chip — "Moody low-key", "Red neon" — still wins by
    * position. That is the intended relationship: this is the house default, not a lock.
    */
+  // Late, and NOT droppable: it is a composition lock, so it belongs near the tail where Seedream
+  // weights hardest — same reasoning as the identity lock below it.
+  if (backView) parts.push(BACK_VIEW_LINE(src));
+
   parts.push(LIGHTING_LINE);
 
   parts.push(`Photorealistic — real pores, hair strands, fabric, slight asymmetry; no plastic or CGI look.`);
@@ -398,7 +423,7 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
   if (faceless) {
     // Faceless output: the face must NOT appear, so the usual "must be recognisably her" guarantee
     // is wrong here and would fight the composition. Identity rides on body/hair instead.
-    parts.push(`FINAL — HIGHEST PRIORITY, overrides everything above: ${her} ${pair ? 'faces are' : 'face is'} intentionally OUT of the shot — cropped above the shoulders, turned away, or hidden by hair/hand/angle so no recognisable face is visible. Do NOT invent or show a face. ${pair ? 'Their bodies, hair, skin and proportions' : 'Her body, hair, skin and proportions'} still come from ${ownRefs}${allowBodyChange ? '' : ' at their true size — never averaged or shrunk toward ' + src}.`);
+    parts.push(`FINAL — HIGHEST PRIORITY, overrides everything above: ${her} ${pair ? 'faces are' : 'face is'} intentionally OUT of the shot — ${backView ? 'she is facing away and stays that way' : 'cropped above the shoulders, turned away, or hidden by hair/hand/angle'} so no recognisable face is visible. Do NOT invent or show a face. ${pair ? 'Their bodies, hair, skin and proportions' : 'Her body, hair, skin and proportions'} still come from ${ownRefs}${allowBodyChange ? '' : ' at their true size — never averaged or shrunk toward ' + src}.`);
   } else {
     const finalLock = [
       `FINAL — HIGHEST PRIORITY, overrides everything above: render ${person} from scratch as ${who} from ${ownRefs} — ${pair ? 'faces' : 'face'}, hair, skin and whole ${pair ? 'bodies' : 'body'}${pair ? `, ${countWord} distinct women in the frame` : ''}. ${pair ? 'The women' : 'The woman'} in ${src} ${pair ? 'are anonymous stand-ins: discard them' : 'is an anonymous stand-in: discard her'} entirely, ${pair ? 'faces' : 'face'} and ${pair ? 'figures' : 'figure'} alike, and when in doubt copy ${pair ? 'the reference images' : refs}.`,
@@ -872,6 +897,20 @@ export default function PhotoMatchSeedreamPage() {
     let missed = 0;
     const added = await Promise.all(valid.map(async (f) => {
       let dataUrl = await fileToDataUrl(f);
+      /**
+       * IS THIS SHOT FROM BEHIND? Decided here, on the ORIGINAL, before anything is blurred.
+       *
+       * Running it after the blur would read a blurred-out face as "no face" and flip every
+       * face-blurred front photo to a back view — which suppresses face matching on exactly the
+       * photos that need it most.
+       *
+       * AGGRESSIVE on purpose, and the direction of the error is the reason. A loose pass finds
+       * turned and partly-hidden faces at the cost of the occasional false box; a false box reads
+       * as "face found" -> front -> today's behaviour, which is harmless. The expensive mistake is
+       * the other way: calling a front photo a back view strips the face rules out of its prompt.
+       * So the only photos tagged back are the ones where even the loose pass finds nothing.
+       */
+      const faceFound = !!(await detectFacePico(dataUrl, { aggressive: true }).catch(() => null));
       let blurred = false;
       if (blurSourceRef.current) {
         const out = await autoBlurFace(dataUrl);
@@ -879,7 +918,7 @@ export default function PhotoMatchSeedreamPage() {
         blurred = out.blurred;
         if (!out.blurred) missed += 1;
       }
-      return { id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, dataUrl, blurred };
+      return { id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, dataUrl, blurred, backView: !faceFound };
     }));
     if (missed) notify(`${missed} photo(s): no face found to blur — use "Blur all" or click a photo to blur by hand`, 'error');
     setSources((prev) => [...prev, ...added]);
@@ -1157,7 +1196,14 @@ export default function PhotoMatchSeedreamPage() {
      * like the preset had stopped working.
      */
     let trimmed = false;
-    const promptFor = (who, refCount) => {
+    const promptFor = (who, refCount, source) => {
+      /**
+       * PER PHOTO, not per run. The page's Faceless switch is one setting for the whole batch, so a
+       * batch of twenty where six are shot from behind meant wrecking six or wrecking fourteen.
+       * A detected back view turns face-matching off for THAT photo only; the global switch still
+       * forces it on for everything.
+       */
+      const backView = !!source?.backView;
       const base = buildMatchInstruction({
         characterName: who.name,
         // Set only for a pair. The builder names the women from this and ignores characterName —
@@ -1167,7 +1213,11 @@ export default function PhotoMatchSeedreamPage() {
         wantsNude,
         addGenericNudeLine,
         sourceFaceBlurred: blurSource,
-        faceless,
+        // A back shot IS a faceless shot — there is no face to match and inventing one is the
+        // failure. backView adds what faceless alone does not say: which way she is facing, and
+        // that she stays that way.
+        faceless: faceless || backView,
+        backView,
         outfitFromChar,
         lookAtCamera,
         /**
@@ -1256,7 +1306,7 @@ export default function PhotoMatchSeedreamPage() {
         const item = queue.shift();
         if (!item) return;
         await runOne({ ...item.src, id: `${item.src.id}::${item.who.id}::${runStamp}` },
-          item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length));
+          item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length, item.src));
       }
     });
     await Promise.all(workers);
@@ -1613,6 +1663,19 @@ export default function PhotoMatchSeedreamPage() {
                         ? <span className="absolute bottom-1 left-1 rounded bg-emerald-600/90 px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-white pointer-events-none">Blurred</span>
                         : <span className="absolute bottom-1 left-1 rounded bg-amber-600/90 px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-white pointer-events-none">Face — tap</span>
                     )}
+                    {/* The back-view call, shown before it is paid for and one click to flip.
+                        Detection is right most of the time, not always — a profile or a face turned
+                        far enough can read as no-face — and calling a front photo a back view
+                        strips the face rules out of its prompt. So it is never silent. */}
+                    <button type="button"
+                      onClick={() => setSources((prev) => prev.map((x) => (x.id === s.id ? { ...x, backView: !x.backView } : x)))}
+                      title={s.backView
+                        ? 'Treated as shot from behind: no face is matched or invented, and she is not turned toward the camera. Click if she is actually facing the camera.'
+                        : 'Treated as facing the camera. Click if this shot is from behind.'}
+                      className={cn('absolute top-1 left-1 rounded px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide cursor-pointer',
+                        s.backView ? 'bg-sky-600/90 text-white' : 'bg-black/50 text-zinc-400 opacity-0 group-hover:opacity-100')}>
+                      {s.backView ? 'Back view' : 'Front'}
+                    </button>
                     <button onClick={() => setSources((prev) => prev.filter((x) => x.id !== s.id))}
                       className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-zinc-800 border border-zinc-600 text-zinc-400 text-xs flex items-center justify-center hover:text-white cursor-pointer">×</button>
                   </div>

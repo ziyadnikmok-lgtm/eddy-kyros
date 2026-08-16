@@ -31,10 +31,13 @@ check('a stored single id from the old build still loads',
 // --- identity must not cross ------------------------------------------------------------------------
 check('refs are resolved per character, not once',
   g.includes('const refsForCharacter = useCallback((id) => {'));
-check('each character gets her OWN prompt', g.includes('const promptFor = (who, refCount) => {'));
+// CHANGED 2026-08-16: promptFor gained the SOURCE photo. A prompt is no longer a property of the
+// character alone -- a back-facing source and a front-facing one of the same woman need different
+// instructions, because the face rules come out for a back shot. Still one prompt per character.
+check('each character gets her OWN prompt', g.includes('const promptFor = (who, refCount, source) => {'));
 check('the prompt names THAT character', g.includes('characterName: who.name,'));
 check('and states HER ref count, not a shared one', /refCount,\s*\n\s*masterPrompt:/.test(g));
-check('the run sends her own refs', g.includes('item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length))'));
+check('the run sends her own refs', g.includes('item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length, item.src))'));
 check('masterPrompt is applied only where it is actually known',
   g.includes('masterPrompt: who.id === characterId ? charDetail?.masterPrompt : undefined,'));
 check('and that limit is written down, not silent', /a silently-missing master prompt would look/.test(g));
