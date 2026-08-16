@@ -484,7 +484,19 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
   if (outfitFromRefs) {
     parts.push(`OUTFIT: ${she} ${pair ? 'each wear their' : 'wears HER'} OWN clothing from ${ownRefs} — same garments, colours, cut, fabric, length. Do NOT dress ${hers} in what ${pair ? 'anyone' : 'the woman'} in ${src} wears; that outfit is not in the output. Everything else still comes from ${src}.`);
   }
-  parts.push(`FORBIDDEN from ${src}: its face, facial structure, eyes, nose, mouth, jaw, hair colour, skin tone${allowBodyChange ? '' : ', body shape'}${outfitFromRefs ? ', its clothing' : ''}, and any tattoo, ink or skin marking. ${who} ${pair ? 'have' : 'has'} only the tattoos visible in ${ownRefs}.`);
+  /**
+   * NO TATTOOS. NOT THE SOURCE'S, NOT INVENTED, NOT ANY.
+   *
+   * This said "she has only the tattoos visible in her reference images", which is a permission: it
+   * tells the model tattoos are part of her whenever a reference happens to show one, and leaves the
+   * door open to inventing a plausible one. The owner does not want them at all (2026-08-16: 'it did
+   * the tattos we never wanna have tattos'), so the rule is now absolute rather than conditional —
+   * an absolute is also far harder to talk a model out of than a comparison between two photographs.
+   */
+  parts.push(`FORBIDDEN from ${src}: its face, facial structure, eyes, nose, mouth, jaw, hair colour, skin tone${allowBodyChange ? '' : ', body shape'}${outfitFromRefs ? ', its clothing' : ''}, and any tattoo, ink or skin marking.`);
+  // Kept tight on purpose: it is not droppable — the owner wants it on every render — so every
+  // character it spends is one the identity lock in the tail cannot have.
+  parts.push(`NO TATTOOS: ${who} ${pair ? 'have' : 'has'} clean unmarked skin — no ink, lettering or symbols anywhere. Never copy one from ${src}, carry one over from ${ownRefs}, or invent one.`);
   parts.push(`NO BLENDING: do not mix, merge or average ${who} with ${person} in ${src} — not ${her} ${pair ? 'faces' : 'face'} and not ${her} ${pair ? 'bodies' : 'body'}. Every part of ${person} in the output is 100% ${pair ? 'from ' + ownRefs : refs}, not a midpoint between the ${pair ? 'women in the two photographs' : 'two women'}.`);
   if (pair) {
     /**
@@ -597,6 +609,14 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
       // an identity that holds at whatever size her references show is the default behaviour
       // anyway. Both survive every ordinary run; only a pair with every flag on reaches here.
       ...(buildText ? [buildText.slice(0, 24)] : []),
+      // Then NO TATTOOS, then the rival-face warning last. Ranked by what a picture loses: a
+      // stray tattoo is a visible defect on an otherwise correct woman, while keeping the
+      // stand-in's face is the wrong woman entirely.
+      //
+      // Only one combination ever reaches this far — a PAIR with a back-facing source and every
+      // flag on — because faceless mode does not emit MAKEUP or EYES TO CAMERA, so the pair
+      // loses the two droppables it would otherwise spend first.
+      'NO TATTOOS:',
       'The face visible in'];
     for (const marker of droppable) {
       if (joined().length <= budget) break;

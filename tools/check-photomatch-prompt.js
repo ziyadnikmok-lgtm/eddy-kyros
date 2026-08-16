@@ -58,7 +58,13 @@ check('makeup may never be taken from the source photo', /never take it from ima
 
 // --- tattoos, which the Gemini route has always blocked ---------------------------------------------
 check('the stand-in\'s ink does not travel', /any tattoo, ink or skin marking/.test(p));
-check('and hers is the only ink allowed', /Chloe has only the tattoos visible in image 1/.test(p));
+// CHANGED 2026-08-16: the rule is ABSOLUTE now, not a comparison. It used to say 'she has only the
+// tattoos visible in her reference images', which is a PERMISSION — it tells the model tattoos are
+// part of her whenever a reference happens to show one, and leaves the door open to inventing a
+// plausible one. The owner does not want them at all ('we never wanna have tattos'), and an
+// absolute is also far harder to talk a model out of than a comparison between two photographs.
+check("no tattoos at all — not the source's, not hers, not invented",
+  /NO TATTOOS: [^]*?clean unmarked skin/.test(p) && /Never copy one from[^]*?or invent one/.test(p));
 
 // --- THE CONSTRAINT THAT CAUSED THE CUT ---------------------------------------------------------------
 // Measured on the live model: 420 chars works, 5,386 returns "The text length cannot exceed the

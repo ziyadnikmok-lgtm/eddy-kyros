@@ -27,3 +27,19 @@ gets neither line, because its face is out of shot by construction.
 
 Nothing else. The identity list, the locks, NO BLENDING, the camera paragraph and the FINAL lock are
 byte-identical; the diff is one added paragraph on the unblurred path.
+
+# Why they changed again on 2026-08-16 (second time)
+
+The tattoo rule became ABSOLUTE. It used to read:
+
+> <her> has only the tattoos visible in her reference images.
+
+That is a PERMISSION, not a prohibition. It tells the model tattoos are part of her whenever a
+reference happens to show one, and it leaves the door open to inventing a plausible one — the owner
+reported exactly that ("it did the tattos we never wanna have tattos").
+
+It now says she has clean unmarked skin, and names all three ways ink arrives: copied from the
+source, carried over from her references, or invented. An absolute is also far harder to talk a
+model out of than a comparison between two photographs.
+
+Nothing else changed.
