@@ -232,5 +232,28 @@ check('and renders that, not the current controls', pm.includes('job.cost.toFixe
 check('which survives a reload', pm.includes("cost: typeof j.cost === 'number' ? j.cost : null,"));
 check('no tile still reads the live price', !/job\.status === 'done' && <span[^>]*>\$\{costPerJob/.test(pm));
 
+// --- 9. THE IMAGES ARE LABELLED WHERE THEY SIT -------------------------------------------------------
+//
+// Sent as one undifferentiated pile followed by a wall of text, Gemini has nothing tying 'images 1-3
+// = Grace' in the prompt to the bytes it actually received — so it does the obvious thing with an
+// edit request and edits the most salient photo, which is the scene. Out comes the stand-in's body
+// and hair with a face invented from nowhere, identity references ignored (owner, 2026-08-16: 'wtf
+// didnt use my model i select').
+//
+// Verified against the live API on two real photos: unlabelled REFUSED outright (IMAGE_OTHER);
+// labelled put the woman from image 1 into image 2's car, same pose, same outfit, right face.
+check('the bypass labels the identity images', svc.includes('IDENTITY REFERENCE PHOTOS'));
+check('and the scene photo separately', svc.includes('SCENE PHOTOGRAPH'));
+check('the labels sit BEFORE their images, not all at the end',
+  svc.indexOf('IDENTITY REFERENCE PHOTOS') < svc.indexOf('images.slice(0, n)'));
+// Positional only: the caller's prompt states every rule about identity, and repeating them would
+// be two briefs in one request — the exact failure raw mode exists to avoid.
+check('the labels state position, not rules', !/must look exactly like|Copy from/.test(svc));
+check('the count travels from the page', pm.includes('identityCount: charRefs.length,'));
+check('through the queue payload', gq.includes('identityCount },'));
+check('and into the bypass', rec.includes('identityCount: Number(job.payload?.identityCount) || 0,'));
+// A job with no count behaves exactly as before, so nothing that predates this changes.
+check('no count means the old flat layout', svc.includes('for (const img of images) parts.push(asPart(img));'));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

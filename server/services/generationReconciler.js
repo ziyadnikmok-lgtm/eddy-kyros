@@ -382,6 +382,9 @@ async function submitOne() {
           aspectRatio: opts.aspectRatio,
           // The page speaks in 1K/2K, same vocabulary the bypass route takes.
           imageSize: job.payload?.resolution === '1K' ? '1K' : '2K',
+          // How many of the images are HER, so the bypass can label them where they sit. Without
+          // it Gemini gets one undifferentiated pile and edits the scene photo instead.
+          identityCount: Number(job.payload?.identityCount) || 0,
         }),
       };
     } else if (engine === 'muapi') {

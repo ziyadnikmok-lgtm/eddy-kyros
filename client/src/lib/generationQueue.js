@@ -74,6 +74,7 @@ export async function queuedSeedreamEdit({
   resolution,
   model,
   provider,
+  identityCount,
   tags,
   destDb,
   destFolder,
@@ -84,7 +85,7 @@ export async function queuedSeedreamEdit({
 }) {
   const created = await jobsApi.enqueue({
     feature,
-    payload: { images, prompt, aspectRatio, resolution, model, provider },
+    payload: { images, prompt, aspectRatio, resolution, model, provider, identityCount },
     destDb,
     destFolder,
     cardPrompt,

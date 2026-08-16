@@ -1244,6 +1244,9 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
       const data = await withRateLimitRetry(() => queuedSeedreamEdit({
         feature: FEATURE,
         images: [...charRefs, sourceImg],
+        // Her photos come first and the scene last — this says where the boundary is, so the
+        // bypass can label each group in place rather than handing Gemini one anonymous pile.
+        identityCount: charRefs.length,
         prompt,
         aspectRatio: ratio,
         resolution,

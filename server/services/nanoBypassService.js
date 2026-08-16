@@ -147,20 +147,50 @@ async function callGemini(apiKey, modelId, parts, aspectRatio, imageSize, temper
  * Returns { images: [{ base64Data, mimeType }] } — the shape the queue's saver already expects, so
  * a bypass result files exactly like a WaveSpeed one.
  */
-async function editRaw({ apiKey, images, prompt, aspectRatio, imageSize = '2K', temperature = 1.0, model = 'flash' }) {
+async function editRaw({ apiKey, images, prompt, aspectRatio, imageSize = '2K', temperature = 1.0, model = 'flash', identityCount = 0 }) {
   if (!apiKey) throw new AppError('Nano Bypass requires a Gemini API key — add one under API Keys.', 400, 'GEMINI_KEY_REQUIRED');
   if (!prompt || !String(prompt).trim()) throw new AppError('prompt is required', 400, 'VALIDATION_ERROR');
   if (!Array.isArray(images) || !images.length) throw new AppError('at least one image is required', 400, 'VALIDATION_ERROR');
 
   const modelId = MODEL_IDS[model] || MODEL_IDS.flash;
-  const parts = [];
-  for (const img of images) {
+  const asPart = (img) => {
     // Accepts a data URL or bare base64, because both are in circulation: the client sends data
     // URLs and the queue stores whatever it was handed.
     const raw = String(img?.base64 ?? img?.base64Data ?? img ?? '').replace(/^data:[^;]+;base64,/, '');
     if (!raw) throw new AppError('each image must carry base64 data', 400, 'VALIDATION_ERROR');
     const mimeType = img?.mimeType || (/^data:([^;]+);/.exec(String(img?.base64 ?? img ?? '')) || [])[1] || 'image/png';
-    parts.push({ inlineData: { mimeType, data: raw } });
+    return { inlineData: { mimeType, data: raw } };
+  };
+
+  const parts = [];
+  const n = Math.max(0, Math.min(Number(identityCount) || 0, images.length - 1));
+  if (n > 0) {
+    /**
+     * THE IMAGES ARE LABELLED WHERE THEY SIT, and this is the difference between getting your
+     * character back and getting the stand-in with an invented face.
+     *
+     * Sent as one undifferentiated pile followed by a wall of text, Gemini has nothing tying "images
+     * 1-3 = Grace" in the prompt to the actual bytes it received — so it does the obvious thing with
+     * an edit request and edits the most salient photo, which is the scene. The result is the
+     * stand-in's body and hair with a face invented from nowhere, and the identity references
+     * ignored entirely (owner, 2026-08-16: 'wtf didnt use my model i select').
+     *
+     * routes/nanoBypass.js already knew this — its identity branch puts a text part BEFORE each
+     * group of images, and that is the shape that works on this API. The labels here are positional
+     * ONLY: the caller's prompt states every rule about identity, and repeating them would be two
+     * briefs in one request, which is the failure raw mode exists to avoid.
+     */
+    const refLabel = n === 1 ? 'Image 1' : `Images 1-${n}`;
+    parts.push({ text: `[${refLabel} — IDENTITY REFERENCE PHOTOS] ${refLabel} ${n === 1 ? 'is' : 'are'} the person to render. They are not the scene.` });
+    for (const img of images.slice(0, n)) parts.push(asPart(img));
+
+    const from = n + 1;
+    const to = images.length;
+    const srcLabel = from === to ? `Image ${from}` : `Images ${from}-${to}`;
+    parts.push({ text: `[${srcLabel} — SCENE PHOTOGRAPH] ${srcLabel} ${from === to ? 'is' : 'are'} the scene to rebuild. The person in it is a stand-in and is not in the output.` });
+    for (const img of images.slice(n)) parts.push(asPart(img));
+  } else {
+    for (const img of images) parts.push(asPart(img));
   }
   parts.push({ text: String(prompt).trim() });
 
