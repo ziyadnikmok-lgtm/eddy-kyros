@@ -360,7 +360,9 @@ const pm = read('client/src/pages/PhotoMatchSeedreamPage.jsx');
 
 // CHANGED 2026-08-16: waitForQueuedJob joined the import — the page can now rejoin work the
 // server is still doing after a page change, instead of forgetting it.
-check('Photo Match SD routes through the queue', pm.includes("import { queuedSeedreamEdit, waitForQueuedJob } from '../lib/generationQueue';"));
+// CHANGED 2026-08-16: reconcileUnfiled joined the import — the page can now pull back pictures
+// that finished while the app was closed, without waiting for the next boot.
+check('Photo Match SD routes through the queue', pm.includes("import { queuedSeedreamEdit, waitForQueuedJob, reconcileUnfiled } from '../lib/generationQueue';"));
 check('and no longer calls the blocking route', !pm.includes('seedreamApi.edit('));
 // CHANGED 2026-08-16: a third engine. Photo Match NB2 is the same component with variant="nb2",
 // running Nano Banana 2 through our bypass on Google's own API instead of WaveSpeed's resale of it.

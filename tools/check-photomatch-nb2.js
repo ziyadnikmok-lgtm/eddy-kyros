@@ -124,7 +124,7 @@ check('its nav colour differs from Photo Match SD, so the tabs are tellable apar
 // turns a refusal into a hole in the batch. Seedream draws that line somewhere else.
 const jq = read('server/services/jobQueue.js');
 check('the bypass gets a fixed number of tries', /const NB2_ATTEMPTS = (\d+);/.test(rec));
-check('and then the job is handed to Seedream', rec.includes("jobQueue.switchEngine(job.id, 'seedream5', { tag: 'fallback' })"));
+check('and then the job is handed to Seedream', rec.includes("jobQueue.switchEngine(job.id, 'seedream5', { tag: 'fallback', patch: FALLBACK_PATCH })"));
 check('only after the tries are spent', rec.includes("engine === 'nanobypass' && job.attempts >= NB2_ATTEMPTS"));
 
 // The swap must be one-way. switchEngine rewrites payload.model, and engineOf reads payload.model,
@@ -214,7 +214,9 @@ check('the session total uses it', pm.includes('setSessionSpend((s) => s + spent
 //    the money is spent; the engine row is where a different engine at a different price belongs.
 check('the NB2 tab says it fails over to Seedream, up front', /Fails over to.*Seedream 5\.0 Pro \(WaveSpeed\)/s.test(pm));
 check('and names the number of tries from the shared constant', pm.includes('after {NB2_ATTEMPTS} failed'));
-check('and quotes the price it would actually cost', pm.includes('seedreamCost(resolution, imagesPerJob).toFixed(3)'));
+// CHANGED 2026-08-16: a fallback renders at 2K whatever is set above, so the note must quote the 2K
+// rate rather than the current resolution's — quoting the cheaper one understates the bill.
+check('and quotes the price it would actually cost', pm.includes("seedreamCost('2K', imagesPerJob).toFixed(3)"));
 check('only on the NB2 tab', /\{isNB2 && \(\s*<p className="mb-2 text-\[0\.625rem\] leading-relaxed text-amber-300\/80">/.test(pm));
 
 // 7. The two tabs must not share a results panel. Shared, NB2 opened full of Photo Match SD's
@@ -254,6 +256,24 @@ check('through the queue payload', gq.includes('identityCount },'));
 check('and into the bypass', rec.includes('identityCount: Number(job.payload?.identityCount) || 0,'));
 // A job with no count behaves exactly as before, so nothing that predates this changes.
 check('no count means the old flat layout', svc.includes('for (const img of images) parts.push(asPart(img));'));
+
+// --- a fallback always renders at 2K -----------------------------------------------------------------
+// The job is already billed at Seedream's rate and the gap between its 1K and 2K is a few cents,
+// while the gap in the picture is not. A fallback is also the run you were least likely to get at all.
+check('the fallback patches the payload', rec.includes("const FALLBACK_PATCH = { resolution: '2K' };"));
+check('and both fallback paths use it', (rec.match(/patch: FALLBACK_PATCH/g) || []).length === 2);
+check('switchEngine can carry a patch', jq.includes('function switchEngine(id, model, { tag = null, patch = null } = {})'));
+check('which is applied to the payload', jq.includes('Object.assign(payload, patch);'));
+check('and the page quotes the 2K rate, not the current setting',
+  pm.includes("seedreamCost('2K', imagesPerJob).toFixed(3)"));
+
+// --- blurring is automatic, including the faces the first pass misses ----------------------------------
+// A sharp rival face in the source is the single most reliable way to lose the character, and the
+// conservative first pass misses turned and tilted faces — those used to sit there with an amber
+// badge until someone noticed and pressed 'Blur all faces'.
+check('a missed face triggers the aggressive pass automatically',
+  pm.includes('if (!out.blurred) out = await autoBlurFace(dataUrl, { aggressive: true });'));
+check('and it is the SAME code the button ran, not a second detector', /the existing retry, taken automatically/.test(pm));
 
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
