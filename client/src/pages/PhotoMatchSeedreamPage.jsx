@@ -580,6 +580,20 @@ function parseDataUrl(dataUrl) {
  * extra), so this default is what every fresh start actually gets — there is no stored `false` to
  * override it.
  */
+/**
+ * Job ids this tab is already waiting on — MODULE level, deliberately.
+ *
+ * Unmounting a React component does not cancel its promises. Leave Photo Match mid-run and
+ * runOne's await keeps polling in the background and still files its picture when it lands. So
+ * the resume-on-open, which is a NEW component instance with a fresh closure, cannot see that the
+ * old one is still on the case — it adopted the same job, waited on it too, and both filed. One
+ * render, two rows in the library (owner, 2026-08-16: 'it duplicate the image').
+ *
+ * A ref would not work: refs die with the component, which is exactly the thing that is not
+ * happening to the promise. Ids are removed when their waiter settles, so this cannot grow.
+ */
+const _awaiting = new Set();
+
 const _cache = { extra: '', aspectRatio: 'auto', resolution: '1K', exactRecreate: true, varyBackground: false, nsfw: false, blurSource: true, faceless: false };
 // Images are too big for _cache/localStorage — IndexedDB so they survive a reload.
 /**
@@ -1104,7 +1118,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
    * Shared by the live run, the resume-on-open and the retry. One copy, so a picture recovered
    * after a page change is filed identically to one watched all the way through.
    */
-  const filePicture = useCallback(async (first, who) => {
+  const filePicture = useCallback(async (first, who, usedPrompt) => {
     if (!first?.galleryId) return;
     const name = (who || '').trim();
     // Her folder is created in THAT collection — the two are separate databases, so a 'Grace'
@@ -1112,7 +1126,19 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     const dest = (await destStore.ensureFolder(name || 'Photo Match'))?.id || null;
     const filed = await destStore.addItems([{
       url: galleryApi.imageUrl(first.galleryId),
-      prompt: `Photo Match - ${name || 'no character'}`,
+      /**
+       * THE PROMPT THAT ACTUALLY MADE IT, so the Library's Copy button has something to copy.
+       *
+       * This was the label `Photo Match - <her>` and nothing more, so the instruction the picture
+       * was built from — every chip, every lock, the identity rules — vanished the moment the run
+       * ended and there was no way to reproduce a result you liked (owner, 2026-08-16).
+       *
+       * The label is kept as the FIRST line so the panel and the collection filters still read
+       * 'Photo Match …' exactly as they did, with the full text below it.
+       */
+      prompt: usedPrompt
+        ? `Photo Match - ${name || 'no character'}\n\n${usedPrompt}`
+        : `Photo Match - ${name || 'no character'}`,
       name: `photomatch-${Date.now()}`,
     }], dest);
     // addItems reports a storage failure by RETURNING an empty array rather than throwing.
@@ -1142,6 +1168,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
        * destDb and the character folder ride along so that a run interrupted by the app closing is
        * filed into the same place it would have gone, rather than needing to be found by hand.
        */
+      let claimedJobId = null;
       const data = await withRateLimitRetry(() => queuedSeedreamEdit({
         feature: FEATURE,
         images: [...charRefs, sourceImg],
@@ -1156,7 +1183,8 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         destDb: destDbRef.current,
         destFolder: charName.trim() || 'Photo Match',
         cardPrompt: `Photo Match - ${charName.trim() || 'no character'}`,
-      }));
+        onJobId: (id) => { claimedJobId = id; _awaiting.add(id); },
+      })).finally(() => { if (claimedJobId) _awaiting.delete(claimedJobId); });
 
       /**
        * The engine that actually produced it, read back from the queue rather than assumed.
@@ -1237,7 +1265,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
        * Shared with the resume-on-open and the retry, so a picture recovered after a page change is
        * filed identically to one watched all the way through.
        */
-      await filePicture(first, charName);
+      await filePicture(first, charName, prompt);
     } catch (err) {
       // A FILING miss is not a failed match: the picture exists, is billed, and is on the feed.
       // Marking the job failed would tell the owner to re-run something that already succeeded.
@@ -1565,7 +1593,8 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         list = r?.data ?? r;
       } catch { return; }              // signed out or offline is not an error worth shouting about
       if (!alive || !list) return;
-      const mineOnly = (arr) => (arr || []).filter((j) => j.feature === FEATURE);
+      // Skip what an earlier, still-running waiter already owns — otherwise both file it.
+      const mineOnly = (arr) => (arr || []).filter((j) => j.feature === FEATURE && !_awaiting.has(j.id));
       const active = mineOnly(list.active);
       const failed = mineOnly(list.failed);
       if (!active.length && !failed.length) return;
@@ -1593,12 +1622,14 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
       // Rejoin each one. filePicture is the same code a fresh run uses, so a resumed picture lands
       // in the same collection, the same folder and the same shape.
       for (const j of active) {
+        _awaiting.add(j.id);
         waitForQueuedJob(j.id)
+          .finally(() => _awaiting.delete(j.id))
           .then(async (data) => {
             if (!alive) return;
             const first = (data.images || [])[0];
             if (!first) throw new Error('finished with no image');
-            await filePicture(first, j.destFolder || '');
+            await filePicture(first, j.destFolder || '', j.cardPrompt || '');
             setJobs((prev) => prev.map((x) => (x.jobId === j.id
               ? { ...x, status: 'done', result: first, galleryId: first.galleryId || null, url: data.url || '', doneAt: Date.now(), filedDb: j.destDb || destDb }
               : x)));
@@ -1632,7 +1663,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
           .then(async (data) => {
             const first = (data.images || [])[0];
             if (!first) throw new Error('finished with no image');
-            await filePicture(first, t.charName || '');
+            await filePicture(first, t.charName || '', '');
             setJobs((prev) => prev.map((x) => (x.jobId === t.jobId
               ? { ...x, status: 'done', result: first, galleryId: first.galleryId || null, url: data.url || '', doneAt: Date.now(), filedDb: destDb }
               : x)));

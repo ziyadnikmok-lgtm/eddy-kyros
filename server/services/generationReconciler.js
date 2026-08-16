@@ -569,12 +569,34 @@ function startGenerationReconciler() {
   log.info('generation_reconciler_started', { intervalMs: POLL_INTERVAL_MS });
 }
 
+/**
+ * Start a pass NOW, because something was just queued.
+ *
+ * The loop ticks every 6 seconds, so a job enqueued a moment after a tick sat doing nothing for
+ * up to six before anyone even tried to send it. On the bypass — where the render itself is about
+ * eight seconds — that is most of the wait, spent idle, and it reads as 'generate is slow'
+ * (owner, 2026-08-16).
+ *
+ * Coalesced: a batch of two hundred enqueues fires ONE pass, not two hundred. runOnce already
+ * fills every free lane, so a second concurrent pass would find nothing and only add contention.
+ */
+let kickTimer = null;
+function kickGenerationReconciler() {
+  if (!timer || kickTimer) return;            // not started, or a kick is already pending
+  kickTimer = setTimeout(() => {
+    kickTimer = null;
+    runOnce().catch((err) => log.warn('generation_reconciler_kick_failed', { error: err.message }));
+  }, 150);
+  if (kickTimer.unref) kickTimer.unref();
+}
+
 function stopGenerationReconciler() {
   if (timer) { clearInterval(timer); timer = null; }
 }
 
 module.exports = {
   startGenerationReconciler,
+  kickGenerationReconciler,
   stopGenerationReconciler,
   runOnce,
   submitOne,

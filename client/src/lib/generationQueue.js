@@ -19,9 +19,21 @@ import { jobs as jobsApi, gallery as galleryApi } from '../services/api';
 import { createEddyCollection } from './eddyCollectionStore';
 import { fileIntoLibrary, destLabel } from './libraryDestination';
 
-// The server polls Muapi every 6s, so asking faster than that only adds requests without learning
-// anything sooner.
-const POLL_MS = 3000;
+/**
+ * HOW OFTEN A WAITING PAGE ASKS — fast at first, then relaxed.
+ *
+ * A flat 3s meant a finished picture could sit invisible for three seconds after it existed,
+ * which on the bypass — where Google answers on the same request and a render is ~8s — is a
+ * third of the wait spent looking idle (owner, 2026-08-16: 'as soon it generate it send fast').
+ *
+ * So the first minute polls at 1s, which is where nearly every bypass render lands, and anything
+ * still going after that drops back to 3s. That keeps the request count sane on a 300-job batch:
+ * flat 1s polling would be three hundred requests a second at our own server for the whole run,
+ * to learn nothing new about jobs that take minutes.
+ */
+const POLL_FAST_MS = 1000;
+const POLL_SLOW_MS = 3000;
+const POLL_FAST_FOR_MS = 60_000;
 /**
  * How long a caller waits before giving up on ITS OWN await. The job is never abandoned — the
  * server keeps working and whatever lands is filed — but the page shows a tile as failed when this
@@ -68,6 +80,7 @@ export async function queuedSeedreamEdit({
   cardPrompt,
   cardName,
   signal,
+  onJobId,
 }) {
   const created = await jobsApi.enqueue({
     feature,
@@ -80,6 +93,10 @@ export async function queuedSeedreamEdit({
   });
   const jobId = created?.data?.id ?? created?.id;
   if (!jobId) throw new Error('The queue did not return a job id');
+  // Handed back the moment it exists so a caller can record that IT owns this job. A page that
+  // later remounts must be able to tell what an earlier, still-running waiter already has —
+  // unmounting does not cancel a promise, and two waiters on one job file it twice.
+  if (typeof onJobId === 'function') { try { onJobId(jobId); } catch { /* a bad callback must not sink a live render */ } }
 
   return waitForQueuedJob(jobId, { signal });
 }
@@ -94,10 +111,11 @@ export async function queuedSeedreamEdit({
  * the client simply had no way to rejoin it.
  */
 export async function waitForQueuedJob(jobId, { signal } = {}) {
-  const deadline = Date.now() + WAIT_TIMEOUT_MS;
+  const startedAt = Date.now();
+  const deadline = startedAt + WAIT_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (signal?.aborted) throw new QueuedJobStillRunning(jobId);
-    await sleep(POLL_MS);
+    await sleep(Date.now() - startedAt < POLL_FAST_FOR_MS ? POLL_FAST_MS : POLL_SLOW_MS);
     let job;
     try {
       const r = await jobsApi.get(jobId);

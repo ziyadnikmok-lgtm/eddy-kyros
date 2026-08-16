@@ -67,6 +67,10 @@ router.post('/', (req, res, next) => {
       throw new AppError('"payload.images" must hold at least one source image', 400, 'VALIDATION_ERROR');
     }
     const id = jobQueue.enqueue({ userId, feature, payload, destDb, destFolder, cardPrompt, cardName, tags });
+    // Wake the worker instead of letting this sit until the next 6-second tick. On the bypass the
+    // render is about eight seconds, so up to six spent waiting to START was most of the delay.
+    // The kick coalesces, so a two-hundred-image batch still fires one pass.
+    try { require('../services/generationReconciler').kickGenerationReconciler(); } catch { /* the tick will get it */ }
     res.status(201).json({ success: true, data: present(jobQueue.get(id)) });
   } catch (err) { next(err); }
 });

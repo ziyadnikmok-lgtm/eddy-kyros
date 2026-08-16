@@ -166,9 +166,12 @@ check('resume runs only after the saved panel is restored, so it cannot race it'
 
 // One filing path for the live run, the resume and the retry — a recovered picture must land in the
 // same collection, folder and shape as one watched all the way through.
-check('filing is one shared function', pmPage.includes('const filePicture = useCallback(async (first, who)'));
-check('the live run uses it', pmPage.includes('await filePicture(first, charName);'));
-check('the resume uses it', pmPage.includes("await filePicture(first, j.destFolder || '');"));
+check('filing is one shared function', pmPage.includes('const filePicture = useCallback(async (first, who, usedPrompt)'));
+// CHANGED 2026-08-16: the PROMPT travels with the picture now. The library row carried only the
+// label 'Photo Match - <her>', so the instruction that actually made the image — every chip, every
+// lock, the identity rules — was gone once the run ended and Copy had nothing to copy.
+check('the live run uses it, and passes the prompt it sent', pmPage.includes('await filePicture(first, charName, prompt);'));
+check('the resume uses it', pmPage.includes("await filePicture(first, j.destFolder || '', j.cardPrompt || '');"));
 check('and no inline copy was left behind', !pmPage.includes("ensureFolder(who || 'Photo Match')"));
 
 // The retry endpoint has existed since the queue was built; the page just never offered it, so
