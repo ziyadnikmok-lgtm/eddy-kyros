@@ -145,5 +145,37 @@ check('using the helper the codebase already has for acting as a user',
 check('wrapped once, not at each call site', rec.split('runWithUser(job.user_id').length - 1 === 1);
 check('and the failure it fixes is recorded', /Image not on this machine/.test(rec));
 
+// --- 8. the page can REJOIN work it walked away from ------------------------------------------------
+//
+// Leaving Photo Match unmounts the component and every promise awaiting a render goes with it. The
+// work does not stop — it is on the durable queue, the server finishes it and bills it — but the
+// panel forgot it existed, so coming back showed an empty page while paid pictures completed
+// invisibly (owner, 2026-08-16: 'when leave page it stop showing the generated').
+const pmPage = read('client/src/pages/PhotoMatchSeedreamPage.jsx');
+check('the waiting loop can be reached by job id', qlib.includes('export async function waitForQueuedJob(jobId'));
+// One loop, not two: enqueue-and-wait and rejoin-by-id must not drift apart.
+check('and enqueue uses that same loop', qlib.includes('return waitForQueuedJob(jobId, { signal });'));
+check('the page asks the server what is still running', pmPage.includes('await jobsApi.list()'));
+check('and rejoins each one', pmPage.includes('waitForQueuedJob(j.id)'));
+// Per tab, or the two tabs adopt each other's work. The model cannot tell them apart: an NB2 job
+// that falls back runs on seedream5 and would then look like an SD job.
+check('scoped to THIS tab, by feature', pmPage.includes("const FEATURE = variant === 'nb2' ? 'photoMatchNB2' : 'photoMatchSeedream';"));
+check('and the enqueue uses it', pmPage.includes('feature: FEATURE,'));
+check('resume runs only after the saved panel is restored, so it cannot race it',
+  pmPage.includes('if (!jobsRestored) return;'));
+
+// One filing path for the live run, the resume and the retry — a recovered picture must land in the
+// same collection, folder and shape as one watched all the way through.
+check('filing is one shared function', pmPage.includes('const filePicture = useCallback(async (first, who)'));
+check('the live run uses it', pmPage.includes('await filePicture(first, charName);'));
+check('the resume uses it', pmPage.includes("await filePicture(first, j.destFolder || '');"));
+check('and no inline copy was left behind', !pmPage.includes("ensureFolder(who || 'Photo Match')"));
+
+// The retry endpoint has existed since the queue was built; the page just never offered it, so
+// recovering one failed picture meant re-running the whole batch.
+check('failed jobs can be run again from the panel', pmPage.includes('await jobsApi.retry(t.jobId);'));
+check('and the button only appears when there is something to retry',
+  pmPage.includes('{failedJobs.length > 0 && ('));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

@@ -81,6 +81,19 @@ export async function queuedSeedreamEdit({
   const jobId = created?.data?.id ?? created?.id;
   if (!jobId) throw new Error('The queue did not return a job id');
 
+  return waitForQueuedJob(jobId, { signal });
+}
+
+/**
+ * Wait on a job that is ALREADY on the queue, and answer in the same shape as an enqueue.
+ *
+ * Split out so a page can pick work back up. Leaving Photo Match mid-run unmounted the
+ * component and the awaiting promises went with it: the server finished the renders and filed
+ * nothing to the panel, so coming back showed an empty page while paid work was completing
+ * invisibly (owner, 2026-08-16). The server has always been able to list what is in flight —
+ * the client simply had no way to rejoin it.
+ */
+export async function waitForQueuedJob(jobId, { signal } = {}) {
   const deadline = Date.now() + WAIT_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (signal?.aborted) throw new QueuedJobStillRunning(jobId);

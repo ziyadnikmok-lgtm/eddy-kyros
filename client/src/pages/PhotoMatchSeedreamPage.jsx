@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { gallery as galleryApi } from '../services/api';
+import { gallery as galleryApi, jobs as jobsApi } from '../services/api';
 import { createEddyCollection } from '../lib/eddyCollectionStore';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Select, Textarea, Toggle, Badge, Spinner } from '../components/UI';
@@ -11,7 +11,7 @@ import { consumeSourceHandoff } from '../lib/sourceHandoff';
 import { detectAspectRatio } from '../lib/detectAspectRatio';
 import { NSFW_PRESETS, nudeState, NUDE_LINE } from '../lib/nsfwPresets';
 import { createPageStore } from '../lib/pageStateStore';
-import { queuedSeedreamEdit } from '../lib/generationQueue';
+import { queuedSeedreamEdit, waitForQueuedJob } from '../lib/generationQueue';
 import { cn } from '../lib/utils';
 import { autoBlurFace } from '../lib/autoBlurFace';
 import { detectFacePico } from '../lib/detectFacePico';
@@ -662,6 +662,14 @@ const NB2_ATTEMPTS = 3;
  */
 export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
   const isNB2 = variant === 'nb2';
+  /**
+   * What this tab's jobs are called on the queue.
+   *
+   * Per tab, because resuming asks the server 'what of mine is still running' and the two tabs
+   * would otherwise adopt each other's work. The model cannot be used to tell them apart: an NB2
+   * job that falls back runs on seedream5 and would then look like an SD job.
+   */
+  const FEATURE = variant === 'nb2' ? 'photoMatchNB2' : 'photoMatchSeedream';
   const store = STORES[isNB2 ? 'nb2' : 'sd'];
   // Its own panel too. Shared, the NB2 tab opened showing Seedream and Nano 2 pictures it had
   // never made — and every one of them priced at the bypass's rate.
@@ -1087,6 +1095,32 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
    */
   const warnedFallback = useRef(false);
 
+  /**
+   * Put a finished picture into the chosen collection, under her name.
+   *
+   * Stored as a URL rather than bytes, exactly as Eddy does it: the server already holds the
+   * file, and copying megabytes into IndexedDB per image is what that choice exists to avoid.
+   *
+   * Shared by the live run, the resume-on-open and the retry. One copy, so a picture recovered
+   * after a page change is filed identically to one watched all the way through.
+   */
+  const filePicture = useCallback(async (first, who) => {
+    if (!first?.galleryId) return;
+    const name = (who || '').trim();
+    // Her folder is created in THAT collection — the two are separate databases, so a 'Grace'
+    // folder in one says nothing about the other.
+    const dest = (await destStore.ensureFolder(name || 'Photo Match'))?.id || null;
+    const filed = await destStore.addItems([{
+      url: galleryApi.imageUrl(first.galleryId),
+      prompt: `Photo Match - ${name || 'no character'}`,
+      name: `photomatch-${Date.now()}`,
+    }], dest);
+    // addItems reports a storage failure by RETURNING an empty array rather than throwing.
+    if (!Array.isArray(filed) || filed.length === 0) {
+      throw new Error(`Browser storage is full - the picture is in the gallery but not in ${destLabel}`);
+    }
+  }, [destStore, destLabel]);
+
   const runOne = async (source, charRefs, ratio, prompt) => {
     const jobId = source.id;
     const feedId = `photomatch-sd-${jobId}`;
@@ -1109,7 +1143,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
        * filed into the same place it would have gone, rather than needing to be found by hand.
        */
       const data = await withRateLimitRetry(() => queuedSeedreamEdit({
-        feature: 'photoMatchSeedream',
+        feature: FEATURE,
         images: [...charRefs, sourceImg],
         prompt,
         aspectRatio: ratio,
@@ -1196,28 +1230,14 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
        * INTO EDDY'S LIBRARY, under her name -- the same place, and the same shape, a generation from
        * the Eddy tab lands in.
        *
-       * Stored as a URL rather than bytes, exactly as Eddy does it: the server already holds the
-       * file, and copying megabytes into IndexedDB per image is what that choice exists to avoid.
-       *
        * NOT swallowed. Eddy had this same call inside its own catch, which is why a filing miss was
        * invisible AND silent for a day. A miss here reaches the handler below, which keeps the image
        * and says so.
+       *
+       * Shared with the resume-on-open and the retry, so a picture recovered after a page change is
+       * filed identically to one watched all the way through.
        */
-      if (first.galleryId) {
-        const who = charName.trim();
-        // Whichever collection was chosen before the run. Her folder is created in THAT collection —
-        // the two are separate databases, so a "Grace" folder in one says nothing about the other.
-        const dest = (await destStore.ensureFolder(who || 'Photo Match'))?.id || null;
-        const filed = await destStore.addItems([{
-          url: galleryApi.imageUrl(first.galleryId),
-          prompt: `Photo Match - ${who || 'no character'}`,
-          name: `photomatch-${Date.now()}`,
-        }], dest);
-        // addItems reports a storage failure by RETURNING an empty array rather than throwing.
-        if (!Array.isArray(filed) || filed.length === 0) {
-          throw new Error(`Browser storage is full - the picture is in the gallery but not in ${destLabel}`);
-        }
-      }
+      await filePicture(first, charName);
     } catch (err) {
       // A FILING miss is not a failed match: the picture exists, is billed, and is on the feed.
       // Marking the job failed would tell the owner to re-run something that already succeeded.
@@ -1521,6 +1541,111 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     // that no longer exists once the page is closed.
     resultsStore.set('queue', jobs.filter((j) => j.status === 'done' && urlOfJob(j)).map(liteJob));
   }, [jobs, jobsRestored]);
+
+
+  /**
+   * PICK BACK UP WHAT THE SERVER IS STILL DOING.
+   *
+   * Leaving the page unmounts the component, and every promise awaiting a render goes with it. The
+   * work does not stop — it is on the durable queue and the server finishes and bills it — but the
+   * panel forgot it existed, so coming back showed an empty page while paid pictures completed
+   * invisibly (owner, 2026-08-16: 'when leave page it stop showing the generated').
+   *
+   * The server has always been able to answer this: GET /api/jobs returns active, failed and
+   * unfiled for the signed-in user. Nothing new was needed on that side — the client just never
+   * asked. Runs once the restore has finished, so it cannot race the saved panel.
+   */
+  useEffect(() => {
+    if (!jobsRestored) return;
+    let alive = true;
+    (async () => {
+      let list;
+      try {
+        const r = await jobsApi.list();
+        list = r?.data ?? r;
+      } catch { return; }              // signed out or offline is not an error worth shouting about
+      if (!alive || !list) return;
+      const mineOnly = (arr) => (arr || []).filter((j) => j.feature === FEATURE);
+      const active = mineOnly(list.active);
+      const failed = mineOnly(list.failed);
+      if (!active.length && !failed.length) return;
+
+      // Shown straight away, before any of them finish, so the panel is honest about what is
+      // outstanding rather than looking idle while the server works.
+      setJobs((prev) => {
+        const known = new Set(prev.map((j) => j.jobId).filter(Boolean));
+        const rows = [...active, ...failed]
+          .filter((j) => !known.has(j.id))
+          .map((j) => ({
+            id: `resumed-${j.id}`,
+            jobId: j.id,
+            status: j.status === 'failed' ? 'failed' : 'running',
+            error: j.error || '',
+            charName: j.destFolder || '',
+            engine: j.model === 'nb2' ? 'nb2' : j.model === 'nano2' ? 'nano2' : 'seedream',
+            fellBack: (j.tags || []).includes('fallback'),
+            resumed: true,
+          }));
+        return rows.length ? [...rows, ...prev] : prev;
+      });
+      if (active.length) notify(`Picking up ${active.length} still running from before`, 'info');
+
+      // Rejoin each one. filePicture is the same code a fresh run uses, so a resumed picture lands
+      // in the same collection, the same folder and the same shape.
+      for (const j of active) {
+        waitForQueuedJob(j.id)
+          .then(async (data) => {
+            if (!alive) return;
+            const first = (data.images || [])[0];
+            if (!first) throw new Error('finished with no image');
+            await filePicture(first, j.destFolder || '');
+            setJobs((prev) => prev.map((x) => (x.jobId === j.id
+              ? { ...x, status: 'done', result: first, galleryId: first.galleryId || null, url: data.url || '', doneAt: Date.now(), filedDb: j.destDb || destDb }
+              : x)));
+          })
+          .catch((err) => {
+            if (!alive) return;
+            setJobs((prev) => prev.map((x) => (x.jobId === j.id
+              ? { ...x, status: 'failed', error: err?.message || 'Failed' } : x)));
+          });
+      }
+    })();
+    return () => { alive = false; };
+  }, [jobsRestored, FEATURE, filePicture, notify, destDb]);
+
+  /**
+   * Run the failed ones again — the server already had the endpoint, the page just never offered it.
+   *
+   * A retry is a POST a human makes on purpose: a job that failed as an orphan may already have
+   * been rendered and billed, so the automatic path refuses to make that call and a person looking
+   * at a missing picture can.
+   */
+  const failedJobs = jobs.filter((j) => j.status === 'failed' && j.jobId);
+  const retryFailed = useCallback(async () => {
+    const targets = jobs.filter((j) => j.status === 'failed' && j.jobId);
+    if (!targets.length) return;
+    setJobs((prev) => prev.map((x) => (targets.some((t) => t.jobId === x.jobId) ? { ...x, status: 'running', error: '' } : x)));
+    for (const t of targets) {
+      try {
+        await jobsApi.retry(t.jobId);
+        waitForQueuedJob(t.jobId)
+          .then(async (data) => {
+            const first = (data.images || [])[0];
+            if (!first) throw new Error('finished with no image');
+            await filePicture(first, t.charName || '');
+            setJobs((prev) => prev.map((x) => (x.jobId === t.jobId
+              ? { ...x, status: 'done', result: first, galleryId: first.galleryId || null, url: data.url || '', doneAt: Date.now(), filedDb: destDb }
+              : x)));
+          })
+          .catch((err) => setJobs((prev) => prev.map((x) => (x.jobId === t.jobId
+            ? { ...x, status: 'failed', error: err?.message || 'Failed again' } : x))));
+      } catch (err) {
+        setJobs((prev) => prev.map((x) => (x.jobId === t.jobId
+          ? { ...x, status: 'failed', error: err?.message || 'Could not retry' } : x)));
+      }
+    }
+    notify(`Retrying ${targets.length} failed`, 'info');
+  }, [jobs, filePicture, notify, destDb]);
 
   const [pickedJobs, setPickedJobs] = useState(() => new Set());
   const toggleJob = useCallback((id) => {
@@ -2171,6 +2296,15 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
                     className="cursor-pointer accent-rose-500" />
                   Before / after
                 </label>
+                {/* The server has had a retry endpoint since the queue was built; the page simply
+                    never offered it, so recovering one failed picture meant re-running the whole
+                    batch. Only shown when there is something to retry. */}
+                {failedJobs.length > 0 && (
+                  <button type="button" onClick={retryFailed}
+                    className="rounded-full border border-red-500/50 bg-red-500/10 px-2.5 py-0.5 text-[0.625rem] font-semibold text-red-300 hover:border-red-400 cursor-pointer">
+                    Retry {failedJobs.length} failed
+                  </button>
+                )}
                 <span className="ml-auto flex flex-wrap gap-2">
                   <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs"
                     disabled={!!movingTo}

@@ -283,7 +283,10 @@ check('no two nav items share the label "Photo Match"', (() => {
 check('the reason is recorded beside the rename', /cost real time twice on 2026-08-13/.test(app));
 // The FOLDER pictures are filed into is deliberately unchanged: renaming it would split every
 // existing Photo Match folder in two.
-check('the filing folder name is untouched', pm.includes("ensureFolder(who || 'Photo Match')"));
+// CHANGED 2026-08-16: the filing block moved into filePicture() so the live run, the resume and
+// the retry all file identically. The FOLDER NAME is what this pins, and it is unchanged — only
+// the variable holding it is now the function's parameter.
+check('the filing folder name is untouched', pm.includes("ensureFolder(name || 'Photo Match')"));
 
 // --- the two columns must be SIBLINGS, not nested (owner, 2026-08-13) -------------------------------
 // The results column was opened inside the setup column, so every result rendered in the left
