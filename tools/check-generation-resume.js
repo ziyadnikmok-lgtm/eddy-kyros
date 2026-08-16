@@ -125,5 +125,25 @@ check('only once signed in', /if \(!currentUser\) return undefined;/.test(app));
 check('and says nothing when there was nothing to collect', app.includes('if (cancelled || (!filed && !failed)) return;'));
 check('bookkeeping can never block the app', /\.catch\(\(\) => \{ \/\* never block the app on bookkeeping \*\/ \}\)/.test(app));
 
+// --- 7. a queued result is saved AS THE JOB'S OWNER ------------------------------------------------
+//
+// getUserId() is AsyncLocalStorage, set by requireAuth on the way in from a request. The reconciler
+// is a setInterval tick, so there is no request and the store is empty — every service that scopes
+// by user saw '__anon__'.
+//
+// What that looked like on 2026-08-16: galleryManager keeps its entries in a PER-USER in-memory
+// store, so a queued render wrote its file correctly, appended its entry to the ANONYMOUS store and
+// persisted it, while the browser — authenticated as the real user — looked the id up in its own
+// store, missed, and answered 404. The picture sat on disk at full size the whole time and the
+// Library showed 'Image not on this machine'. It also risked the reverse: the user's state writing
+// its own snapshot back over gallery.json and dropping the worker's entries entirely.
+check('a queued result is saved as the job owner, not as nobody',
+  rec.includes('return runWithUser(job.user_id, () => _saveResultAsUser(job, images));'));
+check('using the helper the codebase already has for acting as a user',
+  rec.includes("const { runWithUser } = require('../userContext');"));
+// Wrapped at the definition, so neither the poller nor the submit path can forget it.
+check('wrapped once, not at each call site', rec.split('runWithUser(job.user_id').length - 1 === 1);
+check('and the failure it fixes is recorded', /Image not on this machine/.test(rec));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

@@ -25,6 +25,7 @@ const wavespeed = require('./wavespeedService');
 const gallery = require('./galleryManager');
 const imageStore = require('./imageStore');
 const log = require('../utils/logger');
+const { runWithUser } = require('../userContext');
 
 const POLL_INTERVAL_MS = 6000;
 // Seedream renders in seconds to a couple of minutes. Past this a task is not coming back, and
@@ -142,7 +143,30 @@ async function _pollJob(job) {
  * Shared by the poller and by the submit path, because WaveSpeed can hand back a cached edit as
  * already complete — two ways in, one way to record it.
  */
+/**
+ * SAVED AS THE JOB'S OWNER, not as nobody.
+ *
+ * getUserId() is AsyncLocalStorage, set by requireAuth on the way in from a request. The
+ * reconciler is a setInterval tick — there is no request, so the store is empty and every service
+ * that scopes by user saw '__anon__'.
+ *
+ * What that looked like: galleryManager keeps its entries in a PER-USER in-memory store, so a
+ * queued render wrote its file correctly, appended its entry to the anonymous store, and
+ * persisted it — while the browser, authenticated as the real user, looked up the id in ITS store,
+ * did not find it, and answered 404. The picture existed on disk the whole time and the Library
+ * showed 'Image not on this machine'. It also risked the reverse: the user's state persisting its
+ * own snapshot back over gallery.json and dropping the worker's entries.
+ *
+ * runWithUser is the same helper admin.js already uses to act as another user. The job row has
+ * carried user_id since the queue was built; it just was not being put back on.
+ *
+ * Wrapped HERE rather than at the call sites so neither the poller nor the submit path can forget.
+ */
 async function _saveResult(job, images) {
+  return runWithUser(job.user_id, () => _saveResultAsUser(job, images));
+}
+
+async function _saveResultAsUser(job, images) {
   const list = Array.isArray(images) ? images.filter(Boolean) : [];
   if (!list.length) {
     jobQueue.markFailed(job.id, 'The provider reported success but returned no image');
