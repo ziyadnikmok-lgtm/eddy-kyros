@@ -275,5 +275,26 @@ check('a missed face triggers the aggressive pass automatically',
   pm.includes('if (!out.blurred) out = await autoBlurFace(dataUrl, { aggressive: true });'));
 check('and it is the SAME code the button ran, not a second detector', /the existing retry, taken automatically/.test(pm));
 
+// --- it must not hand back what we sent -------------------------------------------------------------
+//
+// An edit model can satisfy 'reproduce this photograph exactly' the lazy way: by returning the
+// photograph. That is the worst possible shape of failure — the job succeeds, the picture files, the
+// tile goes green, and what you have is your own source photo with the blurred face still in it,
+// sitting in the library under the character's name (owner, 2026-08-16).
+check('an echoed input is caught', svc.includes('NANO_BYPASS_ECHO'));
+check('by comparing the output against every input', svc.includes('for (const p of parts) {'));
+// Byte-identical is the whole test: a genuine render is never bit-for-bit one of its inputs, even an
+// exact recreate, so this cannot fire on good work.
+check('on exact bytes, so a real render can never trip it', svc.includes("digest('hex') === outHash"));
+// Thrown, not returned — the queue counts it as a failed attempt, retries, and eventually hands the
+// job to Seedream, which is what you want from an engine that has decided to echo.
+check('and thrown, so the queue retries and then falls back',
+  svc.includes("throw new AppError('Nano Bypass returned one of the input images"));
+
+// The blurred photo is what gets SENT, not the original — auto-blur replaces it in place.
+check('the source sent is the blurred copy', pm.includes('dataUrl = out.dataUrl;') && pm.includes('const sourceImg = parseDataUrl(source.dataUrl);'));
+// And an unfinished tile must not read as a finished result that came back unchanged.
+check('an in-progress tile is labelled as the source', pm.includes('Your source · rendering'));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

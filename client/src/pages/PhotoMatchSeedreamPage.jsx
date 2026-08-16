@@ -2641,8 +2641,19 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
                     )
                   ) : (
                     <div className="relative">
-                      <img src={job.thumb} alt="" className={cn('w-full aspect-[3/4] object-cover rounded-lg border border-zinc-800/60 bg-zinc-950', job.status !== 'done' && 'opacity-50')} />
-                      {job.status === 'running' && <div className="absolute inset-0 flex items-center justify-center"><Spinner size={22} /></div>}
+                      {/* An unfinished tile shows the SOURCE photo, which reads as a finished result
+                          that came back unchanged — with a blurred face, it reads as "it returned
+                          exactly what I sent" (owner, 2026-08-16). Dimmed harder and labelled, so
+                          there is no mistaking the placeholder for the output. */}
+                      <img src={job.thumb} alt="" className={cn('w-full aspect-[3/4] object-cover rounded-lg border border-zinc-800/60 bg-zinc-950', job.status !== 'done' && 'opacity-30')} />
+                      {job.status === 'running' && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                          <Spinner size={22} />
+                          <span className="rounded bg-black/70 px-2 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-amber-300">
+                            Your source · rendering
+                          </span>
+                        </div>
+                      )}
                     </div>
                   )}
 
