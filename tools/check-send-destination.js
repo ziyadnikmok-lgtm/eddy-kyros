@@ -283,7 +283,10 @@ check('no two nav items share the label "Photo Match"', (() => {
 check('the reason is recorded beside the rename', /cost real time twice on 2026-08-13/.test(app));
 // The FOLDER pictures are filed into is deliberately unchanged: renaming it would split every
 // existing Photo Match folder in two.
-check('the filing folder name is untouched', pm.includes("ensureFolder(who || 'Photo Match')"));
+// CHANGED 2026-08-16: the filing block moved into filePicture() so the live run, the resume and
+// the retry all file identically. The FOLDER NAME is what this pins, and it is unchanged — only
+// the variable holding it is now the function's parameter.
+check('the filing folder name is untouched', pm.includes("ensureFolder(name || 'Photo Match')"));
 
 // --- the two columns must be SIBLINGS, not nested (owner, 2026-08-13) -------------------------------
 // The results column was opened inside the setup column, so every result rendered in the left
@@ -376,7 +379,12 @@ check('the tile only compares when asked', pm.includes('showCompare && (job.resu
 // copy first and falls back to bytes only when there is none.
 check('otherwise it shows the RESULT, not the source', pm.includes('resultSrc(job)'));
 check('and it prefers the server copy over inline bytes', pm.includes('function resultSrc(j)'));
-check('and the tile says what made it', pm.includes("job.engine && ` · ${job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}`"));
+// CHANGED 2026-08-16: NB2 is a third engine, and the tile badge is the only place a finished
+// picture says which one produced it.
+// CHANGED 2026-08-16: the badge also marks a FALLBACK. An NB2 job the bypass cannot finish is
+// handed to Seedream by the queue, and without the marker that picture looks like an ordinary
+// Seedream run — there would be no way to tell the bypass was failing.
+check('and the tile says what made it', pm.includes("job.engine && ` · ${job.engine === 'nb2' ? 'NB2' : job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}${job.fellBack ? ' (fallback)' : ''}`"));
 
 // --- two gestures: tick the tile, click the picture (owner, 2026-08-13) ------------------------------
 // "I can click on the side and it selects, but clicking the image opens it — same as the code we

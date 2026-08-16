@@ -50,7 +50,21 @@ function blobDir() {
   } else {
     // eslint-disable-next-line global-require
     const db = require('../db');
-    _dir = path.join(path.dirname(db.name), 'job-blobs');
+    /**
+     * `db.name` is better-sqlite3's path to the open file, and it is the right answer whenever it is
+     * there. It is read defensively because this runs on EVERY enqueue: an undefined name made
+     * path.dirname throw a bare "path must be of type string", which would have failed every job on
+     * the queue with an error naming neither the queue nor the blob store. Falling back to the same
+     * precedence server/db.js uses keeps the blobs beside the database either way.
+     */
+    _dir = typeof db?.name === 'string' && db.name
+      ? path.join(path.dirname(db.name), 'job-blobs')
+      : path.join(
+        process.env.WEB_DATA_ROOT
+          || (process.env.ELECTRON_USER_DATA ? path.join(process.env.ELECTRON_USER_DATA, 'data') : null)
+          || path.join(__dirname, '..', '..', 'userdata'),
+        'job-blobs',
+      );
   }
   fs.mkdirSync(_dir, { recursive: true });
   return _dir;

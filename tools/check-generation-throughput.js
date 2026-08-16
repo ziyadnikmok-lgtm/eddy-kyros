@@ -358,9 +358,13 @@ check('cancel refuses submitted work, matching retry and the orphan sweep',
 // --- 12. Photo Match SD on the queue, and the bug that came with it ---------------------------------
 const pm = read('client/src/pages/PhotoMatchSeedreamPage.jsx');
 
-check('Photo Match SD routes through the queue', pm.includes("import { queuedSeedreamEdit } from '../lib/generationQueue';"));
+// CHANGED 2026-08-16: waitForQueuedJob joined the import — the page can now rejoin work the
+// server is still doing after a page change, instead of forgetting it.
+check('Photo Match SD routes through the queue', pm.includes("import { queuedSeedreamEdit, waitForQueuedJob } from '../lib/generationQueue';"));
 check('and no longer calls the blocking route', !pm.includes('seedreamApi.edit('));
-check('both engines are named', pm.includes("model: engine === 'nano2' ? 'nano2' : 'seedream5',"));
+// CHANGED 2026-08-16: a third engine. Photo Match NB2 is the same component with variant="nb2",
+// running Nano Banana 2 through our bypass on Google's own API instead of WaveSpeed's resale of it.
+check('all three engines are named', pm.includes("model: isNB2 ? 'nb2' : engine === 'nano2' ? 'nano2' : 'seedream5',"));
 check('tags travel, so a recovered match stays attributable', pm.includes("tags: charName.trim() ? ['eddy', charName.trim()] : ['eddy'],"));
 check('the destination is read from a ref, not a stale closure', pm.includes('destDb: destDbRef.current,'));
 const lanes = (pm.match(/LANES = \{ seedream: (\d+), nano2: (\d+) \}/) || []);

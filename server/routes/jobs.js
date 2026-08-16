@@ -30,6 +30,16 @@ function present(job) {
     // The SAME shape /api/seedream/edit answers with, so a page can swap one call for the other.
     images: job.images || [],
     provider: job.payload?.provider === 'wavespeed' ? 'wavespeed' : 'muapi',
+    /**
+     * WHICH MODEL ACTUALLY RAN IT — one short string out of the payload, never the payload itself.
+     *
+     * The queue can change this mid-job: a Nano Banana 2 bypass render that exhausts its tries is
+     * handed to Seedream 5 Pro (generationReconciler, NB2_ATTEMPTS). Without this the page keeps
+     * labelling the tile with the engine it ASKED for, and a Seedream picture sits in the panel
+     * claiming to be NB2. `tags` carries the 'fallback' marker for the same reason.
+     */
+    model: job.payload?.model || null,
+    tags: job.tags || [],
     destDb: job.dest_db,
     destFolder: job.dest_folder,
     cardPrompt: job.card_prompt,
@@ -57,6 +67,10 @@ router.post('/', (req, res, next) => {
       throw new AppError('"payload.images" must hold at least one source image', 400, 'VALIDATION_ERROR');
     }
     const id = jobQueue.enqueue({ userId, feature, payload, destDb, destFolder, cardPrompt, cardName, tags });
+    // Wake the worker instead of letting this sit until the next 6-second tick. On the bypass the
+    // render is about eight seconds, so up to six spent waiting to START was most of the delay.
+    // The kick coalesces, so a two-hundred-image batch still fires one pass.
+    try { require('../services/generationReconciler').kickGenerationReconciler(); } catch { /* the tick will get it */ }
     res.status(201).json({ success: true, data: present(jobQueue.get(id)) });
   } catch (err) { next(err); }
 });

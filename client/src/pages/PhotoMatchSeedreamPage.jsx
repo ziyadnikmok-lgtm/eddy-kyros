@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { gallery as galleryApi } from '../services/api';
+import { gallery as galleryApi, jobs as jobsApi } from '../services/api';
 import { createEddyCollection } from '../lib/eddyCollectionStore';
 import { useApp } from '../context/AppContext';
 import { Card, Btn, Select, Textarea, Toggle, Badge, Spinner } from '../components/UI';
@@ -11,9 +11,10 @@ import { consumeSourceHandoff } from '../lib/sourceHandoff';
 import { detectAspectRatio } from '../lib/detectAspectRatio';
 import { NSFW_PRESETS, nudeState, NUDE_LINE } from '../lib/nsfwPresets';
 import { createPageStore } from '../lib/pageStateStore';
-import { queuedSeedreamEdit } from '../lib/generationQueue';
+import { queuedSeedreamEdit, waitForQueuedJob } from '../lib/generationQueue';
 import { cn } from '../lib/utils';
 import { autoBlurFace } from '../lib/autoBlurFace';
+import { detectFacePico } from '../lib/detectFacePico';
 import ManualBlurModal from '../components/ManualBlurModal';
 
 const ASPECT_OPTIONS = [{ value: 'auto', label: 'Auto (match source)' }, ...SEEDREAM_ASPECT_RATIOS.map((r) => ({ value: r, label: r }))];
@@ -93,9 +94,84 @@ const SEEDREAM_PROMPT_BUDGET = 3000;
 const NANO2_PROMPT_BUDGET = 8000;
 
 /**
+ * A SOURCE SHOT FROM BEHIND, and the failure it exists to stop.
+ *
+ * The rest of this prompt demands a face: "match exactly: face, head shape, jaw", "render her face
+ * sharply", "faces, hair, skin and whole body". Against a back-facing photo that is an instruction
+ * to produce something the photo does not contain, and the model resolves it the only way it can —
+ * it turns her around. The pose the photo was chosen for is gone.
+ *
+ * Owner, 2026-08-16: "sometimes face won't appear in the source image and we want that, or model
+ * face don't appear too." No face in, no face out.
+ *
+ * SHORTER THAN EDDY'S ON PURPOSE. EddyGeneratePage's BACK_VIEW_BODY_SCOPE says the same thing at
+ * ~700 characters, most of it scoping bust and outfit wording that belongs to Eddy's prompt and
+ * does not exist here. Photo Match runs against ByteDance's ~3,000-character cap with a pair
+ * already at 2,989, so importing that paragraph would push the identity lock out of the prompt to
+ * restate rules this page never wrote. The load-bearing sentence — do not rotate her — is kept
+ * verbatim in spirit, and the opening marker matches Eddy's so both read as one rule.
+ */
+const BACK_VIEW_LINE = (src) => `BACK VIEW — HER FACING DIRECTION IS FIXED: ${src} is shot from BEHIND. Her back and shoulders face the camera, exactly as it shows. Do NOT turn, twist, rotate or re-angle her toward the camera, do NOT bring her face or chest into frame, and do NOT change the pose to make either visible.`;
+
+/**
  * The house lighting, on every Photo Match prompt (owner, 2026-08-13). Verbatim, because it was
  * given verbatim — the wording is the request, not a paraphrase of one.
  */
+/**
+ * HER BUILD — a standing fact about the character, NOT a change to her.
+ *
+ * Ported from Eddy, and the distinction from the BODY chips is the whole point. A chip is a
+ * deliberate enlargement, so it sets allowBodyChange and STANDS DOWN the bust-preservation locks —
+ * right for 'make her bigger than her photos', wrong for 'this is what she looks like'. A character
+ * whose references ALREADY show the target build was losing her strongest protection just to state
+ * a size she already had (owner, 2026-08-06: Grace is large, another model is medium, and each
+ * wants her own build HELD, not altered).
+ *
+ * So these never touch allowBodyChange. They ride WITH the locks, naming the size the locks are
+ * holding — which is exactly what a lock cannot do on its own, because 'the size in her references'
+ * is unfalsifiable to a model that also has a different woman's body in the payload.
+ *
+ * 'auto' emits nothing: the locks alone, i.e. the behaviour before this existed.
+ *
+ * BACK-VIEW VARIANTS, not the same sentence. Every front line names the bust and, at the larger
+ * sizes, 'deep natural cleavage' — none of which a shot from behind can show. Feeding it anyway
+ * recreates the exact failure the back-view lock exists to stop: the only way to satisfy cleavage
+ * wording is to twist her toward the camera, destroying the pose. Suppressing it entirely is worse,
+ * because hips, waist and back width DO read from behind and are precisely what drifts toward the
+ * stand-in — so the back variants keep the anchoring job using only what the camera can see.
+ */
+const BUILD_OPTIONS = [
+  { value: 'auto', label: 'From her photos', text: '', backText: '' },
+  { value: 'petite', label: 'Petite',
+    text: 'She is petite and slim with a small bust — that is her natural build, exactly as in her reference images, and it is preserved, not changed.',
+    backText: 'She is petite and slim with narrow hips and a slender back — that is her natural build, exactly as in her reference images, and it is preserved, not changed.' },
+  { value: 'medium', label: 'Medium',
+    text: 'She has a medium, natural bust and an average build — that is her natural figure, exactly as in her reference images, and it is preserved, not changed.',
+    backText: 'She has an average, natural build with proportionate hips and waist — that is her natural figure, exactly as in her reference images, and it is preserved, not changed.' },
+  { value: 'full', label: 'Full',
+    text: 'She has a full, shapely bust and curvy figure — that is her natural build, exactly as in her reference images, and it is preserved, not changed.',
+    backText: 'She has a full, curvy figure with shapely hips and a narrow waist — that is her natural build, exactly as in her reference images, and it is preserved, not changed.' },
+  { value: 'large', label: 'Large',
+    text: 'She has a LARGE, heavy, full bust with deep natural cleavage and a curvy figure — that is her natural build, exactly as in her reference images, and it is preserved, not changed. Never render her smaller, flatter or more athletic than this.',
+    backText: 'She has a full, curvy figure with wide shapely hips and a narrow waist — that is her natural build, exactly as in her reference images, and it is preserved, not changed. Never render her slimmer or more athletic than this.' },
+  { value: 'verylarge', label: 'Very large',
+    text: 'She has a VERY LARGE, heavy, extremely full bust — big, weighty and rounded, sitting wide on her chest with deep natural cleavage between them — and a strongly curvy figure. That is her natural build, exactly as in her reference images, and it is preserved, not changed. Never render her smaller, flatter, perkier or more athletic than this.',
+    backText: 'She has a strongly curvy figure with wide shapely hips and a narrow waist — that is her natural build, exactly as in her reference images, and it is preserved, not changed. Never render her slimmer or more athletic than this.' },
+];
+
+/**
+ * A BUST INSTRUCTION WITH NSFW OFF MUST HAPPEN UNDER THE CLOTHES.
+ *
+ * Ported from Eddy's CLOTHED_FIGURE_LOCK. The Body chips say 'deep cleavage' and 'straining the
+ * garment', and a model asked for a bigger bust in a dressed photo will very often satisfy it by
+ * opening, lowering or removing the top — which is not what was asked and, with NSFW off, not what
+ * anyone wanted. Photo Match had the chips and none of this lock.
+ *
+ * Appended AFTER the chips by the caller, because the chips are appended after the base prompt and
+ * Seedream weights the tail hardest — stated before them, the lock loses to the very text it exists
+ * to bound.
+ */
+const CLOTHED_FIGURE_LOCK = 'CLOTHED — OVERRIDES THE BUST INSTRUCTION ABOVE: she stays FULLY DRESSED. The garment covers her breasts and torso exactly as much as it already does — neckline and coverage unchanged. Any fuller bust or figure shows ONLY as fabric stretching and straining over a fuller shape underneath. Do NOT open, lower, lift, unzip, pull aside or remove any clothing, and do NOT expose breasts, nipples or areola. Read "cleavage" as the silhouette THROUGH the clothing, never as bare skin.';
 const LIGHTING_LINE = 'Lighting: Lighting is soft and diffused lighting, glowing naturally on her skin';
 
 /**
@@ -111,7 +187,11 @@ const LIGHTING_LINE = 'Lighting: Lighting is soft and diffused lighting, glowing
  * IndexedDB the way it once blew localStorage. The source photo is kept only as a small JPEG for
  * the before/after slider, because the full-size source is the biggest thing on the page.
  */
-const resultsStore = createPageStore('photomatch-results-v1');
+const RESULT_STORES = {
+  // The SD tab keeps the original key, so nobody's existing panel empties on upgrade.
+  sd: createPageStore('photomatch-results-v1'),
+  nb2: createPageStore('photomatch-nb2-results-v1'),
+};
 
 /**
  * The picture behind a tile, wherever the tile came from.
@@ -150,6 +230,11 @@ function liteJob(j) {
     url: j.url || '',
     doneAt: j.doneAt || 0,
     engine: j.engine || '',
+    // Survives a reload. Dropped here, the '(fallback)' marker lasted only until the panel was
+    // restored, and a Seedream picture then sat on the NB2 tab looking like an ordinary run —
+    // exactly the silence the marker exists to break.
+    fellBack: !!j.fellBack,
+    cost: typeof j.cost === 'number' ? j.cost : null,
     resolution: j.resolution || '',
     mode: j.mode || '',
     faceless: !!j.faceless,
@@ -188,11 +273,42 @@ function shrinkForStorage(dataUrl, max = 360) {
   });
 }
 
-export function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRecreate, varyBackground, allowExpressionChange, allowHairChange, allowBodyChange, allowLightingChange, faceless, wantsNude, addGenericNudeLine, sourceFaceBlurred, outfitFromChar = false, lookAtCamera = false, budget = 0 }) {
-  const who = characterName || 'the character';
+/**
+ * A PAIR CHARACTER puts two named women in ONE photograph.
+ *
+ * `cast` is [{ name, from, to }] — who, and which image indexes are hers. One entry is the ordinary
+ * single-character prompt and every string below renders exactly as it always has; the plural forms
+ * only appear at two. That equality is pinned by check-photomatch-twins.js against hashes taken
+ * before this existed, because the single path is what every run uses and it must not drift.
+ *
+ * The pronouns are not cosmetic. This prompt says "she" and "her" about fifteen times, and leaving
+ * them singular while naming two women is the most direct way to get ONE woman out — the model
+ * follows the grammar, which outnumbers the names. So `she`/`her` switch with the count.
+ */
+export function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRecreate, varyBackground, allowExpressionChange, allowHairChange, allowBodyChange, allowLightingChange, faceless, wantsNude, addGenericNudeLine, sourceFaceBlurred, outfitFromChar = false, lookAtCamera = false, budget = 0, cast = null, backView = false, buildText = '' }) {
+  const who = (cast && cast.length > 1)
+    ? cast.map((c) => c.name).slice(0, -1).join(', ') + ' and ' + cast[cast.length - 1].name
+    : (characterName || 'the character');
+  const pair = !!(cast && cast.length > 1);
+  // Verb-agreeing pairs, so a sentence reads correctly either way rather than being two sentences.
+  const she = pair ? 'they' : 'she';
+  const her = pair ? 'their' : 'her';
+  const hers = pair ? 'them' : 'her';
+  const person = pair ? 'the people' : 'the person';
+  const count = cast ? cast.length : 1;
+  const countWord = ['', 'one', 'two', 'three', 'four', 'five'][count] || String(count);
+  const woman = pair ? 'the women' : 'the woman';
   const n = Math.max(1, refCount);
   const refs = n > 1 ? `images 1-${n}` : 'image 1';
   const src = `image ${n + 1}`;
+  // Per-woman where it must be per-woman, plural everywhere else. 'her own reference images' in a
+  // sentence whose subject is two women reads as ONE woman's images and invites exactly the
+  // averaging the pair rules exist to stop.
+  //
+  // Declared HERE, below `refs`, not with the other pronouns above: `const` is not hoisted, so
+  // reading refs from up there throws at call time, not at build time — the page would load and
+  // every generate would fail. This is what tools/check-tdz-deps.js exists for.
+  const ownRefs = pair ? 'their own reference images' : refs;
 
   // Identity comes from the refs. Each allow* flag drops its clause so a preset that overrides
   // that attribute (hair/body) doesn't fight the base prompt. Hair/body default ON = from refs.
@@ -233,7 +349,28 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
 
   const parts = [
     // Roles by image index, stated up front and hard.
-    `${refs} = ${who} = the ONLY source for the person. ${src} = a photograph of a DIFFERENT woman, used ONLY for its scene — NEVER an identity reference.`,
+    pair
+      // Which images are WHOSE. Without this the model has one undifferentiated pile of faces and
+      // averages them into a single woman used twice — the exact failure NO BLENDING guards, but
+      // between the two characters rather than against the stand-in.
+      ? `${cast.map((c) => `${c.from === c.to ? `image ${c.from}` : `images ${c.from}-${c.to}`} = ${c.name}`).join('. ')}. Those are the ONLY source for the people. ${src} = a photograph of DIFFERENT people, used ONLY for its scene — NEVER an identity reference.`
+      : `${refs} = ${who} = the ONLY source for the person. ${src} = a photograph of a DIFFERENT woman, used ONLY for its scene — NEVER an identity reference.`,
+    /**
+     * HOW MANY COME OUT, WHO THEY ARE, AND THAT THEY ARE NOT EACH OTHER — one paragraph.
+     *
+     * Two failures, one root: the model takes the count from the scene (one woman in, one woman
+     * out, the second character silently dropped) and, given two piles of reference faces, averages
+     * them into one look worn twice. Both are "it ignored the twins" to anyone looking at the
+     * result.
+     *
+     * The source is sometimes one woman and sometimes two (owner, 2026-08-16). Stating the count as
+     * a fixed fact and covering both shapes in one sentence means no counting, no detection, and no
+     * second code path.
+     *
+     * Written tight ON PURPOSE. It is not droppable — it IS the feature — so every character it
+     * spends is one the identity lock in the tail cannot have, against ByteDance's ~3,000 cap.
+     */
+    ...(pair ? [`EXACTLY ${countWord.toUpperCase()} WOMEN IN THE OUTPUT: ${who} — ${countWord} different people, never one face used twice. If ${src} shows one woman, she is removed and ${count === 2 ? 'both' : 'all ' + countWord} of them stand in that scene, widening the crop to fit them; if it shows ${countWord}, each becomes a different one of ${hers}.`] : []),
     /**
      * REBUILD, NOT EDIT — and it has to be said before anything else.
      *
@@ -248,19 +385,31 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
      * given and repaint a region, and "do not reuse the pixels" is the one phrasing that speaks to
      * that directly.
      */
-    `REBUILD, DO NOT EDIT: produce a NEW photograph of ${who} in ${src}'s scene. Do NOT reuse the pixels of the woman in ${src} or repaint a face onto her — she is not in the output. A body from ${src} with only the face changed is WRONG.`,
+    `REBUILD, DO NOT EDIT: produce a NEW photograph of ${who} in ${src}'s scene. Do NOT reuse the pixels of ${pair ? 'anyone' : 'the woman'} in ${src} or repaint a face onto ${hers} — ${pair ? 'they are' : 'she is'} not in the output. A body from ${src} with only the face changed is WRONG.`,
     exactRecreate
-      ? `Reproduce ${src} exactly — same background, pose, props, framing, lighting${(wantsNude || outfitFromRefs) ? '' : ', outfit'} — but the person in it is rebuilt entirely as ${who}${wantsNude ? ', and remove her clothing as instructed below' : ''}${outfitFromRefs ? `, wearing HER outfit from ${refs} rather than the one in ${src}` : ''}.`
+      // Exact recreate and a pair pull against each other: two bodies do not fit one body's
+      // silhouette, so demanding the identical framing while adding a second woman is a
+      // contradiction and the model resolves it by dropping one of them. For a pair the lock holds
+      // the scene, and lets the frame move.
+      ? (pair
+        ? `Reproduce ${src}'s scene exactly — same background, props, lighting, mood, camera angle and style${(wantsNude || outfitFromRefs) ? '' : ', and the same kind of outfit'} — but the people in it are rebuilt entirely as ${who}${wantsNude ? ', and remove their clothing as instructed below' : ''}${outfitFromRefs ? `, each wearing HER OWN outfit from her own reference images rather than anything in ${src}` : ''}. Framing and pose may adjust only as far as fitting ${countWord} women into the shot requires.`
+        : `Reproduce ${src} exactly — same background, pose, props, framing, lighting${(wantsNude || outfitFromRefs) ? '' : ', outfit'} — but the person in it is rebuilt entirely as ${who}${wantsNude ? ', and remove her clothing as instructed below' : ''}${outfitFromRefs ? `, wearing HER outfit from ${refs} rather than the one in ${src}` : ''}.`)
       : `A new photo of ${who} in ${src}'s scene, not a retouch of ${src}.`,
-    `From ${refs}, match exactly: ${identity}. Where ${src} disagrees, ${refs} win.`,
+    // For a pair this must say HER OWN images, not the pooled range: "match from images 1-8" invites
+    // the model to average eight photos of two different women into one look worn by both.
+    pair
+      ? `Match each woman to HER OWN reference images — never the other's, never an average of the two: ${identity}. Where ${src} disagrees, the reference images win.`
+      : `From ${refs}, match exactly: ${identity}. Where ${src} disagrees, ${refs} win.`,
     `From ${src}: ${scene}.`,
     // #4 — camera as its own instruction. Seedream copies the pose but defaults to a flattering
     // eye-level portrait crop unless the SHOT itself is pinned; this is what "same camera angle"
     // in Eddy needed spelled out separately from framing.
-    `CAMERA: reproduce ${src}'s exact shot — same angle, lens height, distance and crop. Whatever shot it is (low, high, over-the-shoulder, close-up, wide) it stays that shot; do NOT re-frame to a standard eye-level portrait.`,
+    pair
+      ? `CAMERA: same angle, lens height and shot type as ${src} — low stays low, over-the-shoulder stays over-the-shoulder. Only the crop may widen, and only as far as fitting ${countWord} women requires; never re-frame to a standard eye-level portrait.`
+      : `CAMERA: reproduce ${src}'s exact shot — same angle, lens height, distance and crop. Whatever shot it is (low, high, over-the-shoulder, close-up, wide) it stays that shot; do NOT re-frame to a standard eye-level portrait.`,
   ];
 
-  if (sourceFaceBlurred && !faceless) parts.push(`${src}'s face is deliberately blurred — do not reproduce the blur or invent a face from it; render ${who}'s face sharply from ${refs}.`);
+  if (sourceFaceBlurred && !faceless) parts.push(`${src}'s face is deliberately blurred — do not reproduce the blur or invent a face from it; render ${pair ? 'each of their faces' : who + "'s face"} sharply from ${ownRefs}.`);
   if (!exactRecreate && varyBackground) parts.push(`Shift the lighting and mood slightly — same place, a different moment.`);
   if (addGenericNudeLine) parts.push(NUDE_LINE);
   if (masterPrompt?.trim()) parts.push(`${who}: ${masterPrompt.trim()}`);
@@ -284,13 +433,28 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
    *    months.
    */
   if (!faceless) {
-    parts.push(`MAKEUP: exactly as in ${refs} — lips, eyes, lashes, brows. Keep a bold or dark lip if she wears one; do not soften it, do not ADD makeup she is not wearing, and never take it from ${src}.`);
+    parts.push(`MAKEUP: ${pair ? 'each exactly as in her own reference images' : 'exactly as in ' + refs} — lips, eyes, lashes, brows. Keep a bold or dark lip if ${she} ${pair ? 'wear' : 'wears'} one; do not soften it, do not ADD makeup ${she} ${pair ? 'are' : 'is'} not wearing, and never take it from ${src}.`);
   }
   if (outfitFromRefs) {
-    parts.push(`OUTFIT: she wears HER OWN clothing from ${refs} — same garments, colours, cut, fabric, length. Do NOT dress her in what the woman in ${src} wears; that outfit is not in the output. Everything else still comes from ${src}.`);
+    parts.push(`OUTFIT: ${she} ${pair ? 'each wear their' : 'wears HER'} OWN clothing from ${ownRefs} — same garments, colours, cut, fabric, length. Do NOT dress ${hers} in what ${pair ? 'anyone' : 'the woman'} in ${src} wears; that outfit is not in the output. Everything else still comes from ${src}.`);
   }
-  parts.push(`FORBIDDEN from ${src}: its face, facial structure, eyes, nose, mouth, jaw, hair colour, skin tone${allowBodyChange ? '' : ', body shape'}${outfitFromRefs ? ', its clothing' : ''}, and any tattoo, ink or skin marking. ${who} has only the tattoos visible in ${refs}.`);
-  parts.push(`NO BLENDING: do not mix, merge or average ${who} with the person in ${src} — not her face and not her body. Every part of the person in the output is 100% ${refs}, not a midpoint between the two women.`);
+  parts.push(`FORBIDDEN from ${src}: its face, facial structure, eyes, nose, mouth, jaw, hair colour, skin tone${allowBodyChange ? '' : ', body shape'}${outfitFromRefs ? ', its clothing' : ''}, and any tattoo, ink or skin marking. ${who} ${pair ? 'have' : 'has'} only the tattoos visible in ${ownRefs}.`);
+  parts.push(`NO BLENDING: do not mix, merge or average ${who} with ${person} in ${src} — not ${her} ${pair ? 'faces' : 'face'} and not ${her} ${pair ? 'bodies' : 'body'}. Every part of ${person} in the output is 100% ${pair ? 'from ' + ownRefs : refs}, not a midpoint between the ${pair ? 'women in the two photographs' : 'two women'}.`);
+  if (pair) {
+    /**
+     * The pair's own blending rule, restated where it counts.
+     *
+     * NO BLENDING above guards each woman against the STAND-IN. Nothing guards them against EACH
+     * OTHER — two sets of reference faces in one request is precisely the input that makes an edit
+     * model average them into one look worn twice, which reads as "it ignored the twins".
+     *
+     * The full rule is stated in the count paragraph at the top; this is the tail reminder, and it
+     * is here because Seedream weights the tail hardest — the same reason the identity lock lives
+     * down here. Short by necessity: the pair prompt runs close to the length cap, and a long
+     * restatement would push the FINAL lock out.
+     */
+    parts.push(`${who} are ${countWord} DIFFERENT women — different faces, never one face used twice.`);
+  }
 
   /**
    * EYES TO CAMERA. Off by default — the source's gaze is part of the shot being reproduced, and
@@ -299,7 +463,7 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
    * instructions cancel and the model does neither (owner, 2026-08-13).
    */
   if (lookAtCamera && !faceless) {
-    parts.push(`EYES TO CAMERA: she looks straight into the lens, both eyes visible and meeting the viewer. Keep the pose and body angle from ${src} — only the head and gaze turn to the camera.`);
+    parts.push(`EYES TO CAMERA: ${she} ${pair ? 'look' : 'looks'} straight into the lens, both eyes visible and meeting the viewer. Keep the pose and body angle from ${src} — only the ${pair ? 'heads and gazes turn' : 'head and gaze turn'} to the camera.`);
   }
 
   /**
@@ -309,9 +473,22 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
    * weights the tail most heavily, so a Lighting chip — "Moody low-key", "Red neon" — still wins by
    * position. That is the intended relationship: this is the house default, not a lock.
    */
+  // Late, and NOT droppable: it is a composition lock, so it belongs near the tail where Seedream
+  // weights hardest — same reasoning as the identity lock below it.
+  if (backView) parts.push(BACK_VIEW_LINE(src));
+
   parts.push(LIGHTING_LINE);
 
   parts.push(`Photorealistic — real pores, hair strands, fabric, slight asymmetry; no plastic or CGI look.`);
+
+  /**
+   * HER BUILD, immediately before the identity lock.
+   *
+   * It states the size the lock is about to hold. Placed anywhere earlier it is one sentence
+   * among fifteen; here the two read as a single statement, which is the arrangement Eddy
+   * arrived at for the same reason.
+   */
+  if (buildText) parts.push(buildText);
 
   // #3 — the hardest locks go LAST. Seedream weights the tail of the prompt most heavily (the
   // whole reason chips are appended at the very end), so the identity guarantee and the bust lock
@@ -319,19 +496,19 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
   if (faceless) {
     // Faceless output: the face must NOT appear, so the usual "must be recognisably her" guarantee
     // is wrong here and would fight the composition. Identity rides on body/hair instead.
-    parts.push(`FINAL — HIGHEST PRIORITY, overrides everything above: her face is intentionally OUT of the shot — cropped above the shoulders, turned away, or hidden by hair/hand/angle so no recognisable face is visible. Do NOT invent or show a face. Her body, hair, skin and proportions still come from ${refs}${allowBodyChange ? '' : ' at their true size — never averaged or shrunk toward ' + src}.`);
+    parts.push(`FINAL — HIGHEST PRIORITY, overrides everything above: ${her} ${pair ? 'faces are' : 'face is'} intentionally OUT of the shot — ${backView ? 'she is facing away and stays that way' : 'cropped above the shoulders, turned away, or hidden by hair/hand/angle'} so no recognisable face is visible. Do NOT invent or show a face. ${pair ? 'Their bodies, hair, skin and proportions' : 'Her body, hair, skin and proportions'} still come from ${ownRefs}${allowBodyChange ? '' : ' at their true size — never averaged or shrunk toward ' + src}.`);
   } else {
     const finalLock = [
-      `FINAL — HIGHEST PRIORITY, overrides everything above: render the person from scratch as ${who} from ${refs} — face, hair, skin and whole body. The woman in ${src} is an anonymous stand-in: discard her entirely, face and figure alike, and when in doubt copy ${refs}.`,
+      `FINAL — HIGHEST PRIORITY, overrides everything above: render ${person} from scratch as ${who} from ${ownRefs} — ${pair ? 'faces' : 'face'}, hair, skin and whole ${pair ? 'bodies' : 'body'}${pair ? `, ${countWord} distinct women in the frame` : ''}. ${pair ? 'The women' : 'The woman'} in ${src} ${pair ? 'are anonymous stand-ins: discard them' : 'is an anonymous stand-in: discard her'} entirely, ${pair ? 'faces' : 'face'} and ${pair ? 'figures' : 'figure'} alike, and when in doubt copy ${pair ? 'the reference images' : refs}.`,
       // Body/chest: pinned to the refs UNLESS a size chip is driving it (then the chip, appended
       // after this whole prompt, wins and re-pinning here would fight it).
       allowBodyChange
         ? null
         : (wantsNude
-          ? `Her body, figure and chest come from ${refs} at their true size — never averaged or shrunk toward ${src}.`
+          ? `${pair ? 'Each of their bodies, figures and chests come from her own reference images' : 'Her body, figure and chest come from ' + refs} at their true ${pair ? 'sizes' : 'size'} — never averaged${pair ? ', never matched to each other' : ''} or shrunk toward ${src}.`
           : (outfitFromRefs
-            ? `Her body, figure and chest come from ${refs} at their true size, and her own outfit sits on her exactly as it does there.`
-            : `Her body, figure and chest come from ${refs} at their true size; the ${src} outfit stretches to fit HER — a tighter pull from a larger chest is correct, not an error.`)),
+            ? `${pair ? 'Each of their bodies, figures and chests come from her own reference images' : 'Her body, figure and chest come from ' + refs} at their true ${pair ? 'sizes' : 'size'}, and ${pair ? 'each of their own outfits sits on her' : 'her own outfit sits on her'} exactly as it does there.`
+            : `${pair ? 'Each of their bodies, figures and chests come from her own reference images' : 'Her body, figure and chest come from ' + refs} at their true ${pair ? 'sizes' : 'size'}; the ${src} outfit stretches to fit ${pair ? 'EACH OF THEM' : 'HER'} — a tighter pull from a larger chest is correct, not an error.`)),
     ].filter(Boolean);
     parts.push(finalLock.join(' '));
   }
@@ -350,11 +527,30 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
    * Droppable, in order: photoreal boilerplate, the blur note, the master prompt, the camera
    * paragraph. Never droppable: who is who, REBUILD, the two lists, MAKEUP, OUTFIT, FORBIDDEN,
    * NO BLENDING, EYES TO CAMERA, the lighting line, and the FINAL lock.
+   *
+   * A PAIR NEEDS TWO MORE, because it starts ~700 characters up on a single character: it names two
+   * women, splits the image ranges between them, and states the count. Measured with everything on
+   * — exact recreate + her outfit + eyes to camera + a blurred source + a 200-character master
+   * prompt — a pair lands at 3,280 with every droppable above already gone.
+   *
+   * So EYES TO CAMERA and then MAKEUP become droppable, but ONLY for a pair and ONLY after the four
+   * above. Both are real losses and neither is chosen lightly: eyes-to-camera is a chip the user
+   * ticked, and MAKEUP guards a bug that was actually shipped ("it adds makeup"). They lose to the
+   * FINAL lock because a sliced identity guarantee means the wrong women come out of every image in
+   * the batch, which is not recoverable by a retry. Ordinary pair runs never reach this — exact
+   * recreate on a pair measures 2,989 and drops nothing.
    */
   const SEP = '\n\n';
   const joined = () => parts.join(SEP);
   if (budget > 0) {
-    const droppable = ['Photorealistic —', `${src}'s face is deliberately blurred`, `${who}: `, 'CAMERA:'];
+    const droppable = ['Photorealistic —', `${src}'s face is deliberately blurred`, `${who}: `, 'CAMERA:',
+      ...(pair ? ['EYES TO CAMERA:', 'MAKEUP:'] : []),
+      // HER BUILD goes last, and only in the one combination that still does not fit: a pair,
+      // exact recreate, her outfit, eyes to camera, a blurred source AND a 200-character master
+      // prompt. It loses to the FINAL lock because a build line without an identity lock is a
+      // correctly-proportioned stranger, while an identity lock without a build line is her at
+      // whatever size her references show — which is the default behaviour anyway.
+      ...(buildText ? [buildText.slice(0, 24)] : [])];
     for (const marker of droppable) {
       if (joined().length <= budget) break;
       const i = parts.findIndex((t) => typeof t === 'string' && t.startsWith(marker));
@@ -454,7 +650,21 @@ function parseDataUrl(dataUrl) {
  * extra), so this default is what every fresh start actually gets — there is no stored `false` to
  * override it.
  */
-const _cache = { extra: '', aspectRatio: 'auto', resolution: '1K', exactRecreate: true, varyBackground: false, nsfw: false, blurSource: true, faceless: false };
+/**
+ * Job ids this tab is already waiting on — MODULE level, deliberately.
+ *
+ * Unmounting a React component does not cancel its promises. Leave Photo Match mid-run and
+ * runOne's await keeps polling in the background and still files its picture when it lands. So
+ * the resume-on-open, which is a NEW component instance with a fresh closure, cannot see that the
+ * old one is still on the case — it adopted the same job, waited on it too, and both filed. One
+ * render, two rows in the library (owner, 2026-08-16: 'it duplicate the image').
+ *
+ * A ref would not work: refs die with the component, which is exactly the thing that is not
+ * happening to the promise. Ids are removed when their waiter settles, so this cannot grow.
+ */
+const _awaiting = new Set();
+
+const _cache = { extra: '', aspectRatio: 'auto', resolution: '1K', build: 'auto', exactRecreate: true, varyBackground: false, nsfw: false, blurSource: true, faceless: false };
 // Images are too big for _cache/localStorage — IndexedDB so they survive a reload.
 /**
  * Retry a generation that came back rate-limited.
@@ -479,7 +689,15 @@ async function withRateLimitRetry(fn, { attempts = 4, baseDelayMs = 4000 } = {})
   }
 }
 
-const store = createPageStore('kyros-photo-match-seedream-state');
+/**
+ * One store per variant. NB2 is a second tab of the SAME page, and sharing this key would mean the
+ * two tabs fought over one set of sources, characters and chips — pick a character on one and it
+ * moves on the other.
+ */
+const STORES = {
+  sd: createPageStore('kyros-photo-match-seedream-state'),
+  nb2: createPageStore('kyros-photo-match-nb2-state'),
+};
 
 /**
  * WaveSpeed's published per-image rate for nano-banana-2, by resolution. Kept beside Seedream's
@@ -492,7 +710,54 @@ const NANO2_COST = { '1K': 0.07, '2K': 0.105 };
 // client aborting first throws away an image that has already been generated and billed.
 const NANO2_CLIENT_TIMEOUT_MS = 11 * 60_000;
 
-export default function PhotoMatchSeedreamPage() {
+/**
+ * Google's own rate for gemini-3.1-flash-image. Separate from NANO2_COST because it is the same
+ * model bought from a different counter: WaveSpeed resells it with a margin, this is direct.
+ */
+const NB2_COST = { '1K': 0.04, '2K': 0.06 };
+
+/**
+ * Tries on the bypass before the queue hands the job to Seedream 5 Pro.
+ *
+ * MIRRORS generationReconciler.NB2_ATTEMPTS, which is where the decision is actually made — this
+ * copy exists only so the message can say a number. check-photomatch-nb2.js asserts the two
+ * match, because a message that states the wrong count is worse than one that states none.
+ */
+const NB2_ATTEMPTS = 3;
+
+/**
+ * PHOTO MATCH, TWICE — one component, two tabs.
+ *
+ *   variant 'sd'  -> Photo Match SD, Seedream 5.0 Pro or Nano Banana 2, both via WaveSpeed
+ *   variant 'nb2' -> Photo Match NB2, Nano Banana 2 through OUR BYPASS on Google's own API
+ *
+ * NB2 exists because the model is the same but the gatekeeper is not: bought through a reseller you
+ * inherit the reseller's refusals on top of Google's, and this page's whole job is rebuilding a
+ * photo with a specific woman in it. The bypass goes straight to generativelanguage.googleapis.com
+ * with the Gemini key, safety at BLOCK_ONLY_HIGH, and a retry ladder that drops safetySettings
+ * altogether on the last attempt.
+ *
+ * A PROP RATHER THAN A COPIED FILE, deliberately. This page is the twins cast, the back-view
+ * detection, the pose/mood/lighting chips, the blur pipeline, the library destinations and a prompt
+ * builder tuned over months against real failures. Duplicating it would mean every one of those
+ * fixed twice from now on, and the copies quietly disagreeing about which is right. The differences
+ * between the two tabs are genuinely small — which engine, which budget, which price — so they are
+ * conditionals, not a second file.
+ */
+export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
+  const isNB2 = variant === 'nb2';
+  /**
+   * What this tab's jobs are called on the queue.
+   *
+   * Per tab, because resuming asks the server 'what of mine is still running' and the two tabs
+   * would otherwise adopt each other's work. The model cannot be used to tell them apart: an NB2
+   * job that falls back runs on seedream5 and would then look like an SD job.
+   */
+  const FEATURE = variant === 'nb2' ? 'photoMatchNB2' : 'photoMatchSeedream';
+  const store = STORES[isNB2 ? 'nb2' : 'sd'];
+  // Its own panel too. Shared, the NB2 tab opened showing Seedream and Nano 2 pictures it had
+  // never made — and every one of them priced at the bypass's rate.
+  const resultsStore = RESULT_STORES[isNB2 ? 'nb2' : 'sd'];
   const { notify } = useApp();
 
   /**
@@ -594,10 +859,14 @@ export default function PhotoMatchSeedreamPage() {
   const [manualBlurId, setManualBlurId] = useState(null);  // source id being hand-blurred, or null
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [resolution, setResolution] = useState(_cache.resolution);
+  const [build, setBuild] = useState(_cache.build || 'auto');
   // 'seedream' | 'nano2'. Both go through the same /api/seedream/edit route and the same
   // WaveSpeed key -- `model` is the only thing that differs -- so a result gets the same
   // imageStore write, gallery row and tagging either way.
-  const [engine, setEngine] = useState(_cache.engine || 'seedream');
+  const [engineSD, setEngine] = useState(_cache.engine || 'seedream');
+  // NB2's tab has exactly one engine -- the bypass -- so its toggle is not a choice there. The SD
+  // tab keeps its Seedream / Nano Banana 2 pair. Everything downstream still reads one `engine`.
+  const engine = isNB2 ? 'nb2' : engineSD;
 
   const [galleryImages, setGalleryImages] = useState([]);
   const [galleryLoading, setGalleryLoading] = useState(false);
@@ -640,7 +909,8 @@ export default function PhotoMatchSeedreamPage() {
   useEffect(() => { if (restored) store.set('extra', extra); }, [extra, restored]);
 
   useEffect(() => { _cache.extra = extra; }, [extra]);
-  useEffect(() => { _cache.engine = engine; }, [engine]);
+  useEffect(() => { _cache.engine = engineSD; }, [engineSD]);
+  useEffect(() => { _cache.build = build; }, [build]);
   useEffect(() => { _cache.nsfw = nsfw; }, [nsfw]);
   useEffect(() => { _cache.blurSource = blurSource; }, [blurSource]);
   useEffect(() => { _cache.faceless = faceless; }, [faceless]);
@@ -678,12 +948,69 @@ export default function PhotoMatchSeedreamPage() {
   // Pulled out so the run loop can resolve refs for EVERY ticked character, not just the head.
   // Same ordering rule for all of them -- base face first -- because the model treats the leading
   // image as the primary subject.
-  const refsForCharacter = useCallback((id) => {
-    if (!id) return [];
+  /** The photos filed directly in one folder, best identity image first. */
+  const ownItems = useCallback((id) => {
     const mine = charItems.filter((i) => i.folderId === id);
     const rank = (i) => (i.role === 'base' ? 0 : i.role === 'body' ? 1 : 2);
     return [...mine].sort((a, b) => rank(a) - rank(b) || (a.createdAt || 0) - (b.createdAt || 0));
   }, [charItems]);
+
+  /**
+   * A CHARACTER WITH SUBFOLDERS IS A PAIR — two named women who come out in ONE photograph.
+   *
+   * Nothing new is stored to say so. Character folders have had `parentId` since subfolders
+   * existed, the picker already lists every folder, and a parent holding only subfolders was
+   * previously DEAD here — refsForCharacter read images filed directly in the folder, found none,
+   * and the run stopped with "no identity image could be loaded". So this claims a shape that was
+   * broken rather than overriding anything anyone uses.
+   *
+   *   Arya & Rosary        <- tick this, get both women in one photo
+   *      +- Arya           <- tick alone, ordinary single-character run, unchanged
+   *      +- Rosary
+   *
+   * Ticking two separate top-level characters still makes two SEPARATE photos, which is the
+   * compare-a-scene-across-characters behaviour this page was built with.
+   */
+  const membersOf = useCallback((id) => (id ? chars.filter((c) => (c.parentId || null) === id) : []), [chars]);
+
+  /**
+   * The identity images, flattened in member order so each woman occupies a contiguous run of
+   * image slots — which is what lets the prompt say "images 1-4 = Arya, images 5-8 = Rosary".
+   *
+   * The nine slots (Seedream takes ten images and the source claims one) are split evenly. Four
+   * photos each is fewer than a single character gets, and that is the trade: two identities in
+   * one request cost half the evidence apiece.
+   */
+  const refsForCharacter = useCallback((id) => {
+    if (!id) return [];
+    const members = membersOf(id);
+    if (!members.length) return ownItems(id);
+    const per = Math.max(1, Math.floor(MAX_CHAR_IMAGES / members.length));
+    return members.flatMap((m) => ownItems(m.id).slice(0, per));
+  }, [ownItems, membersOf]);
+
+  /**
+   * Who is in the frame and which image indexes are hers — null for an ordinary character, so the
+   * prompt builder takes its single-character path and every existing run is untouched.
+   *
+   * Counted from the images that will ACTUALLY be sent, not from the split, because a member whose
+   * folder holds two photos contributes two — assuming the even split here would mislabel every
+   * range after the first and hand Rosary's images to Arya.
+   */
+  const castOf = useCallback((id) => {
+    const members = membersOf(id);
+    if (members.length < 2) return null;
+    const per = Math.max(1, Math.floor(MAX_CHAR_IMAGES / members.length));
+    const cast = [];
+    let at = 1;
+    for (const m of members) {
+      const n = ownItems(m.id).slice(0, per).length;
+      if (!n) continue;                       // an empty member is skipped, not left naming nothing
+      cast.push({ name: m.name, from: at, to: at + n - 1 });
+      at += n;
+    }
+    return cast.length > 1 ? cast : null;     // one usable member is just that character
+  }, [membersOf, ownItems]);
   const eddyRefs = useMemo(() => refsForCharacter(characterId), [refsForCharacter, characterId]);
   const charName = chars.find((c) => c.id === characterId)?.name || '';
   // NOT filtered by isActive: references are created with isActive:false by default
@@ -704,9 +1031,11 @@ export default function PhotoMatchSeedreamPage() {
   const imagesPerJob = 1 + charImagesUsed;
   // Priced per ENGINE. Showing Seedream's rate while Nano Banana 2 runs would misstate the bill
   // on the one control where spend is agreed.
-  const costPerJob = engine === 'nano2'
-    ? (NANO2_COST[resolution] ?? NANO2_COST['1K'])
-    : seedreamCost(resolution, imagesPerJob);
+  const costPerJob = isNB2
+    ? (NB2_COST[resolution] ?? NB2_COST['1K'])
+    : engine === 'nano2'
+      ? (NANO2_COST[resolution] ?? NANO2_COST['1K'])
+      : seedreamCost(resolution, imagesPerJob);
   /**
    * The run is photos x CHARACTERS. Ticking a second woman doubles the bill, and the price on the
    * button is where that has to be visible -- it is the one number agreed before spending.
@@ -723,6 +1052,20 @@ export default function PhotoMatchSeedreamPage() {
     let missed = 0;
     const added = await Promise.all(valid.map(async (f) => {
       let dataUrl = await fileToDataUrl(f);
+      /**
+       * IS THIS SHOT FROM BEHIND? Decided here, on the ORIGINAL, before anything is blurred.
+       *
+       * Running it after the blur would read a blurred-out face as "no face" and flip every
+       * face-blurred front photo to a back view — which suppresses face matching on exactly the
+       * photos that need it most.
+       *
+       * AGGRESSIVE on purpose, and the direction of the error is the reason. A loose pass finds
+       * turned and partly-hidden faces at the cost of the occasional false box; a false box reads
+       * as "face found" -> front -> today's behaviour, which is harmless. The expensive mistake is
+       * the other way: calling a front photo a back view strips the face rules out of its prompt.
+       * So the only photos tagged back are the ones where even the loose pass finds nothing.
+       */
+      const faceFound = !!(await detectFacePico(dataUrl, { aggressive: true }).catch(() => null));
       let blurred = false;
       if (blurSourceRef.current) {
         const out = await autoBlurFace(dataUrl);
@@ -730,7 +1073,7 @@ export default function PhotoMatchSeedreamPage() {
         blurred = out.blurred;
         if (!out.blurred) missed += 1;
       }
-      return { id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, dataUrl, blurred };
+      return { id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, dataUrl, blurred, backView: !faceFound };
     }));
     if (missed) notify(`${missed} photo(s): no face found to blur — use "Blur all" or click a photo to blur by hand`, 'error');
     setSources((prev) => [...prev, ...added]);
@@ -829,6 +1172,53 @@ export default function PhotoMatchSeedreamPage() {
   };
 
   // ── run ────────────────────────────────────────────────────────────────────
+  /**
+   * Said ONCE per run, not once per picture. On a 200-image batch with the bypass refusing
+   * everything, one notification per image is two hundred toasts carrying one fact.
+   *
+   * Declared ABOVE runOne, which reads it — the same use-before-define this file carries a
+   * warning about on runIdsRef.
+   */
+  const warnedFallback = useRef(false);
+
+  /**
+   * Put a finished picture into the chosen collection, under her name.
+   *
+   * Stored as a URL rather than bytes, exactly as Eddy does it: the server already holds the
+   * file, and copying megabytes into IndexedDB per image is what that choice exists to avoid.
+   *
+   * Shared by the live run, the resume-on-open and the retry. One copy, so a picture recovered
+   * after a page change is filed identically to one watched all the way through.
+   */
+  const filePicture = useCallback(async (first, who, usedPrompt) => {
+    if (!first?.galleryId) return;
+    const name = (who || '').trim();
+    // Her folder is created in THAT collection — the two are separate databases, so a 'Grace'
+    // folder in one says nothing about the other.
+    const dest = (await destStore.ensureFolder(name || 'Photo Match'))?.id || null;
+    const filed = await destStore.addItems([{
+      url: galleryApi.imageUrl(first.galleryId),
+      /**
+       * THE PROMPT THAT ACTUALLY MADE IT, so the Library's Copy button has something to copy.
+       *
+       * This was the label `Photo Match - <her>` and nothing more, so the instruction the picture
+       * was built from — every chip, every lock, the identity rules — vanished the moment the run
+       * ended and there was no way to reproduce a result you liked (owner, 2026-08-16).
+       *
+       * The label is kept as the FIRST line so the panel and the collection filters still read
+       * 'Photo Match …' exactly as they did, with the full text below it.
+       */
+      prompt: usedPrompt
+        ? `Photo Match - ${name || 'no character'}\n\n${usedPrompt}`
+        : `Photo Match - ${name || 'no character'}`,
+      name: `photomatch-${Date.now()}`,
+    }], dest);
+    // addItems reports a storage failure by RETURNING an empty array rather than throwing.
+    if (!Array.isArray(filed) || filed.length === 0) {
+      throw new Error(`Browser storage is full - the picture is in the gallery but not in ${destLabel}`);
+    }
+  }, [destStore, destLabel]);
+
   const runOne = async (source, charRefs, ratio, prompt) => {
     const jobId = source.id;
     const feedId = `photomatch-sd-${jobId}`;
@@ -850,13 +1240,17 @@ export default function PhotoMatchSeedreamPage() {
        * destDb and the character folder ride along so that a run interrupted by the app closing is
        * filed into the same place it would have gone, rather than needing to be found by hand.
        */
+      let claimedJobId = null;
       const data = await withRateLimitRetry(() => queuedSeedreamEdit({
-        feature: 'photoMatchSeedream',
+        feature: FEATURE,
         images: [...charRefs, sourceImg],
+        // Her photos come first and the scene last — this says where the boundary is, so the
+        // bypass can label each group in place rather than handing Gemini one anonymous pile.
+        identityCount: charRefs.length,
         prompt,
         aspectRatio: ratio,
         resolution,
-        model: engine === 'nano2' ? 'nano2' : 'seedream5',
+        model: isNB2 ? 'nb2' : engine === 'nano2' ? 'nano2' : 'seedream5',
         provider: 'wavespeed',
         // Her name travels with the generation so "Recover missing" can file a stranded Photo
         // Match picture into the right folder, exactly as it does for Eddy's.
@@ -864,16 +1258,29 @@ export default function PhotoMatchSeedreamPage() {
         destDb: destDbRef.current,
         destFolder: charName.trim() || 'Photo Match',
         cardPrompt: `Photo Match - ${charName.trim() || 'no character'}`,
-      }));
+        onJobId: (id) => { claimedJobId = id; _awaiting.add(id); },
+      })).finally(() => { if (claimedJobId) _awaiting.delete(claimedJobId); });
+
+      /**
+       * The engine that actually produced it, read back from the queue rather than assumed.
+       *
+       * An NB2 job the bypass could not finish is handed to Seedream 5 Pro by the reconciler
+       * (NB2_ATTEMPTS). Keeping the requested engine on the tile would leave a Seedream picture
+       * claiming to be NB2 — the same shape of quiet lie as a tick with no proof behind it.
+       */
+      const ranOn = data.model === 'seedream5' ? 'seedream' : data.model === 'nano2' ? 'nano2' : data.model === 'nb2' ? 'nb2' : engine;
+      const fellBack = !!data.fellBack || (isNB2 && ranOn !== 'nb2');
+      const engineLabel = ranOn === 'nb2' ? 'Nano Banana 2 (Gemini bypass)'
+        : ranOn === 'nano2' ? 'Nano Banana 2 (WaveSpeed)' : 'Seedream 5.0 Pro Edit';
 
       const first = (data.images || [])[0];
-      if (!first) throw new Error(`${engine === 'nano2' ? 'Nano Banana 2' : 'Seedream'} returned no image`);
+      if (!first) throw new Error(`${isNB2 ? 'Nano Banana 2 (bypass)' : engine === 'nano2' ? 'Nano Banana 2' : 'Seedream'} returned no image`);
 
       resolvePending(feedId, {
         galleryId: first.galleryId,
         imageId: first.imageId,
-        prompt: engine === 'nano2' ? 'Photo Match (Nano Banana 2)' : 'Photo Match (Seedream)',
-        imageModel: engine === 'nano2' ? 'Nano Banana 2 (WaveSpeed)' : 'Seedream 5.0 Pro Edit',
+        prompt: isNB2 ? 'Photo Match NB2 (bypass)' : engine === 'nano2' ? 'Photo Match (Nano Banana 2)' : 'Photo Match (Seedream)',
+        imageModel: fellBack ? `${engineLabel} (fallback)` : engineLabel,
         aspectRatio: ratio,
         resolutionTier: resolution,
         mimeType: first.mimeType,
@@ -883,6 +1290,10 @@ export default function PhotoMatchSeedreamPage() {
       // moves pictures between Library and Base Library, and it cannot find a row without them.
       // A small JPEG of the source, so the before/after slider still works after a reload. Awaited
       // before the tile flips to done so the persisted row is complete the first time it is written.
+      if (fellBack && !warnedFallback.current) {
+        warnedFallback.current = true;
+        notify(`Nano Banana 2 could not finish an image after ${NB2_ATTEMPTS} tries — Seedream 5.0 Pro did it instead. Those are marked "fallback".`, 'error');
+      }
       const thumbSmall = await shrinkForStorage(source.dataUrl);
       setJobs((prev) => prev.map((j) => (j.id === jobId
         ? {
@@ -895,40 +1306,41 @@ export default function PhotoMatchSeedreamPage() {
           // WHEN and HOW, so "the last 30" and "the last hour" mean something after a reload, and
           // so a tile can say what made it rather than leaving you to remember.
           doneAt: Date.now(),
-          engine,
+          // What THIS picture cost, recorded once. Read off the live controls instead, a tile
+          // quoted whatever the engine and resolution are now — so a Seedream fallback showed
+          // the bypass's price, and nudging the resolution toggle repriced finished work.
+          cost: spent,
+          engine: ranOn,
+          fellBack,
           resolution,
           mode: exactRecreate ? 'exact' : 'scene',
           faceless,
         }
         : j)));
-      setSessionSpend((s) => s + costPerJob);
+      /**
+       * Priced by what RAN, not by what was asked for. A fallen-back image is a Seedream render
+       * on the WaveSpeed key, and charging it at the bypass's rate under-reports the session by
+       * roughly forty percent — on the one readout that is supposed to be the honest total.
+       */
+      const spent = ranOn === 'nb2'
+        ? (NB2_COST[resolution] ?? NB2_COST['1K'])
+        : ranOn === 'nano2'
+          ? (NANO2_COST[resolution] ?? NANO2_COST['1K'])
+          : seedreamCost(resolution, imagesPerJob);
+      setSessionSpend((s) => s + spent);
 
       /**
        * INTO EDDY'S LIBRARY, under her name -- the same place, and the same shape, a generation from
        * the Eddy tab lands in.
        *
-       * Stored as a URL rather than bytes, exactly as Eddy does it: the server already holds the
-       * file, and copying megabytes into IndexedDB per image is what that choice exists to avoid.
-       *
        * NOT swallowed. Eddy had this same call inside its own catch, which is why a filing miss was
        * invisible AND silent for a day. A miss here reaches the handler below, which keeps the image
        * and says so.
+       *
+       * Shared with the resume-on-open and the retry, so a picture recovered after a page change is
+       * filed identically to one watched all the way through.
        */
-      if (first.galleryId) {
-        const who = charName.trim();
-        // Whichever collection was chosen before the run. Her folder is created in THAT collection —
-        // the two are separate databases, so a "Grace" folder in one says nothing about the other.
-        const dest = (await destStore.ensureFolder(who || 'Photo Match'))?.id || null;
-        const filed = await destStore.addItems([{
-          url: galleryApi.imageUrl(first.galleryId),
-          prompt: `Photo Match - ${who || 'no character'}`,
-          name: `photomatch-${Date.now()}`,
-        }], dest);
-        // addItems reports a storage failure by RETURNING an empty array rather than throwing.
-        if (!Array.isArray(filed) || filed.length === 0) {
-          throw new Error(`Browser storage is full - the picture is in the gallery but not in ${destLabel}`);
-        }
-      }
+      await filePicture(first, charName, prompt);
     } catch (err) {
       // A FILING miss is not a failed match: the picture exists, is billed, and is on the feed.
       // Marking the job failed would tell the owner to re-run something that already succeeded.
@@ -951,6 +1363,9 @@ export default function PhotoMatchSeedreamPage() {
   const handleMatch = async () => {
     if (!sources.length) { notify('Add at least one source photo', 'error'); return; }
     if (!characterIds.length) { notify('Pick the character whose identity to use', 'error'); return; }
+    // Once per RUN, which means clearing it when a run starts. A ref set once and never reset is
+    // once per page LOAD — the second batch of the session would fall back in silence.
+    warnedFallback.current = false;
 
     // Without identity images Seedream can only fall back on the source photo's face — the exact
     // failure this page exists to prevent. Fail loudly instead of quietly producing the stand-in.
@@ -973,7 +1388,10 @@ export default function PhotoMatchSeedreamPage() {
         if (img) refs.push(img);
       }
       const name = chars.find((c) => c.id === cid)?.name || '';
-      if (refs.length) perChar.push({ id: cid, name, refs });
+      // `cast` set = this ticked character is a pair, and it stays ONE entry here. That is the whole
+      // change to the run: the cross product below is untouched, so a pair produces one job per
+      // source photo (both women in it) instead of one per woman.
+      if (refs.length) perChar.push({ id: cid, name, refs, cast: castOf(cid) });
       else unloadable.push(name || cid);
     }
     if (!perChar.length) { notify('No character identity images could be loaded — add a primary image to this character', 'error'); return; }
@@ -1005,13 +1423,32 @@ export default function PhotoMatchSeedreamPage() {
      * like the preset had stopped working.
      */
     let trimmed = false;
-    const promptFor = (who, refCount) => {
+    const promptFor = (who, refCount, source) => {
+      /**
+       * PER PHOTO, not per run. The page's Faceless switch is one setting for the whole batch, so a
+       * batch of twenty where six are shot from behind meant wrecking six or wrecking fourteen.
+       * A detected back view turns face-matching off for THAT photo only; the global switch still
+       * forces it on for everything.
+       */
+      const backView = !!source?.backView;
       const base = buildMatchInstruction({
         characterName: who.name,
+        // Set only for a pair. The builder names the women from this and ignores characterName —
+        // which is the FOLDER's name ("Arya & Rosary", or whatever it was called) and is not
+        // something to put in a prompt.
+        cast: who.cast,
+        // A standing fact about her, not a change — so it does NOT set allowBodyChange and the
+        // preservation locks stay up. Back-facing sources get the variant that names only what
+        // a shot from behind can actually show.
+        buildText: (BUILD_OPTIONS.find((b) => b.value === build) || {})[backView ? 'backText' : 'text'] || '',
         wantsNude,
         addGenericNudeLine,
         sourceFaceBlurred: blurSource,
-        faceless,
+        // A back shot IS a faceless shot — there is no face to match and inventing one is the
+        // failure. backView adds what faceless alone does not say: which way she is facing, and
+        // that she stays that way.
+        faceless: faceless || backView,
+        backView,
         outfitFromChar,
         lookAtCamera,
         /**
@@ -1019,7 +1456,7 @@ export default function PhotoMatchSeedreamPage() {
          * having its tail sliced off. The chips are appended AFTER it and are what the remaining
          * space is for — `extra` is measured here rather than guessed.
          */
-        budget: Math.max(600, (engine === 'nano2' ? NANO2_PROMPT_BUDGET : SEEDREAM_PROMPT_BUDGET) - extra.trim().length - 8),
+        budget: Math.max(600, (engine === 'seedream' ? SEEDREAM_PROMPT_BUDGET : NANO2_PROMPT_BUDGET) - extra.trim().length - 8),
         refCount,
         masterPrompt: who.id === characterId ? charDetail?.masterPrompt : undefined,
         exactRecreate,
@@ -1030,9 +1467,18 @@ export default function PhotoMatchSeedreamPage() {
         allowLightingChange,
       });
       let out = extra.trim() ? `${base}\n\n${extra.trim()}` : base;
+      /**
+       * The clothed lock goes AFTER the chips, which is the whole reason it works.
+       *
+       * The chips are appended after the base prompt and Seedream weights the tail hardest, so a
+       * lock stated before them loses to the very "deep cleavage, straining the garment" text it
+       * exists to bound. Only when a bust/figure chip is actually on, and never when the request is
+       * nude — there is no garment to keep closed.
+       */
+      if (allowBodyChange && !wantsNude) out = `${out}\n\n${CLOTHED_FIGURE_LOCK}`;
       // Per engine: Seedream's cap is real and fatal, Nano's does not exist. Trimming a Nano prompt
       // to Seedream's limit threw away chips for nothing.
-      const budget = engine === 'nano2' ? NANO2_PROMPT_BUDGET : SEEDREAM_PROMPT_BUDGET;
+      const budget = engine === 'seedream' ? SEEDREAM_PROMPT_BUDGET : NANO2_PROMPT_BUDGET;
       if (out.length > budget) {
         // Seedream 422s on an over-long prompt and the whole batch dies. The base instruction
         // is what makes identity work, so the extra text is what gives.
@@ -1057,7 +1503,7 @@ export default function PhotoMatchSeedreamPage() {
      * would see whichever finished last rather than all three.
      */
     const work = perChar.flatMap((who) => sources.map((src) => ({ src, who })));
-    if (trimmed) notify(`Instructions trimmed to ${engine === 'nano2' ? NANO2_PROMPT_BUDGET : SEEDREAM_PROMPT_BUDGET} characters — the model rejects longer prompts`, 'error');
+    if (trimmed) notify(`Instructions trimmed to ${engine === 'seedream' ? SEEDREAM_PROMPT_BUDGET : NANO2_PROMPT_BUDGET} characters — the model rejects longer prompts`, 'error');
 
     setRunning(true);
     /**
@@ -1083,6 +1529,10 @@ export default function PhotoMatchSeedreamPage() {
       // Shown on the tile so a mixed batch says WHOSE result each one is. Recorded for EVERY run,
       // not just a multi-character one: it decides which folder the picture is filed under later,
       // and a blank name there is how a batch ends up in the wrong woman's folder.
+      // Deliberately the FOLDER's name, for a pair as much as for one woman: this is not only a
+      // label, it decides which library folder the picture is filed under. Joining the members into
+      // "Arya + Rosary" would file a pair's results into a folder the user never created, sitting
+      // beside the one they did.
       charName: who.name || '',
     }));
     setJobs((prev) => [...fresh, ...prev]);
@@ -1096,7 +1546,7 @@ export default function PhotoMatchSeedreamPage() {
         const item = queue.shift();
         if (!item) return;
         await runOne({ ...item.src, id: `${item.src.id}::${item.who.id}::${runStamp}` },
-          item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length));
+          item.who.refs, ratioById.get(item.src.id), promptFor(item.who, item.who.refs.length, item.src));
       }
     });
     await Promise.all(workers);
@@ -1207,6 +1657,114 @@ export default function PhotoMatchSeedreamPage() {
     // that no longer exists once the page is closed.
     resultsStore.set('queue', jobs.filter((j) => j.status === 'done' && urlOfJob(j)).map(liteJob));
   }, [jobs, jobsRestored]);
+
+
+  /**
+   * PICK BACK UP WHAT THE SERVER IS STILL DOING.
+   *
+   * Leaving the page unmounts the component, and every promise awaiting a render goes with it. The
+   * work does not stop — it is on the durable queue and the server finishes and bills it — but the
+   * panel forgot it existed, so coming back showed an empty page while paid pictures completed
+   * invisibly (owner, 2026-08-16: 'when leave page it stop showing the generated').
+   *
+   * The server has always been able to answer this: GET /api/jobs returns active, failed and
+   * unfiled for the signed-in user. Nothing new was needed on that side — the client just never
+   * asked. Runs once the restore has finished, so it cannot race the saved panel.
+   */
+  useEffect(() => {
+    if (!jobsRestored) return;
+    let alive = true;
+    (async () => {
+      let list;
+      try {
+        const r = await jobsApi.list();
+        list = r?.data ?? r;
+      } catch { return; }              // signed out or offline is not an error worth shouting about
+      if (!alive || !list) return;
+      // Skip what an earlier, still-running waiter already owns — otherwise both file it.
+      const mineOnly = (arr) => (arr || []).filter((j) => j.feature === FEATURE && !_awaiting.has(j.id));
+      const active = mineOnly(list.active);
+      const failed = mineOnly(list.failed);
+      if (!active.length && !failed.length) return;
+
+      // Shown straight away, before any of them finish, so the panel is honest about what is
+      // outstanding rather than looking idle while the server works.
+      setJobs((prev) => {
+        const known = new Set(prev.map((j) => j.jobId).filter(Boolean));
+        const rows = [...active, ...failed]
+          .filter((j) => !known.has(j.id))
+          .map((j) => ({
+            id: `resumed-${j.id}`,
+            jobId: j.id,
+            status: j.status === 'failed' ? 'failed' : 'running',
+            error: j.error || '',
+            charName: j.destFolder || '',
+            engine: j.model === 'nb2' ? 'nb2' : j.model === 'nano2' ? 'nano2' : 'seedream',
+            fellBack: (j.tags || []).includes('fallback'),
+            resumed: true,
+          }));
+        return rows.length ? [...rows, ...prev] : prev;
+      });
+      if (active.length) notify(`Picking up ${active.length} still running from before`, 'info');
+
+      // Rejoin each one. filePicture is the same code a fresh run uses, so a resumed picture lands
+      // in the same collection, the same folder and the same shape.
+      for (const j of active) {
+        _awaiting.add(j.id);
+        waitForQueuedJob(j.id)
+          .finally(() => _awaiting.delete(j.id))
+          .then(async (data) => {
+            if (!alive) return;
+            const first = (data.images || [])[0];
+            if (!first) throw new Error('finished with no image');
+            await filePicture(first, j.destFolder || '', j.cardPrompt || '');
+            setJobs((prev) => prev.map((x) => (x.jobId === j.id
+              ? { ...x, status: 'done', result: first, galleryId: first.galleryId || null, url: data.url || '', doneAt: Date.now(), filedDb: j.destDb || destDb }
+              : x)));
+          })
+          .catch((err) => {
+            if (!alive) return;
+            setJobs((prev) => prev.map((x) => (x.jobId === j.id
+              ? { ...x, status: 'failed', error: err?.message || 'Failed' } : x)));
+          });
+      }
+    })();
+    return () => { alive = false; };
+  }, [jobsRestored, FEATURE, filePicture, notify, destDb]);
+
+  /**
+   * Run the failed ones again — the server already had the endpoint, the page just never offered it.
+   *
+   * A retry is a POST a human makes on purpose: a job that failed as an orphan may already have
+   * been rendered and billed, so the automatic path refuses to make that call and a person looking
+   * at a missing picture can.
+   */
+  const failedJobs = jobs.filter((j) => j.status === 'failed' && j.jobId);
+  const retryFailed = useCallback(async () => {
+    const targets = jobs.filter((j) => j.status === 'failed' && j.jobId);
+    if (!targets.length) return;
+    setJobs((prev) => prev.map((x) => (targets.some((t) => t.jobId === x.jobId) ? { ...x, status: 'running', error: '' } : x)));
+    for (const t of targets) {
+      try {
+        await jobsApi.retry(t.jobId);
+        waitForQueuedJob(t.jobId)
+          .then(async (data) => {
+            const first = (data.images || [])[0];
+            if (!first) throw new Error('finished with no image');
+            await filePicture(first, t.charName || '', '');
+            setJobs((prev) => prev.map((x) => (x.jobId === t.jobId
+              ? { ...x, status: 'done', result: first, galleryId: first.galleryId || null, url: data.url || '', doneAt: Date.now(), filedDb: destDb }
+              : x)));
+          })
+          .catch((err) => setJobs((prev) => prev.map((x) => (x.jobId === t.jobId
+            ? { ...x, status: 'failed', error: err?.message || 'Failed again' } : x))));
+      } catch (err) {
+        setJobs((prev) => prev.map((x) => (x.jobId === t.jobId
+          ? { ...x, status: 'failed', error: err?.message || 'Could not retry' } : x)));
+      }
+    }
+    notify(`Retrying ${targets.length} failed`, 'info');
+  }, [jobs, filePicture, notify, destDb]);
 
   const [pickedJobs, setPickedJobs] = useState(() => new Set());
   const toggleJob = useCallback((id) => {
@@ -1453,6 +2011,19 @@ export default function PhotoMatchSeedreamPage() {
                         ? <span className="absolute bottom-1 left-1 rounded bg-emerald-600/90 px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-white pointer-events-none">Blurred</span>
                         : <span className="absolute bottom-1 left-1 rounded bg-amber-600/90 px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-white pointer-events-none">Face — tap</span>
                     )}
+                    {/* The back-view call, shown before it is paid for and one click to flip.
+                        Detection is right most of the time, not always — a profile or a face turned
+                        far enough can read as no-face — and calling a front photo a back view
+                        strips the face rules out of its prompt. So it is never silent. */}
+                    <button type="button"
+                      onClick={() => setSources((prev) => prev.map((x) => (x.id === s.id ? { ...x, backView: !x.backView } : x)))}
+                      title={s.backView
+                        ? 'Treated as shot from behind: no face is matched or invented, and she is not turned toward the camera. Click if she is actually facing the camera.'
+                        : 'Treated as facing the camera. Click if this shot is from behind.'}
+                      className={cn('absolute top-1 left-1 rounded px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide cursor-pointer',
+                        s.backView ? 'bg-sky-600/90 text-white' : 'bg-black/50 text-zinc-400 opacity-0 group-hover:opacity-100')}>
+                      {s.backView ? 'Back view' : 'Front'}
+                    </button>
                     <button onClick={() => setSources((prev) => prev.filter((x) => x.id !== s.id))}
                       className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-zinc-800 border border-zinc-600 text-zinc-400 text-xs flex items-center justify-center hover:text-white cursor-pointer">×</button>
                   </div>
@@ -1533,7 +2104,11 @@ export default function PhotoMatchSeedreamPage() {
                 <p className="text-xs text-zinc-500">Her saved reference photos are sent as the identity to hold.</p>
                 <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
                   {chars.map((c) => {
-                    const mine = charItems.filter((i) => i.folderId === c.id);
+                    // A pair folder holds no images itself — its women are its subfolders. Reading
+                    // only its own items showed "No photo" on a character that works perfectly,
+                    // which reads as broken. refsForCharacter already resolves either shape.
+                    const members = membersOf(c.id);
+                    const mine = members.length ? refsForCharacter(c.id) : charItems.filter((i) => i.folderId === c.id);
                     const lead = mine.find((i) => i.role === 'base') || [...mine].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
                     return (
                       <button key={c.id} type="button"
@@ -1555,6 +2130,13 @@ export default function PhotoMatchSeedreamPage() {
                         <span className={cn('block px-2 py-1.5 text-xs font-semibold',
                           characterIds.includes(c.id) ? 'bg-rose-500/15 text-rose-300' : 'bg-white/[0.02] text-zinc-400')}>
                           {c.name} <span className="text-zinc-600">{mine.length}</span>
+                          {members.length > 1 && (
+                            // Says what will happen before it is paid for: this tile is more than
+                            // one woman, and the names are the ones the prompt will use.
+                            <span className="block truncate font-normal text-emerald-400/90">
+                              {members.length} in one photo · {members.map((m) => m.name).join(' + ')}
+                            </span>
+                          )}
                         </span>
                       </button>
                     );
@@ -1562,9 +2144,11 @@ export default function PhotoMatchSeedreamPage() {
                 </div>
               {characterId && (
                 <p className="text-[0.625rem] text-zinc-600 leading-relaxed">
-                  {characterIds.length > 1
-                    ? <>Each source photo is generated once per character — {characterIds.length} runs of every photo. Each run sends that character&rsquo;s own photos first, then the source.</>
-                    : <>Sends all {charImagesUsed} of {charName || 'this character'}&rsquo;s photo{charImagesUsed === 1 ? '' : 's'} first, then the source photo — Seedream keeps whoever is in image 1, and identity comes only from those.</>}
+                  {membersOf(characterId).length > 1
+                    ? <>{membersOf(characterId).map((m) => m.name).join(' and ')} come out TOGETHER in one photo — one render per source, not one each. A source with one woman is re-staged to fit them both; a source that already has two gives one to each.</>
+                    : characterIds.length > 1
+                      ? <>Each source photo is generated once per character — {characterIds.length} runs of every photo. Each run sends that character&rsquo;s own photos first, then the source.</>
+                      : <>Sends all {charImagesUsed} of {charName || 'this character'}&rsquo;s photo{charImagesUsed === 1 ? '' : 's'} first, then the source photo — Seedream keeps whoever is in image 1, and identity comes only from those.</>}
                   {charImagesUsed === 1 && (
                     <span className="block mt-1 text-yellow-400/90">
                       Only one photo of her is on file. One identity image against the source photo is a weak
@@ -1710,6 +2294,21 @@ export default function PhotoMatchSeedreamPage() {
             <Select label="Aspect Ratio" options={ASPECT_OPTIONS} value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} />
             <Select label="Resolution" options={RES_OPTIONS} value={resolution} onChange={(e) => setResolution(e.target.value)} />
           </div>
+          {/* HER BUILD — the same control, and the same brain, as Eddy's.
+              Deliberately NOT one of the Body chips: a chip is a change and stands the
+              bust-preservation locks down, while this is a standing fact about her that rides WITH
+              them, naming the size they are holding. "From her photos" is the default and emits
+              nothing at all. */}
+          <div>
+            <Select label="Her build"
+              options={BUILD_OPTIONS.map((b) => ({ value: b.value, label: b.label }))}
+              value={build} onChange={(e) => setBuild(e.target.value)} />
+            <p className="mt-1 text-[0.625rem] leading-relaxed text-zinc-600">
+              {build === 'auto'
+                ? 'Her figure comes from her reference photos, held against the source.'
+                : 'Names the build the identity lock is holding — this is what she looks like, not a change to her. A back-facing source gets the version that only describes what the camera can see.'}
+            </p>
+          </div>
           {/* WHERE THE RESULTS GO. Set before Generate, because moving a batch of thirty after the
               fact is thirty drags. Remembered between runs. */}
           <Select label="Send results to" options={DESTINATIONS} value={destDb} onChange={(e) => setDestDb(e.target.value)} />
@@ -1720,7 +2319,7 @@ export default function PhotoMatchSeedreamPage() {
           {/* ENGINE. Both models sit behind the same WaveSpeed key and the same route, so this
               changes one field in the request and the price quoted above it -- nothing else. */}
           <div className="mb-2 flex gap-2 rounded-xl border border-white/[0.07] bg-white/[0.02] p-1">
-            {[['seedream', 'Seedream 5.0 Pro'], ['nano2', 'Nano Banana 2']].map(([id, label]) => (
+            {(isNB2 ? [['nb2', 'Nano Banana 2 — bypass']] : [['seedream', 'Seedream 5.0 Pro'], ['nano2', 'Nano Banana 2']]).map(([id, label]) => (
               <button key={id} type="button" onClick={() => setEngine(id)} aria-pressed={engine === id}
                 className={cn('flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer',
                   engine === id ? 'bg-rose-500/20 text-rose-300' : 'text-zinc-500 hover:text-zinc-300')}>
@@ -1728,6 +2327,18 @@ export default function PhotoMatchSeedreamPage() {
               </button>
             ))}
           </div>
+          {/* The fallback, stated BEFORE the run rather than discovered afterwards.
+              A picture on this tab can come back from a different engine at a different price, and
+              the engine row is where that belongs — the badge on a finished tile only tells you
+              once the money is spent (owner, 2026-08-16). */}
+          {isNB2 && (
+            <p className="mb-2 text-[0.625rem] leading-relaxed text-amber-300/80">
+              Fails over to <span className="font-semibold">Seedream 5.0 Pro (WaveSpeed)</span> after {NB2_ATTEMPTS} failed
+              tries — so a picture the bypass refuses still gets made. Those come back marked
+              <span className="font-semibold"> (fallback)</span> and are billed at Seedream&rsquo;s rate
+              (<span className="font-mono">${seedreamCost(resolution, imagesPerJob).toFixed(3)}</span>), not this one.
+            </p>
+          )}
           <p className="text-[0.625rem] text-zinc-600">
             {imagesPerJob} image{imagesPerJob > 1 ? 's' : ''} per match → <span className="text-zinc-400 font-mono">${costPerJob.toFixed(3)}</span> each
             {runCount > 1 && (
@@ -1819,6 +2430,15 @@ export default function PhotoMatchSeedreamPage() {
                     className="cursor-pointer accent-rose-500" />
                   Before / after
                 </label>
+                {/* The server has had a retry endpoint since the queue was built; the page simply
+                    never offered it, so recovering one failed picture meant re-running the whole
+                    batch. Only shown when there is something to retry. */}
+                {failedJobs.length > 0 && (
+                  <button type="button" onClick={retryFailed}
+                    className="rounded-full border border-red-500/50 bg-red-500/10 px-2.5 py-0.5 text-[0.625rem] font-semibold text-red-300 hover:border-red-400 cursor-pointer">
+                    Retry {failedJobs.length} failed
+                  </button>
+                )}
                 <span className="ml-auto flex flex-wrap gap-2">
                   <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs"
                     disabled={!!movingTo}
@@ -1866,7 +2486,7 @@ export default function PhotoMatchSeedreamPage() {
                         appears once per woman and the thumbnails are identical -- without the name
                         the only way to tell them apart is to open each one. */}
                     {job.charName && <span className="text-[0.625rem] font-semibold text-rose-300">{job.charName}</span>}
-                    {job.status === 'done' && <span className="text-[0.625rem] text-zinc-600 font-mono">${costPerJob.toFixed(3)}</span>}
+                    {job.status === 'done' && typeof job.cost === 'number' && <span className="text-[0.625rem] text-zinc-600 font-mono">${job.cost.toFixed(3)}</span>}
                   </div>
 
                   {job.status === 'done' && (job.result || urlOfJob(job)) ? (
@@ -1907,7 +2527,7 @@ export default function PhotoMatchSeedreamPage() {
                         {job.charName ? `${job.charName} · ` : ''}in {job.filedDb === 'eddy-base' ? 'Base Library' : 'Library'}
                         {/* WHAT MADE IT. Two engines, two modes and a faceless switch produce very
                             different pictures, and a week later the tile is the only record. */}
-                        {job.engine && ` · ${job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}`}
+                        {job.engine && ` · ${job.engine === 'nb2' ? 'NB2' : job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}${job.fellBack ? ' (fallback)' : ''}`}
                         {job.resolution && ` ${job.resolution}`}
                         {job.mode === 'exact' && ' · exact'}
                         {job.faceless && ' · faceless'}
@@ -1962,7 +2582,7 @@ export default function PhotoMatchSeedreamPage() {
 
             <div className="absolute left-4 top-4 rounded-lg bg-black/70 px-3 py-1.5 text-xs text-zinc-300">
               {job.charName || 'Photo Match'}
-              {job.engine && <span className="text-zinc-500"> · {job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}</span>}
+              {job.engine && <span className="text-zinc-500"> · {job.engine === 'nb2' ? 'NB2' : job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}{job.fellBack ? ' (fallback)' : ''}</span>}
               {job.resolution && <span className="text-zinc-500"> {job.resolution}</span>}
               <span className="text-zinc-500"> · {i + 1} of {lightboxList.length}</span>
             </div>
