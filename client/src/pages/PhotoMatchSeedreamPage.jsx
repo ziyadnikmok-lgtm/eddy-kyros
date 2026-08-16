@@ -117,6 +117,61 @@ const BACK_VIEW_LINE = (src) => `BACK VIEW — HER FACING DIRECTION IS FIXED: ${
  * The house lighting, on every Photo Match prompt (owner, 2026-08-13). Verbatim, because it was
  * given verbatim — the wording is the request, not a paraphrase of one.
  */
+/**
+ * HER BUILD — a standing fact about the character, NOT a change to her.
+ *
+ * Ported from Eddy, and the distinction from the BODY chips is the whole point. A chip is a
+ * deliberate enlargement, so it sets allowBodyChange and STANDS DOWN the bust-preservation locks —
+ * right for 'make her bigger than her photos', wrong for 'this is what she looks like'. A character
+ * whose references ALREADY show the target build was losing her strongest protection just to state
+ * a size she already had (owner, 2026-08-06: Grace is large, another model is medium, and each
+ * wants her own build HELD, not altered).
+ *
+ * So these never touch allowBodyChange. They ride WITH the locks, naming the size the locks are
+ * holding — which is exactly what a lock cannot do on its own, because 'the size in her references'
+ * is unfalsifiable to a model that also has a different woman's body in the payload.
+ *
+ * 'auto' emits nothing: the locks alone, i.e. the behaviour before this existed.
+ *
+ * BACK-VIEW VARIANTS, not the same sentence. Every front line names the bust and, at the larger
+ * sizes, 'deep natural cleavage' — none of which a shot from behind can show. Feeding it anyway
+ * recreates the exact failure the back-view lock exists to stop: the only way to satisfy cleavage
+ * wording is to twist her toward the camera, destroying the pose. Suppressing it entirely is worse,
+ * because hips, waist and back width DO read from behind and are precisely what drifts toward the
+ * stand-in — so the back variants keep the anchoring job using only what the camera can see.
+ */
+const BUILD_OPTIONS = [
+  { value: 'auto', label: 'From her photos', text: '', backText: '' },
+  { value: 'petite', label: 'Petite',
+    text: 'She is petite and slim with a small bust — that is her natural build, exactly as in her reference images, and it is preserved, not changed.',
+    backText: 'She is petite and slim with narrow hips and a slender back — that is her natural build, exactly as in her reference images, and it is preserved, not changed.' },
+  { value: 'medium', label: 'Medium',
+    text: 'She has a medium, natural bust and an average build — that is her natural figure, exactly as in her reference images, and it is preserved, not changed.',
+    backText: 'She has an average, natural build with proportionate hips and waist — that is her natural figure, exactly as in her reference images, and it is preserved, not changed.' },
+  { value: 'full', label: 'Full',
+    text: 'She has a full, shapely bust and curvy figure — that is her natural build, exactly as in her reference images, and it is preserved, not changed.',
+    backText: 'She has a full, curvy figure with shapely hips and a narrow waist — that is her natural build, exactly as in her reference images, and it is preserved, not changed.' },
+  { value: 'large', label: 'Large',
+    text: 'She has a LARGE, heavy, full bust with deep natural cleavage and a curvy figure — that is her natural build, exactly as in her reference images, and it is preserved, not changed. Never render her smaller, flatter or more athletic than this.',
+    backText: 'She has a full, curvy figure with wide shapely hips and a narrow waist — that is her natural build, exactly as in her reference images, and it is preserved, not changed. Never render her slimmer or more athletic than this.' },
+  { value: 'verylarge', label: 'Very large',
+    text: 'She has a VERY LARGE, heavy, extremely full bust — big, weighty and rounded, sitting wide on her chest with deep natural cleavage between them — and a strongly curvy figure. That is her natural build, exactly as in her reference images, and it is preserved, not changed. Never render her smaller, flatter, perkier or more athletic than this.',
+    backText: 'She has a strongly curvy figure with wide shapely hips and a narrow waist — that is her natural build, exactly as in her reference images, and it is preserved, not changed. Never render her slimmer or more athletic than this.' },
+];
+
+/**
+ * A BUST INSTRUCTION WITH NSFW OFF MUST HAPPEN UNDER THE CLOTHES.
+ *
+ * Ported from Eddy's CLOTHED_FIGURE_LOCK. The Body chips say 'deep cleavage' and 'straining the
+ * garment', and a model asked for a bigger bust in a dressed photo will very often satisfy it by
+ * opening, lowering or removing the top — which is not what was asked and, with NSFW off, not what
+ * anyone wanted. Photo Match had the chips and none of this lock.
+ *
+ * Appended AFTER the chips by the caller, because the chips are appended after the base prompt and
+ * Seedream weights the tail hardest — stated before them, the lock loses to the very text it exists
+ * to bound.
+ */
+const CLOTHED_FIGURE_LOCK = 'CLOTHED — OVERRIDES THE BUST INSTRUCTION ABOVE: she stays FULLY DRESSED. The garment covers her breasts and torso exactly as much as it already does — neckline and coverage unchanged. Any fuller bust or figure shows ONLY as fabric stretching and straining over a fuller shape underneath. Do NOT open, lower, lift, unzip, pull aside or remove any clothing, and do NOT expose breasts, nipples or areola. Read "cleavage" as the silhouette THROUGH the clothing, never as bare skin.';
 const LIGHTING_LINE = 'Lighting: Lighting is soft and diffused lighting, glowing naturally on her skin';
 
 /**
@@ -230,7 +285,7 @@ function shrinkForStorage(dataUrl, max = 360) {
  * them singular while naming two women is the most direct way to get ONE woman out — the model
  * follows the grammar, which outnumbers the names. So `she`/`her` switch with the count.
  */
-export function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRecreate, varyBackground, allowExpressionChange, allowHairChange, allowBodyChange, allowLightingChange, faceless, wantsNude, addGenericNudeLine, sourceFaceBlurred, outfitFromChar = false, lookAtCamera = false, budget = 0, cast = null, backView = false }) {
+export function buildMatchInstruction({ characterName, refCount, masterPrompt, exactRecreate, varyBackground, allowExpressionChange, allowHairChange, allowBodyChange, allowLightingChange, faceless, wantsNude, addGenericNudeLine, sourceFaceBlurred, outfitFromChar = false, lookAtCamera = false, budget = 0, cast = null, backView = false, buildText = '' }) {
   const who = (cast && cast.length > 1)
     ? cast.map((c) => c.name).slice(0, -1).join(', ') + ' and ' + cast[cast.length - 1].name
     : (characterName || 'the character');
@@ -426,6 +481,15 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
 
   parts.push(`Photorealistic — real pores, hair strands, fabric, slight asymmetry; no plastic or CGI look.`);
 
+  /**
+   * HER BUILD, immediately before the identity lock.
+   *
+   * It states the size the lock is about to hold. Placed anywhere earlier it is one sentence
+   * among fifteen; here the two read as a single statement, which is the arrangement Eddy
+   * arrived at for the same reason.
+   */
+  if (buildText) parts.push(buildText);
+
   // #3 — the hardest locks go LAST. Seedream weights the tail of the prompt most heavily (the
   // whole reason chips are appended at the very end), so the identity guarantee and the bust lock
   // — the two things whose loss reads as "the page is broken" — belong here, not buried mid-prompt.
@@ -480,7 +544,13 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
   const joined = () => parts.join(SEP);
   if (budget > 0) {
     const droppable = ['Photorealistic —', `${src}'s face is deliberately blurred`, `${who}: `, 'CAMERA:',
-      ...(pair ? ['EYES TO CAMERA:', 'MAKEUP:'] : [])];
+      ...(pair ? ['EYES TO CAMERA:', 'MAKEUP:'] : []),
+      // HER BUILD goes last, and only in the one combination that still does not fit: a pair,
+      // exact recreate, her outfit, eyes to camera, a blurred source AND a 200-character master
+      // prompt. It loses to the FINAL lock because a build line without an identity lock is a
+      // correctly-proportioned stranger, while an identity lock without a build line is her at
+      // whatever size her references show — which is the default behaviour anyway.
+      ...(buildText ? [buildText.slice(0, 24)] : [])];
     for (const marker of droppable) {
       if (joined().length <= budget) break;
       const i = parts.findIndex((t) => typeof t === 'string' && t.startsWith(marker));
@@ -594,7 +664,7 @@ function parseDataUrl(dataUrl) {
  */
 const _awaiting = new Set();
 
-const _cache = { extra: '', aspectRatio: 'auto', resolution: '1K', exactRecreate: true, varyBackground: false, nsfw: false, blurSource: true, faceless: false };
+const _cache = { extra: '', aspectRatio: 'auto', resolution: '1K', build: 'auto', exactRecreate: true, varyBackground: false, nsfw: false, blurSource: true, faceless: false };
 // Images are too big for _cache/localStorage — IndexedDB so they survive a reload.
 /**
  * Retry a generation that came back rate-limited.
@@ -789,6 +859,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
   const [manualBlurId, setManualBlurId] = useState(null);  // source id being hand-blurred, or null
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [resolution, setResolution] = useState(_cache.resolution);
+  const [build, setBuild] = useState(_cache.build || 'auto');
   // 'seedream' | 'nano2'. Both go through the same /api/seedream/edit route and the same
   // WaveSpeed key -- `model` is the only thing that differs -- so a result gets the same
   // imageStore write, gallery row and tagging either way.
@@ -839,6 +910,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
 
   useEffect(() => { _cache.extra = extra; }, [extra]);
   useEffect(() => { _cache.engine = engineSD; }, [engineSD]);
+  useEffect(() => { _cache.build = build; }, [build]);
   useEffect(() => { _cache.nsfw = nsfw; }, [nsfw]);
   useEffect(() => { _cache.blurSource = blurSource; }, [blurSource]);
   useEffect(() => { _cache.faceless = faceless; }, [faceless]);
@@ -1362,6 +1434,10 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         // which is the FOLDER's name ("Arya & Rosary", or whatever it was called) and is not
         // something to put in a prompt.
         cast: who.cast,
+        // A standing fact about her, not a change — so it does NOT set allowBodyChange and the
+        // preservation locks stay up. Back-facing sources get the variant that names only what
+        // a shot from behind can actually show.
+        buildText: (BUILD_OPTIONS.find((b) => b.value === build) || {})[backView ? 'backText' : 'text'] || '',
         wantsNude,
         addGenericNudeLine,
         sourceFaceBlurred: blurSource,
@@ -1388,6 +1464,15 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         allowLightingChange,
       });
       let out = extra.trim() ? `${base}\n\n${extra.trim()}` : base;
+      /**
+       * The clothed lock goes AFTER the chips, which is the whole reason it works.
+       *
+       * The chips are appended after the base prompt and Seedream weights the tail hardest, so a
+       * lock stated before them loses to the very "deep cleavage, straining the garment" text it
+       * exists to bound. Only when a bust/figure chip is actually on, and never when the request is
+       * nude — there is no garment to keep closed.
+       */
+      if (allowBodyChange && !wantsNude) out = `${out}\n\n${CLOTHED_FIGURE_LOCK}`;
       // Per engine: Seedream's cap is real and fatal, Nano's does not exist. Trimming a Nano prompt
       // to Seedream's limit threw away chips for nothing.
       const budget = engine === 'seedream' ? SEEDREAM_PROMPT_BUDGET : NANO2_PROMPT_BUDGET;
@@ -2205,6 +2290,21 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
           <div className="grid grid-cols-2 gap-4">
             <Select label="Aspect Ratio" options={ASPECT_OPTIONS} value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} />
             <Select label="Resolution" options={RES_OPTIONS} value={resolution} onChange={(e) => setResolution(e.target.value)} />
+          </div>
+          {/* HER BUILD — the same control, and the same brain, as Eddy's.
+              Deliberately NOT one of the Body chips: a chip is a change and stands the
+              bust-preservation locks down, while this is a standing fact about her that rides WITH
+              them, naming the size they are holding. "From her photos" is the default and emits
+              nothing at all. */}
+          <div>
+            <Select label="Her build"
+              options={BUILD_OPTIONS.map((b) => ({ value: b.value, label: b.label }))}
+              value={build} onChange={(e) => setBuild(e.target.value)} />
+            <p className="mt-1 text-[0.625rem] leading-relaxed text-zinc-600">
+              {build === 'auto'
+                ? 'Her figure comes from her reference photos, held against the source.'
+                : 'Names the build the identity lock is holding — this is what she looks like, not a change to her. A back-facing source gets the version that only describes what the camera can see.'}
+            </p>
           </div>
           {/* WHERE THE RESULTS GO. Set before Generate, because moving a batch of thirty after the
               fact is thirty drags. Remembered between runs. */}
