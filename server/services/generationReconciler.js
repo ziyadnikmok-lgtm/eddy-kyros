@@ -455,9 +455,23 @@ async function _submitClaimed(job) {
       }
       if (!apiKey) {
         const onVertex = !!apiKeys.shouldUseVertexBackend?.();
+        /**
+         * SAY THAT NO FALLBACK WAS TRIED, AND WHY.
+         *
+         * "it failed and didnt fall back" (owner, 2026-08-17) — correct, and by design, but nothing
+         * on screen said so. A missing or dead Gemini key is the one failure the fallback must NOT
+         * serve: Seedream bills a DIFFERENT account and would succeed, so falling back would run
+         * every bypass job on WaveSpeed with the tab looking perfectly healthy and the bypass quietly
+         * dead. That is a decision worth stating, not a silence to be inferred.
+         *
+         * On the web deployment this was ALSO reachable with a key present, until today: the queue
+         * looked up keys with no user context and found none (see asJobUser). Same message, quite
+         * different cause — so the wording points at both places to look.
+         */
+        const noFallback = ' It did NOT fall back to Seedream: a key problem is kept visible on purpose, because Seedream bills a different account and would hide a dead bypass behind a healthy-looking tab.';
         jobQueue.markFailed(job.id, onVertex
-          ? 'Photo Match NB2 needs a direct Gemini API key. Vertex credentials are selected, and the bypass calls Google\'s API directly rather than through Vertex — add a Gemini key under API Keys, or use Photo Match SD.'
-          : 'Photo Match NB2 needs a Gemini API key — add one under API Keys.');
+          ? `Nano Banana 2 needs a direct Gemini API key. Vertex credentials are selected, and the bypass calls Google's API directly rather than through Vertex — add a Gemini key under API Keys, or run this on WaveSpeed.${noFallback}`
+          : `Nano Banana 2 needs a Gemini API key — add one under API Keys, and check it is the ACTIVE key.${noFallback}`);
         log.error('generation_nb2_no_key', { jobId: job.id, onVertex });
         return true;
       }

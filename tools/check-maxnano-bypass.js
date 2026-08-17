@@ -91,6 +91,27 @@ check('and that effect depends on the TAB, not the engine — or the bypass coul
   return i > -1 && page.slice(i, i + 120).includes('}, [maxNano]);');
 })());
 
+// --- WHEN THERE IS NO FALLBACK, SAY SO --------------------------------------------------------------
+//
+// ⚠️ "in my other account it failed and didnt fall back" (owner, 2026-08-17). Correct, and by
+// design — but nothing on screen said so, and a silent exception to a documented rule reads as a
+// broken rule.
+//
+// A missing or dead Gemini key is the ONE failure the fallback must not serve: Seedream bills a
+// different account and would succeed, so falling back would run every bypass job on WaveSpeed with
+// the tab looking healthy and the bypass quietly dead. On the web deployment the same message was
+// also reachable WITH a key present, until the user-context fix — the queue looked keys up as
+// nobody. Same message, different cause, so the wording points at both.
+check('a key failure names the fallback it did not take', rec.includes('It did NOT fall back to Seedream'));
+check('and why not', rec.includes('Seedream bills a different account and would hide a dead bypass'));
+check('it also says to check the key is ACTIVE, which is the other way to have one and not have one',
+  rec.includes('check it is the ACTIVE key'));
+// The fallback itself is unchanged for every non-key failure — that is the case worth swapping for.
+check('a content refusal still falls back', !rec.includes("NB2_TERMINAL_CODES = new Set(['VALIDATION_ERROR', 'GEMINI_KEY_REQUIRED', 'NO_ACTIVE_KEY', 'KEY_CORRUPTED', 'NANO_BYPASS_NO_IMAGE'])"));
+check('and the fallback fires below the queue ceiling, or it would never be reached',
+  Number(/const NB2_ATTEMPTS = (\d+);/.exec(rec)[1])
+    < Number(/const MAX_SUBMIT_ATTEMPTS = (\d+);/.exec(read('server/services/jobQueue.js'))[1]));
+
 // --- A REFUSAL MUST READ AS A REFUSAL ------------------------------------------------------------
 // "Nano Bypass returned no image (reason: IMAGE_OTHER)" tells nobody anything, and it was the only
 // thing reaching the card while every job failed.
