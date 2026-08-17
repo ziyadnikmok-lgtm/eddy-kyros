@@ -13,8 +13,7 @@ import { NSFW_PRESETS, nudeState, NUDE_LINE } from '../lib/nsfwPresets';
 import { createPageStore } from '../lib/pageStateStore';
 import { queuedSeedreamEdit, waitForQueuedJob, reconcileUnfiled } from '../lib/generationQueue';
 import { cn } from '../lib/utils';
-import { autoBlurFace } from '../lib/autoBlurFace';
-import { detectFacePico } from '../lib/detectFacePico';
+import { autoBlurFace, findFace, blurFound } from '../lib/autoBlurFace';
 import ManualBlurModal from '../components/ManualBlurModal';
 
 const ASPECT_OPTIONS = [{ value: 'auto', label: 'Auto (match source)' }, ...SEEDREAM_ASPECT_RATIOS.map((r) => ({ value: r, label: r }))];
@@ -1191,41 +1190,30 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     const added = await Promise.all(valid.map(async (f) => {
       let dataUrl = await fileToDataUrl(f);
       /**
-       * IS THIS SHOT FROM BEHIND? Decided here, on the ORIGINAL, before anything is blurred.
+       * ONE DETECTION, BOTH ANSWERS — is there a face, and where is it.
        *
-       * Running it after the blur would read a blurred-out face as "no face" and flip every
-       * face-blurred front photo to a back view — which suppresses face matching on exactly the
-       * photos that need it most.
+       * This ran the detector three times per photo: once loose to decide whether the shot is a
+       * back view, then a confident blur pass, then a loose one. Each decodes the image, scales it
+       * and sweeps eight rotations, and the thumbnail did not appear until all of it finished
+       * (owner, 2026-08-17: 'sometimes slow to put the image there').
        *
-       * AGGRESSIVE on purpose, and the direction of the error is the reason. A loose pass finds
-       * turned and partly-hidden faces at the cost of the occasional false box; a false box reads
-       * as "face found" -> front -> today's behaviour, which is harmless. The expensive mistake is
-       * the other way: calling a front photo a back view strips the face rules out of its prompt.
-       * So the only photos tagged back are the ones where even the loose pass finds nothing.
+       * They could also disagree — the back-view check ran loose and ungated while the blur ran
+       * strict — so a photo could be called back-facing while its face was being blurred.
+       *
+       * Run on the ORIGINAL, before any blur. Detecting after would read a blurred-out face as no
+       * face and flip every face-blurred front photo to a back view.
        */
-      const faceFound = !!(await detectFacePico(dataUrl, { aggressive: true }).catch(() => null));
+      const face = await findFace(dataUrl).catch(() => ({ box: null, present: false }));
       let blurred = false;
       if (blurSourceRef.current) {
-        /**
-         * TWO PASSES, AUTOMATICALLY — the second is what 'Blur all faces' was doing by hand.
-         *
-         * The first pass uses pico's confident threshold, which misses turned, tilted and partly
-         * hidden faces. Those arrived with the amber 'FACE - TAP' badge and stayed sharp until
-         * someone noticed and pressed the button — and a sharp rival face in the source is the
-         * single most reliable way to lose the character (owner, 2026-08-16: 'i want it to be
-         * automatic').
-         *
-         * The aggressive pass is the SAME code the button already ran, so this is not a new
-         * detector with new failure modes — it is the existing retry, taken automatically. It
-         * costs a second local scan and no network at all.
-         */
-        let out = await autoBlurFace(dataUrl);
-        if (!out.blurred) out = await autoBlurFace(dataUrl, { aggressive: true });
+        const out = await blurFound(dataUrl, face);
         dataUrl = out.dataUrl;
         blurred = out.blurred;
         if (!out.blurred) missed += 1;
       }
-      return { id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, dataUrl, blurred, backView: !faceFound };
+      // `present`, not `box`: a loose match the gate refused still means a face is probably there,
+      // so the shot is not a back view even though nothing was blurred.
+      return { id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, dataUrl, blurred, backView: !face.present };
     }));
     if (missed) notify(`${missed} photo(s): no face found even on the second pass — click a photo to blur by hand`, 'error');
     setSources((prev) => [...prev, ...added]);
@@ -1242,7 +1230,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     setBlurringAll(true);
     let blurred = 0; let missed = 0;
     const results = await Promise.all(targets.map(async (s) => {
-      const out = await autoBlurFace(s.dataUrl, { aggressive: true });
+      const out = await autoBlurFace(s.dataUrl);
       if (out.blurred) { blurred += 1; return { id: s.id, dataUrl: out.dataUrl, blurred: true }; }
       missed += 1; return null;
     }));
@@ -1275,6 +1263,47 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     };
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
+  }, [addSources, notify]);
+
+  /**
+   * DROPPING ANYWHERE ON THE PAGE, not just on the dashed box.
+   *
+   * Paste was bound to the WINDOW and drop only to the drop-zone div, so pasting worked everywhere
+   * and dragging worked only if you happened to release the mouse inside one small rectangle —
+   * which is scrolled out of view as soon as the page has any content. Dropped anywhere else the
+   * file hit Electron's default handler and nothing happened at all (owner, 2026-08-17: 'i drag
+   * and it dont work but i copy paste it work').
+   *
+   * dragover must preventDefault too, or the drop event never fires — the browser only offers a
+   * drop target to a handler that has said it will take one.
+   */
+  useEffect(() => {
+    const onDragOver = (e) => { e.preventDefault(); };
+    const onDrop = async (e) => {
+      const files = Array.from(e.dataTransfer?.files || []).filter((f) => /^image//i.test(f.type));
+      if (files.length) {
+        e.preventDefault();
+        await addSources(files);
+        notify(`Dropped ${files.length} photo${files.length === 1 ? '' : 's'} into Source Photos ✨`, 'success');
+        return;
+      }
+      /**
+       * An image dragged out of a BROWSER carries a URL, not a file — dataTransfer.files is empty.
+       * Fetching it here is blocked by CORS on most image hosts, so rather than appear broken it
+       * says what happened and names the two things that do work.
+       */
+      const url = e.dataTransfer?.getData('text/uri-list') || e.dataTransfer?.getData('text/plain');
+      if (url && /^https?:/i.test(url)) {
+        e.preventDefault();
+        notify('That came from a browser as a link, not a file — right-click and save it first, or copy the image and paste it here with Ctrl+V.', 'error');
+      }
+    };
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('drop', onDrop);
+    };
   }, [addSources, notify]);
 
   useEffect(() => {

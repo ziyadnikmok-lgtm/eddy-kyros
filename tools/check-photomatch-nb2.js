@@ -271,9 +271,11 @@ check('and the page quotes the 2K rate, not the current setting',
 // A sharp rival face in the source is the single most reliable way to lose the character, and the
 // conservative first pass misses turned and tilted faces — those used to sit there with an amber
 // badge until someone noticed and pressed 'Blur all faces'.
-check('a missed face triggers the aggressive pass automatically',
-  pm.includes('if (!out.blurred) out = await autoBlurFace(dataUrl, { aggressive: true });'));
-check('and it is the SAME code the button ran, not a second detector', /the existing retry, taken automatically/.test(pm));
+// CHANGED 2026-08-17: the escalation moved into findFace, so the page makes one call and the
+// strict-then-loose decision lives in one place. check-blur-gate.js exercises it properly.
+check('a missed face escalates automatically, inside findFace',
+  read('client/src/lib/autoBlurFace.js').includes('const loose = await detectFacePico(dataUrl, { aggressive: true });'));
+check('and Blur all faces runs that same path', pm.includes('await autoBlurFace(s.dataUrl);'));
 
 // --- it must not hand back what we sent -------------------------------------------------------------
 //
@@ -306,11 +308,11 @@ const blur = read('client/src/lib/autoBlurFace.js');
 // tell a big face from a big hip — position can, because heads are high in the frame. The gate and
 // its shapes are exercised properly in check-blur-gate.js; this only pins that it still exists and
 // still applies to the loose pass alone.
-check('the loose pass is gated at all', blur.includes('if (aggressive) {'));
+check('the loose pass is gated at all', blur.includes('function looksLikeAFace(box)'));
 check('on absurd size or on large-and-low, not on size alone',
   blur.includes('const absurd =') && blur.includes('const bigAndLow ='));
 check('and a rejected match reports not-blurred rather than blurring the wrong region',
-  blur.includes("reason: 'loose match was not face-shaped or face-placed'"));
+  blur.includes("'loose match was not face-shaped or face-placed'"));
 
 // --- an empty account fails immediately, and says so ------------------------------------------------
 // Both providers already answer with INSUFFICIENT_CREDITS and a message naming the top-up. The queue

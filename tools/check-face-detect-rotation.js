@@ -94,8 +94,10 @@ check('nothing is lost off the edge at 90 degrees',
 // --- 5. the caller still behaves -------------------------------------------------------------------------
 check('the found angle is reported, so a caller can widen the box if it wants', src.includes('angle: deg,'));
 check('a miss is still a plain null', src.includes('return null;'));
+// CHANGED 2026-08-17: this moved into blurFound, which turns one shared detection into a picture,
+// so adding a source no longer runs the detector three separate times.
 check('no face found is not an error — the photo is passed through unblurred',
-  blur.includes("return { dataUrl, blurred: false, reason: 'no face found' };"));
+  blur.includes("reason: face?.rejected ? 'loose match was not face-shaped or face-placed' : 'no face found',"));
 check('the box is still padded, which covers the extra spread of a tilted face',
   blur.includes('const grow = 0.25;'));
 check('a thrown detector never costs the image', blur.includes("reason: err?.message || 'blur failed'"));

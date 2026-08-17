@@ -15,7 +15,8 @@ const path = require('path');
 const crypto = require('crypto');
 // The repo root, derived — this suite has to run on whichever machine has the repo.
 const ROOT = path.join(__dirname, '..');
-const src = fs.readFileSync(path.join(ROOT, 'client/src/pages/PhotoMatchSeedreamPage.jsx'), 'utf8').replace(/\r\n/g, '\n');
+const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
+const src = read('client/src/pages/PhotoMatchSeedreamPage.jsx');
 
 let pass = 0; let fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };
@@ -99,15 +100,21 @@ for (const [name, opts] of Object.entries(COMBOS)) {
 // front photo silently becomes a back view — stripping the face rules from the photos that need
 // them most. Blur is ON by default, so this would have hit almost every source.
 const addBlock = src.slice(src.indexOf('const addSources = useCallback'), src.indexOf('setSources((prev) => [...prev, ...added]);'));
+// CHANGED 2026-08-17: one detection now feeds both the blur and the back-view flag, so the order
+// is findFace-then-blurFound rather than two independent detector calls. Same invariant: the face is
+// found on the ORIGINAL, before any blur, or a blurred-out face reads as no face.
 check('the face is detected BEFORE anything is blurred',
-  addBlock.indexOf('detectFacePico(dataUrl') < addBlock.indexOf('await autoBlurFace(dataUrl)'));
-check('and the reason is written down', /Running it after the blur would read a blurred-out face as "no face"/.test(src));
+  addBlock.indexOf('await findFace(dataUrl)') < addBlock.indexOf('await blurFound(dataUrl, face)'));
+check('and the reason is written down', /Detecting after would read a blurred-out face as no/.test(src));
 
 // Aggressive detection, because the two mistakes are not equally expensive: a false "face found"
 // means today's behaviour; a false "no face" strips the face rules off a front photo.
-check('detection runs in aggressive mode', addBlock.includes("detectFacePico(dataUrl, { aggressive: true })"));
-check('and a detector failure does not take the paste down', addBlock.includes('.catch(() => null)'));
-check('each source carries its own verdict', addBlock.includes('backView: !faceFound'));
+// The escalation moved into findFace: strict first, loose only if that finds nothing. The page no
+// longer chooses a mode at all, which is why the two answers can never disagree again.
+check('detection escalates strict-then-loose inside findFace',
+  read('client/src/lib/autoBlurFace.js').includes('const loose = await detectFacePico(dataUrl, { aggressive: true });'));
+check('and a detector failure does not take the paste down', addBlock.includes('.catch(() => ({ box: null, present: false }))'));
+check('each source carries its own verdict', addBlock.includes('backView: !face.present'));
 
 // Per photo, not per run — the global Faceless switch was all-or-nothing across a mixed batch.
 check('the prompt is built per source photo', src.includes('const promptFor = (who, refCount, source) => {'));

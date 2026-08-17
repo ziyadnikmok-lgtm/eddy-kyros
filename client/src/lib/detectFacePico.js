@@ -98,15 +98,35 @@ export async function detectFacePico(dataUrl, { aggressive = false } = {}) {
     grey[i] = (rgba[i * 4] * 0.299 + rgba[i * 4 + 1] * 0.587 + rgba[i * 4 + 2] * 0.114) | 0;
   }
 
+  /**
+   * BOTH PASSES SCAN FINELY. They differ in how much EVIDENCE they require, nothing else.
+   *
+   * The first pass used to step the window at 0.1 and scale at 1.1 — a coarse sweep — and that,
+   * not the score threshold, is what made it miss faces. Measured on the owner's own photos by
+   * running this cascade outside the browser (2026-08-17):
+   *
+   *     photo   coarse+strict     fine+strict
+   *     SRC2    nothing           410.0     <- eight times the threshold, missed by the sweep
+   *     REF3    nothing           151.7
+   *     SRC1    nothing            54.7
+   *
+   * None of those are weak detections. The coarse sweep simply never landed a window on the face,
+   * so an obvious front-facing head came back as "no face" and went to the model unblurred — the
+   * single most reliable way to lose the character.
+   *
+   * With both passes scanning finely the difference between them is honest: pass one demands
+   * upstream's confident score of 50, pass two accepts 15 for a turned or partly hidden face and
+   * pays for it with the occasional false box, which is what autoBlurFace's gate is for. It also
+   * means far fewer photos ever reach that second pass.
+   *
+   * The cost is small: detection returns at the first angle that hits, and an upright face hits at
+   * 0 degrees immediately.
+   */
   const params = {
-    // Aggressive mode steps the window in finer increments and looks for smaller faces.
-    // Slower, but a retry that repeats the same scan is not a retry.
-    shiftfactor: aggressive ? 0.05 : 0.1,
+    shiftfactor: 0.05,
     maxsize: Math.min(w, h),
-    scalefactor: aggressive ? 1.05 : 1.1,
+    scalefactor: 1.05,
   };
-  // 50 is upstream's threshold for a confident hit. A retry accepts weaker evidence, which finds
-  // turned or partly hidden faces at the cost of the occasional false box.
   const minScore = aggressive ? 15.0 : 50.0;
 
   for (const deg of ANGLES) {
@@ -114,7 +134,9 @@ export async function detectFacePico(dataUrl, { aggressive = false } = {}) {
     const dets = pico.run_cascade(
       { pixels: r.grey, nrows: r.h, ncols: r.w, ldim: r.w },
       classifier(),
-      { ...params, minsize: Math.round(Math.min(r.w, r.h) * (aggressive ? 0.04 : 0.08)), maxsize: Math.min(r.w, r.h) },
+      // Same smallest-face floor on both passes, for the same reason the scan is the same: a
+      // face that is small in frame is not a less certain face, it is a smaller one.
+      { ...params, minsize: Math.round(Math.min(r.w, r.h) * 0.04), maxsize: Math.min(r.w, r.h) },
     );
 
     // Overlapping hits on one face are merged; the score threshold drops the noise.
