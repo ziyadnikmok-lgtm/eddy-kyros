@@ -123,8 +123,24 @@ async function callGemini(apiKey, modelId, parts, aspectRatio, imageSize, temper
         .filter((p) => !p.thought && p.text)
         .map((p) => p.text)
         .join(' ');
+      /**
+       * SAY WHAT ACTUALLY HAPPENED, because "reason: IMAGE_OTHER" tells nobody anything.
+       *
+       * IMAGE_OTHER is how this API refuses on content. There is no blockReason and no message —
+       * it simply answers with no image, and the raw finishReason was the only thing reaching the
+       * card. Owner, 2026-08-17: "why i click say every gneeration failed", with 11 of 11 bypass
+       * jobs that day ending exactly here.
+       *
+       * It matters that this reads as a REFUSAL rather than a fault, because the two have different
+       * fixes: a refusal means run it on WaveSpeed, where the guard draws the line elsewhere — the
+       * queue's own fallback does that automatically, so the message names it as what to expect.
+       * The raw reason is kept in the text, in brackets, for anyone diagnosing.
+       */
+      const REFUSALS = new Set(['IMAGE_OTHER', 'IMAGE_SAFETY', 'SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST']);
       throw new AppError(
-        `Nano Bypass returned no image (reason: ${finishReason})${textParts ? ` — ${textParts.slice(0, 200)}` : ''}`,
+        REFUSALS.has(finishReason)
+          ? `Google refused this image — its content filter, not an error (${finishReason}). Seedream 5 Pro on WaveSpeed takes over automatically; if that account is out of credits the job stops here.${textParts ? ` — ${textParts.slice(0, 160)}` : ''}`
+          : `Nano Bypass returned no image (reason: ${finishReason})${textParts ? ` — ${textParts.slice(0, 200)}` : ''}`,
         502,
         'NANO_BYPASS_NO_IMAGE'
       );

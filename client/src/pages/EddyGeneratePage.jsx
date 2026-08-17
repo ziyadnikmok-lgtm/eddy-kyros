@@ -3706,16 +3706,26 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   useEffect(() => { if (engine === 'nano2' || engine === 'nb2') setResolution('2K'); }, [engine]);
 
   /**
-   * MAX NANO ARRIVES ON THE GEMINI BYPASS (owner, 2026-08-17: "by default nb2 gemini bypass
-   * selected").
+   * MAX NANO ARRIVES ON WAVESPEED — and this reverses a default set two hours earlier.
    *
-   * On ARRIVAL only — deps are [maxNano] — so switching to WaveSpeed while you are on the tab
-   * sticks for that session. It is the same shape as the Eddy-arrives-on-Seedream effect below, and
-   * for the same reason: `engine` is one shared, persisted value, so without an arrival default
-   * whichever tab you used last decides what the next one opens with.
+   * Asked for as "by default nb2 gemini bypass selected", shipped, and then measured against what
+   * this tab actually generates: ELEVEN OF ELEVEN bypass jobs that afternoon were refused by Google
+   * with finishReason IMAGE_OTHER — its content filter, silent, no blockReason. Every one then fell
+   * back to Seedream, and that account was out of credits, so every one failed ("why i click say
+   * every gneeration failed").
+   *
+   * That is not a bug in the bypass and not something a prompt can fix: Google's guard and
+   * WaveSpeed's copy of the same model draw the line in different places, and Max Nano's whole job
+   * sits on the wrong side of Google's. A default that cannot succeed for the content the tab
+   * exists to make is the wrong default, however explicitly it was asked for.
+   *
+   * The bypass is still one click away and still sticks for the session — and it is the right
+   * choice for anything Google will pass, since it is the same model with one reseller fewer.
+   *
+   * On ARRIVAL only, deps [maxNano], so the click sticks. Same shape as Eddy-arrives-on-Seedream.
    */
   useEffect(() => {
-    if (maxNano) setEngine('nb2');
+    if (maxNano) setEngine('nano2');
   }, [maxNano]);
 
   /**

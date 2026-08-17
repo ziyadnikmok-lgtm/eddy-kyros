@@ -69,16 +69,37 @@ check('an empty result is still a failure rather than a blank tile', nb2Branch.i
 // The WaveSpeed branch keeps ITS retry and fallback — that one is not on the queue's bypass path.
 check('the WaveSpeed branch is untouched', page.includes('data = await withEngineRetry(callNano2, { attempts: NANO2_ATTEMPTS });'));
 
-// --- THE DEFAULT ---------------------------------------------------------------------------------
-// Owner, 2026-08-17: "by default nb2 gemini bypass selected". On ARRIVAL only, so choosing WaveSpeed
-// while you are on the tab sticks for the session — the same shape as Eddy-arrives-on-Seedream.
-check('Max Nano arrives on the bypass', page.includes("if (maxNano) setEngine('nb2');"));
+// --- THE DEFAULT, AND WHY IT IS NOT THE BYPASS ------------------------------------------------------
+//
+// Asked for as "by default nb2 gemini bypass selected", shipped, then measured against what this tab
+// actually generates: ELEVEN OF ELEVEN bypass jobs that afternoon were refused by Google with
+// finishReason IMAGE_OTHER — its content filter, silent, no blockReason. Each fell back to Seedream,
+// that account was out of credits, and so every one failed ("why i click say every gneeration
+// failed").
+//
+// Google's guard and WaveSpeed's copy of the same model draw the line in different places, and Max
+// Nano's whole job sits on the wrong side of Google's. No prompt fixes that. A default that cannot
+// succeed for the content the tab exists to make is the wrong default, however explicitly asked for
+// — so the arrival default is WaveSpeed and the bypass is one click away.
+check('Max Nano arrives on WaveSpeed', page.includes("if (maxNano) setEngine('nano2');"));
+check('and the measurement that reversed the requested default is recorded',
+  /ELEVEN OF ELEVEN bypass jobs that afternoon were refused/.test(page));
 // Deps [maxNano], NOT [maxNano, engine] — an arrival default that re-fires on every engine change
-// is a lock, and you could never switch to WaveSpeed at all.
-check('and that effect depends on the TAB, not the engine — or it could never be changed', (() => {
-  const i = page.indexOf("if (maxNano) setEngine('nb2');");
+// is a lock, and the bypass could never be selected at all.
+check('and that effect depends on the TAB, not the engine — or the bypass could never be chosen', (() => {
+  const i = page.indexOf("if (maxNano) setEngine('nano2');");
   return i > -1 && page.slice(i, i + 120).includes('}, [maxNano]);');
 })());
+
+// --- A REFUSAL MUST READ AS A REFUSAL ------------------------------------------------------------
+// "Nano Bypass returned no image (reason: IMAGE_OTHER)" tells nobody anything, and it was the only
+// thing reaching the card while every job failed.
+check('a content refusal says so in words', svc.includes("Google refused this image — its content filter, not an error"));
+check('and names what happens next', svc.includes('Seedream 5 Pro on WaveSpeed takes over automatically'));
+check('and what stops it', svc.includes('if that account is out of credits the job stops here'));
+check('the refusal reasons are listed rather than matched loosely',
+  svc.includes("const REFUSALS = new Set(['IMAGE_OTHER', 'IMAGE_SAFETY', 'SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST']);"));
+check('a genuine fault still reports its raw reason', svc.includes('Nano Bypass returned no image (reason: ${finishReason})'));
 check('a separate guard still rejects anything that is not a Nano Banana route',
   page.includes("if (maxNano && engine !== 'nano2' && engine !== 'nb2') setEngine('nb2');"));
 
