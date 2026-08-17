@@ -191,6 +191,40 @@ check('the button REPLACES the picks rather than adding to them',
 check('the chips are generated from the shared vocabulary, not a local copy',
   page.includes('POSE_TAGS.map((tag)'));
 check('the shortfall is shown, not swallowed', page.includes('taking all ${d.poolSize}'));
+
+// --- ONE DRAW PER BASE PHOTO (owner, 2026-08-17: "i want randomized") -----------------------------
+//
+// The draw used to be a single list applied to every ticked base photo: three photos and
+// "randomise 12" meant the SAME twelve poses three times over — thirty-six renders carrying twelve
+// ideas. Each photo now gets its own independent draw from the same eligible pool, so the click is
+// worth three times as much at exactly the same price.
+check('the draw is per base photo when photos are ticked',
+  page.includes('for (const photoId of pickedBasePhotos) {') && page.includes('byPhoto[photoId] = drawn;'));
+check('and a single shared draw when none are', page.includes("if (!pickedBasePhotos.length) { setPosesByPhoto(null);"));
+// pickedPoses stays the union so the grid, the picked count and Clear all behave as they always did.
+check('the grid still shows every pose that was drawn', page.includes('setPickedPoses([...union]);'));
+check('combos spends the per-photo mapping', page.includes('const posesFor = (b) => (perPhoto && b != null ? perPhoto[b] : ps);'));
+check('and the mapping is in its deps, or the run would use a stale one',
+  /\}, \[pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, posesByPhoto,/.test(page));
+
+// STALENESS IS THE DANGER. A mapping made for other photos, or made before a pose was clicked by
+// hand, would decide the run from something the screen no longer shows.
+check('the mapping only applies when it covers exactly the photos ticked NOW',
+  page.includes('pickedBasePhotos.every((id) => Array.isArray(posesByPhoto[id]) && posesByPhoto[id].length)'));
+check('anything else falls back to the shared list', page.includes('? posesByPhoto : null;'));
+check('picking a pose or a photo by hand throws the draw away',
+  page.includes("const setPicked = (slot.key === 'pose' || slot.key === 'basephoto')")
+  && page.includes('{ setPosesByPhoto(null); rawSetPicked(v); }'));
+check('which covers Select all and Clear all too, since both go through it',
+  page.includes('onClick={() => keepScroll(() => setPicked([]))}'));
+
+// The image count is the number that has to be believed: this is where 12 becomes 36.
+check('the count multiplies by the number of photos',
+  page.includes('const photoCount = Math.max(1, pickedBasePhotos.length);')
+  && page.includes('pickedOutfits.length * photoCount || photoCount'));
+check('and the row says "each" so the number is not read as a total',
+  page.includes("` each · ${pickedBasePhotos.length} photos`"));
+
 check('the image count is shown at the point of the click', page.includes('d.images > 0 &&'));
 check('the button is disabled when there is nothing to draw', page.includes('disabled={!d.taking}'));
 check('the randomiser row is a SIBLING of the header, not inside it',

@@ -3463,6 +3463,22 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   const [characterName, setCharacterName] = useState(_cache.characterName || '');
   const [pickedOutfits, setPickedOutfits] = useState(_cache.pickedOutfits);
   const [pickedPoses, setPickedPoses] = useState(_cache.pickedPoses);
+  /**
+   * A SEPARATE DRAW FOR EACH BASE PHOTO (owner, 2026-08-17: "i want randomized").
+   *
+   * The draw used to be one list applied to everything: tick three base photos, randomise 12, and
+   * all three photos ran the SAME twelve poses. Thirty-six images, twelve ideas.
+   *
+   * This holds `{ basePhotoId: [poseId, ...] }` — one independent draw per photo. combos reads it
+   * when it is populated, so the same click now yields thirty-six different pairings.
+   *
+   * It is a CACHE OF A DRAW, not selection state, and stale entries are the whole danger: a mapping
+   * left over from three other photos, or from before you clicked a pose by hand, would silently
+   * decide the run behind your back. So it is cleared whenever the photo selection or the pose
+   * selection changes by any route other than this draw. pickedPoses stays the union of everything
+   * drawn, so the grid highlights, the "N picked" count and Clear all behave exactly as before.
+   */
+  const [posesByPhoto, setPosesByPhoto] = useState(null);
   const [randomCount, setRandomCount] = useState(_cache.randomCount);
   const [randomTags, setRandomTags] = useState(_cache.randomTags);
   const [randomViews, setRandomViews] = useState(_cache.randomViews);
@@ -4778,14 +4794,29 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // With base photos ticked the product gains a dimension: every photo gets every pairing. With
     // none ticked it is exactly what it always was, driven by the single slot above.
     const bp = pickedBasePhotos.length ? pickedBasePhotos : [null];
-    const all = bp.flatMap((b) => os.flatMap((o) => ps.map((p) => ({ outfitId: o, poseId: p, basePhotoId: b }))));
+    /**
+     * EACH PHOTO ITS OWN POSES, when a per-photo draw is in hand.
+     *
+     * Without it every base photo runs the identical pose list, so ticking three photos and
+     * randomising twelve is thirty-six images of twelve ideas. posesByPhoto holds one draw per
+     * photo; this is where they are actually spent.
+     *
+     * Guarded rather than trusted: the mapping only applies when it covers exactly the photos that
+     * are ticked NOW. Any other case — a photo added since, a stale key, an empty draw — falls back
+     * to the shared list, which is the behaviour that has always worked.
+     */
+    const perPhoto = posesByPhoto && pickedBasePhotos.length
+      && pickedBasePhotos.every((id) => Array.isArray(posesByPhoto[id]) && posesByPhoto[id].length)
+      ? posesByPhoto : null;
+    const posesFor = (b) => (perPhoto && b != null ? perPhoto[b] : ps);
+    const all = bp.flatMap((b) => os.flatMap((o) => posesFor(b).map((p) => ({ outfitId: o, poseId: p, basePhotoId: b }))));
     if (!pickedOutfits.length || !pickedPoses.length) return all;
     const compatible = all.filter((c) => (
       (outfitViewOf(outfits.find((x) => x.id === c.outfitId), outfitFolderName(c.outfitId)) === 'closeup')
       === (readPoseView(poseById.get(c.poseId)?.prompt) === 'closeup')
     ));
     return compatible.length ? compatible : all;
-  }, [pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, outfitRotation, smartMatch, libItems, outfits, outfitFolders, poses, maxNano, maxOutfit]);
+  }, [pickedOutfits, pickedPoses, pickedBases, pickedBasePhotos, posesByPhoto, outfitRotation, smartMatch, libItems, outfits, outfitFolders, poses, maxNano, maxOutfit]);
 
   /**
    * THE BREAKDOWN: how many of the images about to be made are front, back and close-up.
@@ -4922,6 +4953,8 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     });
   };
 
+  // The per-photo draw is invalidated by the setter itself, not here — every call site passes the
+  // guarded `setPicked` from the picker below. See posesByPhoto.
   const toggle = (setter) => (id) => keepScroll(() => {
     setter((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   });
@@ -6840,10 +6873,22 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
               ? (() => { const ids = subtreeOf(slot.folders, folderFilter[slot.key]);
                   return slot.items.filter((i) => ids.has(i.folderId) && !slot.favIds.has(i.id)); })()
               : slot.items.filter((i) => !slot.favIds.has(i.id)));
-          const setPicked = slot.key === 'outfit' ? setPickedOutfits
+          const rawSetPicked = slot.key === 'outfit' ? setPickedOutfits
             : slot.key === 'base' ? setPickedBases
             : slot.key === 'basephoto' ? setPickedBasePhotos
             : setPickedPoses;
+          /**
+           * Any change to poses or base photos throws away the per-photo draw.
+           *
+           * posesByPhoto is a cache of one particular draw over one particular set of photos. Left
+           * alive through a Select all, a Clear all or a folder-wide pick, it would keep deciding
+           * the run from a mapping that no longer matches what is ticked — the picks would look
+           * right on screen and the renders would not follow them. combos guards against a stale
+           * mapping too; this is the cheaper half of the same rule, applied at the source.
+           */
+          const setPicked = (slot.key === 'pose' || slot.key === 'basephoto')
+            ? (v) => { setPosesByPhoto(null); rawSetPicked(v); }
+            : rawSetPicked;
           const allVisiblePicked = visible.length > 0 && visible.every((i) => slot.picked.includes(i.id));
           return (
           <Card key={slot.key} data-picker-slot={slot.key} className="p-4 space-y-3">
@@ -6904,7 +6949,10 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             {slot.key === 'pose' && openPickers.pose && visible.length > 0 && (() => {
               const pool = eligiblePoses(visible, { tags: randomTags, views: randomViews },
                 { readTags: readPoseTags, readView: readPoseView });
-              const d = describeDraw(randomCount, pool.length, pickedOutfits.length);
+              // A draw per base photo, so the image count is poses x outfits x PHOTOS. Stated here
+              // because this is where a 12-pose click quietly becomes 36 renders.
+              const photoCount = Math.max(1, pickedBasePhotos.length);
+              const d = describeDraw(randomCount, pool.length, pickedOutfits.length * photoCount || photoCount);
               const counts = chipCounts(visible, { tags: randomTags, views: randomViews },
                 { readTags: readPoseTags, readView: readPoseView },
                 { tags: POSE_TAGS, views: ['front', 'back', 'closeup'] });
@@ -6937,9 +6985,13 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
                       </button>
                     );
                   })}
-                  {/* Views are a SECOND family, so they get their own divider. Within a family the
-                      chips are OR (front or back); across families it is AND, so back + mirror
-                      selfie draws back-facing mirror selfies rather than the union of the two. */}
+                  {/* Views are a SECOND family, so they get their own divider.
+                      STALE COMMENT REMOVED (2026-08-17): this used to say the two families combine
+                      with AND — "back + mirror selfie draws back-facing mirror selfies". That was
+                      true when the chips INCLUDED. They exclude now, and eligiblePoses drops a pose
+                      that matches ANY ticked chip in EITHER family, so back + mirror selfie removes
+                      everything back-facing AND everything that is a mirror selfie. Exclusion has no
+                      across-family subtlety: "remove this, and also remove that" means one thing. */}
                   <span className="flex items-center gap-1 border-l border-white/[0.08] pl-2">
                     {['front', 'back', 'closeup'].map((v) => {
                       const on = randomViews.includes(v);
@@ -6954,9 +7006,32 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
                       );
                     })}
                   </span>
+                  {/**
+                    * ONE DRAW PER BASE PHOTO when photos are ticked (owner, 2026-08-17: "i want
+                    * randomized"). Three photos and "randomise 12" used to mean the same twelve
+                    * poses three times over — thirty-six images carrying twelve ideas. Now each
+                    * photo gets its own twelve, from the same eligible pool, so the click is worth
+                    * three times as much for exactly the same money.
+                    *
+                    * pickedPoses is still set to the UNION, so the grid highlights, the picked
+                    * count and Clear all all behave as they always have; combos is what reads the
+                    * per-photo mapping. With no base photos ticked there is nothing to vary and it
+                    * is a single draw, exactly as before.
+                    */}
                   <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs"
                     disabled={!d.taking}
-                    onClick={() => keepScroll(() => setPickedPoses(drawPoses(pool, randomCount)))}>
+                    onClick={() => keepScroll(() => {
+                      if (!pickedBasePhotos.length) { setPosesByPhoto(null); setPickedPoses(drawPoses(pool, randomCount)); return; }
+                      const byPhoto = {};
+                      const union = new Set();
+                      for (const photoId of pickedBasePhotos) {
+                        const drawn = drawPoses(pool, randomCount);
+                        byPhoto[photoId] = drawn;
+                        drawn.forEach((id) => union.add(id));
+                      }
+                      setPosesByPhoto(byPhoto);
+                      setPickedPoses([...union]);
+                    })}>
                     Randomise
                   </Btn>
                   {/* States the truth every time, including the shortfall. Asking for 30 and being
@@ -6967,6 +7042,9 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
                       : d.short
                         ? `only ${d.poolSize} match — taking all ${d.poolSize}`
                         : `${d.taking} of ${d.poolSize}`}
+                    {/* "each" is load-bearing: with photos ticked this draws that many PER photo,
+                        and the image count below is the one that has to be believed. */}
+                    {pickedBasePhotos.length > 1 && d.taking > 0 && ` each · ${pickedBasePhotos.length} photos`}
                     {d.images > 0 && ` · ${d.images} image${d.images === 1 ? '' : 's'}`}
                   </span>
                 </div>
