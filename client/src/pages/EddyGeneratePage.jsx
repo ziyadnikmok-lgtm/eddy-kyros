@@ -5297,6 +5297,22 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
 
     let payload;
     let prompt;
+    /**
+     * WHICH SLOT EACH IMAGE LANDS IN — declared HERE, at function scope, not inside the branch.
+     *
+     * ⚠️ These were `let` inside the re-roll block, and the bypass's label builder further down read
+     * them from outside it. Valid syntax, so it built cleanly — and threw ReferenceError on every
+     * single click, before any request left the browser. "nzh it didint even try" (owner,
+     * 2026-08-17), and the server log agreed: not one POST /api/jobs while every card failed.
+     *
+     * They belong out here anyway. Two things need them now — buildPrompt, which names the images in
+     * prose, and the bypass labels, which name them where they sit — and those two MUST agree about
+     * which image is the pose diagram. One declaration is what makes that structural rather than
+     * hopeful.
+     */
+    let outfitIndex = 0;
+    let poseIndex = 0;
+    let faceIndex = 0;
     // Carried only by the re-roll path (read from the source pose); the edit path replaces an
     // existing tile whose videoPrompt is already set and never reaches the fresh-tile branch, so ''
     // is correct there.
@@ -5408,9 +5424,11 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
        */
       const faceImg = maxOutfit ? null : (comboFace || charPayload[1] || null);
       payload = mainImg ? [mainImg] : [];
-      let outfitIndex = 0;
-      let poseIndex = 0;
-      let faceIndex = 0;
+      // Assignment, not declaration — see the note beside `let payload`. Re-declaring here would
+      // shadow the outer ones and put the label builder back on undefined values.
+      outfitIndex = 0;
+      poseIndex = 0;
+      faceIndex = 0;
 
       let poseText = '';
       let poseFaceless = false;

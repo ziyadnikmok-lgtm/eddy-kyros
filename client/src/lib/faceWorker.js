@@ -19,6 +19,14 @@
  * the result back into a data URL. The SWEEP is imported from detectFacePico rather than copied —
  * two cascade implementations that must agree exactly is how they stop agreeing.
  */
+/*
+ * eslint-env worker
+ *
+ * Not decoration: this file runs in a Worker, and its globals are not the browser's. Without this,
+ * FileReaderSync — which exists only in workers, and is the one way to turn a Blob into a data URL
+ * without a callback — reads as an undefined variable and check-lint.js fails the whole client.
+ */
+/* global FileReaderSync, OffscreenCanvas, createImageBitmap, self */
 import { sweepPlane, greyscalePlane, verifyLooseBox, SCAN_EDGE } from './detectFacePico';
 
 /**
