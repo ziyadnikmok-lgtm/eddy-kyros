@@ -1150,6 +1150,34 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
     lines.push(hasTweak
       ? `POSE MATCH: trace image ${poseIndex}'s silhouette — limb angles, hands, feet, head tilt, torso twist — except where the CORRECTION says otherwise.`
       : `POSE MATCH — TOP PRIORITY FOR THE SHOT: reproduce image ${poseIndex}'s pose EXACTLY, joint for joint — every limb angle, the hands, the feet, the head tilt, the torso arch and twist. Trace the silhouette; do NOT reinterpret or "improve" it.`);
+    /**
+     * THE ROOM, RESTATED AT THE TAIL — and this is the whole fix (owner, 2026-08-17: "in max nano
+     * it using the background of the pose image not of the base image wtf").
+     *
+     * The setting lock is not missing. THE SETTING COMES FROM IMAGE 1 AND NOTHING ELSE is already up
+     * there, and so is the ban on the pose DESCRIPTION's furniture. The problem is where they sit:
+     * mid-prompt, and then the last four things the model reads are CAMERA ANGLE — MATCH THE POSE
+     * DIAGRAM EXACTLY, FRAMING — THIS OVERRIDES EVERYTHING ABOUT THE SHOT, POSE MATCH — TOP PRIORITY,
+     * and an identity check. Three consecutive absolutes pointing at the diagram, with nothing at the
+     * tail saying the ROOM is not part of what they are pointing at.
+     *
+     * This file has learned the same lesson three times already — the bust lock, the framing line and
+     * the face lock each had to be restated at the end for exactly this reason, and each comment says
+     * so. The scene is the one that had not been.
+     *
+     * The last sentence is the load-bearing one. Matching the diagram's crop and camera almost always
+     * reveals space that is outside image 1's frame, and the model has to invent it. The only other
+     * room in the payload is the diagram's, so that is what it reaches for. Saying whose space it is
+     * costs one sentence.
+     *
+     * ON LENGTH, since two comments above worry about it: the "~5.3k = a 422" figure they cite is
+     * MUAPI's limit, and Eddy has not gone through Muapi since the WaveSpeed path was added —
+     * wavespeedService says so in as many words ("WaveSpeed documents no prompt-length cap, which is
+     * the whole reason this path exists"). Measured today, the prompt this function actually emits is
+     * 5,414 chars for an Eddy nude run and 7,530 with an outfit, and neither 422s. So there is room
+     * for a sentence that earns it; there is still no room for a paragraph that does not.
+     */
+    lines.push(`THE ROOM IS IMAGE 1'S, AND THE CAMERA DOES NOT CHANGE THAT: image ${poseIndex} gives the body position, the camera and the crop — and NOTHING of its room, walls, floor, furniture, props, bedding or view. Where the new framing shows space beyond image 1's edges, extend image 1's OWN room into it. Never image ${poseIndex}'s.`);
   }
 
   // The identity lock demands a face by default (portrait or a normal pose). ONLY when the FACELESS
