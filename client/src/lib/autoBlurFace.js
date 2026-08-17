@@ -75,7 +75,12 @@ export async function findFace(dataUrl) {
   if (!loose) return { box: null, confident: false, present: false };
   // A rejected loose match still means a face is PROBABLY there — it just is not one this box
   // describes. So it counts as present (the shot is not a back view) but is not blurred.
-  if (!looksLikeAFace(loose)) return { box: null, confident: false, present: true, rejected: true };
+  //
+  // `unverified` is the same verdict from the other direction: detectFacePico cropped the match out
+  // of the original at 256px, re-scanned it at the confident threshold and did not find a face
+  // there. Treated identically, and deliberately NOT as "no face in this photograph" — that answer
+  // would flip the source to back view and take the face rules out of the prompt.
+  if (loose.unverified || !looksLikeAFace(loose)) return { box: null, confident: false, present: true, rejected: true };
   return { box: loose, confident: false, present: true };
 }
 

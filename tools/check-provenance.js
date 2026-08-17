@@ -109,7 +109,13 @@ check('and the ids behind it',
   && gen.includes('poseId: combo?.poseId || null')
   && gen.includes('outfitId: combo?.outfitId || null'));
 check('and who it was filed under', gen.includes("charName: filedUnder || ''"));
-check('and what it cost, for the spend total', gen.includes('price: perImageCost'));
+// CHANGED 2026-08-17: priced by what RAN, not what was asked for. A Nano Banana job the queue
+// gives up on is re-run on Seedream 5 Pro server-side; filed at the bypass's rate it under-reports
+// the row, and spentToday is summed FROM these rows.
+check('and what it cost, for the spend total', gen.includes('price: paidCost,'));
+check('which is the price of the engine that actually ran',
+  gen.includes('const paidCost = usedFallback')
+  && gen.includes("? priceOne('seedream', resolution, perRunImages)"));
 check('provenance is imported, not re-implemented inline', gen.includes("from '../lib/provenance'"));
 check('the key is built from the SAME engine and resolution the run used',
   /engine,\s+resolution,\s+\}\);/.test(gen));

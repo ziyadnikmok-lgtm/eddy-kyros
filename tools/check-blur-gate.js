@@ -22,6 +22,7 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
 const src = read('client/src/lib/autoBlurFace.js');
 const det = read('client/src/lib/detectFacePico.js');
+const worker = read('client/src/lib/faceWorker.js');
 
 let pass = 0; let fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };
@@ -127,6 +128,23 @@ check('and the smallest-face floor', det.includes('minsize: Math.round(Math.min(
 check('the ONLY difference is the score threshold', det.includes('const minScore = aggressive ? 15.0 : 50.0;'));
 check('and the measurement is recorded, not just the change', det.includes('coarse+strict'));
 
+// --- the two paths must AGREE, including on how they fail -------------------------------------------
+//
+// Found in the 2026-08-17 audit, before it shipped. detectFacePico returned NULL when the 256px
+// re-scan refused a loose match, while the worker returned {present: true, rejected: true}. Null
+// does not mean "not a face" to the caller — it means "no face in this photograph", and that answer
+// flips the source to BACK VIEW and strips the face rules out of the prompt.
+//
+// So the same photo would have been a back view or a front shot depending only on whether a worker
+// happened to take it. The box now comes back MARKED instead.
+check('a failed second look marks the box rather than erasing it',
+  det.includes('return ok ? box : { ...box, unverified: true };'));
+check('and the caller refuses to blur it while still counting a face as present',
+  src.includes('if (loose.unverified || !looksLikeAFace(loose)) return { box: null, confident: false, present: true, rejected: true };'));
+check('which is exactly what the worker answers', worker.includes('if (!verified) return { box: null, confident: false, present: true, rejected: true };'));
+check('the reason is written down where it was nearly lost',
+  /flips the source to BACK VIEW/.test(det));
+
 // --- one detection per photo, feeding both answers ------------------------------------------------
 // Adding a source ran the detector three times — a loose back-view check, a strict blur pass and a
 // loose one — each decoding and sweeping eight rotations before the thumbnail appeared. They could
@@ -152,7 +170,6 @@ check('the page no longer calls the detector itself', !page.includes("from '../l
 // A photo that lands on a worker and the same photo that falls back must get the same verdict, so
 // the sweep is imported rather than copied. The gate constants ARE duplicated in the worker (they
 // sit beside blurRegion's DOM canvas, which a worker cannot load) — hence these assertions.
-const worker = read('client/src/lib/faceWorker.js');
 check('the worker imports the sweep instead of copying it',
   worker.includes("from './detectFacePico'") && worker.includes('sweepPlane') && worker.includes('greyscalePlane'));
 check('and the sweep is exported as DOM-free for exactly that reason',

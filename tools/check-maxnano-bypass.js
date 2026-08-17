@@ -55,7 +55,12 @@ check('the bypass branch enqueues once', (nb2Branch.match(/await runEdit\(/g) ||
 // The words appear in the branch's own comment explaining why they are absent, so these look for
 // the CALL rather than the mention.
 check('with no client retry wrapper', !/=\s*await withEngineRetry\(/.test(nb2Branch));
-check('and no client-side Seedream fallback', !nb2Branch.includes('usedFallback = true;'));
+// It DOES read the queue's verdict back — that is not a client-side fallback, it is believing the
+// server's answer about which engine ran. What it must not do is issue its own Seedream call.
+check('and no client-side Seedream fallback call', !/runEdit\(\{[^}]*tags: \[\.\.\.eddyTags/.test(nb2Branch));
+check('but it does read the queue verdict, so a fallback is labelled and priced honestly',
+  nb2Branch.includes("if (data.fellBack || data.model === 'seedream5') {")
+  && nb2Branch.includes("engineLabel = 'Seedream 5.0 Pro Edit (fallback)';"));
 check('the reason is written down', /queue already does both, and better/.test(page));
 check('an empty result is still a failure rather than a blank tile', nb2Branch.includes("throw new Error('Nano Banana 2 (bypass) returned no image')"));
 // The WaveSpeed branch keeps ITS retry and fallback — that one is not on the queue's bypass path.

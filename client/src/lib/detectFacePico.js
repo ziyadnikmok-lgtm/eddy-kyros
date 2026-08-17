@@ -167,7 +167,19 @@ export async function detectFacePico(dataUrl, { aggressive = false } = {}) {
     cctx.drawImage(img, sx, sy, sw, sh, 0, 0, cw, ch);
     return { grey: greyscalePlane(cctx.getImageData(0, 0, cw, ch).data, cw, ch), w: cw, h: ch };
   });
-  return ok ? box : null;
+  /**
+   * A FAILED SECOND LOOK IS NOT THE SAME AS "NOTHING HERE" — returning null would say it was.
+   *
+   * The caller reads "no box at all" as "this photograph has no face in it", and that answer does
+   * more than skip the blur: it flips the source to BACK VIEW, which strips the face rules out of
+   * the prompt. A chest that failed verification says nothing about whether she is facing the
+   * camera, and the worker path already gets this right — it reports {present: true, rejected:
+   * true}. Returning null here would have made the same photo a back view on one path and a front
+   * shot on the other, depending only on whether a worker happened to take it.
+   *
+   * So the box comes back MARKED. findFace refuses to blur it and still counts a face as present.
+   */
+  return ok ? box : { ...box, unverified: true };
 }
 
 /**

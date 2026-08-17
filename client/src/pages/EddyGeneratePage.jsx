@@ -5421,7 +5421,15 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     }
 
     const feedId = `eddy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const engineLabel = engine === 'nb2' ? 'Nano Banana 2 (Gemini bypass)'
+    /**
+     * `let`, because on the bypass the engine that RUNS is not always the one that was asked for.
+     *
+     * A bypass job the queue gives up on is re-run on Seedream 5 Pro server-side, and the answer
+     * comes back carrying model:'seedream5' and a 'fallback' tag. Left as a const computed before
+     * the call, the tile would keep claiming Nano Banana for a picture Seedream made — the same
+     * quiet lie as a green tick with no proof behind it. Re-derived below once the queue answers.
+     */
+    let engineLabel = engine === 'nb2' ? 'Nano Banana 2 (Gemini bypass)'
       : engine === 'nano2' ? 'Nano Banana 2 (WaveSpeed)' : 'Seedream 5.0 Pro Edit';
     pushPending({ id: feedId, prompt, imageModel: engineLabel, aspectRatio: ratio, resolutionTier: resolution });
 
@@ -5455,6 +5463,23 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           tags: eddyTags(isEdit, characterName),
         });
         if (!(data.images || []).length) throw new Error('Nano Banana 2 (bypass) returned no image');
+        /**
+         * DID THE QUEUE FALL BACK? Ask it, do not assume.
+         *
+         * The swap happens on the SERVER (generationReconciler: NB2_ATTEMPTS generation failures,
+         * or NB2_RATE_LIMIT_TOLERANCE quota refusals), so nothing on this side sees it happen. The
+         * job comes back tagged 'fallback' with model 'seedream5', and both the label and the PRICE
+         * have to follow it — otherwise a Seedream render is filed as Nano Banana at Nano Banana's
+         * rate, and the spend total, which is summed from those rows, is quietly wrong.
+         */
+        if (data.fellBack || data.model === 'seedream5') {
+          usedFallback = true;
+          engineLabel = 'Seedream 5.0 Pro Edit (fallback)';
+          if (!warnedFallback.current) {
+            warnedFallback.current = true;
+            notify(`Nano Banana 2 could not finish an image — Seedream 5.0 Pro did it instead. Those are tagged "fallback".`, 'error');
+          }
+        }
       } else if (engine === 'nano2') {
         /**
          * Nano Banana 2 on WaveSpeed — the Vertex / Nano-Bypass path this replaces is gone.
@@ -5531,6 +5556,21 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       warnedProvider.current = true;
       notify('No WaveSpeed key — running on Muapi, which rejects long prompts. Add the key in API Keys.', 'error');
     }
+
+    /**
+     * PRICED BY WHAT RAN, not by what was asked for.
+     *
+     * A fallen-back image is a Seedream render on the WaveSpeed key. Filed at the bypass's rate it
+     * under-reports the row, and `spentToday` is summed FROM those rows — so the one number on the
+     * page that is supposed to be the honest total drifts. Photo Match made this same correction on
+     * 2026-08-16; this is the Eddy half of it.
+     *
+     * Only the bypass can reach here with usedFallback set from the SERVER. The WaveSpeed branch
+     * sets it too, and it is the same correction for the same reason.
+     */
+    const paidCost = usedFallback
+      ? priceOne('seedream', resolution, perRunImages)
+      : perImageCost;
 
     const first = (data.images || [])[0];
     if (!first) {
@@ -5696,7 +5736,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             outfitId: combo?.outfitId || null,
             comboKey: rowComboKey,
             charName: filedUnder || '',
-            price: perImageCost,
+            price: paidCost,
           }],
           libFolderId,
         );
