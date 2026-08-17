@@ -21,6 +21,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
 const src = read('client/src/lib/autoBlurFace.js');
+const det = read('client/src/lib/detectFacePico.js');
 
 let pass = 0; let fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };
@@ -75,6 +76,39 @@ check('a big match HIGH in the frame is kept — that is where heads are',
 check('the same size LOW in the frame is rejected — that is where hips are',
   rejects({ x: 0.25, y: 0.5, w: 0.5, h: 0.5 }));
 
+// --- WHICH detection wins when a photo has more than one -------------------------------------------
+//
+// ⚠️ THE ONE THAT WAS ACTUALLY BLURRING HER CHEST (owner, 2026-08-17: "sometimes it blur random
+// stuff not the face"). The winner was picked by SIZE alone — "biggest wins, the subject's face is
+// the large one" — which holds right up until the biggest match is not a face.
+//
+// Measured over 60 real generated photos: 5 had more than one detection, and in every one of those
+// the largest was not the best. The scores are nowhere near each other:
+//
+//     photo      biggest (what shipped)   best      what the big box actually was
+//     037f685c   score   61, 206px        2025      bare chest
+//     046f7a4c   score  224, 176px        1896      bikini chest
+//     00561834   score  333, 149px        1287      torso in a dress
+//     0102c6f9   score   60, 153px         854      chest and neck
+//     02d6efb8   score  257,  73px         434      also her face, one pixel smaller
+//
+// Crops of all five were compared side by side before and after: every one moved from a chest to a
+// face, and the box centre moved from 40-45% of frame height to 11-29% — where heads are.
+//
+// AND NOTE WHERE THIS SITS: it is the STRICT pass. Both other guards — the size/position gate and
+// the 256px re-scan — only ever look at LOOSE matches, so neither could have caught it.
+const CONFIDENT = Number(/const CONFIDENT_FRACTION = ([0-9.]+);/.exec(det)[1]);
+check(`confidence is ranked before size (fraction ${CONFIDENT})`, CONFIDENT > 0 && CONFIDENT < 1);
+check('the weak candidates are dropped first', det.includes('const confident = clustered.filter((d) => d[3] >= topScore * CONFIDENT_FRACTION);'));
+check('and the biggest of what REMAINS is chosen — the original rule, on real faces only',
+  det.includes('confident.sort((a, b) => b[2] - a[2]);') && det.includes('const [rowCentre, colCentre, size] = confident[0];'));
+check('the naive size sort is gone', !det.includes('clustered.sort((a, b) => b[2] - a[2]);'));
+check('and the measurement is recorded, not just the change', det.includes('bare chest') && det.includes('bikini chest'));
+// The threshold has to separate the two groups the measurement found: false picks at 3-26% of the
+// best score, and one harmless same-face disagreement at 59%.
+check('the fraction rejects every measured false pick', [61 / 2025, 224 / 1896, 333 / 1287, 60 / 854].every((r) => r < CONFIDENT));
+check('and keeps the one that was two boxes on the same face', 257 / 434 > CONFIDENT);
+
 // --- both passes must scan the SAME way, differing only in evidence required --------------------
 //
 // The first pass stepped the window at 0.1 and scaled at 1.1 — a coarse sweep — and that, not the
@@ -87,7 +121,6 @@ check('the same size LOW in the frame is rejected — that is where hips are',
 //     SRC1    nothing          54.7
 //
 // None of those are weak detections, and each one went to the model with an unblurred rival face.
-const det = read('client/src/lib/detectFacePico.js');
 check('the scan step is the same on both passes', /shiftfactor: 0.05,/.test(det) && !/shiftfactor: aggressive/.test(det));
 check('the scale step too', /scalefactor: 1.05,/.test(det) && !/scalefactor: aggressive/.test(det));
 check('and the smallest-face floor', det.includes('minsize: Math.round(Math.min(r.w, r.h) * 0.04)'));

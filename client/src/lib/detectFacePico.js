@@ -36,6 +36,16 @@ function classifier() {
  */
 const ANGLES = [0, -20, 20, -40, 40, 90, -90, 180];
 
+/**
+ * How much weaker than the best detection a candidate may be and still be considered the subject.
+ *
+ * 0.4 was chosen from the measurement in sweepPlane: the false picks scored 3%, 7%, 12% and 26% of
+ * the best in the same photo, while the one harmless disagreement — two boxes on the same face —
+ * scored 59%. Anything from roughly 0.3 to 0.5 separates those two groups; 0.4 sits in the middle
+ * of the gap rather than on either edge of it.
+ */
+const CONFIDENT_FRACTION = 0.4;
+
 /** Rotate a greyscale plane by whole degrees, returning the new plane and its dimensions. */
 function rotatePlane(grey, w, h, deg) {
   if (!deg) return { grey, w, h };
@@ -213,10 +223,39 @@ export function sweepPlane(grey, w, h, aggressive = false) {
     const clustered = pico.cluster_detections(dets, 0.2).filter((d) => d[3] > minScore);
     if (!clustered.length) continue;
 
-    // Biggest wins: on a pose photo the subject's face is the large one, and a face in a poster
-    // on the wall is not what needs hiding.
-    clustered.sort((a, b) => b[2] - a[2]);
-    const [rowCentre, colCentre, size] = clustered[0];
+    /**
+     * CONFIDENCE FIRST, SIZE SECOND — and getting that order wrong is what blurred her chest.
+     *
+     * This was a plain sort by size: "biggest wins — on a pose photo the subject's face is the
+     * large one, and a face in a poster on the wall is not what needs hiding." True, right up until
+     * the biggest match is not a face at all. Then the largest box wins on size alone, and it is the
+     * one that gets painted over (owner, 2026-08-17: "sometimes it blur random stuff not the face").
+     *
+     * MEASURED, on 60 real generated photos: 5 had more than one detection and in every one of
+     * those the largest was NOT the best. The scores are not close —
+     *
+     *     photo      biggest (what shipped)     best score     what the big box actually was
+     *     037f685c   score   61,  206px         score 2025     bare chest
+     *     046f7a4c   score  224,  176px         score 1896     bikini chest
+     *     00561834   score  333,  149px         score 1287     torso in a dress
+     *     0102c6f9   score   60,  153px         score  854     chest and neck
+     *     02d6efb8   score  257,   73px         score  434     also her face, 1px smaller
+     *
+     * A real face scores in the hundreds or thousands; these blobs score 60-333 and only cleared the
+     * bar because the STRICT threshold is 50. Note where that leaves the other two guards: both the
+     * size/position gate and the 256px re-scan apply to LOOSE matches only, so neither of them ever
+     * saw any of this. It was the confident pass all along.
+     *
+     * So: keep only detections within a fraction of the best score, and take the biggest of THOSE.
+     * The original reasoning survives intact — among candidates that are genuinely faces, the
+     * subject's is still the large one and the poster on the wall still loses. The last row above is
+     * why the rule is a fraction rather than "highest score wins": two boxes on the same face, one
+     * pixel apart, and the bigger one is the better crop.
+     */
+    const topScore = clustered.reduce((best, d) => Math.max(best, d[3]), 0);
+    const confident = clustered.filter((d) => d[3] >= topScore * CONFIDENT_FRACTION);
+    confident.sort((a, b) => b[2] - a[2]);
+    const [rowCentre, colCentre, size] = confident[0];
 
     // Back to the original frame before turning it into a box, or a face found at 90 degrees would
     // be blurred in the wrong place entirely.
