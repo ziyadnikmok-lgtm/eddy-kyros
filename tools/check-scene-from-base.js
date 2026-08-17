@@ -78,6 +78,11 @@ check('and it says whose space fills what the new framing reveals',
 check('the tail line covers the clothes, not only the room', p.includes('THE ROOM AND THE CLOTHES'));
 check('and bans clothing from the diagram explicitly', p.includes('bedding, view or clothing'));
 check('naming where the clothes DO come from', p.includes('She wears what she wears in image 1 — not what the stand-in has on'));
+// MEASURED after the rewording: room held twice, top and trousers held twice, and one of the two
+// runs came back in the stand-in's white boots carrying her green bag. "Clothing" did not read as
+// covering accessories, so they are named.
+check('and accessories are named, because boots and a bag leaked when they were not',
+  p.includes('that includes shoes, boots, bags, jewellery and anything she is holding'));
 // It has to follow where the clothes actually come from, or the line becomes the contradiction it
 // exists to prevent. Written per case, because splicing fragments produced "THE ROOM ARE IMAGE 1'S".
 {
@@ -90,6 +95,31 @@ check('naming where the clothes DO come from', p.includes('She wears what she we
     && !nude.includes('or clothing'));
   check('and no case produces broken grammar', !nude.includes('THE ROOM ARE') && !outfit.includes('THE ROOM ARE'));
 }
+
+// --- THE THREE PHRASES THAT LICENSED THE LEAK -----------------------------------------------------
+//
+// ⚠️ Third report of the same symptom, this time with the full prompt pasted — every lock present
+// and correct, and the room STILL coming from the pose photo. So the fault is not a missing rule;
+// it is three phrases that grant one.
+//
+//   1. "image 2 supplies the shot, including where the camera is" — a photograph IS a shot. Read
+//      plainly, that sentence hands the model image 2's picture.
+//   2. "CAMERA ANGLE — MATCH THE POSE DIAGRAM EXACTLY" — with no statement that the camera is
+//      re-staged in image 1's room, matching it exactly is most easily done by keeping image 2.
+//   3. "FRAMING — THIS OVERRIDES EVERYTHING ABOUT THE SHOT" — the loud word is EVERYTHING, and it
+//      sits at 79%, well after the setting lock at 55%. An override that outranks the room is
+//      exactly how the room gets overridden.
+//
+// None of these were wrong about the SHOT. They were unscoped about the SCENE.
+check('the diagram supplies the camera, not the photograph',
+  p.includes('supplies ONLY the camera — where it stands, how far away it is and how much it frames. It does not supply the photograph.'));
+check('the camera is explicitly re-staged inside the base photo room',
+  p.includes("the camera, not the photograph — it is re-staged inside image 1's room"));
+check('and the framing override is scoped to the shot alone',
+  p.includes('THIS OVERRIDES EVERYTHING ABOUT THE SHOT, AND NOTHING ABOUT THE SCENE: it decides the crop and the distance, never the room, the clothes or who she is'));
+check('the old unscoped phrasing is gone',
+  !p.includes('supplies the shot, including where the camera is')
+  && !src.includes('`FRAMING — THIS OVERRIDES EVERYTHING ABOUT THE SHOT: match'));
 
 // --- POSITION IS THE WHOLE POINT ----------------------------------------------------------------------
 const at = (out, needle) => out.indexOf(needle);

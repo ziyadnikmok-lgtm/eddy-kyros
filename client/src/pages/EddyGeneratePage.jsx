@@ -1000,7 +1000,7 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
     lines.push(`Image ${poseIndex} is a POSE DIAGRAM, not a person. A DIFFERENT woman appears in it and she is NOT the subject — she is a stand-in showing the shape to copy.`);
     // The pose counterpart to "ignore what she is wearing in the references". Without it image 1's
     // pose survives into the result and the diagram is ignored — the exact failure reported.
-    lines.push(`IGNORE THE POSE SHE IS IN IN HER REFERENCE PHOTOS. Whatever she is doing in image 1 — how she sits, leans, holds her arms, where the camera was standing, how close it was — is NOT used. Her body position, her limbs, the CAMERA ANGLE and the crop come ONLY from image ${poseIndex}. Image 1 supplies who she is and the room; image ${poseIndex} supplies the shot, including where the camera is.`);
+    lines.push(`IGNORE THE POSE SHE IS IN IN HER REFERENCE PHOTOS. Whatever she is doing in image 1 — how she sits, leans, holds her arms, where the camera was standing, how close it was — is NOT used. Her body position, her limbs, the CAMERA ANGLE and the crop come ONLY from image ${poseIndex}. Image 1 supplies who she is and the room; image ${poseIndex} supplies ONLY the camera — where it stands, how far away it is and how much it frames. It does not supply the photograph.`);
     // The absolute "EXACTLY" is dropped when a tweak exists: it is the line most likely to be
     // the thing the user is trying to override ("her hand is broken", "turn her head towards me")
     // and an unqualified EXACTLY standing against that produces neither the pose nor the fix.
@@ -1133,10 +1133,10 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
     // images. Stated first of the two, both at the end where nothing competes with them.
     lines.push(hasTweak
       ? `CAMERA ANGLE: put the camera where the pose diagram's camera is — same height, same direction, same tilt — except where the CORRECTION at the end says otherwise.`
-      : `CAMERA ANGLE — MATCH THE POSE DIAGRAM EXACTLY: the camera sits in the SAME position relative to her as in the diagram. Same HEIGHT (below her looking up, level with her, or above her looking down), same DIRECTION (from the front, from the side, from behind, or overhead), same TILT and the same perspective. If the diagram looks UP at her from below, the result looks up at her from below. If it looks DOWN from above, the result looks down from above. If it is a POV down her own body, the result is that same POV. Do NOT re-shoot the pose from a different position, and do NOT default to a level, straight-on camera.`);
+      : `CAMERA ANGLE — MATCH THE POSE DIAGRAM EXACTLY (the camera, not the photograph — it is re-staged inside image 1's room): the camera sits in the SAME position relative to her as in the diagram. Same HEIGHT (below her looking up, level with her, or above her looking down), same DIRECTION (from the front, from the side, from behind, or overhead), same TILT and the same perspective. If the diagram looks UP at her from below, the result looks up at her from below. If it looks DOWN from above, the result looks down from above. If it is a POV down her own body, the result is that same POV. Do NOT re-shoot the pose from a different position, and do NOT default to a level, straight-on camera.`);
     lines.push(hasTweak
       ? `FRAMING: match the pose diagram's crop and camera distance — the same part of her body fills the frame — except where the CORRECTION at the end says otherwise.`
-      : `FRAMING — THIS OVERRIDES EVERYTHING ABOUT THE SHOT: match the pose diagram's crop EXACTLY. The result is framed on the SAME part of her body, at the SAME camera distance and zoom. If the diagram is a tight close-up of her chest and torso, the result is that same tight close-up — do NOT zoom out, step back or widen to show more of her, and do NOT widen to show the outfit. If the diagram is a full-body shot, the result is full-body. How much of her body is visible, and where the frame cuts her, must match the diagram.`);
+      : `FRAMING — THIS OVERRIDES EVERYTHING ABOUT THE SHOT, AND NOTHING ABOUT THE SCENE: it decides the crop and the distance, never the room, the clothes or who she is. Match the pose diagram's crop EXACTLY. The result is framed on the SAME part of her body, at the SAME camera distance and zoom. If the diagram is a tight close-up of her chest and torso, the result is that same tight close-up — do NOT zoom out, step back or widen to show more of her, and do NOT widen to show the outfit. If the diagram is a full-body shot, the result is full-body. How much of her body is visible, and where the frame cuts her, must match the diagram.`);
     // The FACE side of framing is the only part gated on the toggle: allowing her face out of frame
     // is a deliberate choice, while matching the crop is not.
     if (poseFaceless) {
@@ -1202,8 +1202,19 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
     const head = dressedFromBase ? "THE ROOM AND THE CLOTHES ARE IMAGE 1'S"
       : dressedFromOutfit ? "THE ROOM IS IMAGE 1'S AND THE CLOTHES ARE THE OUTFIT'S"
         : "THE ROOM IS IMAGE 1'S";
+    /**
+     * SHOES AND BAGS ARE CLOTHING TOO, and "clothing" alone did not cover them.
+     *
+     * Measured after the rewording above (2026-08-17): base = a pink bedroom, pose diagram = a woman
+     * outdoors in a denim skirt and white knee boots with a green bag. Two runs. The room held both
+     * times and the top and trousers held both times — and one of the two came back wearing the
+     * stand-in's WHITE BOOTS and carrying her GREEN BAG.
+     *
+     * Which is fair: the model was told her clothing comes from image 1, and boots and a bag read as
+     * accessories rather than clothing. Naming them costs six words.
+     */
     const clothesFrom = dressedFromBase
-      ? ' She wears what she wears in image 1 — not what the stand-in has on.'
+      ? ' She wears what she wears in image 1 — not what the stand-in has on, and that includes shoes, boots, bags, jewellery and anything she is holding.'
       : dressedFromOutfit
         ? ` Her clothing comes from the outfit above, never from image ${poseIndex}.`
         : '';
