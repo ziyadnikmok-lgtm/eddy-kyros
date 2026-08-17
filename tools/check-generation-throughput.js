@@ -123,7 +123,7 @@ check('an unmodelled job defaults to WaveSpeed, never Muapi',
 check('seedream5 is its own engine', rec.includes("if (model === 'seedream5' || model === 'seedream') return 'seedream5';"));
 check('and Muapi is only reached when explicitly asked for', rec.includes("if (model === 'muapi') return 'muapi';"));
 check('polling sends only explicit Muapi jobs to Muapi', rec.includes("engineOf(job) === 'muapi'"));
-check('everything else polls WaveSpeed, which is model-agnostic', rec.includes('await wavespeed.pollNanoBanana2(job.task_id)'));
+check('everything else polls WaveSpeed, which is model-agnostic', rec.includes('wavespeed.pollNanoBanana2(job.task_id)'));
 check('submitting routes seedream5 to WaveSpeed', rec.includes('await wavespeed.submitSeedream5Edit('));
 check('and nano2 to Nano Banana 2', rec.includes('await wavespeed.submitNanoBanana2Edit('));
 // A missing split must never fall through to another provider. Silently running Seedream work on

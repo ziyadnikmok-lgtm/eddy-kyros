@@ -120,11 +120,36 @@ function engineOf(job) {
   return job.payload?.provider === 'muapi' ? 'muapi' : 'nano2';
 }
 
+/**
+ * RUN THIS JOB AS THE PERSON WHO QUEUED IT.
+ *
+ * ⚠️ THE BUG THIS CLOSES — "WaveSpeed API key not configured. Add it in API Keys." on an account
+ * that plainly has one (owner, 2026-08-17).
+ *
+ * API keys are stored PER USER, and which user is resolved from AsyncLocalStorage: apiKeyManager
+ * reads getUserId(), and in the web deployment even the DATA DIRECTORY is derived from it
+ * (paths._getRoot -> WEB_DATA_ROOT/<userId>). That context is set by requireAuth on the way in from
+ * a request — and this worker is a setInterval. It has none.
+ *
+ * So every provider call from the queue looked up keys as nobody: an empty store in
+ * `server/` instead of the user's own, no WaveSpeed key, no Gemini key, and the honest error
+ * message from a service that genuinely could not find one. Locally it never showed, because
+ * ELECTRON_USER_DATA short-circuits the per-user path — which is exactly why it only ever appeared
+ * on the other machine.
+ *
+ * The job row carries user_id; runWithUser is the same helper _saveResult already uses, and the
+ * same one admin.js uses to act as another user. Everything that touches a key or the data
+ * directory now runs inside it.
+ */
+function asJobUser(job, fn) {
+  return runWithUser(job.user_id, fn);
+}
+
 async function _pollJob(job) {
   // pollNanoBanana2 is model-agnostic -- it reads a WaveSpeed prediction, whichever model made it.
-  const res = engineOf(job) === 'muapi'
-    ? await muapi.pollSeedreamEdit(job.task_id)
-    : await wavespeed.pollNanoBanana2(job.task_id);
+  const res = await asJobUser(job, () => (engineOf(job) === 'muapi'
+    ? muapi.pollSeedreamEdit(job.task_id)
+    : wavespeed.pollNanoBanana2(job.task_id)));
   if (res.status === 'processing') return false;
 
   if (res.status === 'failed') {
@@ -361,6 +386,12 @@ async function submitOne() {
   if (Date.now() < pausedUntil) return false;      // backing off — do not add to the pile
   const job = jobQueue.claimNext();
   if (!job) return false;
+  // Everything past this line reads keys, blobs and the data directory, all of which are resolved
+  // from the user context — see asJobUser. Without it the worker is nobody and has no keys.
+  return asJobUser(job, () => _submitClaimed(job));
+}
+
+async function _submitClaimed(job) {
   const engine = engineOf(job);
   try {
     // The row holds references; the bytes are read here, at the last possible moment, so a queue

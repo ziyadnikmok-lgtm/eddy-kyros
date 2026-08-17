@@ -8,7 +8,9 @@
 // What it enforces, on EVERY one of them:
 //   * it fits the budget it was given, so nothing gets sliced off the tail
 //   * the identity lock is present — that is the paragraph that stops a face swap
-//   * the lighting line is present — the owner asked for it on every prompt, verbatim
+//   * the lighting line is present — the owner asked for it on every prompt, verbatim — EXCEPT
+//     on an exact recreate, where it contradicts the source lighting and the EXACT RECREATE lock
+//     takes its place (2026-08-17)
 //   * no contradiction: the outfit cannot come from two places, a faceless result cannot be told
 //     to look at the lens, and a nude result cannot be given an outfit
 const fs = require('fs');
@@ -42,7 +44,7 @@ const FLAGS = ['exactRecreate', 'varyBackground', 'allowExpressionChange', 'allo
   'outfitFromChar', 'lookAtCamera'];
 
 // --- the sweep -------------------------------------------------------------------------------------
-const counts = { over: 0, noLock: 0, noLight: 0, clash: 0, threw: 0 };
+const counts = { over: 0, noLock: 0, noLight: 0, noExact: 0, clash: 0, threw: 0 };
 const firstProblem = {};
 for (let mask = 0; mask < (1 << FLAGS.length); mask += 1) {
   const opts = { characterName: 'Grace', refCount: 5, masterPrompt: 'x'.repeat(120), addGenericNudeLine: false, budget: BUDGET };
@@ -54,7 +56,11 @@ for (let mask = 0; mask < (1 << FLAGS.length); mask += 1) {
 
   if (out.length > BUDGET) { counts.over += 1; firstProblem.over = firstProblem.over || `${on()} -> ${out.length}`; }
   if (!out.includes('FINAL — HIGHEST PRIORITY')) { counts.noLock += 1; firstProblem.noLock = firstProblem.noLock || on(); }
-  if (!out.includes(LIGHT)) { counts.noLight += 1; firstProblem.noLight = firstProblem.noLight || on(); }
+  // The lighting line is the house default EVERYWHERE EXCEPT an exact recreate, which asks for the
+  // source's own light and would be flatly contradicted by it. So the invariant is: exactly one of
+  // the two is present — never neither, never both.
+  if (out.includes(LIGHT) === !!opts.exactRecreate) { counts.noLight += 1; firstProblem.noLight = firstProblem.noLight || on(); }
+  if (out.includes('EXACT RECREATE') !== !!opts.exactRecreate) { counts.noExact += 1; firstProblem.noExact = firstProblem.noExact || on(); }
 
   const outfitFromScene = /From image 6:[^\n]*outfit/.test(out);
   const outfitFromHer = out.includes('OUTFIT: she wears HER OWN');
@@ -68,7 +74,12 @@ for (let mask = 0; mask < (1 << FLAGS.length); mask += 1) {
 check(`all ${1 << FLAGS.length} combinations build without throwing${counts.threw ? ` — ${firstProblem.threw}` : ''}`, counts.threw === 0);
 check(`none exceeds the ${BUDGET}-character budget${counts.over ? ` — ${firstProblem.over}` : ''}`, counts.over === 0);
 check(`every one keeps the identity lock${counts.noLock ? ` — missing on ${firstProblem.noLock}` : ''}`, counts.noLock === 0);
-check(`every one carries the lighting line${counts.noLight ? ` — missing on ${firstProblem.noLight}` : ''}`, counts.noLight === 0);
+// CHANGED 2026-08-17: every prompt EXCEPT an exact recreate. "Reproduce image 5 exactly — same
+// lighting" and "lighting is soft and diffused" cannot both be obeyed, and the house default sits
+// later, where the weight is. Handed a harsh or neon-lit source the model softened it, which is
+// what "i selected exact recreate it doesnt do the exact recreate at all" looked like.
+check(`every non-exact prompt carries the lighting line${counts.noLight ? ` — missing on ${firstProblem.noLight}` : ''}`, counts.noLight === 0);
+check(`the exact-recreate lock appears exactly when the switch is on${counts.noExact ? ` — wrong on ${firstProblem.noExact}` : ''}`, counts.noExact === 0);
 check(`no combination contradicts itself${counts.clash ? ` — ${firstProblem.clash}` : ''}`, counts.clash === 0);
 
 // --- edges a sweep of booleans cannot reach -----------------------------------------------------------
@@ -94,8 +105,9 @@ for (const [name, opts] of [
 ]) {
   const out = build({ ...BASE, ...opts });
   const o = { ...BASE, ...opts };
-  check(`${name}: fits, locked, lit (${out.length})`,
-    out.length <= o.budget && out.includes('FINAL — HIGHEST PRIORITY') && out.includes(LIGHT));
+  check(`${name}: fits, locked, and lit or exact-locked (${out.length})`,
+    out.length <= o.budget && out.includes('FINAL — HIGHEST PRIORITY')
+    && (o.exactRecreate ? out.includes('EXACT RECREATE') : out.includes(LIGHT)));
 }
 
 /**
@@ -115,7 +127,9 @@ const sliced = combined.length > BUDGET ? combined.slice(0, BUDGET) : combined;
 check('below the floor it sheds rather than throwing', shed.length > 0);
 check('and the base alone is well under the cap', shed.length < BUDGET);
 check('so the identity lock survives the caller slice', sliced.includes('FINAL — HIGHEST PRIORITY'));
-check('and so does the lighting line', sliced.includes(LIGHT));
+// exactRecreate is on in this case, so the lighting line is deliberately absent — the EXACT
+// RECREATE lock is what has to survive the slice instead.
+check('and so does the exact-recreate lock', sliced.includes('EXACT RECREATE'));
 check('only the chips are lost, which the page reports', combined.length > sliced.length);
 
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);

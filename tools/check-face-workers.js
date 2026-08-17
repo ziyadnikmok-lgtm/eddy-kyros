@@ -47,9 +47,9 @@ check('a dead worker frees its slot instead of stalling the queue', pool.include
 // --- one detector, two homes ---------------------------------------------------------------------
 // A photo that lands on a worker and the same photo that falls back MUST get the same verdict.
 check('the sweep is exported DOM-free', det.includes('export function sweepPlane(grey, w, h, aggressive = false)'));
-check('the DOM path uses it', det.includes('return sweepPlane(grey, w, h, aggressive);'));
+check('the DOM path uses it', det.includes('const box = sweepPlane(grey, w, h, aggressive);'));
 check('and the worker imports it rather than copying the cascade loop',
-  worker.includes("import { sweepPlane, greyscalePlane, SCAN_EDGE } from './detectFacePico'"));
+  worker.includes("from './detectFacePico'") && worker.includes('sweepPlane') && worker.includes('verifyLooseBox'));
 check('the greyscale conversion is shared too', det.includes('export function greyscalePlane(rgba, w, h)'));
 check('and the scan edge is one number', det.includes('export const SCAN_EDGE = 640;') && worker.includes('SCAN_EDGE / Math.max(bitmap.width, bitmap.height)'));
 

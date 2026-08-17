@@ -58,3 +58,35 @@ retouched — and 2K is the default resolution.
 Kept under 300 characters on purpose. It is still the FIRST paragraph dropped at the cap, because
 it improves a picture that is already of the right woman while the identity lock decides whether
 she is. A 640-character first attempt was dropped on every single run, which is worse than useless.
+
+# Why `exact`, `outfit` and `budget` changed on 2026-08-17
+
+Owner: "i selected exact recreate it doesnt do the exact recreate at all."
+
+Diffing the two prompts explained it. The switch changed ONE sentence out of fifteen paragraphs:
+
+    on:  "Reproduce image 5 exactly — same background, pose, props, framing, lighting, outfit"
+    off: "A new photo of Grace in image 5's scene, not a retouch of image 5."
+
+and BOTH modes already carried "From image 5: background, pose, hands/props, outfit, expression,
+lighting" plus the CAMERA paragraph. So the model read nearly the same instruction either way, with
+the one distinguishing sentence sitting fifth from the top, where the weight is lowest.
+
+Worse, two later paragraphs contradicted it outright:
+
+  * `Lighting: Lighting is soft and diffused lighting, glowing naturally on her skin` — the house
+    default, added 2026-08-13 for every prompt. Against "same lighting" it cannot be obeyed, it sits
+    later, and softening is also the safer default. Now suppressed on an exact recreate only.
+  * SCENE AND CAMERA asks for natural depth of field and highlights that roll off — both changes to
+    how the source LOOKS. An exact recreate now gets a variant that keeps the source's own optics.
+
+And the switch gained a tail paragraph, the same position that already makes the identity lock and
+the bust lock work.
+
+THE THREE THAT MOVED ARE EXACTLY THE THREE WITH exactRecreate ON — `exact`, `outfit` (which sets it)
+and `budget`. `plain`, `nude`, `faceless` and `camera` are byte-identical, which is the check that
+this was scoped rather than a rewrite of every prompt.
+
+Seedream's cap made this tight: the exact-recreate lock has a short form sized to fit in the gap the
+removed lighting line leaves, so the tab gains the lock without the trim loop eating the skin
+paragraph. Measured — an ordinary single-character exact run is 2,991 of 3,000 and drops nothing.

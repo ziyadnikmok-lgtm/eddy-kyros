@@ -533,18 +533,28 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
     parts.push(`EYES TO CAMERA: ${she} ${pair ? 'look' : 'looks'} straight into the lens, both eyes visible and meeting the viewer. Keep the pose and body angle from ${src} — only the ${pair ? 'heads and gazes turn' : 'head and gaze turn'} to the camera.`);
   }
 
-  /**
-   * THE LIGHTING LINE, on every prompt (owner, 2026-08-13).
-   *
-   * Deliberately placed BEFORE the chips, which are appended after this whole instruction. Seedream
-   * weights the tail most heavily, so a Lighting chip — "Moody low-key", "Red neon" — still wins by
-   * position. That is the intended relationship: this is the house default, not a lock.
-   */
   // Late, and NOT droppable: it is a composition lock, so it belongs near the tail where Seedream
   // weights hardest — same reasoning as the identity lock below it.
   if (backView) parts.push(BACK_VIEW_LINE(src));
 
-  parts.push(LIGHTING_LINE);
+  /**
+   * THE LIGHTING LINE, on every prompt (owner, 2026-08-13) — EXCEPT an exact recreate.
+   *
+   * Deliberately placed BEFORE the chips, which are appended after this whole instruction. Seedream
+   * weights the tail most heavily, so a Lighting chip — "Moody low-key", "Red neon" — still wins by
+   * position. That is the intended relationship: this is the house default, not a lock.
+   *
+   * BUT IT IS A FLAT CONTRADICTION OF EXACT RECREATE. "Reproduce image 5 exactly — same lighting"
+   * and "lighting is soft and diffused" cannot both be obeyed, and this one sits later, where the
+   * weight is. Handed a harsh, contrasty or neon-lit source, the model was being told in the same
+   * breath to keep that lighting and to soften it — and softening is also the safer, more default
+   * thing to do, so that is what came back (owner, 2026-08-17: "i selected exact recreate it doesnt
+   * do the exact recreate at all").
+   *
+   * The house default still applies everywhere it is not being overruled by an explicit request for
+   * the source's own light.
+   */
+  if (!exactRecreate) parts.push(LIGHTING_LINE);
 
   /**
    * WHAT A REAL PHOTOGRAPH OF SKIN LOOKS LIKE, named rather than gestured at.
@@ -610,7 +620,21 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
    * correct — at that point room really is short.
    */
   if (roomy) {
-    parts.push(`SCENE AND CAMERA: render the scene with real photographic optics — natural depth of field with the background falling off softly behind her, light with one consistent direction and soft-edged shadows that match it, and true material texture: fabric weave, hair strands, wood, metal, wall and floor surfaces each keeping their own grain. Highlights roll off instead of clipping, shadows hold detail and colour instead of going flat black, and fine sensor grain sits evenly over the whole frame. No HDR halos, no over-sharpening, no plastic or waxy surfaces, no CGI gloss, no uniform edge-to-edge sharpness. This governs how the scene is RENDERED, not what is in it — do NOT add, remove, relight or rearrange anything.`);
+    /**
+     * AND IN EXACT RECREATE IT MUST NOT RESTYLE EITHER.
+     *
+     * The general version asks for natural depth of field, one consistent light direction and
+     * highlights that roll off. Every one of those is a change to how the source LOOKS, which is
+     * the one thing an exact recreate forbids — a source shot flat and sharp to the back wall would
+     * come back with a soft background and different contrast, and read as "it ignored exact
+     * recreate" even though the person was right.
+     *
+     * So in exact mode the same paragraph asks only for material texture and honest sensor
+     * character, and explicitly hands the optics and the light back to the source photo.
+     */
+    parts.push(exactRecreate
+      ? `SCENE AND CAMERA: keep ${src}'s own optics, depth of field, contrast and colour exactly as they are — this does NOT restyle the photograph. Render its materials truthfully within them: fabric weave, hair strands, skin, wood, metal, wall and floor surfaces each keeping their own texture, with fine sensor grain. No over-sharpening, no plastic or waxy surfaces, no CGI gloss, no smoothed or cleaned-up look.`
+      : `SCENE AND CAMERA: render the scene with real photographic optics — natural depth of field with the background falling off softly behind her, light with one consistent direction and soft-edged shadows that match it, and true material texture: fabric weave, hair strands, wood, metal, wall and floor surfaces each keeping their own grain. Highlights roll off instead of clipping, shadows hold detail and colour instead of going flat black, and fine sensor grain sits evenly over the whole frame. No HDR halos, no over-sharpening, no plastic or waxy surfaces, no CGI gloss, no uniform edge-to-edge sharpness. This governs how the scene is RENDERED, not what is in it — do NOT add, remove, relight or rearrange anything.`);
   }
 
   /**
@@ -700,6 +724,35 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
    */
   if (!faceless && roomy) {
     parts[parts.length - 1] += ` Her skin is PHOTOGRAPHED, not retouched: visible pores, fine facial hair, natural unevenness, shine only where skin is oily. If her reference photos look smoothed or airbrushed, take her IDENTITY from them and not that finish.`;
+  }
+
+  /**
+   * EXACT RECREATE, IN THE ONE PLACE THAT OUTRANKS EVERYTHING.
+   *
+   * Owner, 2026-08-17: "i selected exact recreate it doesnt do the exact recreate at all". Diffing
+   * the two prompts explains it — the switch changed ONE sentence out of fifteen paragraphs:
+   *
+   *     on:  "Reproduce image 5 exactly — same background, pose, props, framing, lighting, outfit"
+   *     off: "A new photo of Grace in image 5's scene, not a retouch of image 5."
+   *
+   * and BOTH modes already carry "From image 5: background, pose, hands/props, outfit, expression,
+   * lighting" and the CAMERA paragraph. So the model was reading nearly the same instruction either
+   * way, with the exact-recreate sentence sitting fifth from the top where the weight is lowest,
+   * while the tail was busy talking about the person.
+   *
+   * The fix is the one that already works for identity and for the bust: say it LAST. Everything
+   * above is about who she is; this is the one line about what the photograph is.
+   *
+   * Two lengths for the usual reason — Seedream has no spare room. The short one costs it nothing,
+   * because turning exact recreate on now also removes the lighting line that was contradicting it.
+   */
+  if (exactRecreate) {
+    parts.push(roomy
+      ? `EXACT RECREATE — the photograph itself is FIXED: ${src}'s framing, crop, camera angle, pose, background, props, lighting, contrast and colour all stay exactly as they are. Do not re-frame, re-pose, relight, restyle, tidy, recolour or "improve" any of it. The ONLY thing that changes in that photograph is who the woman is.`
+      // Measured to the character. Turning exact recreate on removes the 81-character lighting line
+      // it contradicts, and this is sized to fit in that gap — so Seedream gains the lock without
+      // losing the skin paragraph to the trim loop. Anything longer costs one.
+      : `EXACT RECREATE: ${src}'s framing, pose, lighting and colour stay EXACTLY as they are — never restyled.`);
   }
 
   const SEP = '\n\n';
@@ -1367,7 +1420,24 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
       if (wantBlur && !r.blurred) missed += 1;
       // `present`, not the box: a loose match the gate refused still means a face is probably
       // there, so the shot is not a back view even though nothing was blurred.
-      return { id: `s-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`, dataUrl: r.dataUrl, blurred: r.blurred, backView: !r.present };
+      return {
+        id: `s-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
+        dataUrl: r.dataUrl,
+        blurred: r.blurred,
+        backView: !r.present,
+        /**
+         * The photo as it arrived, kept ONLY when the blur changed it — so the blur can be undone.
+         *
+         * Detection is not perfect and never will be: it sometimes paints over a chest instead of a
+         * face, and until now the original was gone the moment that happened, leaving no way back
+         * except deleting the tile and dropping the file again (owner, 2026-08-17: "i want have a
+         * undo blur for i chose the blur place myself").
+         *
+         * Only for blurred photos, so an unblurred batch costs nothing extra, and dropped again as
+         * soon as it is used.
+         */
+        ...(r.blurred ? { orig: incoming } : {}),
+      };
     });
     if (missed) notify(`${missed} photo${missed === 1 ? '' : 's'}: no face found even on the second pass — use the "no face" filter to blur them by hand`, 'error');
     setSources((prev) => (replace ? added : [...prev, ...added]));
@@ -1412,7 +1482,8 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     setScanning(null);
     const results = targets.map((s, i) => {
       const r = out[i];
-      if (r?.blurred) { blurred += 1; return { id: s.id, dataUrl: r.dataUrl, blurred: true }; }
+      // Keep whatever original this source already had; if it had none, this run is what changed it.
+      if (r?.blurred) { blurred += 1; return { id: s.id, dataUrl: r.dataUrl, blurred: true, orig: s.orig || s.dataUrl }; }
       missed += 1; return null;
     });
     const byId = new Map(results.filter(Boolean).map((r) => [r.id, r]));
@@ -1423,11 +1494,34 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     else notify('No faces detected — click a photo to blur by hand', 'error');
   }, [sources, notify]);
 
-  // Apply a hand-drawn blur box from the modal and mark that source blurred.
+  // Apply a hand-drawn blur box from the modal and mark that source blurred. The original is kept
+  // if this is the first blur on that photo, so undo works on a hand-drawn box too.
   const applyManualBlur = useCallback((id, newDataUrl) => {
-    setSources((prev) => prev.map((s) => (s.id === id ? { ...s, dataUrl: newDataUrl, blurred: true } : s)));
+    setSources((prev) => prev.map((s) => (s.id === id
+      ? { ...s, dataUrl: newDataUrl, blurred: true, orig: s.orig || s.dataUrl }
+      : s)));
     setManualBlurId(null);
     notify('Face blurred by hand ✨', 'success');
+  }, [notify]);
+
+  /**
+   * PUT THE PHOTO BACK THE WAY IT ARRIVED.
+   *
+   * Detection is right most of the time and wrong some of the time, and when it is wrong it has
+   * painted over a chest or a hip. Until now that was permanent: the original was replaced in place,
+   * so the only way back was deleting the tile and finding the file again — and the hand-blur tool
+   * was useless, because it could only draw on top of the smear (owner, 2026-08-17).
+   *
+   * Undo restores the untouched photo and clears the blurred flag, which is exactly the state where
+   * clicking the tile lets you draw the box yourself.
+   */
+  const undoBlur = useCallback((id) => {
+    setSources((prev) => prev.map((s) => (s.id === id && s.orig
+      // `orig` is dropped, not kept: the photo IS the original again, and holding a second copy of
+      // every restored photo is real memory at five hundred sources.
+      ? { id: s.id, dataUrl: s.orig, blurred: false, backView: s.backView }
+      : s)));
+    notify('Blur undone — click the photo to draw the blur yourself', 'info');
   }, [notify]);
 
   const unblurredCount = sources.filter((s) => !s.blurred).length;
@@ -2166,7 +2260,46 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     } finally { setRecovering(false); }
   }, [notify, destLabel, refreshUnfiled]);
 
+  /**
+   * Retryable and dismissible are NOT the same set.
+   *
+   * Retry needs a jobId — it re-runs the job the server already has. A job that fell over before it
+   * got one (a submit that was refused, a config error) has nothing to retry, but it is still a red
+   * tile in the way, so it must still be removable.
+   */
   const failedJobs = jobs.filter((j) => j.status === 'failed' && j.jobId);
+  const allFailed = jobs.filter((j) => j.status === 'failed');
+
+  /**
+   * Throwing away a failed tile — one, or the lot.
+   *
+   * Seventy results with seven "WaveSpeed is out of credits" tiles scattered through them is a wall
+   * to scroll past, and "Clear" throws away the finished pictures with them (owner, 2026-08-17).
+   * Dismissing only drops the tile from this page; nothing on the server or in the library moves.
+   */
+  const dismissJob = useCallback((id) => {
+    setJobs((prev) => prev.filter((j) => j.id !== id));
+    setPickedJobs((cur) => { const next = new Set(cur); next.delete(id); return next; });
+  }, []);
+  const dismissAllFailed = useCallback(async () => {
+    const n = jobs.filter((j) => j.status === 'failed').length;
+    if (!n) return;
+    setJobs((prev) => prev.filter((j) => j.status !== 'failed'));
+    /**
+     * The SERVER rows go too, not just the tiles.
+     *
+     * Leaving them behind means a "retry all failed" from anywhere else brings them back and runs
+     * them — spending money on jobs that were explicitly thrown away. jobQueue.deleteAllFailed is
+     * scoped to status = failed by the same WHERE clause retryAllFailed uses, so it cannot touch
+     * queued, running or finished work, and a failed job never reached a provider that billed it.
+     *
+     * Best effort: if the call fails the tiles are still gone from the page, which is what was
+     * asked for. Worth knowing it is account-wide rather than this tab's rows — there is no
+     * per-job delete endpoint, and the single-tile × below is therefore page-only.
+     */
+    try { await jobsApi.deleteAllFailed(); } catch { /* the tiles are gone either way */ }
+    notify(`${n} failed result${n === 1 ? '' : 's'} dismissed — finished pictures untouched`, 'info');
+  }, [jobs, notify]);
   const retryFailed = useCallback(async () => {
     const targets = jobs.filter((j) => j.status === 'failed' && j.jobId);
     if (!targets.length) return;
@@ -2485,7 +2618,14 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
                     </button>
                     {blurSource && (
                       s.blurred
-                        ? <span className="absolute bottom-1 left-1 rounded bg-emerald-600/90 px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-white pointer-events-none">Blurred</span>
+                        // The badge IS the undo button when there is an original to go back to —
+                        // the blur landing in the wrong place is exactly when you look at this
+                        // corner of the tile, so the way out belongs here rather than in a menu.
+                        ? (s.orig
+                          ? <button type="button" onClick={(e) => { e.stopPropagation(); undoBlur(s.id); }}
+                            title="Wrong spot? Put the original photo back, then click the photo to draw the blur yourself."
+                            className="absolute bottom-1 left-1 rounded bg-emerald-600/90 px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-white hover:bg-red-600/90 cursor-pointer">Blurred · undo</button>
+                          : <span className="absolute bottom-1 left-1 rounded bg-emerald-600/90 px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-white pointer-events-none">Blurred</span>)
                         : <span className="absolute bottom-1 left-1 rounded bg-amber-600/90 px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-white pointer-events-none">Face — tap</span>
                     )}
                     {/* The back-view call, shown before it is paid for and one click to flip.
@@ -2875,6 +3015,42 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
               {!running && <button onClick={() => setJobs([])} className="text-[0.6875rem] text-zinc-500 hover:text-zinc-300 transition cursor-pointer underline">Clear</button>}
             </div>
 
+            {/**
+              * THE FAILED ROW, on its own and OUTSIDE the finished-results toolbar.
+              *
+              * Retry used to live in that toolbar, which only renders when something has finished
+              * and been filed. So a run where everything failed — the exact case you most want to
+              * retry, and what "WaveSpeed is out of credits" does to a whole batch — showed no
+              * retry button at all. Topping the account up on another machine then left no way back
+              * into those jobs from this page.
+              *
+              * Dismiss sits beside it because the other half of the problem is the tiles: seven red
+              * cards spread through seventy good ones, and the only broom was "Clear", which throws
+              * away the finished pictures too (owner, 2026-08-17).
+              */}
+            {allFailed.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/[0.07] px-3 py-2">
+                <span className="text-xs font-semibold text-red-300">{allFailed.length} failed</span>
+                {/* The reason, once, instead of reading it off each card — they are nearly always
+                    the same reason, and the fix is usually one thing (top up, add a key). */}
+                {allFailed[0]?.error && (
+                  <span className="min-w-0 flex-1 truncate text-[0.625rem] text-zinc-500" title={allFailed[0].error}>{allFailed[0].error}</span>
+                )}
+                {failedJobs.length > 0 && (
+                  <button type="button" onClick={retryFailed}
+                    title="Re-runs them on the server. Use this after topping up credits or adding a key."
+                    className="rounded-full border border-red-500/50 bg-red-500/10 px-2.5 py-0.5 text-[0.625rem] font-semibold text-red-300 hover:border-red-400 cursor-pointer">
+                    Retry {failedJobs.length} failed
+                  </button>
+                )}
+                <button type="button" onClick={dismissAllFailed}
+                  title="Removes the failed tiles from this page only. Finished pictures and anything already in your library are untouched."
+                  className="rounded-full border border-white/[0.12] px-2.5 py-0.5 text-[0.625rem] font-semibold text-zinc-300 hover:border-zinc-400 cursor-pointer">
+                  Dismiss {allFailed.length} failed
+                </button>
+              </div>
+            )}
+
             {/* TICK AND SEND, the same idea Eddy's results panel has had for months.
                 Without it the only way to act on a finished picture was to leave for the Library
                 tab and find it again (owner, 2026-08-13). With nothing ticked the buttons act on
@@ -2920,20 +3096,11 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
                     className="cursor-pointer accent-rose-500" />
                   Before / after
                 </label>
-                {/* The server has had a retry endpoint since the queue was built; the page simply
-                    never offered it, so recovering one failed picture meant re-running the whole
-                    batch. Only shown when there is something to retry. */}
                 {unfiledCount > 0 && (
                   <button type="button" onClick={recoverLost} disabled={recovering}
                     title="Pictures that finished while the app was closed or reloading. They are in the gallery already — this puts them into your library."
                     className="rounded-full border border-emerald-500/50 bg-emerald-500/10 px-2.5 py-0.5 text-[0.625rem] font-semibold text-emerald-300 hover:border-emerald-400 cursor-pointer disabled:opacity-50">
                     {recovering ? 'Recovering…' : `Recover ${unfiledCount} lost`}
-                  </button>
-                )}
-                {failedJobs.length > 0 && (
-                  <button type="button" onClick={retryFailed}
-                    className="rounded-full border border-red-500/50 bg-red-500/10 px-2.5 py-0.5 text-[0.625rem] font-semibold text-red-300 hover:border-red-400 cursor-pointer">
-                    Retry {failedJobs.length} failed
                   </button>
                 )}
                 <span className="ml-auto flex flex-wrap gap-2">
@@ -2984,6 +3151,14 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
                         the only way to tell them apart is to open each one. */}
                     {job.charName && <span className="text-[0.625rem] font-semibold text-rose-300">{job.charName}</span>}
                     {job.status === 'done' && typeof job.cost === 'number' && <span className="text-[0.625rem] text-zinc-600 font-mono">${job.cost.toFixed(3)}</span>}
+                    {/* One failed tile, gone. Only on failed ones: a finished picture is removed by
+                        clearing, and a running one would come back on the next poll anyway. */}
+                    {job.status === 'failed' && (
+                      <button type="button"
+                        onClick={(e) => { e.stopPropagation(); dismissJob(job.id); }}
+                        title="Remove this failed result from the page"
+                        className="ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-900 text-xs text-zinc-500 hover:border-red-500 hover:text-red-300 cursor-pointer">×</button>
+                    )}
                   </div>
 
                   {job.status === 'done' && (job.result || urlOfJob(job)) ? (

@@ -19,7 +19,7 @@
  * the result back into a data URL. The SWEEP is imported from detectFacePico rather than copied —
  * two cascade implementations that must agree exactly is how they stop agreeing.
  */
-import { sweepPlane, greyscalePlane, SCAN_EDGE } from './detectFacePico';
+import { sweepPlane, greyscalePlane, verifyLooseBox, SCAN_EDGE } from './detectFacePico';
 
 /**
  * How big a detection may be before it is not a face — the same gate as autoBlurFace.
@@ -90,6 +90,22 @@ function findFaceIn(bitmap) {
   if (!loose) return { box: null, confident: false, present: false };
   // A rejected loose match still means a face is probably there — it just is not this box.
   if (!looksLikeAFace(loose)) return { box: null, confident: false, present: true, rejected: true };
+  // Then look again, closer: crop the match out of the ORIGINAL at 256px and demand a confident
+  // score. A chest or a hip only ever looked like a face at 15 on a downscaled sweep.
+  const verified = verifyLooseBox(loose, (b, margin, edge) => {
+    const sx = Math.max(0, (b.x - b.w * margin) * bitmap.width);
+    const sy = Math.max(0, (b.y - b.h * margin) * bitmap.height);
+    const sw = Math.min(bitmap.width - sx, b.w * (1 + margin * 2) * bitmap.width);
+    const sh = Math.min(bitmap.height - sy, b.h * (1 + margin * 2) * bitmap.height);
+    if (sw < 8 || sh < 8) return null;
+    const cw = edge;
+    const ch = Math.max(8, Math.round((sh / sw) * edge));
+    const c = new OffscreenCanvas(cw, ch);
+    const cctx = c.getContext('2d', { willReadFrequently: true });
+    cctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, cw, ch);
+    return { grey: greyscalePlane(cctx.getImageData(0, 0, cw, ch).data, cw, ch), w: cw, h: ch };
+  });
+  if (!verified) return { box: null, confident: false, present: true, rejected: true };
   return { box: loose, confident: false, present: true };
 }
 

@@ -121,7 +121,7 @@ check('the page no longer calls the detector itself', !page.includes("from '../l
 // sit beside blurRegion's DOM canvas, which a worker cannot load) — hence these assertions.
 const worker = read('client/src/lib/faceWorker.js');
 check('the worker imports the sweep instead of copying it',
-  worker.includes("import { sweepPlane, greyscalePlane, SCAN_EDGE } from './detectFacePico'"));
+  worker.includes("from './detectFacePico'") && worker.includes('sweepPlane') && worker.includes('greyscalePlane'));
 check('and the sweep is exported as DOM-free for exactly that reason',
   det.includes('export function sweepPlane(grey, w, h, aggressive = false)'));
 for (const name of ['ABSURD_FRACTION', 'LOW_MATCH_FRACTION', 'LOW_CENTRE']) {

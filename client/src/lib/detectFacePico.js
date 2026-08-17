@@ -88,6 +88,41 @@ export function greyscalePlane(rgba, w, h) {
   return grey;
 }
 
+/**
+ * VERIFYING A LOOSE MATCH BY LOOKING AGAIN, CLOSER.
+ *
+ * The aggressive pass accepts a score of 15 where the confident one wants 50, which is how it finds
+ * turned and partly-hidden faces — and also how it starts reporting chests, hips and backsides
+ * (owner: "it blurred the boobs and ass"). autoBlurFace's gate throws out the ones that are large
+ * AND low in the frame, but a chest in a portrait crop is neither, so it walks straight through.
+ *
+ * Position and size cannot separate those cases. LOOKING PROPERLY can: crop the matched region out
+ * of the ORIGINAL image, blow it up to 256px so the cascade sees real detail instead of a 60px
+ * smudge from the downscaled scan plane, and re-run at the CONFIDENT threshold. A real face fills
+ * that crop and scores well. A chest scores nothing at 50, because it is not a face — it only ever
+ * looked like one at 15 in a low-resolution sweep.
+ *
+ * Only loose matches pay for it, and they are rare: 25 of 25 real photos hit on the strict pass in
+ * the benchmark, so this runs on the exceptions.
+ */
+export const VERIFY_EDGE = 256;
+export const VERIFY_MARGIN = 0.3;
+
+/**
+ * @param {object} box            the loose match, in image fractions
+ * @param {function} cropToPlane  (box, margin, edge) => {grey, w, h}, supplied by the caller
+ *                                because one lives in the DOM and one in a worker
+ */
+export function verifyLooseBox(box, cropToPlane) {
+  try {
+    const crop = cropToPlane(box, VERIFY_MARGIN, VERIFY_EDGE);
+    if (!crop) return true;                       // cannot check — keep today's behaviour
+    return !!sweepPlane(crop.grey, crop.w, crop.h, false);
+  } catch {
+    return true;
+  }
+}
+
 export async function detectFacePico(dataUrl, { aggressive = false } = {}) {
   const img = await loadImage(dataUrl);
 
@@ -104,7 +139,25 @@ export async function detectFacePico(dataUrl, { aggressive = false } = {}) {
   ctx.drawImage(img, 0, 0, w, h);
   const grey = greyscalePlane(ctx.getImageData(0, 0, w, h).data, w, h);
 
-  return sweepPlane(grey, w, h, aggressive);
+  const box = sweepPlane(grey, w, h, aggressive);
+  // Only the loose threshold produces the false positives, so only it pays for a second look.
+  if (!box || !aggressive) return box;
+  const ok = verifyLooseBox(box, (b, margin, edge) => {
+    const sx = Math.max(0, (b.x - b.w * margin) * img.naturalWidth);
+    const sy = Math.max(0, (b.y - b.h * margin) * img.naturalHeight);
+    const sw = Math.min(img.naturalWidth - sx, b.w * (1 + margin * 2) * img.naturalWidth);
+    const sh = Math.min(img.naturalHeight - sy, b.h * (1 + margin * 2) * img.naturalHeight);
+    if (sw < 8 || sh < 8) return null;
+    const cw = edge;
+    const ch = Math.max(8, Math.round((sh / sw) * edge));
+    const c = document.createElement('canvas');
+    c.width = cw;
+    c.height = ch;
+    const cctx = c.getContext('2d', { willReadFrequently: true });
+    cctx.drawImage(img, sx, sy, sw, sh, 0, 0, cw, ch);
+    return { grey: greyscalePlane(cctx.getImageData(0, 0, cw, ch).data, cw, ch), w: cw, h: ch };
+  });
+  return ok ? box : null;
 }
 
 /**

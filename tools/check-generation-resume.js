@@ -142,7 +142,13 @@ check('a queued result is saved as the job owner, not as nobody',
 check('using the helper the codebase already has for acting as a user',
   rec.includes("const { runWithUser } = require('../userContext');"));
 // Wrapped at the definition, so neither the poller nor the submit path can forget it.
-check('wrapped once, not at each call site', rec.split('runWithUser(job.user_id').length - 1 === 1);
+// CHANGED 2026-08-17: there are now TWO wrappers, and that is the fix rather than a regression —
+// saving was wrapped, submitting and polling were not, so the worker looked up API keys as nobody
+// and reported "WaveSpeed API key not configured" on an account that had one. Both go through a
+// named helper; check-queue-user-context.js is the suite that holds that shape.
+check('wrapped at the definition, never ad hoc at a call site',
+  rec.includes('function asJobUser(job, fn) {')
+  && rec.split('runWithUser(job.user_id').length - 1 === 2);
 check('and the failure it fixes is recorded', /Image not on this machine/.test(rec));
 
 // --- 8. the page can REJOIN work it walked away from ------------------------------------------------

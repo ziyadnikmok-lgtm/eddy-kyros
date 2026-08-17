@@ -65,8 +65,12 @@ check('and the ByteDance cap is not applied to a Gemini run', !pm.includes("engi
 // why the drop list exists at all. Nano Banana's heaviest measured run is ~4,547 of 8,000.
 const budgets = { sd: Number(/const SEEDREAM_PROMPT_BUDGET = (\d+);/.exec(pm)[1]), nb2: Number(/const NANO2_PROMPT_BUDGET = (\d+);/.exec(pm)[1]) };
 check(`the two caps are what this is reasoned from (${budgets.sd} / ${budgets.nb2})`, budgets.sd === 3000 && budgets.nb2 === 8000);
+// Two versions: the general one, and an exact-recreate one that must NOT restyle the photograph —
+// "natural depth of field" and "highlights roll off" are changes to how the source looks, which is
+// the one thing an exact recreate forbids.
 check('the scene paragraph exists and is automatic — no chip to tick',
-  pm.includes('parts.push(`SCENE AND CAMERA: render the scene with real photographic optics'));
+  pm.includes('SCENE AND CAMERA: render the scene with real photographic optics')
+  && pm.includes("SCENE AND CAMERA: keep ${src}'s own optics"));
 check('it is emitted only where there is measured room', pm.includes('const roomy = budget >= 5000;') && pm.includes('if (roomy) {'));
 check('and the threshold sits between the two caps', 5000 > budgets.sd && 5000 < budgets.nb2);
 // The prompt above orders the scene reproduced EXACTLY. Without this clause an "improve the
@@ -380,7 +384,7 @@ check('and thrown, so the queue retries and then falls back',
   svc.includes("throw new AppError('Nano Bypass returned one of the input images"));
 
 // The blurred photo is what gets SENT, not the original — auto-blur replaces it in place.
-check('the source sent is the blurred copy', pm.includes('dataUrl: r.dataUrl, blurred: r.blurred') && pm.includes('const sourceImg = parseDataUrl(source.dataUrl);'));
+check('the source sent is the blurred copy', pm.includes('dataUrl: r.dataUrl,') && pm.includes('const sourceImg = parseDataUrl(source.dataUrl);'));
 // And an unfinished tile must not read as a finished result that came back unchanged.
 check('an in-progress tile is labelled as the source', pm.includes('Your source · rendering'));
 

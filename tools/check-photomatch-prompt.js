@@ -201,10 +201,24 @@ check('the page says which one is in force', src.includes('she wears HER outfit 
 const LIGHT = 'Lighting: Lighting is soft and diffused lighting, glowing naturally on her skin';
 check('it is there, verbatim', p.includes(LIGHT));
 for (const [name, opts] of [['faceless', { faceless: true }], ['nude', { wantsNude: true }],
-  ['exact recreate', { exactRecreate: true }], ['her outfit', { outfitFromChar: true }],
+  ['her outfit', { outfitFromChar: true }],
   ['eyes to camera', { lookAtCamera: true }]]) {
   check(`and on the ${name} variant too`, buildMatchInstruction({ ...BASE, ...opts }).includes(LIGHT));
 }
+/**
+ * EXCEPT on an exact recreate, where it is a straight contradiction (2026-08-17).
+ *
+ * "Reproduce image 5 exactly — same lighting" and "lighting is soft and diffused, glowing naturally
+ * on her skin" cannot both be obeyed, and the house default sits later in the prompt, where the
+ * weight is. Given a harsh, contrasty or neon-lit source the model softened it — and softening is
+ * also the safer default, so that is what came back. The owner's report was "i selected exact
+ * recreate it doesnt do the exact recreate at all".
+ */
+const exactly = buildMatchInstruction({ ...BASE, exactRecreate: true });
+check('but NOT on an exact recreate, where it contradicts the source lighting', !exactly.includes(LIGHT));
+check('and the lock that replaces it is there instead', exactly.includes('EXACT RECREATE'));
+check('which lands in the TAIL, where the weight is — the reason it was not working before',
+  exactly.lastIndexOf('EXACT RECREATE') > exactly.lastIndexOf('FINAL — HIGHEST PRIORITY'));
 check('it sits BEFORE the chips, so a Lighting chip still wins by position',
   /Deliberately placed BEFORE the chips/.test(src));
 check('the wording is a constant, not retyped per branch', src.includes('const LIGHTING_LINE ='));
@@ -234,7 +248,9 @@ const fitted = buildMatchInstruction({ ...worstOpts, budget: 3000 });
 check(`the worst case really does exceed the cap unbounded (${unbounded.length})`, unbounded.length > 3000);
 check(`and fits once a budget is given (${fitted.length})`, fitted.length <= 3000);
 check('the identity lock SURVIVES the fit', /FINAL — HIGHEST PRIORITY/.test(fitted));
-check('so does the lighting line', fitted.includes(LIGHT));
+// The worst case has exactRecreate on, which now suppresses the lighting line it contradicts —
+// what must survive the fit is the lock that replaced it.
+check('so does the exact-recreate lock', fitted.includes('EXACT RECREATE'));
 check('so does eyes to camera', /EYES TO CAMERA/.test(fitted));
 check('what came out is the boilerplate, whole', !/Photorealistic —/.test(fitted));
 // A budget below what the load-bearing paragraphs alone cost cannot be met by dropping — there is
