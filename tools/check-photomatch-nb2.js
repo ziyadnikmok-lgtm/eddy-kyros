@@ -340,7 +340,9 @@ check('the labels sit BEFORE their images, not all at the end',
 // be two briefs in one request — the exact failure raw mode exists to avoid.
 check('the labels state position, not rules', !/must look exactly like|Copy from/.test(svc));
 check('the count travels from the page', pm.includes('identityCount: charRefs.length,'));
-check('through the queue payload', gq.includes('identityCount },'));
+// 'labels' joined it 2026-08-17 — the same idea for callers whose payload is not one identity
+// block and one scene (Eddy: base photo, pose diagram, face close-up, garment).
+check('through the queue payload', gq.includes('identityCount, labels },'));
 check('and into the bypass', rec.includes('identityCount: Number(job.payload?.identityCount) || 0,'));
 // A job with no count behaves exactly as before, so nothing that predates this changes.
 check('no count means the old flat layout', svc.includes('for (const img of images) parts.push(asPart(img));'));

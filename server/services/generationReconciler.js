@@ -464,6 +464,10 @@ async function _submitClaimed(job) {
           // How many of the images are HER, so the bypass can label them where they sit. Without
           // it Gemini gets one undifferentiated pile and edits the scene photo instead.
           identityCount: Number(job.payload?.identityCount) || 0,
+          // The same problem for callers whose payload is not "her, then the scene". Eddy sends
+          // base photo, pose diagram, face close-up — four jobs in one pile — and a number in its
+          // prose does not tell this API which bytes are which.
+          labels: Array.isArray(job.payload?.labels) ? job.payload.labels : null,
         }),
       };
     } else if (engine === 'muapi') {

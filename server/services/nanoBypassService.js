@@ -148,7 +148,7 @@ async function callGemini(apiKey, modelId, parts, aspectRatio, imageSize, temper
  * Returns { images: [{ base64Data, mimeType }] } — the shape the queue's saver already expects, so
  * a bypass result files exactly like a WaveSpeed one.
  */
-async function editRaw({ apiKey, images, prompt, aspectRatio, imageSize = '2K', temperature = 1.0, model = 'flash', identityCount = 0 }) {
+async function editRaw({ apiKey, images, prompt, aspectRatio, imageSize = '2K', temperature = 1.0, model = 'flash', identityCount = 0, labels = null }) {
   if (!apiKey) throw new AppError('Nano Bypass requires a Gemini API key — add one under API Keys.', 400, 'GEMINI_KEY_REQUIRED');
   if (!prompt || !String(prompt).trim()) throw new AppError('prompt is required', 400, 'VALIDATION_ERROR');
   if (!Array.isArray(images) || !images.length) throw new AppError('at least one image is required', 400, 'VALIDATION_ERROR');
@@ -164,8 +164,32 @@ async function editRaw({ apiKey, images, prompt, aspectRatio, imageSize = '2K', 
   };
 
   const parts = [];
+
+  /**
+   * A LABEL PER IMAGE, for callers whose images are not one identity block and one scene.
+   *
+   * identityCount below solved this for Photo Match, where the payload really is "these are her,
+   * that is the scene". Eddy's is not: base photo, pose diagram, face close-up, garment — four
+   * different jobs, in an order the caller decides.
+   *
+   * Its prompt names them by number ("image 2 is a POSE DIAGRAM"), and on WaveSpeed that is enough.
+   * On this API it is not, and the comment below already says why: sent as an undifferentiated pile
+   * followed by a wall of text, there is nothing tying a number in the prose to the bytes that
+   * arrived, so the model edits whatever photo is most salient. That is exactly what "in max nano it
+   * using the background of the pose image not of the base image" looks like from the outside — the
+   * pose diagram is a full photograph of a room and a person, and the base photo is one too.
+   *
+   * Positional only, like the identity labels: the caller's prompt states every RULE, and repeating
+   * rules here would be two briefs in one request.
+   */
   const n = Math.max(0, Math.min(Number(identityCount) || 0, images.length - 1));
-  if (n > 0) {
+  if (Array.isArray(labels) && labels.length && !n) {
+    images.forEach((img, i) => {
+      const label = String(labels[i] || '').trim();
+      if (label) parts.push({ text: `[Image ${i + 1} — ${label}]` });
+      parts.push(asPart(img));
+    });
+  } else if (n > 0) {
     /**
      * THE IMAGES ARE LABELLED WHERE THEY SIT, and this is the difference between getting your
      * character back and getting the stand-in with an invented face.

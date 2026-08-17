@@ -3706,14 +3706,27 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
   useEffect(() => { if (engine === 'nano2' || engine === 'nb2') setResolution('2K'); }, [engine]);
 
   /**
-   * Max Nano pins the ENGINE. Enforced here rather than only in the UI: the settings are shared and
-   * persisted across every workspace, so an engine left over from an Eddy run would otherwise follow
-   * you into Max and generate on the wrong one with nothing on screen disagreeing.
+   * MAX NANO ARRIVES ON THE GEMINI BYPASS (owner, 2026-08-17: "by default nb2 gemini bypass
+   * selected").
+   *
+   * On ARRIVAL only — deps are [maxNano] — so switching to WaveSpeed while you are on the tab
+   * sticks for that session. It is the same shape as the Eddy-arrives-on-Seedream effect below, and
+   * for the same reason: `engine` is one shared, persisted value, so without an arrival default
+   * whichever tab you used last decides what the next one opens with.
    */
   useEffect(() => {
-    // Either Nano Banana 2 path is valid here now (WaveSpeed or the Gemini bypass); anything else —
-    // a Seedream left over from an Eddy run — is pulled back to the default.
-    if (maxNano && engine !== 'nano2' && engine !== 'nb2') setEngine('nano2');
+    if (maxNano) setEngine('nb2');
+  }, [maxNano]);
+
+  /**
+   * And it never leaves the two Nano Banana routes.
+   *
+   * Separate from the arrival default above because it has to react to `engine` as well: a Seedream
+   * left over from an Eddy run, or anything else that arrives through the shared persisted value,
+   * is pulled back rather than generating on the wrong model with nothing on screen disagreeing.
+   */
+  useEffect(() => {
+    if (maxNano && engine !== 'nano2' && engine !== 'nb2') setEngine('nb2');
   }, [maxNano, engine]);
 
   // Max Outfit is Seedream-only, enforced here and not just in the UI: engine is shared and
@@ -5144,6 +5157,9 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       resolution: body.resolution,
       model,
       provider: 'wavespeed',
+      // Only the bypass reads these — see the note on the nb2 branch. Harmless on the other
+      // engines, which never look at the field.
+      labels: body.labels || null,
       tags: body.tags,
       // Only read if the app dies before this page files the result — then the sweep needs to know
       // which library and which character folder it belonged to.
@@ -5482,12 +5498,35 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
          * So this is one enqueue. An error that reaches here is one the queue has already declared
          * terminal, and it carries the provider's own wording.
          */
+        /**
+         * SAY WHAT EACH IMAGE IS, WHERE IT SITS — the reason the bypass was using the wrong room.
+         *
+         * The prompt already names them: "image 1 is the subject", "image 2 is a POSE DIAGRAM, not a
+         * person". On WaveSpeed that is enough. On Google's API it is not, and nanoBypassService's
+         * own comment says why — sent as an undifferentiated pile followed by a wall of text, there
+         * is nothing tying a number in the prose to the bytes that arrived, so it edits whichever
+         * photo is most salient. A pose diagram IS a full photograph of a room and a person, and so
+         * is the base photo, so "most salient" is a coin toss — which is what "in max nano it using
+         * the background of the pose image not of the base image" looks like from the outside.
+         *
+         * Built from the SAME indices the prompt uses, so the two can never disagree: if poseIndex
+         * says image 2, image 2 is labelled the pose diagram. Positional only — every RULE stays in
+         * the prompt, because two briefs in one request is the failure raw mode exists to avoid.
+         */
+        const labels = payload.map((_, i) => {
+          const at = i + 1;
+          if (at === poseIndex) return 'POSE DIAGRAM — copy the BODY POSITION and the CAMERA only. Its room, walls, floor, furniture and props are NOT the scene and the woman in it is NOT the subject';
+          if (at === faceIndex) return 'FACE CLOSE-UP of the SAME woman — her face only. Nothing else from it';
+          if (at === outfitIndex) return 'PRODUCT PHOTO OF THE GARMENT — the clothing only. Not its background, not its mannequin';
+          return 'THE SUBJECT AND THE SETTING — she is the woman to render, and this room is the scene';
+        });
         data = await runEdit({
           images: payload,
           prompt,
           model: 'nb2',
           aspectRatio: ratio,
           resolution,
+          labels,
           tags: eddyTags(isEdit, characterName),
         });
         if (!(data.images || []).length) throw new Error('Nano Banana 2 (bypass) returned no image');
