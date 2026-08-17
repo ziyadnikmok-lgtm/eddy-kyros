@@ -7084,10 +7084,19 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             /* Display-only: no `multi`, so this slot's own picker stays single-select. It mirrors
                whatever the base slot resolved to. */
             multiRows={faceSlotRows}
-            multiEmptyHint={basePhotoSummary?.unmatched
-              // Names the folder, so the fix is a rename you can actually make rather than a rule
-              // you have to go and work out.
-              ? `${basePhotoSummary.unmatched} base photo${basePhotoSummary.unmatched === 1 ? '' : 's'} in ${(basePhotoSummary.unmatchedNames || []).map((n) => `"${n}"`).join(', ') || 'no folder'} ${basePhotoSummary.unmatched === 1 ? 'has' : 'have'} no Character folder of the same name, so ${basePhotoSummary.unmatched === 1 ? 'it uses' : 'they use'} whatever is picked in this slot for her face. Rename the Base Library folder to match her Character folder — or pick her close-up here yourself.`
+            /**
+             * THE HINT IS FOR A MISSING FACE, NOT A MISSING FOLDER.
+             *
+             * It fired on "no Character folder of the same name" alone, so it kept shouting at
+             * someone who had already picked her close-up in this very slot — which is exactly what
+             * the fallback uses (owner, 2026-08-17: "the close up say that when it has the image
+             * already"). Nothing is wrong in that case: the pairing did not happen, the slot answered
+             * for it, and the tile caption already says "from this slot".
+             *
+             * So it only appears when the fallback has nothing to fall back TO.
+             */
+            multiEmptyHint={basePhotoSummary?.unmatched && !faceImage
+              ? `${basePhotoSummary.unmatched} base photo${basePhotoSummary.unmatched === 1 ? '' : 's'} in ${(basePhotoSummary.unmatchedNames || []).map((n) => `"${n}"`).join(', ') || 'no folder'} ${basePhotoSummary.unmatched === 1 ? 'has' : 'have'} no Character folder of the same name, and nothing is picked here — so ${basePhotoSummary.unmatched === 1 ? 'it has' : 'they have'} no face reference at all. Pick her close-up here, or rename the Base Library folder to match her Character folder.`
               : null}
           />
         </div>

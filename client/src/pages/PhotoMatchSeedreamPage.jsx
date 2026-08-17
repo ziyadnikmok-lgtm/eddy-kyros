@@ -949,7 +949,7 @@ const NB2_COST = { '1K': 0.04, '2K': 0.06 };
  * copy exists only so the message can say a number. check-photomatch-nb2.js asserts the two
  * match, because a message that states the wrong count is worse than one that states none.
  */
-const NB2_ATTEMPTS = 3;
+const NB2_ATTEMPTS = 5;
 
 /**
  * PHOTO MATCH, TWICE — one component, two tabs.

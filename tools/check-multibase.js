@@ -88,7 +88,15 @@ check('still ringed as a fallback rather than passed off as a pairing', gen.incl
 // CHANGED 2026-08-17: the hint now NAMES the folder that failed to pair. "1 base photo had no
 // character folder of the same name" is true and unactionable — you cannot rename a folder you have
 // not been told (owner: "why it show this one").
-check('and the fix is named', /Rename the Base Library folder to match her Character folder/.test(gen));
+check('and the fix is named', /rename the Base Library folder to match her Character folder/i.test(gen));
+// ⚠️ AND IT ONLY FIRES WHEN THERE IS ACTUALLY NO FACE. It used to fire on "no Character folder"
+// alone, so it kept shouting at someone who had already picked her close-up in that very slot —
+// which is exactly what the fallback uses (owner: "the close up say that when it has the image
+// already"). Nothing is wrong in that case.
+check('the hint is suppressed once a close-up is picked',
+  gen.includes('multiEmptyHint={basePhotoSummary?.unmatched && !faceImage'));
+check('and it says what is actually missing, not what failed to pair',
+  gen.includes('no face reference at all'));
 check('and the folder that failed is named too, so the rename is possible',
   gen.includes('(basePhotoSummary.unmatchedNames || []).map((n) => `"${n}"`).join(', ')')
   && gen.includes('unmatchedNames.add(pair?.name ||'));

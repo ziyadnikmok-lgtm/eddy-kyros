@@ -266,15 +266,23 @@ async function _saveResultAsUser(job, images) {
 /**
  * Tries on the bypass before the job is handed to Seedream 5 Pro instead.
  *
- * Three, not more, because each one is expensive in TIME rather than money: a single call runs
- * Google's own three-rung retry ladder inside it, each rung with a 180-second ceiling. Three queue
- * attempts is therefore up to nine API calls before the engine swap. That is fine across 300 lanes
- * and would be painful as a serial number.
+ * FIVE (owner, 2026-08-17: "does it do retry at least 5 times before go to seedream 5 pro"). It was
+ * three, and the reasoning for three was cost in TIME rather than money — a single call runs
+ * Google's own three-rung retry ladder inside it, each rung with a 180-second ceiling, so five queue
+ * attempts is up to FIFTEEN API calls before the swap. Across 300 lanes that is fine; as a serial
+ * number it would be painful.
+ *
+ * What makes five the better number is what the failures actually are. Measured that day, every
+ * bypass failure was a CONTENT REFUSAL (IMAGE_OTHER / PROHIBITED_CONTENT / IMAGE_SAFETY), and a
+ * refusal is a roll rather than a verdict: the same images and the same prompt were refused four
+ * times and passed on the fifth in testing. Two more rolls is exactly what that shape of failure is
+ * worth, and the alternative — handing it to Seedream — costs money on a different account and
+ * returns a different model's picture.
  *
  * Rate limits do not count against it — those are refunded before this is consulted, the same way
- * they are for every other engine.
+ * they are for every other engine, and they have their own patience counter below.
  */
-const NB2_ATTEMPTS = 3;
+const NB2_ATTEMPTS = 5;
 
 /**
  * Failures that will fail identically no matter which engine runs them, so an engine swap is a

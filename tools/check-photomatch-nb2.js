@@ -53,6 +53,19 @@ check('and the reconciler reads it', rec.includes("if (model === 'nb2') return '
 check('only Seedream gets the short budget', pm.includes("engine === 'seedream' ? SEEDREAM_PROMPT_BUDGET : NANO2_PROMPT_BUDGET"));
 check('and the ByteDance cap is not applied to a Gemini run', !pm.includes("engine === 'nano2' ? NANO2_PROMPT_BUDGET : SEEDREAM_PROMPT_BUDGET"));
 
+// --- HOW MANY TRIES BEFORE SEEDREAM ---------------------------------------------------------------
+// Raised 3 -> 5 (owner, 2026-08-17: "does it do retry at least 5 times before go to seedream 5 pro").
+// Every bypass failure measured that day was a CONTENT REFUSAL, and a refusal is a roll rather than
+// a verdict — the same images and prompt were refused four times and passed on the fifth. Two more
+// rolls is what that shape of failure is worth; the alternative spends money on another account and
+// returns a different model's picture.
+const attemptsIn = (text) => Number(/const NB2_ATTEMPTS = (\d+);/.exec(text)?.[1]);
+check(`the queue gives the bypass ${attemptsIn(rec)} tries`, attemptsIn(rec) === 5);
+// The page keeps its own copy ONLY so the toast can state a number. Drift means a message that lies.
+check('and the page states the same number', attemptsIn(pm) === attemptsIn(rec));
+check('the reason for the number is recorded, not just the number',
+  /refusal is a roll rather than a verdict/.test(rec));
+
 // --- what the spare budget is SPENT on ------------------------------------------------------------
 //
 // Owner, 2026-08-17: "without select instruction it auto the prompt upscale the skin and enviroment".
