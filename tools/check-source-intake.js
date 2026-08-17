@@ -34,8 +34,9 @@ check('and so does the Library/Pinterest/Frames handoff',
 // The old handoff built tiles by hand. If that ever comes back, everything below is bypassed again.
 check('the handoff no longer builds source tiles itself',
   !page.includes('const incoming = items.map((it, i) => ({ id: `s-${Date.now()}-${i}`, dataUrl: it.dataUrl }));'));
-check('every arrival is face-detected', page.includes('const face = await findFace(dataUrl)'));
-check('every arrival gets a back-view verdict', page.includes('backView: !face.present'));
+check('every arrival is face-detected', page.includes('const face = await findFace(incoming)')
+  && read('client/src/lib/faceWorker.js').includes('const face = findFaceIn(bitmap);'));
+check('every arrival gets a back-view verdict', page.includes('backView: !r.present'));
 check('and the reason the two paths were merged is written down',
   /Dropping a file and sending from the Library used to be two separate intakes/.test(page));
 
@@ -82,9 +83,13 @@ const url = (n) => `data:image/png;base64,AAA${n}`;
 const have = (n) => Array.from({ length: n }, (_, i) => ({ dataUrl: url(i) }));
 
 // The reported bug: a batch bigger than the room is truncated. It must be COUNTED, not swallowed.
-const big = runIntake(Array.from({ length: 80 }, (_, i) => url(1000 + i)), [], 'add', MAX_SOURCES);
-check(`80 dropped onto an empty page takes ${MAX_SOURCES} and reports the rest`,
-  big.taken === MAX_SOURCES && big.overflow === 80 - MAX_SOURCES);
+const OVER = MAX_SOURCES + 30;
+const big = runIntake(Array.from({ length: OVER }, (_, i) => url(1000 + i)), [], 'add', MAX_SOURCES);
+check(`${OVER} dropped onto an empty page takes ${MAX_SOURCES} and reports the other 30`,
+  big.taken === MAX_SOURCES && big.overflow === 30);
+// The whole batch, when it fits — the point of raising the cap in the first place.
+const five = runIntake(Array.from({ length: MAX_SOURCES }, (_, i) => url(5000 + i)), [], 'add', MAX_SOURCES);
+check(`a full ${MAX_SOURCES} goes in with nothing dropped`, five.taken === MAX_SOURCES && five.overflow === 0);
 const partial = runIntake([url(2001), url(2002), url(2003)], have(MAX_SOURCES - 1), 'add', MAX_SOURCES);
 check('with one slot left, one goes in and two are reported', partial.taken === 1 && partial.overflow === 2);
 check('a full page reports full rather than adding nothing quietly',
@@ -97,8 +102,8 @@ check('a mixed batch keeps the new one', halfDup.taken === 1 && halfDup.dupes ==
 // Replace clears the page, so the full cap is available and existing photos cannot collide.
 const rep = runIntake([url(0), url(1)], have(MAX_SOURCES), 'replace', MAX_SOURCES);
 check('a replace onto a full page still takes everything', rep.taken === 2 && rep.dupes === 0);
-const repBig = runIntake(Array.from({ length: 80 }, (_, i) => url(4000 + i)), have(10), 'replace', MAX_SOURCES);
-check('and a replace is still capped', repBig.taken === MAX_SOURCES && repBig.overflow === 80 - MAX_SOURCES);
+const repBig = runIntake(Array.from({ length: OVER }, (_, i) => url(4000 + i)), have(10), 'replace', MAX_SOURCES);
+check('and a replace is still capped', repBig.taken === MAX_SOURCES && repBig.overflow === 30);
 check('a batch that is entirely duplicates of itself collapses to one',
   runIntake([url(7), url(7), url(7)], [], 'add', MAX_SOURCES).taken === 1);
 check('empty in, nothing out', runIntake([], [], 'add', MAX_SOURCES).taken === 0);

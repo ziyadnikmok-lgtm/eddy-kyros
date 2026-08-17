@@ -67,7 +67,7 @@ const budgets = { sd: Number(/const SEEDREAM_PROMPT_BUDGET = (\d+);/.exec(pm)[1]
 check(`the two caps are what this is reasoned from (${budgets.sd} / ${budgets.nb2})`, budgets.sd === 3000 && budgets.nb2 === 8000);
 check('the scene paragraph exists and is automatic — no chip to tick',
   pm.includes('parts.push(`SCENE AND CAMERA: render the scene with real photographic optics'));
-check('it is emitted only where there is measured room', pm.includes('if (budget >= 5000) {'));
+check('it is emitted only where there is measured room', pm.includes('const roomy = budget >= 5000;') && pm.includes('if (roomy) {'));
 check('and the threshold sits between the two caps', 5000 > budgets.sd && 5000 < budgets.nb2);
 // The prompt above orders the scene reproduced EXACTLY. Without this clause an "improve the
 // environment" instruction fights that and starts adding light sources and set dressing.
@@ -75,6 +75,32 @@ check('it governs rendering, not content — or it would fight exact-recreate',
   pm.includes('This governs how the scene is RENDERED, not what is in it — do NOT add, remove, relight or rearrange anything.'));
 check('the reason it is Nano-Banana-only is recorded as a measurement',
   /already spends 2,921 of it on the plainest run and 3,200 on the worst/.test(pm));
+
+// --- plastic skin: the fix is structural, not more adjectives ---------------------------------------
+//
+// Owner, 2026-08-17: "the face skin still look like plastic" — with SKIN AND DETAIL already in the
+// prompt. Two structural reasons it loses, and the second is almost certainly the real one:
+//
+//   POSITION — it sits mid-prompt, and the FINAL lock afterwards re-anchors everything to the
+//   reference photos. Both engines weight the tail hardest.
+//
+//   THE REFERENCES — "match exactly: skin tone" and "render her as Grace from her references" are
+//   orders to COPY those photos, and character references are very often generated or retouched
+//   images with smooth, poreless skin. The model was reproducing that finish faithfully. Nothing
+//   told it to take her identity from them and NOT their finish.
+check('the skin instruction also rides inside the FINAL lock, where the weight is',
+  pm.includes('Her skin is PHOTOGRAPHED, not retouched'));
+check('and it separates her identity from her references\' FINISH — the sentence that does the work',
+  pm.includes('If her reference photos look smoothed or airbrushed, take her IDENTITY from them and not that finish.'));
+check('it is appended to the lock paragraph, not added as a new one after it',
+  pm.includes('parts[parts.length - 1] +='));
+// Faceless output has no face to texture, and its lock is a different paragraph making a different
+// promise — appending this to it would say "her skin is photographed" about a shot with no face.
+check('a faceless run does not get it', pm.includes('if (!faceless && roomy) {'));
+check('the fuller skin paragraph names physical detail, not adjectives',
+  pm.includes('faint translucency at the ears and eyelids') && pm.includes('lips with visible lines rather than a smooth fill'));
+check('and Seedream is left untouched, because it has no room for any of it',
+  /Seedream's prompt is left exactly as it was/.test(pm));
 
 // Run the REAL builder at both budgets: present on one tab, absent on the other, and neither over.
 const grab = (re, from) => { const m = re.exec(from); if (!m) throw new Error('missing constant'); return m[1]; };
@@ -333,7 +359,9 @@ check('and the page quotes the 2K rate, not the current setting',
 // strict-then-loose decision lives in one place. check-blur-gate.js exercises it properly.
 check('a missed face escalates automatically, inside findFace',
   read('client/src/lib/autoBlurFace.js').includes('const loose = await detectFacePico(dataUrl, { aggressive: true });'));
-check('and Blur all faces runs that same path', pm.includes('await autoBlurFace(s.dataUrl);'));
+// On the worker pool since 2026-08-17, with autoBlurFace as the per-photo fallback — the same
+// detection either way (faceWorker imports the sweep from detectFacePico rather than copying it).
+check('and Blur all faces runs that same path', pm.includes('fallback: (url) => autoBlurFace(url),'));
 
 // --- it must not hand back what we sent -------------------------------------------------------------
 //
@@ -352,7 +380,7 @@ check('and thrown, so the queue retries and then falls back',
   svc.includes("throw new AppError('Nano Bypass returned one of the input images"));
 
 // The blurred photo is what gets SENT, not the original — auto-blur replaces it in place.
-check('the source sent is the blurred copy', pm.includes('dataUrl = out.dataUrl;') && pm.includes('const sourceImg = parseDataUrl(source.dataUrl);'));
+check('the source sent is the blurred copy', pm.includes('dataUrl: r.dataUrl, blurred: r.blurred') && pm.includes('const sourceImg = parseDataUrl(source.dataUrl);'));
 // And an unfinished tile must not read as a finished result that came back unchanged.
 check('an in-progress tile is labelled as the source', pm.includes('Your source · rendering'));
 

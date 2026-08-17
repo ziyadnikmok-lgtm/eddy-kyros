@@ -103,7 +103,10 @@ check('the socket ceiling is written down, so nobody raises this expecting more'
   /Chromium allows 6 sockets per host/.test(g));
 check('and the measurement behind it', /max concurrent overlap \*\*6\*\*/.test(g));
 check('with the way past it named', /submit -> job id -> poll/.test(g));
-check('a Pinterest-sized batch fits', g.includes('const MAX_SOURCES = 50;'));
+// 500 as of 2026-08-17 ("more 500 can get blurred at once"). The cap was never the real ceiling —
+// ~945ms of face detection per photo on the main thread was, and that now runs on a worker pool.
+// See check-source-intake.js for the arithmetic and lib/facePool.js for the measurement.
+check('a Pinterest-sized batch fits, and then some', g.includes('const MAX_SOURCES = 500;'));
 
 // A pool of N over M items must run every item exactly once, whatever N is.
 const drain = (items, lanes) => {

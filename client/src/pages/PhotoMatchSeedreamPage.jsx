@@ -14,6 +14,7 @@ import { createPageStore } from '../lib/pageStateStore';
 import { queuedSeedreamEdit, waitForQueuedJob, reconcileUnfiled } from '../lib/generationQueue';
 import { cn } from '../lib/utils';
 import { autoBlurFace, findFace, blurFound } from '../lib/autoBlurFace';
+import { poolAvailable, poolSize, runBatch } from '../lib/facePool';
 import ManualBlurModal from '../components/ManualBlurModal';
 
 const ASPECT_OPTIONS = [{ value: 'auto', label: 'Auto (match source)' }, ...SEEDREAM_ASPECT_RATIOS.map((r) => ({ value: r, label: r }))];
@@ -33,9 +34,18 @@ const DESTINATIONS = [
 
 // Each job sends exactly one source photo, so the character gets the rest of Seedream's budget.
 const MAX_CHAR_IMAGES = SEEDREAM_MAX_IMAGES - 1;
-// 50, not 12: a Pinterest send arrives as one batch of whatever you ticked, and the old ceiling
-// only ever blocked the manual "add photos" path while the handoff walked straight past it.
-const MAX_SOURCES = 50;
+/**
+ * 500. Raised from 50 (owner, 2026-08-17: "more 500 can get blurred at once"), and from 12 before
+ * that — a Pinterest send arrives as one batch of whatever you ticked.
+ *
+ * MEASURED before raising it, because the two obvious worries pull in opposite directions:
+ *   memory  — 500 photos at a typical 239 KB is ~0.16 GB of base64 in state. Fine.
+ *   time    — ~945ms of cascade sweep each, which on the main thread is EIGHT MINUTES frozen.
+ * So the cap was never the real limit; the single thread was. Detection and blurring now run on a
+ * worker pool (lib/facePool.js), which is what makes this number honest — about eighty seconds for
+ * five hundred, with the page still usable and a counter running.
+ */
+const MAX_SOURCES = 500;
 
 /**
  * HOW MANY RENDER AT ONCE. Raised 4 -> 12 / 6 (owner asked for "whatever WaveSpeed allows",
@@ -552,7 +562,26 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
    * Still the FIRST thing dropped at the length cap: it improves a picture that is already of the
    * right woman, and the identity lock decides whether she is. Ordinary runs never reach that.
    */
-  parts.push(`SKIN AND DETAIL: real pore texture, stray hairs, uneven specular — shiny where oily, matte elsewhere, never one even sheen. Keep freckles, moles and uneven tone. Sharp micro-contrast; no smoothing, no wax skin, no airbrush.`);
+  /**
+   * ROOM TO SAY MORE THAN THE MINIMUM.
+   *
+   * Nano Banana's cap is 8000 and its heaviest measured run is ~4.8k; Seedream's is 3000 and its
+   * plainest run already spends 2,900 of it. So the two long quality paragraphs below exist only
+   * where they FIT. On Seedream they were not merely tight — measured, they were dropped by the trim
+   * loop on every single configuration, which is worse than absent: text that looks present in the
+   * source and never reaches the model.
+   *
+   * Seedream is not left without one. The skin instruction that matters most rides inside the FINAL
+   * lock further down, on both tabs — see SKIN_IN_LOCK.
+   *
+   * A budget of 0 means "no cap stated" — treated as the SMALL shape, deliberately. The harnesses
+   * call it that way to prove the prompt fits 3000 unaided, and a caller that forgets to pass a
+   * budget should get the conservative prompt rather than one sized for a cap it never declared.
+   */
+  const roomy = budget >= 5000;
+  parts.push(roomy
+    ? `SKIN AND DETAIL: real pore texture at the nose, cheeks and forehead, fine vellus hair catching the light along the jaw and hairline, uneven specular — shiny where skin is oily, matte elsewhere, never one even sheen. Slight redness around the nose and eyes, faint translucency at the ears and eyelids, lips with visible lines rather than a smooth fill. Keep freckles, moles, fine lines and uneven tone. Sharp micro-contrast; no smoothing, no wax skin, no airbrush.`
+    : `SKIN AND DETAIL: real pore texture, stray hairs, uneven specular — shiny where oily, matte elsewhere, never one even sheen. Keep freckles, moles and uneven tone. Sharp micro-contrast; no smoothing, no wax skin, no airbrush.`);
 
   /**
    * THE REST OF THE FRAME, not just her skin.
@@ -580,7 +609,7 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
    * 3000+ characters of its own instructions falls back under it and loses this paragraph, which is
    * correct — at that point room really is short.
    */
-  if (budget >= 5000) {
+  if (roomy) {
     parts.push(`SCENE AND CAMERA: render the scene with real photographic optics — natural depth of field with the background falling off softly behind her, light with one consistent direction and soft-edged shadows that match it, and true material texture: fabric weave, hair strands, wood, metal, wall and floor surfaces each keeping their own grain. Highlights roll off instead of clipping, shadows hold detail and colour instead of going flat black, and fine sensor grain sits evenly over the whole frame. No HDR halos, no over-sharpening, no plastic or waxy surfaces, no CGI gloss, no uniform edge-to-edge sharpness. This governs how the scene is RENDERED, not what is in it — do NOT add, remove, relight or rearrange anything.`);
   }
 
@@ -643,6 +672,36 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
    * the batch, which is not recoverable by a retry. Ordinary pair runs never reach this — exact
    * recreate on a pair measures 2,989 and drops nothing.
    */
+  /**
+   * SKIN, SAID AGAIN IN THE ONE PLACE THAT OUTRANKS EVERYTHING — and said differently.
+   *
+   * Owner, 2026-08-17: "the face skin still look like plastic". SKIN AND DETAIL was already in the
+   * prompt, so more adjectives in the same spot were not going to fix it. Two structural reasons it
+   * loses:
+   *
+   *   1. POSITION. It sits mid-prompt and the FINAL lock comes after it, re-anchoring everything to
+   *      the reference photos. Both engines weight the tail hardest — that is why the identity lock
+   *      lives there and why the chips are appended after the whole instruction.
+   *
+   *   2. THE REFERENCES THEMSELVES. "Match exactly: skin tone" and "render her as Grace from her
+   *      references" are orders to COPY those photos, and a character's references are very often
+   *      generated or retouched images with smooth, poreless skin. The model is then reproducing
+   *      the plastic finish faithfully — obeying the prompt, not ignoring it. Nothing anywhere told
+   *      it to take her identity from the references and NOT their finish.
+   *
+   * So this rides inside the final paragraph, and its real work is the second sentence.
+   *
+   * NANO BANANA ONLY, measured — and this one hurt to conclude. Seedream has no room whatsoever:
+   * adding even a 60-character version means the trim loop reaches the "her face is deliberately
+   * blurred — render it sharply" line on an ordinary nude, pair or extra-instruction run, and that
+   * line guards a bug that actually shipped. Paying for skin texture with a wrong face is a bad
+   * trade at any length, so Seedream's prompt is left exactly as it was and every version of this
+   * lands on the tab that can hold it.
+   */
+  if (!faceless && roomy) {
+    parts[parts.length - 1] += ` Her skin is PHOTOGRAPHED, not retouched: visible pores, fine facial hair, natural unevenness, shine only where skin is oily. If her reference photos look smoothed or airbrushed, take her IDENTITY from them and not that finish.`;
+  }
+
   const SEP = '\n\n';
   const joined = () => parts.join(SEP);
   if (budget > 0) {
@@ -1004,6 +1063,11 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
    */
   const [lookAtCamera, setLookAtCamera] = useState(_cache.lookAtCamera ?? false);
   const [blurringAll, setBlurringAll] = useState(false);
+  // {done, total} while a batch is being scanned, null otherwise. Five hundred photos take about a
+  // minute and a half; without a count that is indistinguishable from the page having hung.
+  const [scanning, setScanning] = useState(null);
+  // Show only the photos that came back without a blur, so a handful out of hundreds can be found.
+  const [showUnblurredOnly, setShowUnblurredOnly] = useState(false);
   const [manualBlurId, setManualBlurId] = useState(null);  // source id being hand-blurred, or null
   const [aspectRatio, setAspectRatio] = useState(_cache.aspectRatio);
   const [resolution, setResolution] = useState(_cache.resolution);
@@ -1063,8 +1127,19 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     return () => { cancelled = true; };
   }, []);
 
-  // Persist only after restore, or the first empty render would wipe the save.
-  useEffect(() => { if (restored) store.set('sources', sources); }, [sources, restored]);
+  /**
+   * Persist only after restore, or the first empty render would wipe the save.
+   *
+   * DEBOUNCED since the cap went to 500: this serialises every source photo, and at that size the
+   * snapshot is ~160 MB. Writing it on each individual state change — which is what happened while
+   * a batch was landing — is a second freeze right behind the one the workers just removed. A
+   * second of quiet is long past the end of any burst and far short of anything that could be lost.
+   */
+  useEffect(() => {
+    if (!restored) return undefined;
+    const t = setTimeout(() => store.set('sources', sources), 1000);
+    return () => clearTimeout(t);
+  }, [sources, restored]);
   useEffect(() => { if (restored) store.set('characterIds', characterIds); }, [characterIds, restored]);
   useEffect(() => { if (restored) store.set('extra', extra); }, [extra, restored]);
 
@@ -1254,35 +1329,47 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     if (overflow) notify(`${overflow} photo${overflow === 1 ? '' : 's'} left out — the limit is ${MAX_SOURCES}`, 'error');
     if (!take.length) return 0;
     let missed = 0;
-    const added = await Promise.all(take.map(async (incoming) => {
-      let dataUrl = incoming;
-      /**
-       * ONE DETECTION, BOTH ANSWERS — is there a face, and where is it.
-       *
-       * This ran the detector three times per photo: once loose to decide whether the shot is a
-       * back view, then a confident blur pass, then a loose one. Each decodes the image, scales it
-       * and sweeps eight rotations, and the thumbnail did not appear until all of it finished
-       * (owner, 2026-08-17: 'sometimes slow to put the image there').
-       *
-       * They could also disagree — the back-view check ran loose and ungated while the blur ran
-       * strict — so a photo could be called back-facing while its face was being blurred.
-       *
-       * Run on the ORIGINAL, before any blur. Detecting after would read a blurred-out face as no
-       * face and flip every face-blurred front photo to a back view.
-       */
-      const face = await findFace(dataUrl).catch(() => ({ box: null, present: false }));
-      let blurred = false;
-      if (blurSourceRef.current) {
-        const out = await blurFound(dataUrl, face);
-        dataUrl = out.dataUrl;
-        blurred = out.blurred;
-        if (!out.blurred) missed += 1;
-      }
-      // `present`, not `box`: a loose match the gate refused still means a face is probably there,
-      // so the shot is not a back view even though nothing was blurred.
-      return { id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, dataUrl, blurred, backView: !face.present };
-    }));
-    if (missed) notify(`${missed} photo(s): no face found even on the second pass — click a photo to blur by hand`, 'error');
+    const wantBlur = blurSourceRef.current;
+    /**
+     * DETECTION RUNS ON WORKERS, and that is the difference between usable and not.
+     *
+     * One photo costs ~945ms of cascade sweep — benchmarked over 25 real photos at these exact
+     * parameters. JavaScript is single-threaded, so this Promise.all does NOT run them at the same
+     * time: on the main thread 500 photos is about eight minutes with the window frozen solid. A
+     * pool of workers turns that into roughly eighty seconds with the page still alive.
+     *
+     * The worker does the blur too. Sending only the box back would mean every full-size photo is
+     * decoded and re-encoded on the UI thread anyway, which is its own freeze at this scale.
+     *
+     * The main-thread path stays as the fallback for any photo a worker could not take — no
+     * environment gets a silently unprocessed photo.
+     */
+    const onMainThread = async (incoming) => {
+      // Detected on the ORIGINAL, before any blur: reading a blurred-out face as "no face" would
+      // flip every face-blurred front photo to a back view.
+      const face = await findFace(incoming).catch(() => ({ box: null, present: false }));
+      if (!wantBlur) return { dataUrl: incoming, blurred: false, present: face.present };
+      const out = await blurFound(incoming, face);
+      return { dataUrl: out.dataUrl, blurred: out.blurred, present: face.present };
+    };
+    const useWorkers = poolAvailable() && take.length > 1;
+    if (useWorkers) setScanning({ done: 0, total: take.length });
+    const results = useWorkers
+      ? await runBatch(take, {
+        blur: wantBlur,
+        fallback: onMainThread,
+        onProgress: (done, total) => setScanning({ done, total }),
+      })
+      : await Promise.all(take.map(onMainThread));
+    setScanning(null);
+    const added = take.map((incoming, i) => {
+      const r = results[i] || { dataUrl: incoming, blurred: false, present: false };
+      if (wantBlur && !r.blurred) missed += 1;
+      // `present`, not the box: a loose match the gate refused still means a face is probably
+      // there, so the shot is not a back view even though nothing was blurred.
+      return { id: `s-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`, dataUrl: r.dataUrl, blurred: r.blurred, backView: !r.present };
+    });
+    if (missed) notify(`${missed} photo${missed === 1 ? '' : 's'}: no face found even on the second pass — use the "no face" filter to blur them by hand`, 'error');
     setSources((prev) => (replace ? added : [...prev, ...added]));
     return added.length;
   }, [sources, notify]);
@@ -1311,11 +1398,23 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     if (!targets.length) { notify('Every source is already blurred', 'info'); return; }
     setBlurringAll(true);
     let blurred = 0; let missed = 0;
-    const results = await Promise.all(targets.map(async (s) => {
-      const out = await autoBlurFace(s.dataUrl);
-      if (out.blurred) { blurred += 1; return { id: s.id, dataUrl: out.dataUrl, blurred: true }; }
+    // On the workers, same as intake — this is the button most likely to be pressed on 500 photos,
+    // and on the main thread that is eight minutes of frozen window.
+    const useWorkers = poolAvailable() && targets.length > 1;
+    if (useWorkers) setScanning({ done: 0, total: targets.length });
+    const out = useWorkers
+      ? await runBatch(targets.map((s) => s.dataUrl), {
+        blur: true,
+        fallback: (url) => autoBlurFace(url),
+        onProgress: (done, total) => setScanning({ done, total }),
+      })
+      : await Promise.all(targets.map((s) => autoBlurFace(s.dataUrl)));
+    setScanning(null);
+    const results = targets.map((s, i) => {
+      const r = out[i];
+      if (r?.blurred) { blurred += 1; return { id: s.id, dataUrl: r.dataUrl, blurred: true }; }
       missed += 1; return null;
-    }));
+    });
     const byId = new Map(results.filter(Boolean).map((r) => [r.id, r]));
     setSources((prev) => prev.map((s) => (byId.has(s.id) ? { ...s, ...byId.get(s.id) } : s)));
     setBlurringAll(false);
@@ -2317,6 +2416,42 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
             </div>
           </div>
 
+          {/**
+            * DID EVERY FACE GET BLURRED — answerable at a glance, at any batch size.
+            *
+            * With fifty photos you could count the amber rings. With five hundred you cannot, and
+            * "it show if all face blurred" is the whole question (owner, 2026-08-17). So the count
+            * is stated, and the ones that failed can be isolated in one click instead of hunted
+            * through a wall of thumbnails.
+            */}
+          {scanning ? (
+            <div className="rounded-lg border border-sky-700/40 bg-sky-950/30 px-3 py-2">
+              <div className="flex items-center justify-between text-[0.6875rem] font-semibold text-sky-200">
+                <span>Scanning faces — {scanning.done} of {scanning.total}</span>
+                <span className="font-mono tabular-nums text-sky-400/70">{poolSize()} workers</span>
+              </div>
+              <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-sky-950">
+                <span className="block h-full rounded-full bg-sky-500 transition-[width] duration-200"
+                  style={{ width: `${Math.round((scanning.done / Math.max(1, scanning.total)) * 100)}%` }} />
+              </div>
+            </div>
+          ) : sources.length > 0 && blurSource && (
+            <div className={cn('flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-[0.6875rem] font-semibold',
+              unblurredCount ? 'border-amber-700/40 bg-amber-950/25 text-amber-200' : 'border-emerald-700/40 bg-emerald-950/25 text-emerald-200')}>
+              <span>
+                {unblurredCount
+                  ? `${sources.length - unblurredCount} of ${sources.length} blurred · ${unblurredCount} with no face found`
+                  : `All ${sources.length} face${sources.length === 1 ? '' : 's'} blurred`}
+              </span>
+              {unblurredCount > 0 && (
+                <button type="button" onClick={() => setShowUnblurredOnly((v) => !v)}
+                  className="shrink-0 rounded border border-amber-600/50 px-2 py-0.5 text-[0.625rem] uppercase tracking-wide text-amber-100 hover:bg-amber-900/40 cursor-pointer">
+                  {showUnblurredOnly ? 'Show all' : `Show the ${unblurredCount}`}
+                </button>
+              )}
+            </div>
+          )}
+
           <div
             className={cn('rounded-xl border-2 border-dashed p-3 transition-colors', dragging ? 'border-rose-500 bg-rose-500/[0.06]' : 'border-zinc-800/60')}
             onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
@@ -2336,7 +2471,10 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
           >
             {sources.length ? (
               <div className="grid [grid-template-columns:repeat(auto-fill,minmax(90px,1fr))] gap-2">
-                {sources.map((s) => (
+                {/* The filter narrows what is DRAWN, never what is queued — every source still
+                    generates. Turning it on with nothing left to fix shows the lot again rather
+                    than an empty box. */}
+                {(showUnblurredOnly && unblurredCount ? sources.filter((s) => !s.blurred) : sources).map((s) => (
                   <div key={s.id} className="relative group">
                     {/* Click the photo to blur a region by hand — the fallback for a face the
                         detector missed. The amber ring flags exactly those un-blurred photos. */}

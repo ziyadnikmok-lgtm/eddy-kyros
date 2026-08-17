@@ -76,12 +76,24 @@ function unrotatePoint(col, row, deg, w, h, nw, nh) {
   return { col: w / 2 + dx * cos + dy * sin, row: h / 2 - dx * sin + dy * cos };
 }
 
+/** The long edge every photo is scaled to before scanning. Exported so the worker matches exactly. */
+export const SCAN_EDGE = 640;
+
+/** RGBA to the single greyscale plane pico wants. Shared with the worker. */
+export function greyscalePlane(rgba, w, h) {
+  const grey = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i += 1) {
+    grey[i] = (rgba[i * 4] * 0.299 + rgba[i * 4 + 1] * 0.587 + rgba[i * 4 + 2] * 0.114) | 0;
+  }
+  return grey;
+}
+
 export async function detectFacePico(dataUrl, { aggressive = false } = {}) {
   const img = await loadImage(dataUrl);
 
   // pico scans at fixed scales, so a huge photo wastes time without finding more. 640px on the
   // long edge is plenty for a face that matters, and keeps this instant on a 4000px original.
-  const scale = Math.min(1, 640 / Math.max(img.naturalWidth, img.naturalHeight));
+  const scale = Math.min(1, SCAN_EDGE / Math.max(img.naturalWidth, img.naturalHeight));
   const w = Math.max(1, Math.round(img.naturalWidth * scale));
   const h = Math.max(1, Math.round(img.naturalHeight * scale));
 
@@ -90,14 +102,19 @@ export async function detectFacePico(dataUrl, { aggressive = false } = {}) {
   canvas.height = h;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(img, 0, 0, w, h);
-  const rgba = ctx.getImageData(0, 0, w, h).data;
+  const grey = greyscalePlane(ctx.getImageData(0, 0, w, h).data, w, h);
 
-  // pico wants a single greyscale plane, not RGBA.
-  const grey = new Uint8Array(w * h);
-  for (let i = 0; i < w * h; i += 1) {
-    grey[i] = (rgba[i * 4] * 0.299 + rgba[i * 4 + 1] * 0.587 + rgba[i * 4 + 2] * 0.114) | 0;
-  }
+  return sweepPlane(grey, w, h, aggressive);
+}
 
+/**
+ * The sweep itself — greyscale plane in, box out. NO DOM, so the worker runs the identical code.
+ *
+ * Split out when detection moved off the main thread: at ~945ms a photo, 500 of them is eight
+ * minutes of frozen UI, and a worker pool turns that into about eighty seconds. Two copies of a
+ * cascade sweep that must agree exactly is the last thing this file needs, so there is one.
+ */
+export function sweepPlane(grey, w, h, aggressive = false) {
   /**
    * BOTH PASSES SCAN FINELY. They differ in how much EVIDENCE they require, nothing else.
    *

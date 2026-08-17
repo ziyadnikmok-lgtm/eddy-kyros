@@ -319,12 +319,16 @@ check('2K is the default resolution', /const _cache = {[^}]*resolution: '2K'/.te
 // begins, in effect, with SKIN AND DETAIL.
 check('the droppable markers follow the paragraph names',
   src.includes("const droppable = ['SCENE AND CAMERA:', 'SKIN AND DETAIL',"));
-check('and it is short enough to survive a normal run', (() => {
-  const start = src.indexOf('parts.push(`SKIN AND DETAIL:');
-  if (start < 0) return false;
-  const end = src.indexOf('`);', start);
-  return end > start && (end - start) < 300;
-})());
+// TWO VERSIONS as of 2026-08-17 (owner: "the face skin still look like plastic"): a fuller one
+// naming pore scale, vellus hair and subsurface colour on the Nano Banana budget, and the original
+// on Seedream's. The Seedream one is the one that must stay short enough to survive a normal run —
+// that is what made the very first attempt useless, at 640 characters it was dropped every time.
+const skinVariants = [...src.matchAll(/`SKIN AND DETAIL: ([^`]*)`/g)].map((m) => m[0]);
+check(`both skin paragraphs exist (${skinVariants.map((v) => v.length).join(', ')} chars)`, skinVariants.length === 2);
+check('the Seedream one is short enough to survive a normal run',
+  skinVariants.length === 2 && Math.min(...skinVariants.map((v) => v.length)) < 300);
+check('and the fuller one is only reached where there is room',
+  src.includes('const roomy = budget >= 5000;') && src.includes('parts.push(roomy'));
 
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);

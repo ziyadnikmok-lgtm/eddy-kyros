@@ -107,10 +107,33 @@ check('a confident hit skips the gate entirely', blurLib.includes('if (strict) r
 // shot is not a back view, even though nothing was blurred.
 check('a gated-out match still counts as a face being present',
   blurLib.includes('present: true, rejected: true'));
-check('the page detects once and reuses it', page.includes('const face = await findFace(dataUrl)')
-  && page.includes('await blurFound(dataUrl, face)'));
-check('and the back-view flag comes from that same result', page.includes('backView: !face.present'));
+// CHANGED 2026-08-17: the per-photo work moved onto a worker pool (~945ms of sweep each; 500 photos
+// on the main thread is eight frozen minutes). The main-thread path below is now the FALLBACK for a
+// photo no worker could take, and it still detects once and reuses the result.
+check('the main-thread fallback detects once and reuses it', page.includes('const face = await findFace(incoming)')
+  && page.includes('await blurFound(incoming, face)'));
+check('and the back-view flag comes from that same result', page.includes('backView: !r.present'));
 check('the page no longer calls the detector itself', !page.includes("from '../lib/detectFacePico'"));
+
+// --- the worker must run the SAME detection, or the two paths disagree per photo ------------------
+// A photo that lands on a worker and the same photo that falls back must get the same verdict, so
+// the sweep is imported rather than copied. The gate constants ARE duplicated in the worker (they
+// sit beside blurRegion's DOM canvas, which a worker cannot load) — hence these assertions.
+const worker = read('client/src/lib/faceWorker.js');
+check('the worker imports the sweep instead of copying it',
+  worker.includes("import { sweepPlane, greyscalePlane, SCAN_EDGE } from './detectFacePico'"));
+check('and the sweep is exported as DOM-free for exactly that reason',
+  det.includes('export function sweepPlane(grey, w, h, aggressive = false)'));
+for (const name of ['ABSURD_FRACTION', 'LOW_MATCH_FRACTION', 'LOW_CENTRE']) {
+  const inWorker = new RegExp(`const ${name} = ([0-9.]+);`).exec(worker);
+  check(`the worker's ${name} matches the page's`, inWorker && Number(inWorker[1]) === num(name));
+}
+check('the worker escalates strict-then-loose too',
+  worker.indexOf('sweepPlane(grey, w, h, false)') < worker.indexOf('sweepPlane(grey, w, h, true)'));
+check('it pads the box by the same amount', worker.includes('const grow = 0.25;'));
+check('and blurs by destroying the pixels, not softening them', worker.includes('Math.round(w / 24)'));
+check('a worker that cannot run means the main thread does it, never a skipped photo',
+  page.includes('fallback: onMainThread'));
 
 // --- dropping a photo must work anywhere on the page ------------------------------------------------
 // Paste was bound to the window and drop only to the dashed box, which scrolls out of view as soon

@@ -105,9 +105,12 @@ const addBlock = src.slice(src.indexOf('const intakeUrls = useCallback'), src.in
 // CHANGED 2026-08-17: one detection now feeds both the blur and the back-view flag, so the order
 // is findFace-then-blurFound rather than two independent detector calls. Same invariant: the face is
 // found on the ORIGINAL, before any blur, or a blurred-out face reads as no face.
-check('the face is detected BEFORE anything is blurred',
-  addBlock.indexOf('await findFace(dataUrl)') < addBlock.indexOf('await blurFound(dataUrl, face)'));
-check('and the reason is written down', /Detecting after would read a blurred-out face as no/.test(src));
+check('the face is detected BEFORE anything is blurred, on the main-thread path',
+  addBlock.indexOf('await findFace(incoming)') < addBlock.indexOf('await blurFound(incoming, face)'));
+// And on the worker path, which is where a batch actually goes. Same order, same reason.
+check('and on the worker path too',
+  (() => { const w = read('client/src/lib/faceWorker.js'); return w.indexOf('findFaceIn(bitmap)') < w.indexOf('blurInto(bitmap'); })());
+check('and the reason is written down', /reading a blurred-out face as "no face" would/.test(src));
 
 // Aggressive detection, because the two mistakes are not equally expensive: a false "face found"
 // means today's behaviour; a false "no face" strips the face rules off a front photo.
@@ -116,7 +119,7 @@ check('and the reason is written down', /Detecting after would read a blurred-ou
 check('detection escalates strict-then-loose inside findFace',
   read('client/src/lib/autoBlurFace.js').includes('const loose = await detectFacePico(dataUrl, { aggressive: true });'));
 check('and a detector failure does not take the paste down', addBlock.includes('.catch(() => ({ box: null, present: false }))'));
-check('each source carries its own verdict', addBlock.includes('backView: !face.present'));
+check('each source carries its own verdict', addBlock.includes('backView: !r.present'));
 
 // Per photo, not per run — the global Faceless switch was all-or-nothing across a mixed batch.
 check('the prompt is built per source photo', src.includes('const promptFor = (who, refCount, source) => {'));
