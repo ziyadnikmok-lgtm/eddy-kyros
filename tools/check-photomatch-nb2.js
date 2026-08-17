@@ -165,7 +165,11 @@ check('and the route imports it rather than keeping its own copy',
   route.includes("require('../services/nanoBypassService')") && !route.includes('async function callGemini('));
 check('it goes straight to Google', svc.includes('generativelanguage.googleapis.com/v1beta/models/'));
 // This IS the bypass: the last rung of the ladder sends no safetySettings at all.
-check('safety starts at BLOCK_ONLY_HIGH', svc.includes("threshold: 'BLOCK_ONLY_HIGH'"));
+// Raised BLOCK_ONLY_HIGH -> OFF on 2026-08-17 after measuring that an IMAGE refusal is not governed
+// by these at all (BLOCK_ONLY_HIGH, BLOCK_NONE and OFF all refused the same request; only the
+// finishReason changed). Kept at OFF because it is strictly more permissive on the text-side
+// categories, which ARE configurable.
+check('safety starts at the most permissive value the API accepts', svc.includes("threshold: 'OFF'"));
 check('and the last attempt drops safetySettings entirely', svc.includes('delete body.safetySettings;'));
 check('the Gemini key is required, with a message that says where to add one',
   svc.includes('GEMINI_KEY_REQUIRED') && /add one under API Keys/.test(svc));

@@ -22,12 +22,35 @@ const { AppError } = require('../middleware/errorHandler');
  * Loosest setting the API accepts on this path. Note the retry ladder in callGemini drops the block
  * entirely on the third attempt, which is the actual bypass — this is the first, politest rung.
  */
+/**
+ * OFF — the most permissive value this API accepts, and MEASURED as accepted by this model.
+ *
+ * It was BLOCK_ONLY_HIGH. Raised after a direct experiment on 2026-08-17, because the owner wants
+ * the bypass to work rather than to be routed around ("i care more about using the gemini bypass
+ * nb2 not in wavespeed"). Same two images, same prompt, one variable:
+ *
+ *     BLOCK_ONLY_HIGH   refused — PROHIBITED_CONTENT
+ *     BLOCK_NONE        refused — IMAGE_SAFETY
+ *     OFF               refused — IMAGE_OTHER
+ *     OFF, all 5 cats   refused — IMAGE_SAFETY   (accepted by the API; no HTTP error)
+ *
+ * SO THIS IS NOT THE LEVER, and that is worth knowing rather than re-guessing: an image REFUSAL is
+ * not governed by safetySettings at all. The image model has its own output filter, and the
+ * finishReason simply changes name while the answer stays no.
+ *
+ * Kept at OFF anyway. It is strictly more permissive on everything that IS configurable — the
+ * text-side categories — so a borderline case has one fewer reason to be blocked, and it costs
+ * nothing.
+ *
+ * WHAT THE LEVER ACTUALLY IS: the input photograph. Same pose, same prompt, same settings — a base
+ * photo in sheer lace was refused, and a base photo in an ordinary top came back with an image.
+ */
 const SAFETY_SETTINGS = [
-  { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
-  { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
-  { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-  { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
-  { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_ONLY_HIGH' },
+  { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'OFF' },
+  { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'OFF' },
+  { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'OFF' },
+  { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'OFF' },
+  { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'OFF' },
 ];
 
 const MODEL_IDS = {
@@ -139,7 +162,7 @@ async function callGemini(apiKey, modelId, parts, aspectRatio, imageSize, temper
       const REFUSALS = new Set(['IMAGE_OTHER', 'IMAGE_SAFETY', 'SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST']);
       throw new AppError(
         REFUSALS.has(finishReason)
-          ? `Google refused this image — its content filter, not an error (${finishReason}). Seedream 5 Pro on WaveSpeed takes over automatically; if that account is out of credits the job stops here.${textParts ? ` — ${textParts.slice(0, 160)}` : ''}`
+          ? `Google refused this image — its content filter, not an error (${finishReason}). Measured: this is decided by the SOURCE PHOTO, not by the prompt or by safety settings — the same request passed with a less revealing base photo and was refused with a sheer one, at every threshold including OFF. Seedream 5 Pro on WaveSpeed takes over automatically; if that account is out of credits the job stops here.${textParts ? ` — ${textParts.slice(0, 160)}` : ''}`
           : `Nano Bypass returned no image (reason: ${finishReason})${textParts ? ` — ${textParts.slice(0, 200)}` : ''}`,
         502,
         'NANO_BYPASS_NO_IMAGE'

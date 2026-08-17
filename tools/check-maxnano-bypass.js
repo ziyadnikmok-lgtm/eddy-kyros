@@ -160,6 +160,32 @@ check('and the fallback fires below the queue ceiling, or it would never be reac
   Number(/const NB2_ATTEMPTS = (\d+);/.exec(rec)[1])
     < Number(/const MAX_SUBMIT_ATTEMPTS = (\d+);/.exec(read('server/services/jobQueue.js'))[1]));
 
+// --- WHAT ACTUALLY DECIDES A REFUSAL, measured ------------------------------------------------------
+//
+// The owner wants the bypass to WORK, not to be routed around ("i care more about using the gemini
+// bypass nb2 not in wavespeed"). So the obvious lever was tested directly rather than assumed. Same
+// two images, same prompt, one variable — the thresholds:
+//
+//     BLOCK_ONLY_HIGH   refused — PROHIBITED_CONTENT
+//     BLOCK_NONE        refused — IMAGE_SAFETY
+//     OFF               refused — IMAGE_OTHER
+//     OFF, all 5 cats   refused — IMAGE_SAFETY   (accepted by the API; no HTTP error)
+//
+// An image refusal is NOT governed by safetySettings. The model has its own output filter and the
+// finishReason just changes name. Kept at OFF regardless: strictly more permissive on everything
+// that IS configurable, and it costs nothing.
+//
+// THE LEVER IS THE INPUT PHOTO. Same pose, prompt and settings: a sheer-lace base was refused, an
+// ordinary top came back with an image.
+check('safety is set to the most permissive value the API takes',
+  svc.includes("{ category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'OFF' }"));
+check('every category, not just the obvious one',
+  (svc.match(/threshold: 'OFF'/g) || []).length === 5);
+check('and the experiment that says it is not the lever is recorded',
+  /BLOCK_ONLY_HIGH   refused/.test(svc) && /OFF               refused/.test(svc));
+check('the refusal message names the lever that IS real',
+  svc.includes('this is decided by the SOURCE PHOTO, not by the prompt or by safety settings'));
+
 // --- A REFUSAL MUST READ AS A REFUSAL ------------------------------------------------------------
 // "Nano Bypass returned no image (reason: IMAGE_OTHER)" tells nobody anything, and it was the only
 // thing reaching the card while every job failed.
