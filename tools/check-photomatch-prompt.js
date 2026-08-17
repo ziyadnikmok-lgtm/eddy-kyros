@@ -314,8 +314,11 @@ check('2K is the default resolution', /const _cache = {[^}]*resolution: '2K'/.te
 // woman, and the identity lock decides whether she is. So it must be short enough to survive an
 // ordinary run, which is what made the first attempt useless: at 640 characters it was dropped every
 // single time.
-check('the droppable marker follows the paragraph name',
-  src.includes("const droppable = ['SKIN AND DETAIL',"));
+// SCENE AND CAMERA sits ahead of it: at the cap the woman matters more than the room she is in.
+// It only exists on the Nano Banana budget anyway (see below), so on Seedream this list still
+// begins, in effect, with SKIN AND DETAIL.
+check('the droppable markers follow the paragraph names',
+  src.includes("const droppable = ['SCENE AND CAMERA:', 'SKIN AND DETAIL',"));
 check('and it is short enough to survive a normal run', (() => {
   const start = src.indexOf('parts.push(`SKIN AND DETAIL:');
   if (start < 0) return false;

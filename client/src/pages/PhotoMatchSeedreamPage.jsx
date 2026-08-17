@@ -555,6 +555,36 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
   parts.push(`SKIN AND DETAIL: real pore texture, stray hairs, uneven specular — shiny where oily, matte elsewhere, never one even sheen. Keep freckles, moles and uneven tone. Sharp micro-contrast; no smoothing, no wax skin, no airbrush.`);
 
   /**
+   * THE REST OF THE FRAME, not just her skin.
+   *
+   * SKIN AND DETAIL fixed the woman and left everything around her alone, so a correct, textured
+   * face kept arriving inside a scene that still looked rendered — flat even light, plastic
+   * surfaces, a background as sharp as the subject. That is what reads as AI at a glance, and it
+   * is not the skin (owner, 2026-08-17: "it auto the prompt upscale the skin and enviroment").
+   *
+   * AUTOMATIC, like the skin line. Both are what a photograph IS, not an effect somebody opts into,
+   * and a quality that has to be ticked is a quality most runs go without.
+   *
+   * THE TRAP THIS AVOIDS: the prompt above orders the scene reproduced EXACTLY — same background,
+   * lighting, props. An instruction to improve the environment fights that directly and will start
+   * adding light sources and set dressing. So every clause here is about RENDERING — optics, light
+   * behaviour, material texture, sensor character — and it closes by saying so outright.
+   *
+   * NANO BANANA ONLY, and that is a measurement rather than a preference. Seedream's cap is 3000
+   * and the prompt already spends 2,921 of it on the plainest run and 3,200 on the worst — the drop
+   * list exists because of that. There is no room on that tab for another automatic paragraph: a
+   * short one still lands the worst case over the cap, where ByteDance 422s the whole batch. Nano
+   * Banana's cap is 8000 and its heaviest measured run is ~4.5k, so there it is free.
+   *
+   * 5000 is the test because it sits above one cap and below the other. A Nano Banana run carrying
+   * 3000+ characters of its own instructions falls back under it and loses this paragraph, which is
+   * correct — at that point room really is short.
+   */
+  if (budget >= 5000) {
+    parts.push(`SCENE AND CAMERA: render the scene with real photographic optics — natural depth of field with the background falling off softly behind her, light with one consistent direction and soft-edged shadows that match it, and true material texture: fabric weave, hair strands, wood, metal, wall and floor surfaces each keeping their own grain. Highlights roll off instead of clipping, shadows hold detail and colour instead of going flat black, and fine sensor grain sits evenly over the whole frame. No HDR halos, no over-sharpening, no plastic or waxy surfaces, no CGI gloss, no uniform edge-to-edge sharpness. This governs how the scene is RENDERED, not what is in it — do NOT add, remove, relight or rearrange anything.`);
+  }
+
+  /**
    * HER BUILD, immediately before the identity lock.
    *
    * It states the size the lock is about to hold. Placed anywhere earlier it is one sentence
@@ -616,7 +646,9 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
   const SEP = '\n\n';
   const joined = () => parts.join(SEP);
   if (budget > 0) {
-    const droppable = ['SKIN AND DETAIL', `${src}'s face is deliberately blurred`, `${who}: `, 'CAMERA:',
+    // SCENE AND CAMERA goes first, ahead of SKIN AND DETAIL: at the cap the woman matters more than
+    // the room she is standing in, and hers is the smaller line of the two.
+    const droppable = ['SCENE AND CAMERA:', 'SKIN AND DETAIL', `${src}'s face is deliberately blurred`, `${who}: `, 'CAMERA:',
       ...(pair ? ['EYES TO CAMERA:', 'MAKEUP:'] : []),
       // HER BUILD, then the rival-face warning — in that order, because they are not worth the
       // same. Asked to keep only one, 'do not copy the stand-in's face' beats 'she has a very

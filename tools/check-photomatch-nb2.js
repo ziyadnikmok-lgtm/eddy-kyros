@@ -53,6 +53,64 @@ check('and the reconciler reads it', rec.includes("if (model === 'nb2') return '
 check('only Seedream gets the short budget', pm.includes("engine === 'seedream' ? SEEDREAM_PROMPT_BUDGET : NANO2_PROMPT_BUDGET"));
 check('and the ByteDance cap is not applied to a Gemini run', !pm.includes("engine === 'nano2' ? NANO2_PROMPT_BUDGET : SEEDREAM_PROMPT_BUDGET"));
 
+// --- what the spare budget is SPENT on ------------------------------------------------------------
+//
+// Owner, 2026-08-17: "without select instruction it auto the prompt upscale the skin and enviroment".
+// SKIN AND DETAIL fixed the woman and left the room she stands in untouched, so a correct, textured
+// face kept arriving inside a flatly-lit, plastic-surfaced, uniformly-sharp scene — which is what
+// reads as AI at a glance.
+//
+// It is on the Nano Banana budget ONLY, and that is arithmetic rather than taste. Measured against
+// the real builder: Seedream's plainest run is 2,921 of its 3,000 and its worst is 3,200, which is
+// why the drop list exists at all. Nano Banana's heaviest measured run is ~4,547 of 8,000.
+const budgets = { sd: Number(/const SEEDREAM_PROMPT_BUDGET = (\d+);/.exec(pm)[1]), nb2: Number(/const NANO2_PROMPT_BUDGET = (\d+);/.exec(pm)[1]) };
+check(`the two caps are what this is reasoned from (${budgets.sd} / ${budgets.nb2})`, budgets.sd === 3000 && budgets.nb2 === 8000);
+check('the scene paragraph exists and is automatic — no chip to tick',
+  pm.includes('parts.push(`SCENE AND CAMERA: render the scene with real photographic optics'));
+check('it is emitted only where there is measured room', pm.includes('if (budget >= 5000) {'));
+check('and the threshold sits between the two caps', 5000 > budgets.sd && 5000 < budgets.nb2);
+// The prompt above orders the scene reproduced EXACTLY. Without this clause an "improve the
+// environment" instruction fights that and starts adding light sources and set dressing.
+check('it governs rendering, not content — or it would fight exact-recreate',
+  pm.includes('This governs how the scene is RENDERED, not what is in it — do NOT add, remove, relight or rearrange anything.'));
+check('the reason it is Nano-Banana-only is recorded as a measurement',
+  /already spends 2,921 of it on the plainest run and 3,200 on the worst/.test(pm));
+
+// Run the REAL builder at both budgets: present on one tab, absent on the other, and neither over.
+const grab = (re, from) => { const m = re.exec(from); if (!m) throw new Error('missing constant'); return m[1]; };
+const presets = read('client/src/lib/nsfwPresets.js');
+const fnStart = pm.indexOf('export function buildMatchInstruction');
+// eslint-disable-next-line no-new-func
+const build = new Function(`
+  const NUDE_LINE = ${grab(/export const NUDE_LINE = ('[^']*');/, presets)};
+  const LIGHTING_LINE = ${grab(/const LIGHTING_LINE = ('[^']*');/, pm)};
+  const BACK_VIEW_LINE = ${grab(/const BACK_VIEW_LINE = ([\s\S]*?);\n/, pm)};
+  ${pm.slice(fnStart, pm.indexOf('\n}\n', fnStart) + 3).replace('export function', 'function')};
+  return buildMatchInstruction;`)();
+const CASE = {
+  characterName: 'Grace', refCount: 4, masterPrompt: '', exactRecreate: true, varyBackground: false,
+  allowExpressionChange: false, allowHairChange: false, allowBodyChange: false, allowLightingChange: false,
+  faceless: false, wantsNude: false, addGenericNudeLine: false, sourceFaceBlurred: true,
+};
+const CAST = [{ name: 'Arya', from: 1, to: 4 }, { name: 'Rosary', from: 5, to: 8 }];
+const HEAVY = { ...CASE, refCount: 8, cast: CAST, wantsNude: true, addGenericNudeLine: true, outfitFromChar: true, lookAtCamera: true, masterPrompt: 'x'.repeat(200) };
+for (const [name, opts] of [['plain', CASE], ['heaviest', HEAVY]]) {
+  const onSd = build({ ...opts, budget: budgets.sd });
+  const onNb2 = build({ ...opts, budget: budgets.nb2 });
+  check(`${name}: Nano Banana gets the scene paragraph (${onNb2.length} chars)`, onNb2.includes('SCENE AND CAMERA:'));
+  check(`${name}: Seedream does not, and is unchanged by it (${onSd.length} chars)`, !onSd.includes('SCENE AND CAMERA:'));
+  check(`${name}: both fit their own cap`, onSd.length <= budgets.sd && onNb2.length <= budgets.nb2);
+  check(`${name}: the identity lock survives on both`,
+    onSd.includes('FINAL — HIGHEST PRIORITY') && onNb2.includes('FINAL — HIGHEST PRIORITY'));
+}
+// The skin paragraph is what the scene one extends, and Nano Banana keeps BOTH where Seedream, at
+// the cap, keeps neither.
+check('the heaviest Nano Banana run still carries the skin paragraph too',
+  build({ ...HEAVY, budget: budgets.nb2 }).includes('SKIN AND DETAIL'));
+// A Nano Banana run carrying 3000+ characters of its own instructions drops back under 5000 — the
+// page subtracts the extra text from the budget before calling the builder.
+check('a huge extra instruction gives the room back', !build({ ...CASE, budget: 4000 }).includes('SCENE AND CAMERA:'));
+
 // Same model, different counter — quoting WaveSpeed's resale price on a direct run misstates the
 // bill on the one control where spend is agreed.
 check('NB2 is priced separately', pm.includes('const NB2_COST =') && pm.includes('NB2_COST[resolution]'));
