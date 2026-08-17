@@ -2611,7 +2611,10 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
                   <div key={s.id} className="relative group">
                     {/* Click the photo to blur a region by hand — the fallback for a face the
                         detector missed. The amber ring flags exactly those un-blurred photos. */}
-                    <button type="button" onClick={() => setManualBlurId(s.id)} title="Click to blur a region by hand"
+                    <button type="button" onClick={() => setManualBlurId(s.id)}
+                      title={s.orig
+                        ? 'Blur landed in the wrong place? Click to redraw it — this opens the ORIGINAL photo, not the blurred copy.'
+                        : 'Click to blur a region by hand'}
                       className={cn('block w-full rounded-lg border overflow-hidden cursor-pointer',
                         blurSource && !s.blurred ? 'border-amber-500/70 ring-1 ring-amber-500/40' : 'border-zinc-800/60')}>
                       <img src={s.dataUrl} alt="" className="w-full aspect-[3/4] object-cover bg-zinc-950" />
@@ -3286,8 +3289,20 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
       })()}
 
       {manualBlurId && sources.some((s) => s.id === manualBlurId) && (
+          /**
+           * DRAW ON THE ORIGINAL, not on the smear.
+           *
+           * Opening this on an auto-blurred photo used to show the blurred copy, so the only thing
+           * you could do was paint a second box on top of the wrong one — the misplaced blur stayed
+           * in the picture that gets sent. You had to undo on the tile first and then come back,
+           * which nobody would guess.
+           *
+           * The original is what it edits whenever there is one, so "the blur landed on her chest"
+           * is fixed in one place: open it, draw the box on her face, apply. applyManualBlur keeps
+           * `orig`, so this stays reversible however many times it is redrawn.
+           */
           <ManualBlurModal
-            src={sources.find((s) => s.id === manualBlurId).dataUrl}
+            src={sources.find((s) => s.id === manualBlurId).orig || sources.find((s) => s.id === manualBlurId).dataUrl}
             onApply={(newDataUrl) => applyManualBlur(manualBlurId, newDataUrl)}
             onClose={() => setManualBlurId(null)}
           />

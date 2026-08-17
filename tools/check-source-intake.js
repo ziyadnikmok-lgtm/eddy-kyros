@@ -121,6 +121,29 @@ check('the dashed box only paints the highlight; the window does the adding',
 check('and it does not stop the event reaching the window',
   !page.includes('onDrop={(e) => { e.preventDefault(); setDragging(false); addSources(e.dataTransfer.files); }}'));
 
+// --- putting a wrong blur right --------------------------------------------------------------------
+//
+// Detection is right most of the time and wrong some of the time, and when it is wrong it has
+// painted over a chest. Two ways back, both of which need the untouched photo kept (owner,
+// 2026-08-17: "i want have a undo blur for i chose the blur place myself").
+check('the photo as it arrived is kept when the blur changed it', page.includes('...(r.blurred ? { orig: incoming } : {})'));
+check('only when it changed it — an unblurred batch costs nothing extra', page.includes('r.blurred ? { orig:'));
+check('"Blur all faces" keeps it too, and never overwrites an earlier one',
+  page.includes('orig: s.orig || s.dataUrl'));
+check('a hand-drawn box keeps it as well, so redrawing stays reversible',
+  page.includes('{ ...s, dataUrl: newDataUrl, blurred: true, orig: s.orig || s.dataUrl }'));
+// 1. Undo, on the badge itself — the corner of the tile you are already looking at.
+check('the Blurred badge becomes the undo button', page.includes('Blurred · undo'));
+check('and it restores the untouched photo, unblurred', page.includes('{ id: s.id, dataUrl: s.orig, blurred: false, backView: s.backView }'));
+check('dropping the copy it no longer needs', !page.includes('dataUrl: s.orig, blurred: false, orig:'));
+check('only shown when there is something to go back to', page.includes('? (s.orig'));
+// 2. Redraw, which is the one that matters: the modal must open the ORIGINAL, or you are painting a
+// second box on top of the wrong one and the misplaced blur still ships.
+check('the hand-blur modal edits the original when there is one',
+  page.includes('sources.find((s) => s.id === manualBlurId).orig || sources.find((s) => s.id === manualBlurId).dataUrl'));
+check('and the tile says so rather than leaving it to be discovered',
+  page.includes('this opens the ORIGINAL photo, not the blurred copy'));
+
 // --- a send lands on the tab you are using ------------------------------------------------------------
 check('the destination is resolved, not hardcoded', handoff.includes('export function photoMatchTarget()'));
 check('it reads the tab that was last open', handoff.includes("window.localStorage.getItem('kyros.lastPhotoMatchTab')"));
