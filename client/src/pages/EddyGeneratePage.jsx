@@ -987,10 +987,29 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
     lines.push(`The POSE description above may name furniture, props, surfaces or a location — a chair, a bed, a wall, a floor, a room. Those words describe ONLY how her body is arranged and supported. They are NOT part of the scene and must NOT be built: do not add that furniture, those props or that location to the image.`);
     lines.push(`Put the same body position into image 1's own setting instead${exceptCorrection}. If the pose rests on something that is not in image 1, she takes the same position on whatever image 1 actually has — its own seat, surface, floor or ground — at the same angle and the same height. The shape of her body is copied; the room around it is never copied.`);
   }
-  // The pose photo's own facial expression. Stated next to the pose it came from, and kept to the
-  // one sentence the vision pass wrote — this is a look to copy, not a second identity rule, so it
-  // deliberately sits BEFORE the face-lock and FINAL CHECK lines that pin who she is.
-  if (expressionText) lines.push(`EXPRESSION — copy the face she is making: ${expressionText}`);
+  /**
+   * THE POSE PHOTO'S EXPRESSION — and ONLY the expression.
+   *
+   * ⚠️ It read "copy the face she is making: <sentence>", and the sentence comes from the pose
+   * JSON's `subject.features` field. FEATURES, not expression — so what actually arrives is things
+   * like "Attractive face looking straight at the camera with a soft confident expression, full
+   * glossy lips, heavy eye makeup". Half of that is the STAND-IN'S FACE, and the prompt was
+   * instructing the model to copy it while three other lines said the opposite: MAKEUP comes from
+   * her references, the woman in the diagram must not appear, and FINAL CHECK pins her face to the
+   * close-up. Whichever won, one of them was going to be wrong.
+   *
+   * The field cannot be trusted to contain only an expression, and stripping appearance words out
+   * of a free-text sentence is the kind of fix that works until it does not. So the line SCOPES it
+   * instead: take what the face is doing, and read nothing in that sentence as a description of who
+   * she is.
+   *
+   * Still stated next to the pose it came from and still BEFORE the face lock, so the lock is the
+   * later line and wins by position as well as by wording.
+   */
+  if (expressionText) {
+    lines.push(`EXPRESSION — what her face is DOING, and nothing else: ${expressionText}`);
+    lines.push(`From that sentence take ONLY the expression itself — where she is looking, her mouth, her eyes, her brows, her tongue. Everything it says about how her face LOOKS — her features, her lips, her makeup, her skin — is describing the stand-in and is IGNORED. Those come from ${faceIndex ? `image ${faceIndex}` : 'image 1'}.`);
+  }
   // TEXT-ONLY POSE — what makes the "pose photo NOT sent" toggle actually change the result.
   //
   // Every pose enforcement line below is gated on poseIndex because each one points at "image N".
@@ -3835,6 +3854,20 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
    */
   useEffect(() => {
     if (maxNano) setEngine('nano2');
+  }, [maxNano]);
+
+  /**
+   * MAX NANO ARRIVES WITH THE POSE PHOTO ON. "Her, in every pose you pick" is the tab — a run here
+   * with the picture withheld is a pose approximated from one sentence, and the difference shows
+   * ("ALSO DO IT SEND THE FUCKING PICTURE OF THE POSE CAN YOU MAKE SURE IT RECREATE").
+   *
+   * It defaults ON already, but the value is SHARED and PERSISTED across every tab, so a text-only
+   * experiment run on Eddy last week followed you in here silently. On arrival only, so turning it
+   * off deliberately still sticks for the session — same shape as the engine and resolution
+   * defaults above.
+   */
+  useEffect(() => {
+    if (maxNano) setSendPoseImage(true);
   }, [maxNano]);
 
   /**
@@ -7646,7 +7679,15 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             hers. buildPrompt now states the counter-rule whenever the image is present, so this is
             offered as a real choice — ON when the garment has detail the words cannot carry
             (a print, an unusual cut), OFF when her figure matters more. Suppressed automatically
-            with NSFW, where there is no garment to reproduce. */}
+            with NSFW, where there is no garment to reproduce.
+
+            ⚠️ AND HIDDEN ENTIRELY ON MAX NANO (owner, 2026-08-17: "and wich one i select or
+            deslect"). That tab has no outfit picker at all — combos force `os = [null]` — so no
+            outfit image can ever be sent and this switch cannot change a single pixel. It was sitting
+            there lit up, reading "OUTFIT PHOTO SENT · better garment accuracy", on a tab that sends
+            no outfit photo. Max Outfit already taught this rule: a control that lies about what will
+            run is worse than one that is absent. */}
+        {!maxNano && (
         <button
           onClick={() => setSendOutfitImage((v) => !v)}
           aria-pressed={sendOutfitImage}
@@ -7683,6 +7724,28 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             </span>
           </span>
         </button>
+        )}
+        {/**
+          * WITH IT OFF AND POSES PICKED, SAY WHAT THAT COSTS.
+          *
+          * Off is a legitimate choice — it is how a text-only pose is tested — but it is also the
+          * quiet way to get loose poses and wonder why.
+          *
+          * Precisely what changes, checked against the builder rather than assumed: every clause
+          * that points AT THE PICTURE is gated on poseIndex, so "match the pose diagram's crop
+          * EXACTLY", "reproduce image 2's pose joint for joint" and the camera-position lock all
+          * disappear. The text-only branch replaces them with the same three demands sourced from
+          * the SENTENCE — which is real, and is not the same as tracing a silhouette.
+          *
+          * Only shown when it can actually bite: poses picked AND the photo withheld.
+          */}
+        {!sendPoseImage && pickedPoses.length > 0 && (
+          <p className="text-[0.625rem] leading-relaxed text-amber-300/80">
+            Pose photo is OFF — the pose goes as a sentence, with no picture to trace. The prompt still
+            asks for the camera and the position, but from the DESCRIPTION rather than the image, so
+            limb angles and the crop come back approximate. Turn it on for an exact recreation.
+          </p>
+        )}
         {/* POSE PHOTO toggle — governs the PAYLOAD only. ON sends the pose picture to the provider
             alongside its description (what this page has always done); OFF sends the one-sentence
             description alone and the picture never leaves your machine. The pose card keeps showing

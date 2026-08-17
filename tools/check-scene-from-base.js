@@ -157,6 +157,71 @@ for (const [name, opts] of Object.entries({
   check(`${name}: it sits in the last fifth of the prompt`, room / out.length > 0.8);
 }
 
+// --- THE EXPRESSION LINE WAS DESCRIBING THE STAND-IN'S FACE -------------------------------------------
+//
+// ⚠️ It read "copy the face she is making: <sentence>", and the sentence comes from the pose JSON's
+// `subject.features` — FEATURES, not expression. What arrives is like "Attractive face looking
+// straight at the camera with a soft confident expression, full glossy lips, heavy eye makeup".
+// Half of that is the stand-in's FACE, and the prompt was telling the model to copy it while MAKEUP,
+// the diagram ban and FINAL CHECK all said the opposite.
+//
+// Not fixed by stripping words out of free text — that works until it does not. The line scopes what
+// may be read out of the sentence instead.
+{
+  const withExpr = build({ ...MAXNANO, expressionText: 'Attractive face, full glossy lips, heavy eye makeup' });
+  check('the expression line is scoped to what the face is DOING',
+    withExpr.includes('EXPRESSION — what her face is DOING, and nothing else:'));
+  check('and appearance in that sentence is explicitly ignored',
+    withExpr.includes('is describing the stand-in and is IGNORED'));
+  check('naming where her features actually come from', withExpr.includes('Those come from image 3.'));
+  // Position still matters: the face lock is the later line, so it wins by placement too.
+  check('it stays before the final identity check',
+    withExpr.indexOf('EXPRESSION —') < withExpr.indexOf('FINAL CHECK'));
+  // No pose expression, no line — an empty one would be a rule about nothing.
+  check('and no expression means no line at all', !build(MAXNANO).includes('EXPRESSION —'));
+}
+
+// --- THE POSE PICTURE MUST ACTUALLY BE SENT ----------------------------------------------------------
+//
+// "ALSO DO IT SEND THE FUCKING PICTURE OF THE POSE CAN YOU MAKE SURE IT RECREATE" (owner,
+// 2026-08-17). It does — sendPoseImage defaults ON — but the value is SHARED and PERSISTED across
+// every tab, so a text-only experiment run on Eddy follows you into Max Nano silently. And silence
+// is the problem: EVERY "match the diagram" clause is gated on poseIndex, so with no picture the
+// prompt stops asking for the camera, the crop and the silhouette altogether.
+const gen = src;
+check('Max Nano arrives with the pose photo on', gen.includes('if (maxNano) setSendPoseImage(true);'));
+// Deps [maxNano], not [maxNano, sendPoseImage] — an arrival default that re-fires on every change
+// is a lock, and the toggle could never be turned off at all.
+check('on ARRIVAL only, so turning it off deliberately still sticks', (() => {
+  const i = gen.indexOf('if (maxNano) setSendPoseImage(true);');
+  return i > -1 && gen.slice(i, i + 130).includes('}, [maxNano]);');
+})());
+check('and turning it off with poses picked says what it costs',
+  gen.includes('{!sendPoseImage && pickedPoses.length > 0 && (')
+  && gen.includes('with no picture to trace'));
+// The prompt half of the same fact, asserted on the real builder: no diagram, no diagram clauses.
+{
+  const noPic = build({ ...BASE, poseText: POSE, faceIndex: 3 });
+  const withPic = build(MAXNANO);
+  // Checked against the builder rather than assumed — and the first version of this assertion was
+  // WRONG, which is the point of running it: the text-only branch has its own camera and pose-match
+  // lines sourced from the sentence. What disappears is everything that points AT THE PICTURE.
+  check('with no pose picture, nothing points at a diagram',
+    !noPic.includes('MATCH THE POSE DIAGRAM EXACTLY')
+    && !/[Mm]atch the pose diagram's crop EXACTLY/.test(noPic)
+    && !noPic.includes('is a POSE DIAGRAM, not a person'));
+  check('but the pose is still asked for, in words',
+    noPic.includes('POSE MATCH') && noPic.includes('CAMERA ANGLE'));
+  check('and with a picture, every diagram clause is there',
+    withPic.includes('MATCH THE POSE DIAGRAM EXACTLY')
+    && /[Mm]atch the pose diagram's crop EXACTLY/.test(withPic)
+    && withPic.includes('POSE MATCH — TOP'));
+  // The warning must describe THAT, not something stronger — it used to claim the camera and crop
+  // were "not asked for at all", which the builder disproves.
+  check('and the on-screen warning says what actually changes',
+    gen.includes('asks for the camera and the position, but from the DESCRIPTION rather than the image'));
+}
+
 // --- and only when there IS a diagram to steal a room from --------------------------------------------
 const textOnly = build({ ...BASE, poseText: POSE, faceIndex: 3 });
 check('a text-only pose gets no diagram line, because there is no diagram',

@@ -69,6 +69,22 @@ check('and Max Outfit is excluded, so a mixed batch cannot cross faces',
 check('an unreadable base photo fails loudly', /throw new Error\('That base photo could not be read'\)/.test(gen));
 check('collections are read through a ref, not deps', /basePhotosRef\.current\.pairs\.get\(combo\.basePhotoId\)/.test(gen));
 
+// ⚠️ A CONTROL THAT CANNOT CHANGE THE OUTCOME IS HIDDEN. Max Nano has no outfit picker — combos
+// force `os = [null]` there — so no outfit image can ever be sent, yet the toggle sat lit reading
+// "OUTFIT PHOTO SENT · better garment accuracy" on a tab that sends no outfit photo (owner,
+// 2026-08-17: "and wich one i select or deslect"). Max Outfit taught this rule with its engine
+// switch: a control that lies about what will run is worse than one that is absent.
+// Matched as two facts rather than one multi-line literal: the guard opens right before the
+// toggle's own handler, and the handler is the next thing inside it.
+const outfitToggleAt = gen.indexOf('setSendOutfitImage((v) => !v)');
+check('the outfit-photo toggle is hidden on Max Nano',
+  outfitToggleAt > -1 && gen.slice(Math.max(0, outfitToggleAt - 200), outfitToggleAt).includes('{!maxNano && ('));
+check('and Max Nano genuinely cannot send one', gen.includes("const os = (!maxNano && pickedOutfits.length) ? pickedOutfits : [null];"));
+// The pose toggle is the opposite case — it changes the payload on every tab, so it stays.
+const poseToggleAt = gen.indexOf('setSendPoseImage((v) => !v)');
+check('the pose-photo toggle is NOT hidden, because it does something everywhere',
+  poseToggleAt > -1 && !gen.slice(Math.max(0, poseToggleAt - 200), poseToggleAt).includes('{!maxNano && ('));
+
 // Gates and visibility.
 check('Generate no longer demands the single slot', /!maxOutfit && !baseImage && !pickedBasePhotos\.length/.test(gen));
 check('the button agrees', /\(!baseImage && !pickedBasePhotos\.length\)/.test(gen));
