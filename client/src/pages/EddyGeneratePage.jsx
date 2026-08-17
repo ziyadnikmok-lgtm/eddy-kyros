@@ -4721,9 +4721,21 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     if (maxOutfit || !pickedBasePhotos.length) return null;
     const byName = new Map();
     let unmatched = 0;
+    /**
+     * WHICH folder failed to pair, not just how many.
+     *
+     * "1 base photo had no character folder of the same name" is true and unactionable — you cannot
+     * fix a name you have not been told (owner, 2026-08-17: "why it show this one"). The folder the
+     * photo actually sits in is the one thing needed to fix it, and it is right here.
+     */
+    const unmatchedNames = new Set();
     for (const id of pickedBasePhotos) {
       const pair = basePhotoPairs.get(id);
-      if (!pair?.faceId) { unmatched += 1; continue; }
+      if (!pair?.faceId) {
+        unmatched += 1;
+        unmatchedNames.add(pair?.name || '(no folder)');
+        continue;
+      }
       byName.set(pair.name, (byName.get(pair.name) || 0) + 1);
     }
     // The pairs themselves, in ticked order, so the UI can SHOW base-beside-face. A tally reads
@@ -4733,7 +4745,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
       const pair = basePhotoPairs.get(id);
       return { id, name: pair?.name || '', faceId: pair?.faceId || null };
     });
-    return { rows, people: [...byName.entries()].sort((a2, b2) => b2[1] - a2[1]), unmatched, total: pickedBasePhotos.length };
+    return { rows, people: [...byName.entries()].sort((a2, b2) => b2[1] - a2[1]), unmatched, unmatchedNames: [...unmatchedNames], total: pickedBasePhotos.length };
   }, [maxOutfit, pickedBasePhotos, basePhotoPairs]);
 
   /**
@@ -7055,7 +7067,9 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
                whatever the base slot resolved to. */
             multiRows={faceSlotRows}
             multiEmptyHint={basePhotoSummary?.unmatched
-              ? `${basePhotoSummary.unmatched} base photo${basePhotoSummary.unmatched === 1 ? '' : 's'} had no character folder of the same name — ${basePhotoSummary.unmatched === 1 ? 'it uses' : 'they use'} whatever is picked in this slot. Name the Base Library folder the same as her Character folder to pair them.`
+              // Names the folder, so the fix is a rename you can actually make rather than a rule
+              // you have to go and work out.
+              ? `${basePhotoSummary.unmatched} base photo${basePhotoSummary.unmatched === 1 ? '' : 's'} in ${(basePhotoSummary.unmatchedNames || []).map((n) => `"${n}"`).join(', ') || 'no folder'} ${basePhotoSummary.unmatched === 1 ? 'has' : 'have'} no Character folder of the same name, so ${basePhotoSummary.unmatched === 1 ? 'it uses' : 'they use'} whatever is picked in this slot for her face. Rename the Base Library folder to match her Character folder — or pick her close-up here yourself.`
               : null}
           />
         </div>

@@ -75,7 +75,13 @@ check('the button agrees', /\(!baseImage && !pickedBasePhotos\.length\)/.test(ge
 check('the totals line shows the extra dimension', /\{pickedBasePhotos\.length\} photos × <\/>\}/.test(gen));
 check('the pairing is shown BEFORE spending', /face taken from/.test(gen));
 check('an unmatched photo is called out, not silent', /no matching character/.test(gen));
-check('and the fix is named', /Name the Base Library folder the same as her Character folder/.test(gen));
+// CHANGED 2026-08-17: the hint now NAMES the folder that failed to pair. "1 base photo had no
+// character folder of the same name" is true and unactionable — you cannot rename a folder you have
+// not been told (owner: "why it show this one").
+check('and the fix is named', /Rename the Base Library folder to match her Character folder/.test(gen));
+check('and the folder that failed is named too, so the rename is possible',
+  gen.includes('(basePhotoSummary.unmatchedNames || []).map((n) => `"${n}"`).join(', ')')
+  && gen.includes('unmatchedNames.add(pair?.name ||'));
 // smartMatch left this list when it stopped being a setting -- it is a constant now, so there is
 // nothing to persist. pickedBasePhotos is what this assertion is actually for.
 check('the selection survives a restart', gen.includes('pickedBases, pickedBasePhotos, outfitRotation, instruction,'));
