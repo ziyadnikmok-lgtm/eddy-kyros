@@ -4801,12 +4801,30 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
 
   const faceSlotRows = useMemo(() => (maxOutfit ? [] : pickedBasePhotos).map((id) => {
     const pair = basePhotoPairs.get(id);
-    const src = pair?.faceId ? charThumbs[pair.faceId] : '';
-    // No character folder of the same name -> the face slot's own picture is used instead. Shown
-    // as a dimmed amber tile rather than omitted, because a MISSING row would make the two
-    // columns fall out of step and every pairing below it would read as wrong.
-    return { id, src: src || baseThumbs[id] || '', name: pair?.name || 'no match', missing: !src };
-  }).filter((r) => r.src), [maxOutfit, pickedBasePhotos, basePhotoPairs, charThumbs, baseThumbs]);
+    const paired = pair?.faceId ? charThumbs[pair.faceId] : '';
+    /**
+     * UNPAIRED SHOWS THE PICTURE THAT WILL ACTUALLY BE SENT — which is this slot's own.
+     *
+     * ⚠️ It used to fall back to the BASE thumbnail, which said the opposite of the truth. With no
+     * character folder of the same name, generateCombo sends `comboFace || charPayload[1]` — and
+     * charPayload[1] IS the face slot's picture. So a user who had picked her close-up saw the base
+     * photo sitting in the face slot and concluded, reasonably, that their close-up was being
+     * ignored (owner, 2026-08-17: "but it has the close up"). It was not being ignored; it was
+     * being hidden.
+     *
+     * Still dimmed and ringed amber, and still shown rather than omitted — the pairing is genuinely
+     * a fallback, and a missing row would put the two columns out of step so every pairing below it
+     * read as wrong. Only the picture and the caption change: the caption now says where it came
+     * from instead of only that something failed.
+     */
+    const src = paired || faceImage || baseThumbs[id] || '';
+    return {
+      id,
+      src,
+      name: pair?.name || (paired ? '' : (faceImage ? 'from this slot' : 'no match')),
+      missing: !paired,
+    };
+  }).filter((r) => r.src), [maxOutfit, pickedBasePhotos, basePhotoPairs, charThumbs, baseThumbs, faceImage]);
 
   /**
    * Ticked outfits whose angle is a GUESS, not a fact.

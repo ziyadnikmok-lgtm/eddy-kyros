@@ -75,6 +75,16 @@ check('the button agrees', /\(!baseImage && !pickedBasePhotos\.length\)/.test(ge
 check('the totals line shows the extra dimension', /\{pickedBasePhotos\.length\} photos × <\/>\}/.test(gen));
 check('the pairing is shown BEFORE spending', /face taken from/.test(gen));
 check('an unmatched photo is called out, not silent', /no matching character/.test(gen));
+// ⚠️ AND THE TILE MUST SHOW WHAT WILL ACTUALLY BE SENT. Unpaired, generateCombo uses
+// `comboFace || charPayload[1]` — charPayload[1] IS the face slot's own picture — but the tile
+// showed the BASE thumbnail, so a user who had picked her close-up saw the base photo in the face
+// slot and concluded it was being ignored ("but it has the close up"). It was being hidden.
+check('an unpaired face tile shows the slot picture that is really used',
+  gen.includes('const src = paired || faceImage || baseThumbs[id] ||'));
+check('and says where it came from', gen.includes("(faceImage ? 'from this slot' : 'no match')"));
+check('with faceImage in the deps, or the tile never updates when you pick one',
+  /basePhotoPairs, charThumbs, baseThumbs, faceImage\]\)/.test(gen));
+check('still ringed as a fallback rather than passed off as a pairing', gen.includes('missing: !paired,'));
 // CHANGED 2026-08-17: the hint now NAMES the folder that failed to pair. "1 base photo had no
 // character folder of the same name" is true and unactionable — you cannot rename a folder you have
 // not been told (owner: "why it show this one").
@@ -101,8 +111,11 @@ check('the Face slot shows the faces they paired with', /multiRows=\{faceSlotRow
 check('the two lists are built in the SAME order, or the columns lie',
   gen.includes('const baseSlotRows = useMemo(() => (maxOutfit ? [] : pickedBasePhotos).map')
   && gen.includes('const faceSlotRows = useMemo(() => (maxOutfit ? [] : pickedBasePhotos).map'));
+// The row is still built for an unpaired photo — only its PICTURE changed (see above). Dropping it
+// would put the two columns out of step and make every pairing below it read as wrong.
 check('an unpaired row is kept, not dropped -- dropping it desynchronises the columns',
-  /src: src \|\| baseThumbs\[id\] \|\| '', name: pair\?\.name \|\| 'no match', missing: !src/.test(gen));
+  gen.includes("const src = paired || faceImage || baseThumbs[id] || '';")
+  && gen.includes('missing: !paired,'));
 check('the face slot itself stays single-select', /Display-only: no `multi`/.test(gen));
 check('ticking keeps the picker open', /multi \? toggleOne\(l\.id\) : pickFromLibrary/.test(gen));
 check('select-all covers the whole folder, not just what is scrolled into view',
