@@ -336,6 +336,32 @@ const rateLimitHits = new Map();
 const NB2_RATE_LIMIT_TOLERANCE = 5;
 
 /**
+ * WHEN THE BYPASS IS REFUSING EVERYTHING, STOP PAYING FIVE TRIES TO FIND THAT OUT.
+ *
+ * ⚠️ "in macbook it slow as fuck to generate and most time fall back to seedream" (owner,
+ * 2026-08-17). Both halves of that sentence are the same fact: Google refuses this material, so
+ * every job spends its full NB2_ATTEMPTS — each of which runs Google's own three-rung ladder with a
+ * 180-second ceiling — and then falls back anyway. Five tries is right when a refusal is a bad roll
+ * and the next one passes. It is pure wall-clock when the content is simply not allowed.
+ *
+ * So the retries adapt to what is actually happening. A run of consecutive content refusals ACROSS
+ * jobs means the material, not the roll: after REFUSAL_STREAK of them the bypass gets ONE try per
+ * job instead of five, and anything it refuses goes straight to Seedream.
+ *
+ * ONE TRY, NOT ZERO, deliberately. A single probe per job is what lets the run recover by itself
+ * the moment a passable image comes along — a success resets the streak and full patience returns.
+ * Skipping the bypass entirely would be faster still and would never come back.
+ */
+const REFUSAL_STREAK = 3;
+let refusalStreak = 0;
+
+/** A content refusal, as opposed to a fault: Google answered, and declined to draw it. */
+function isContentRefusal(err) {
+  return err?.code === 'NANO_BYPASS_NO_IMAGE'
+    && /IMAGE_OTHER|IMAGE_SAFETY|PROHIBITED_CONTENT|BLOCKLIST|content filter/i.test(err?.message || '');
+}
+
+/**
  * A FALLBACK ALWAYS RENDERS AT 2K.
  *
  * The job is already going to be billed at Seedream's rate, and the gap between its 1K and its 2K
@@ -515,6 +541,9 @@ async function _submitClaimed(job) {
      * has been paid for once and must not be made again. Fail toward the visible miss.
      */
     if (sub.done) {
+      // The bypass produced a picture, so whatever it was refusing has passed — full patience
+      // returns for the rest of the run. See REFUSAL_STREAK.
+      if (engine === 'nanobypass') refusalStreak = 0;
       try {
         await _saveResult(job, sub.done.images);
       } catch (saveErr) {
@@ -607,7 +636,14 @@ async function _submitClaimed(job) {
      * The swap is one-way by construction: switchEngine rewrites payload.model to seedream5, and
      * engineOf reads that, so the job cannot bounce back to the bypass and loop.
      */
-    if (engine === 'nanobypass' && job.attempts >= NB2_ATTEMPTS && !isTerminalForFallback(err)) {
+    /**
+     * The streak is counted here, where a real failure lands — a rate limit returned above with its
+     * attempt refunded, so it can never inflate this.
+     */
+    if (engine === 'nanobypass' && isContentRefusal(err)) refusalStreak += 1;
+    // Patience shrinks to a single probe once the refusals are clearly about the material.
+    const bypassTries = refusalStreak >= REFUSAL_STREAK ? 1 : NB2_ATTEMPTS;
+    if (engine === 'nanobypass' && job.attempts >= bypassTries && !isTerminalForFallback(err)) {
       if (jobQueue.switchEngine(job.id, 'seedream5', { tag: 'fallback', patch: FALLBACK_PATCH })) {
         log.warn('generation_nb2_fallback', { jobId: job.id, attempts: job.attempts, error: err.message });
         return true;

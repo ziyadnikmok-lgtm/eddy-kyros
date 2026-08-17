@@ -107,8 +107,33 @@ check('it names the 2K override, the marker and the price', page.includes('come 
 // The one thing Photo Match's line cannot say, because its fallback account is the same one.
 check('and it says what happens with no WaveSpeed credit', page.includes('With no WaveSpeed credit the job stops there instead'));
 check('the count comes from a mirrored constant, not a typed number', page.includes('const NB2_ATTEMPTS = 5;'));
-check('the finished tile is marked', page.includes('Seedream · fallback'));
-check('and the marker only appears when it actually happened', page.includes('{item.fellBack && !busy && ('));
+// EVERY tile says which engine made it, not only the fallbacks ("show if fall back seedream or gen
+// with nb2"). A badge that appears only on failure answers half the question — you can see that one
+// fell back, but not that the one beside it did not.
+check('the finished tile names its engine', page.includes("const label = item.fellBack ? 'Seedream · fallback'")
+  && page.includes("item.engine === 'nb2' ? 'NB2 · bypass'")
+  && page.includes("item.engine === 'nano2' ? 'NB2 · WaveSpeed' : 'Seedream'"));
+check('and it shows on every result, not only the failures', page.includes('{item.engine && !busy && (() => {'));
+check('with the fallback picked out in amber, since it cost a different rate',
+  page.includes("item.fellBack ? 'bg-amber-600/90 text-white' : 'bg-black/65 text-zinc-300'"));
+
+// --- THE REFUSAL STREAK: stop paying five tries to learn the same thing -------------------------------
+//
+// ⚠️ "in macbook it slow as fuck to generate and most time fall back to seedream" (owner,
+// 2026-08-17). Both halves are the same fact: Google refuses this material, so every job spends its
+// full NB2_ATTEMPTS — each running Google's own three-rung ladder with a 180-second ceiling — and
+// falls back anyway. Five tries is right when a refusal is a bad roll. It is pure wall-clock when
+// the content is simply not allowed.
+check('a content refusal is told apart from a fault', rec.includes('function isContentRefusal(err)')
+  && rec.includes('IMAGE_OTHER|IMAGE_SAFETY|PROHIBITED_CONTENT|BLOCKLIST|content filter'));
+check('consecutive refusals across jobs are counted', rec.includes("if (engine === 'nanobypass' && isContentRefusal(err)) refusalStreak += 1;"));
+check('and once it is clearly the material, the bypass gets one probe instead of five',
+  rec.includes('const bypassTries = refusalStreak >= REFUSAL_STREAK ? 1 : NB2_ATTEMPTS;'));
+// ONE probe, not zero — that is what lets a run recover by itself when a passable image arrives.
+check('a success restores full patience', rec.includes("if (engine === 'nanobypass') refusalStreak = 0;"));
+check('and the reason for one-not-zero is written down', /Skipping the bypass entirely would be faster still and would never come back/.test(rec));
+// A rate limit refunds its attempt above, so it can never inflate the streak.
+check('rate limits cannot inflate the streak', rec.indexOf('if (isRateLimit(err))') < rec.indexOf('isContentRefusal(err)) refusalStreak'));
 check('the result carries which engine made it', page.includes("engine: usedFallback ? 'seedream' : engine,")
   && page.includes('fellBack: usedFallback,'));
 check('and survives a reload, or the marker lasts only until the panel rebuilds',

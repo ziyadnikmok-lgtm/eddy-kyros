@@ -226,7 +226,11 @@ check('its nav colour differs from Photo Match SD, so the tabs are tellable apar
 const jq = read('server/services/jobQueue.js');
 check('the bypass gets a fixed number of tries', /const NB2_ATTEMPTS = (\d+);/.test(rec));
 check('and then the job is handed to Seedream', rec.includes("jobQueue.switchEngine(job.id, 'seedream5', { tag: 'fallback', patch: FALLBACK_PATCH })"));
-check('only after the tries are spent', rec.includes("engine === 'nanobypass' && job.attempts >= NB2_ATTEMPTS"));
+// `bypassTries` since 2026-08-17: NB2_ATTEMPTS normally, but ONE while a run of content refusals
+// says the material is what is being refused rather than the roll — see REFUSAL_STREAK.
+check('only after the tries are spent', rec.includes("engine === 'nanobypass' && job.attempts >= bypassTries"));
+check('and the number of tries adapts to whether refusals are systematic',
+  rec.includes('const bypassTries = refusalStreak >= REFUSAL_STREAK ? 1 : NB2_ATTEMPTS;'));
 
 // The swap must be one-way. switchEngine rewrites payload.model, and engineOf reads payload.model,
 // so a fallen-back job cannot be routed to the bypass again — no loop.
@@ -247,7 +251,7 @@ check('a rejected Gemini key fails visibly rather than hiding behind Seedream',
 check('a content refusal still gets the other engine', !rec.includes('NANO_BYPASS_NO_IMAGE\', \'VALIDATION_ERROR'));
 // Rate limits are refunded before this is reached, so they cannot eat the budget of a good job.
 check('a rate limit is refunded before the count is consulted',
-  rec.indexOf('requeueUnsent(job.id, { refundAttempt: true })') < rec.indexOf('job.attempts >= NB2_ATTEMPTS'));
+  rec.indexOf('requeueUnsent(job.id, { refundAttempt: true })') < rec.indexOf('job.attempts >= bypassTries'));
 
 // --- and the page must not lie about which engine made the picture --------------------------------------
 const gq = read('client/src/lib/generationQueue.js');

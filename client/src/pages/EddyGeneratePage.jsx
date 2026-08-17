@@ -2879,14 +2879,35 @@ function ResultTile({ item, src, thumbSrc, selected, busy, error, favorited, onT
           * 2026-08-17: "it should say fall back seedream etc same everything we built in photo
           * match nb2"). Bottom-left, where nothing else sits, and only when it actually happened.
           */}
-        {item.fellBack && !busy && (
-          <span
-            title="Nano Banana 2 could not finish this one, so Seedream 5.0 Pro made it instead — at 2K, billed at Seedream's rate."
-            className="absolute bottom-2 left-2 rounded bg-amber-600/90 px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-white pointer-events-none"
-          >
-            Seedream · fallback
-          </span>
-        )}
+        {item.engine && !busy && (() => {
+          /**
+           * WHICH ENGINE MADE THIS ONE — said on every tile, not only on the fallbacks.
+           *
+           * "add the thing show if fall back seedream or gen with nb2" (owner, 2026-08-17). A badge
+           * that appears only when something went wrong answers half the question: you can see that
+           * a picture fell back, but not that the one beside it did NOT. On a tab whose whole point
+           * is which engine ran, both answers matter, and a week later the tile is the only record.
+           *
+           * Amber for the fallback because it is the one that cost a different rate on a different
+           * account; muted for the ordinary case, so a wall of good results stays quiet.
+           */
+          const label = item.fellBack ? 'Seedream · fallback'
+            : item.engine === 'nb2' ? 'NB2 · bypass'
+              : item.engine === 'nano2' ? 'NB2 · WaveSpeed' : 'Seedream';
+          const why = item.fellBack
+            ? "Nano Banana 2 could not finish this one, so Seedream 5.0 Pro made it instead — at 2K, billed at Seedream's rate."
+            : item.engine === 'nb2' ? "Nano Banana 2 on Google's own API, billed to your Gemini key."
+              : item.engine === 'nano2' ? 'Nano Banana 2 through WaveSpeed.' : 'Seedream 5.0 Pro.';
+          return (
+            <span
+              title={why}
+              className={cn('absolute bottom-2 left-2 rounded px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide pointer-events-none',
+                item.fellBack ? 'bg-amber-600/90 text-white' : 'bg-black/65 text-zinc-300')}
+            >
+              {label}
+            </span>
+          );
+        })()}
         {/* FAVORITE STAR — moves this result's SOURCE pose (the pose it was generated from) into the
             Pose tab's "★ Favorite", fully populated with its existing image / pose prompt / video prompt /
             title. Top-LEFT so it never overlaps the selection tick (top-right, above) — the two controls
@@ -4707,7 +4728,26 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
    * Base page uses, so the same photo leads the payload wherever you generate from.
    */
   const basePhotoPairs = useMemo(() => {
-    const baseFolderName = (id) => baseFolders.find((f) => f.id === id)?.name?.trim() || '';
+    /**
+     * THE CHARACTER FOLDER, LOOKING PAST "used".
+     *
+     * ⚠️ A base photo is MOVED into `<Character>/used` the first time it generates — that is how the
+     * Base Library shows what has already been done. So from its second run onward its folder is
+     * literally named "used", and this lookup asked for a Character folder called "used", found
+     * none, and reported the photo as unpaired. Every base photo therefore lost its face pairing
+     * the moment it had been used once, and both slots captioned the tile "used" (owner,
+     * 2026-08-17: "still show used the close up wtf").
+     *
+     * The move code already walks up past any folder named "used" for exactly this reason and says
+     * so in its own comment. This is the same walk, on the read side, where it was missing.
+     */
+    const baseFolderName = (id) => {
+      let cur = baseFolders.find((f) => f.id === id);
+      while (cur && String(cur.name).trim().toLowerCase() === 'used') {
+        cur = cur.parentId ? baseFolders.find((f) => f.id === cur.parentId) : null;
+      }
+      return cur?.name?.trim() || '';
+    };
     const charFolderByName = new Map(charFolders.map((f) => [f.name.trim().toLowerCase(), f.id]));
     const out = new Map();
     for (const b of baseItems) {

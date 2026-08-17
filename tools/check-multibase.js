@@ -75,6 +75,25 @@ check('the button agrees', /\(!baseImage && !pickedBasePhotos\.length\)/.test(ge
 check('the totals line shows the extra dimension', /\{pickedBasePhotos\.length\} photos × <\/>\}/.test(gen));
 check('the pairing is shown BEFORE spending', /face taken from/.test(gen));
 check('an unmatched photo is called out, not silent', /no matching character/.test(gen));
+
+// ⚠️ THE PAIRING MUST LOOK PAST "used" (owner, 2026-08-17: "still show used the close up wtf").
+//
+// A base photo is MOVED into `<Character>/used` the first time it generates — that is how Base
+// Library shows what is done. From its second run onward its folder is literally named "used", so a
+// lookup on the raw folder name asked for a Character folder called "used", found none, and
+// reported the photo unpaired. Every base photo lost its face pairing the moment it had been used
+// once, and both slots captioned the tile "used".
+//
+// The MOVE code already walks up past any folder named "used" and says why in its own comment. The
+// READ side was missing the same walk. Replayed against the real shapes: Grace -> "Grace",
+// Grace/used -> "Grace", Grace/used/used -> "Grace".
+check('the pair name walks up past a "used" folder',
+  gen.includes("while (cur && String(cur.name).trim().toLowerCase() === 'used') {")
+  && gen.includes('cur = cur.parentId ? baseFolders.find((f) => f.id === cur.parentId) : null;'));
+check('and the move side still does the same walk, or the two disagree',
+  gen.includes("if (!cur || String(cur.name).trim().toLowerCase() !== 'used') break;"));
+check('the reason is recorded where the next person will hit it',
+  /lost its face pairing/.test(gen));
 // ⚠️ AND THE TILE MUST SHOW WHAT WILL ACTUALLY BE SENT. Unpaired, generateCombo uses
 // `comboFace || charPayload[1]` — charPayload[1] IS the face slot's own picture — but the tile
 // showed the BASE thumbnail, so a user who had picked her close-up saw the base photo in the face
