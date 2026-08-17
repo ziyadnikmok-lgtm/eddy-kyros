@@ -24,7 +24,11 @@ check('it is derived, so it survives a reload', /derived, not counted/.test(gen)
 // --- the price it sums ---------------------------------------------------------------------------
 // The total is only as honest as the price stamped on each row, and that price was Seedream's on
 // every engine -- including nano2, which is the DEFAULT.
-check('one helper prices an image for whichever engine is running', gen.includes('const priceOne = (engine, resolution, perRunImages) => (engine === \'nano2\''));
+// Both Nano Banana routes quote the same number — same model at the same size, only the key it is
+// billed to differs (WaveSpeed's vs Gemini's). A bypass job that falls back to Seedream is repriced
+// by the queue, and the result carries that price rather than this estimate.
+check('one helper prices an image for whichever engine is running',
+  gen.includes("const priceOne = (engine, resolution, perRunImages) => ((engine === 'nano2' || engine === 'nb2')"));
 check('no site prices an image by calling seedreamCost directly any more',
   (gen.match(/seedreamCost\(resolution/g) || []).length === 1);
 check('the row price goes through it', gen.includes('const perImageCost = priceOne(engine, resolution, perRunImages);'));

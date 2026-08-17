@@ -80,7 +80,10 @@ const NANO2_COST = { '1K': 0.07, '2K': 0.105 };
  * confirm dialog and stamped it onto every Library row. Today's spend total sums those rows, which
  * is what turned a quiet mismatch into a wrong number on screen.
  */
-const priceOne = (engine, resolution, perRunImages) => (engine === 'nano2'
+const priceOne = (engine, resolution, perRunImages) => ((engine === 'nano2' || engine === 'nb2')
+  // Same model at the same size either way, so the same quote. 'nb2' bills the Gemini key rather
+  // than the WaveSpeed one; if the bypass gives up, the queue's Seedream fallback reprices it and
+  // the result carries that price, not this estimate.
   ? (NANO2_COST[resolution] ?? NANO2_COST['1K'])
   : seedreamCost(resolution, Math.max(1, perRunImages)));
 // How many times one image is attempted on Nano Banana 2 before it falls back to Seedream 5.0
@@ -480,7 +483,7 @@ function pathTo(folders, id) {
   while (cur && !seen.has(cur.id)) { seen.add(cur.id); path.unshift(cur); cur = cur.parentId ? byId.get(cur.parentId) : null; }
   return path;
 }
-const parallelFor = (engine) => (engine === 'nano2' ? NANO2_PARALLEL_REQUESTS : PARALLEL_REQUESTS);
+const parallelFor = (engine) => ((engine === 'nano2' || engine === 'nb2') ? NANO2_PARALLEL_REQUESTS : PARALLEL_REQUESTS);
 
 /**
  * Retry a generation call that came back rate-limited, backing off between attempts.
@@ -3672,7 +3675,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
 
   // Nano Banana 2 is used at 2K here; picking it selects that rather than leaving whatever
   // Seedream was last set to, which is a mismatch you only notice in the output.
-  useEffect(() => { if (engine === 'nano2') setResolution('2K'); }, [engine]);
+  useEffect(() => { if (engine === 'nano2' || engine === 'nb2') setResolution('2K'); }, [engine]);
 
   /**
    * Max Nano pins the ENGINE. Enforced here rather than only in the UI: the settings are shared and
@@ -3680,7 +3683,9 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
    * you into Max and generate on the wrong one with nothing on screen disagreeing.
    */
   useEffect(() => {
-    if (maxNano) setEngine('nano2');
+    // Either Nano Banana 2 path is valid here now (WaveSpeed or the Gemini bypass); anything else —
+    // a Seedream left over from an Eddy run — is pulled back to the default.
+    if (maxNano && engine !== 'nano2' && engine !== 'nb2') setEngine('nano2');
   }, [maxNano, engine]);
 
   // Max Outfit is Seedream-only, enforced here and not just in the UI: engine is shared and
@@ -5087,7 +5092,22 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
    * still attributable to its character.
    */
   const runEdit = useCallback(async (body) => {
-    const model = body.model === 'nano2' ? 'nano2' : 'seedream5';
+    /**
+     * 'nb2' is Nano Banana 2 on GOOGLE'S OWN API through our bypass, not on WaveSpeed.
+     *
+     * Same model, one reseller fewer: only Google's refusals rather than a reseller's on top, and it
+     * is billed to the Gemini key instead of the WaveSpeed one. The queue already knows the name —
+     * generationReconciler.engineOf maps it to the nanobypass engine, retries it three times and
+     * hands it to Seedream 5 Pro if the bypass cannot finish. Photo Match NB2 has run on exactly
+     * this path since 2026-08-16; this only lets Max Nano choose it too (owner, 2026-08-17).
+     *
+     * NO identityCount is sent, deliberately. That option makes the bypass label the leading images
+     * as "the person" and the rest as "the scene", which is Photo Match's shape. Eddy's images are
+     * base photo, pose diagram, face close-up, outfit — identity is not a leading block, and its
+     * prompt already names every image by its number. Labelling them positionally here would fight
+     * the prompt rather than help it.
+     */
+    const model = body.model === 'nb2' ? 'nb2' : body.model === 'nano2' ? 'nano2' : 'seedream5';
     return queuedSeedreamEdit({
       feature: 'eddy',
       images: body.images,
@@ -5401,7 +5421,8 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     }
 
     const feedId = `eddy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const engineLabel = engine === 'nano2' ? 'Nano Banana 2 (WaveSpeed)' : 'Seedream 5.0 Pro Edit';
+    const engineLabel = engine === 'nb2' ? 'Nano Banana 2 (Gemini bypass)'
+      : engine === 'nano2' ? 'Nano Banana 2 (WaveSpeed)' : 'Seedream 5.0 Pro Edit';
     pushPending({ id: feedId, prompt, imageModel: engineLabel, aspectRatio: ratio, resolutionTier: resolution });
 
     // Only the API call is in the try. Wrapping the success path too meant a throw AFTER the
@@ -5411,7 +5432,30 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     // labels it with the engine that ACTUALLY made it rather than the one that was selected.
     let usedFallback = false;
     try {
-      if (engine === 'nano2') {
+      if (engine === 'nb2') {
+        /**
+         * Nano Banana 2 on Google's own API, through our bypass.
+         *
+         * NO client-side retry and NO client-side fallback, unlike the WaveSpeed branch below — the
+         * queue already does both, and better: generationReconciler gives the bypass NB2_ATTEMPTS
+         * tries and then re-runs the job on Seedream 5 Pro itself, from the server, where it can see
+         * a rate limit for what it is. Wrapping that in withEngineRetry would multiply the attempts
+         * (four client tries x three server tries) and a second fallback here would race the one the
+         * queue is already running.
+         *
+         * So this is one enqueue. An error that reaches here is one the queue has already declared
+         * terminal, and it carries the provider's own wording.
+         */
+        data = await runEdit({
+          images: payload,
+          prompt,
+          model: 'nb2',
+          aspectRatio: ratio,
+          resolution,
+          tags: eddyTags(isEdit, characterName),
+        });
+        if (!(data.images || []).length) throw new Error('Nano Banana 2 (bypass) returned no image');
+      } else if (engine === 'nano2') {
         /**
          * Nano Banana 2 on WaveSpeed — the Vertex / Nano-Bypass path this replaces is gone.
          *
@@ -5490,7 +5534,7 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
 
     const first = (data.images || [])[0];
     if (!first) {
-      const who = engine === 'nano2' && !usedFallback ? 'Nano Banana 2' : 'Seedream';
+      const who = (engine === 'nano2' || engine === 'nb2') && !usedFallback ? 'Nano Banana 2' : 'Seedream';
       failPending(feedId, `${who} returned no image`);
       throw new Error(`${who} returned no image`);
     }
@@ -7453,16 +7497,27 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             exist — no bypass flag is passed from here. Every other control on this page (pose
             photo toggle, Her build, NSFW, faceless, framing) is engine-agnostic and applies to
             both, because they all shape the PROMPT, not the request. */}
-        {/* No engine choice in Max Nano — it is the whole point of the tab. A switch that cannot
-            change anything is worse than no switch.
-            Max Outfit is the same case and was missed: line ~3421 pins it to Seedream on mount, so
-            the switch rendered, accepted a click, showed Nano Banana 2 as selected, and generated
-            on Seedream regardless (owner, 2026-08-10). A control that lies about what will run is
-            worse than one that is absent. */}
-        {!maxNano && !maxOutfit && (
+        {/* Max Outfit gets no switch: line ~3421 pins it to Seedream on mount, so a switch there
+            rendered, accepted a click, showed Nano Banana 2 as selected, and generated on Seedream
+            regardless (owner, 2026-08-10). A control that lies about what will run is worse than
+            one that is absent.
+            MAX NANO DOES get one now, and it is not a contradiction of that rule: both of its
+            options are Nano Banana 2, which is still the whole point of the tab. They differ in the
+            ROUTE — WaveSpeed's copy of the model, or Google's own API through our bypass on the
+            Gemini key (owner, 2026-08-17). Same page, same prompt, same pose logic; the bypass just
+            has one reseller fewer between the request and the model, and its refusals are Google's
+            rather than a reseller's on top. If the bypass cannot finish an image the queue retries
+            it and then runs it on Seedream 5 Pro, and the result says so. */}
+        {!maxOutfit && (
         <div className="flex gap-2 rounded-xl border border-white/[0.07] bg-white/[0.02] p-1">
-          {[['seedream', 'Seedream'], ['nano2', 'Nano Banana 2']].map(([id, label]) => (
+          {(maxNano
+            ? [['nano2', 'NB2 · WaveSpeed'], ['nb2', 'NB2 · Gemini bypass']]
+            : [['seedream', 'Seedream'], ['nano2', 'Nano Banana 2']]
+          ).map(([id, label]) => (
             <button key={id} type="button" onClick={() => setEngine(id)} aria-pressed={engine === id}
+              title={id === 'nb2'
+                ? 'Nano Banana 2 on Google’s own API, billed to your Gemini key. Falls back to Seedream 5 Pro if it cannot finish.'
+                : id === 'nano2' ? 'Nano Banana 2 through WaveSpeed, billed to your WaveSpeed key.' : undefined}
               className={cn('flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer',
                 engine === id ? 'bg-rose-500/20 text-rose-300' : 'text-zinc-500 hover:text-zinc-300')}>
               {label}

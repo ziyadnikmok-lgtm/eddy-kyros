@@ -306,9 +306,12 @@ check('the reconciler can reach it', rec.includes('await wavespeed.submitSeedrea
 check('Eddy routes through the queue', eddy.includes("import { queuedSeedreamEdit } from '../lib/generationQueue';"));
 // Three call sites: nano2, the Seedream fallback, and plain Seedream. Two are wrapped in
 // withRateLimitRetry, so they read `() => runEdit(` rather than `await runEdit(`.
-check('all three edit call sites go through one router', (eddy.match(/runEdit\(\{/g) || []).length === 3);
+// FOUR since 2026-08-17: nano2, the Seedream fallback, plain Seedream, and the Gemini bypass.
+check('every edit call site goes through one router', (eddy.match(/runEdit\(\{/g) || []).length === 4);
 check('and none call the blocking route directly any more', !eddy.includes('seedreamApi.edit('));
-check('nano2 and seedream5 are both routed', eddy.includes("const model = body.model === 'nano2' ? 'nano2' : 'seedream5';"));
+// 'nb2' is the same Nano Banana 2 on Google's own API instead of WaveSpeed's copy — the queue
+// already knew the name (engineOf -> nanobypass); Max Nano can now choose it.
+check('all three models are routed', eddy.includes("const model = body.model === 'nb2' ? 'nb2' : body.model === 'nano2' ? 'nano2' : 'seedream5';"));
 check('tags travel with the job, so a recovered image stays attributable', eddy.includes('tags: body.tags,'));
 check('the destination is read from a ref, not a stale closure', eddy.includes('destDb: genDestDbRef.current,'));
 

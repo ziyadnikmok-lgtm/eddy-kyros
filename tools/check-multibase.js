@@ -234,8 +234,14 @@ check('and the filing function sends a named run to her folder',
   /if \(who\) return \(await store\.ensureFolder\(who\)\)\?\.id/.test(gen));
 
 // --- ENGINE + CHIPS ON MAX OUTFIT (owner, 2026-08-10, from screenshots) ------------------------
+// CHANGED 2026-08-17: Max Nano now shows a switch too — but both of its options are Nano Banana 2
+// (WaveSpeed's copy, or Google's own API through the bypass), so it still cannot select a model the
+// tab does not mean. Max Outfit remains switch-less, because it is pinned to Seedream and a control
+// that lies about what will run is worse than no control.
 check('the engine switch is hidden on Max Outfit, which is pinned to Seedream',
-  /\{!maxNano && !maxOutfit && \(/.test(gen));
+  /\{!maxOutfit && \(/.test(gen) && !/\{!maxNano && !maxOutfit && \(/.test(gen));
+check('and Max Nano only ever offers the two Nano Banana routes',
+  gen.includes("[['nano2', 'NB2 · WaveSpeed'], ['nb2', 'NB2 · Gemini bypass']]"));
 check('and the pin it would have fought is still there', /if \(maxOutfit\) setEngine\('seedream'\);/.test(gen));
 check('the base-photo line does not claim poses on a tab that has none',
   /maxOutfit \? ' ticked' : ' — each one runs every pose and outfit below'/.test(gen));
