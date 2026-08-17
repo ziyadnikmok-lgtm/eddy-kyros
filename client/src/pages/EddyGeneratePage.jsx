@@ -92,6 +92,16 @@ const priceOne = (engine, resolution, perRunImages) => ((engine === 'nano2' || e
 // retries entirely -- see TERMINAL_CODES -- so this never multiplies a misconfiguration.
 const NANO2_ATTEMPTS = 4;
 
+/**
+ * Tries the QUEUE gives the Gemini bypass before it hands the job to Seedream 5 Pro.
+ *
+ * MIRRORS generationReconciler.NB2_ATTEMPTS, which is where the decision is actually made — this
+ * copy exists only so the engine row can state a number before you spend. Photo Match keeps the
+ * same mirror for the same reason, and check-photomatch-nb2.js asserts all three agree, because a
+ * line that states the wrong count is worse than one that states none.
+ */
+const NB2_ATTEMPTS = 5;
+
 // Above this many picked items the summary list becomes a thumbnail grid instead of text rows.
 // Eight is about what fits without the Generate button leaving the screen.
 const COMPACT_PICKED = 8;
@@ -1147,9 +1157,6 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
     // re-statement. The camera/framing locks above cover WHERE the camera is and HOW MUCH is in frame;
     // this is the blunt final word on the body silhouette — trace it, do not reinterpret it. Softened
     // under a tweak so a correction ("turn her head") is not fighting an absolute EXACT.
-    lines.push(hasTweak
-      ? `POSE MATCH: trace image ${poseIndex}'s silhouette — limb angles, hands, feet, head tilt, torso twist — except where the CORRECTION says otherwise.`
-      : `POSE MATCH — TOP PRIORITY FOR THE SHOT: reproduce image ${poseIndex}'s pose EXACTLY, joint for joint — every limb angle, the hands, the feet, the head tilt, the torso arch and twist. Trace the silhouette; do NOT reinterpret or "improve" it.`);
     /**
      * THE ROOM, RESTATED AT THE TAIL — and this is the whole fix (owner, 2026-08-17: "in max nano
      * it using the background of the pose image not of the base image wtf").
@@ -1219,6 +1226,25 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
         ? ` Her clothing comes from the outfit above, never from image ${poseIndex}.`
         : '';
     lines.push(`${head}, AND THE CAMERA DOES NOT CHANGE THAT: image ${poseIndex} gives the body position, the camera and the crop — and NOTHING of its room, walls, floor, furniture, props, bedding, view${wantsNude ? '' : ' or clothing'}.${clothesFrom} Where the new framing shows space beyond image 1's edges, extend image 1's OWN room into it. Never image ${poseIndex}'s.`);
+
+    /**
+     * POSE MATCH IS THE LAST WORD ABOUT THE SHOT — and putting the room line after it was my
+     * mistake this morning.
+     *
+     * This file's rule is that the later line wins; it is the reason the bust lock, the framing line
+     * and the face lock were each moved to the end. When the room/clothes sentence went in, it
+     * landed AFTER this one, so the final instruction the model read about the shot stopped being
+     * "trace the silhouette" and became "the room is image 1's". Measured: POSE MATCH slid to 86%
+     * with the room at 89%, and the poses stopped being copied exactly (owner, 2026-08-17: "now it
+     * not copy the pose exactly the exact same").
+     *
+     * Both belong in the final fifth. The order between them is what decides which is the last
+     * word, and for the SHOT that has to be the pose — the room line above it is a scoping
+     * statement, not a competing instruction about her body.
+     */
+    lines.push(hasTweak
+      ? `POSE MATCH: trace image ${poseIndex}'s silhouette — limb angles, hands, feet, head tilt, torso twist — except where the CORRECTION says otherwise.`
+      : `POSE MATCH — TOP PRIORITY FOR THE SHOT: reproduce image ${poseIndex}'s pose EXACTLY, joint for joint — every limb angle, the hands, the feet, the head tilt, the torso arch and twist. Trace the silhouette; do NOT reinterpret or "improve" it.`);
   }
 
   // The identity lock demands a face by default (portrait or a normal pose). ONLY when the FACELESS
@@ -2844,6 +2870,23 @@ function ResultTile({ item, src, thumbSrc, selected, busy, error, favorited, onT
             ✓
           </button>
         )}
+        {/**
+          * A FALLBACK SAYS SO, ON THE PICTURE ITSELF.
+          *
+          * The queue can hand a bypass job to Seedream 5 Pro, and a Seedream render sitting in the
+          * panel labelled as Nano Banana is the same quiet lie as a tick with no proof behind it.
+          * Photo Match has said this on its tiles since 2026-08-16; this is the Eddy half (owner,
+          * 2026-08-17: "it should say fall back seedream etc same everything we built in photo
+          * match nb2"). Bottom-left, where nothing else sits, and only when it actually happened.
+          */}
+        {item.fellBack && !busy && (
+          <span
+            title="Nano Banana 2 could not finish this one, so Seedream 5.0 Pro made it instead — at 2K, billed at Seedream's rate."
+            className="absolute bottom-2 left-2 rounded bg-amber-600/90 px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-white pointer-events-none"
+          >
+            Seedream · fallback
+          </span>
+        )}
         {/* FAVORITE STAR — moves this result's SOURCE pose (the pose it was generated from) into the
             Pose tab's "★ Favorite", fully populated with its existing image / pose prompt / video prompt /
             title. Top-LEFT so it never overlaps the selection tick (top-right, above) — the two controls
@@ -3336,6 +3379,10 @@ function liteResult(r) {
     regenCost: r.regenCost,
     aspectRatio: r.aspectRatio,
     resolutionTier: r.resolutionTier,
+    // WHAT MADE IT. Dropped here, the "(fallback)" marker would last only until the panel was
+    // rebuilt from storage — the same way Photo Match lost it before its own liteResult kept them.
+    engine: r.engine,
+    fellBack: !!r.fellBack,
     videoStatus: r.videoStatus,
     // Carry the clip fields so a reload rehydrates a PLAYABLE done tile (videoUrl) instead of a
     // stuck spinner, and so a still-pending tile keeps the taskId the reconcile poll needs.
@@ -5788,6 +5835,16 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           prompt,
           aspectRatio: ratio,
           resolutionTier: resolution,
+          /**
+           * WHAT MADE IT, carried on the result — the same pair Photo Match keeps.
+           *
+           * A bypass job the queue gives up on comes back from Seedream 5 Pro, and without these two
+           * fields the tile cannot say so: it would show the engine that was ASKED for. Same shape of
+           * quiet lie as a tick with no proof behind it (owner, 2026-08-17: "it should say fall back
+           * seedream etc same everything we built in photo match nb2").
+           */
+          engine: usedFallback ? 'seedream' : engine,
+          fellBack: usedFallback,
           videoPrompt: poseVideoPrompt,
           // The pose this image came from, carried as a plain field. FEATURE 2 uses it to blank the
           // SOURCE pose's videoPrompt so a rejected clip idea isn't re-inherited. null for a
@@ -5847,6 +5904,9 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
               regenCost: perImageCost,
               aspectRatio: ratio,
               resolutionTier: resolution,
+              // Kept on the lite row as well, or a reload mid-run forgets which engine made it.
+              engine: usedFallback ? 'seedream' : engine,
+              fellBack: usedFallback,
             });
             await resultsStore.set('queue', [row, ...stored]);
           } catch {
@@ -7741,6 +7801,25 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
             </button>
           ))}
         </div>
+        )}
+        {/**
+          * THE FALLBACK, STATED BEFORE THE RUN rather than discovered afterwards.
+          *
+          * Photo Match NB2 has carried this line since 2026-08-16 for a reason that applies here
+          * word for word: a picture on this route can come back from a DIFFERENT engine at a
+          * DIFFERENT price, and the engine row is where that belongs. A badge on a finished tile
+          * only tells you once the money is spent (owner, 2026-08-17: "it should say fall back
+          * seedream etc same everything we built in photo match nb2").
+          */}
+        {engine === 'nb2' && (
+          <p className="text-[0.625rem] leading-relaxed text-amber-300/80">
+            Fails over to <span className="font-semibold">Seedream 5.0 Pro (WaveSpeed)</span> after {NB2_ATTEMPTS} refused
+            tries — so a picture Google will not make still gets made. Those render at{' '}
+            <span className="font-semibold">2K</span> whatever is set above, come back marked{' '}
+            <span className="font-semibold">(fallback)</span>, and are billed at Seedream&rsquo;s rate
+            (<span className="font-mono">${priceOne('seedream', '2K', perRunImages).toFixed(3)}</span>), not this one.
+            With no WaveSpeed credit the job stops there instead.
+          </p>
         )}
         {/* ONE OUTFIT PER PHOTO vs EVERY COMBINATION — a 10x decision, so it is a visible switch
             and not a hidden default. 81 photos x 5 outfits is 405 generations and about $18;

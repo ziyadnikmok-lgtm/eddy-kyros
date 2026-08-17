@@ -135,9 +135,23 @@ for (const [name, opts] of Object.entries({
   const out = build(opts);
   const room = at(out, TAIL);
   check(`${name}: the tail room lock is present`, room > -1);
-  // After every instruction that points at the diagram — that is the entire reason it exists.
-  check(`${name}: it comes AFTER framing and pose match`,
-    room > at(out, 'FRAMING') && room > at(out, 'POSE MATCH'));
+  // After CAMERA ANGLE and FRAMING — the two that point at the diagram and used to go unanswered.
+  check(`${name}: it comes AFTER camera angle and framing`,
+    room > at(out, 'CAMERA ANGLE') && room > at(out, 'FRAMING'));
+  /**
+   * BUT BEFORE POSE MATCH, and that order is the whole lesson of 2026-08-17.
+   *
+   * This file's rule is that the later line wins — it is why the bust lock, the framing line and the
+   * face lock were each moved to the end. The room sentence went in AFTER pose match, so the last
+   * thing the model read about the shot stopped being "trace the silhouette" and became "the room is
+   * image 1's". Measured at the time: pose match 86%, room 89% — and the poses stopped being copied
+   * exactly ("now it not copy the pose exactly the exact same").
+   *
+   * Both belong in the final fifth; the ORDER decides which is the last word, and for the shot that
+   * has to be the pose.
+   */
+  check(`${name}: and BEFORE pose match, which stays the last word on the shot`,
+    room < at(out, 'POSE MATCH'));
   // Before the identity check, which stays the last word on WHO she is.
   check(`${name}: and before the final identity check`, room < at(out, 'FINAL CHECK'));
   check(`${name}: it sits in the last fifth of the prompt`, room / out.length > 0.8);

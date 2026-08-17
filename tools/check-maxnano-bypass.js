@@ -91,6 +91,29 @@ check('and that effect depends on the TAB, not the engine — or the bypass coul
   return i > -1 && page.slice(i, i + 120).includes('}, [maxNano]);');
 })());
 
+// --- THE FALLBACK IS VISIBLE, THE WAY PHOTO MATCH MADE IT VISIBLE -----------------------------------
+//
+// Owner, 2026-08-17: "it should say fall back seedream etc same everything we built in photo match
+// nb2." Three places, and Max Nano had only the middle one.
+//
+//   BEFORE the run — the engine row says a picture can come back from a different engine at a
+//   different price. A badge on a finished tile only tells you once the money is spent.
+//   DURING — one toast the first time it happens in a run, not one per image.
+//   AFTER — the tile itself is marked, and the row is priced by what RAN.
+check('the engine row warns before you spend', page.includes("{engine === 'nb2' && (")
+  && page.includes('Fails over to <span className="font-semibold">Seedream 5.0 Pro (WaveSpeed)</span> after {NB2_ATTEMPTS} refused'));
+check('it names the 2K override, the marker and the price', page.includes('come back marked')
+  && page.includes("priceOne('seedream', '2K', perRunImages)"));
+// The one thing Photo Match's line cannot say, because its fallback account is the same one.
+check('and it says what happens with no WaveSpeed credit', page.includes('With no WaveSpeed credit the job stops there instead'));
+check('the count comes from a mirrored constant, not a typed number', page.includes('const NB2_ATTEMPTS = 5;'));
+check('the finished tile is marked', page.includes('Seedream · fallback'));
+check('and the marker only appears when it actually happened', page.includes('{item.fellBack && !busy && ('));
+check('the result carries which engine made it', page.includes("engine: usedFallback ? 'seedream' : engine,")
+  && page.includes('fellBack: usedFallback,'));
+check('and survives a reload, or the marker lasts only until the panel rebuilds',
+  page.includes('fellBack: !!r.fellBack,'));
+
 // --- WHEN THERE IS NO FALLBACK, SAY SO --------------------------------------------------------------
 //
 // ⚠️ "in my other account it failed and didnt fall back" (owner, 2026-08-17). Correct, and by
