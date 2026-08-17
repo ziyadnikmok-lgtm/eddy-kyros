@@ -52,9 +52,12 @@ check('the pose DESCRIPTION\'s furniture is banned from being built',
 check('and re-pointed at image 1\'s own surfaces instead', p.includes("Put the same body position into image 1's own setting instead"));
 
 // --- the one that was missing: the same rule at the TAIL --------------------------------------------
-check('the room is restated after the pose block', p.includes("THE ROOM IS IMAGE 1'S, AND THE CAMERA DOES NOT CHANGE THAT"));
+// Anchored on the clause every variant shares — the heading changes with where the clothes come
+// from (image 1, the outfit, or nothing on a nude run).
+const TAIL = 'AND THE CAMERA DOES NOT CHANGE THAT';
+check('the room is restated after the pose block', p.includes(TAIL));
 check('it names what the diagram supplies, and what it does not',
-  p.includes('gives the body position, the camera and the crop — and NOTHING of its room, walls, floor, furniture, props, bedding or view'));
+  p.includes('gives the body position, the camera and the crop — and NOTHING of its room, walls, floor, furniture, props, bedding, view or clothing'));
 /**
  * THE LOAD-BEARING SENTENCE. Matching the diagram's crop and camera almost always reveals space
  * outside image 1's frame, and the model has to invent it. The only other room in the payload is
@@ -62,6 +65,31 @@ check('it names what the diagram supplies, and what it does not',
  */
 check('and it says whose space fills what the new framing reveals',
   p.includes("extend image 1's OWN room into it"));
+
+// --- THE CLOTHES TOO, and for the same reason ----------------------------------------------------------
+//
+// ⚠️ Owner, 2026-08-17: "it using outfit of the pose image it not using only the pose from it" —
+// their results showed her in the pose photos' grey gym set instead of the base photo's lace dress.
+//
+// The outfit lock was not missing either. Measured on the real builder: "Her CLOTHING comes from
+// image 1" sits at 45% and "whatever the stand-in is wearing is IRRELEVANT" at 50% — the same dead
+// middle the setting lock was in — while FRAMING (79%) and POSE MATCH (88%) point at the diagram.
+// Same disease, same cure: say it in the tail sentence.
+check('the tail line covers the clothes, not only the room', p.includes('THE ROOM AND THE CLOTHES'));
+check('and bans clothing from the diagram explicitly', p.includes('bedding, view or clothing'));
+check('naming where the clothes DO come from', p.includes('She wears what she wears in image 1 — not what the stand-in has on'));
+// It has to follow where the clothes actually come from, or the line becomes the contradiction it
+// exists to prevent. Written per case, because splicing fragments produced "THE ROOM ARE IMAGE 1'S".
+{
+  const outfit = build({ ...MAXNANO, outfitIndex: 4, outfitText: 'black lace bodysuit', lockOutfitToBase: false });
+  check('with an outfit chosen, the clothes come from the OUTFIT, not image 1',
+    outfit.includes("THE ROOM IS IMAGE 1'S AND THE CLOTHES ARE THE OUTFIT'S")
+    && outfit.includes('Her clothing comes from the outfit above, never from image 2.'));
+  const nude = build({ ...MAXNANO, wantsNude: true });
+  check('a nude run says nothing about clothing at all', nude.includes("THE ROOM IS IMAGE 1'S, AND THE CAMERA")
+    && !nude.includes('or clothing'));
+  check('and no case produces broken grammar', !nude.includes('THE ROOM ARE') && !outfit.includes('THE ROOM ARE'));
+}
 
 // --- POSITION IS THE WHOLE POINT ----------------------------------------------------------------------
 const at = (out, needle) => out.indexOf(needle);
@@ -75,7 +103,7 @@ for (const [name, opts] of Object.entries({
   'custom lighting': { ...MAXNANO, lightingText: 'Warm golden hour light.' },
 })) {
   const out = build(opts);
-  const room = at(out, "THE ROOM IS IMAGE 1'S");
+  const room = at(out, TAIL);
   check(`${name}: the tail room lock is present`, room > -1);
   // After every instruction that points at the diagram — that is the entire reason it exists.
   check(`${name}: it comes AFTER framing and pose match`,
@@ -88,7 +116,7 @@ for (const [name, opts] of Object.entries({
 // --- and only when there IS a diagram to steal a room from --------------------------------------------
 const textOnly = build({ ...BASE, poseText: POSE, faceIndex: 3 });
 check('a text-only pose gets no diagram line, because there is no diagram',
-  !textOnly.includes("THE ROOM IS IMAGE 1'S"));
+  !textOnly.includes(TAIL));
 check('but it still gets the setting lock and the furniture ban',
   textOnly.includes('THE SETTING COMES FROM IMAGE 1') && textOnly.includes('must NOT be built'));
 

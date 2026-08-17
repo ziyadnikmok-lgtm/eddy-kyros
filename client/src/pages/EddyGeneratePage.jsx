@@ -1177,7 +1177,37 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
      * 5,414 chars for an Eddy nude run and 7,530 with an outfit, and neither 422s. So there is room
      * for a sentence that earns it; there is still no room for a paragraph that does not.
      */
-    lines.push(`THE ROOM IS IMAGE 1'S, AND THE CAMERA DOES NOT CHANGE THAT: image ${poseIndex} gives the body position, the camera and the crop — and NOTHING of its room, walls, floor, furniture, props, bedding or view. Where the new framing shows space beyond image 1's edges, extend image 1's OWN room into it. Never image ${poseIndex}'s.`);
+    /**
+     * AND THE CLOTHES, for exactly the same reason (owner, 2026-08-17: "it using outfit of the pose
+     * image it not using only the pose from it").
+     *
+     * The outfit lock is not missing either. "Her CLOTHING comes from image 1" and "whatever the
+     * stand-in in image N is wearing is IRRELEVANT" are both already there — measured, at 45% and
+     * 50% of the prompt, in the same dead middle the setting lock sat in. Then FRAMING at 79% and
+     * POSE MATCH at 88% point at the diagram, and the last word before the identity check was about
+     * the room only.
+     *
+     * So the tail sentence covers both. One line rather than two: they are the same instruction —
+     * from the diagram take the BODY and the CAMERA, and nothing else that is in the picture.
+     *
+     * The clothing clause has to follow where the clothes actually come from, or it becomes the
+     * contradiction it is meant to prevent: on Max Nano they come from image 1, on Eddy with an
+     * outfit chosen they come from the garment, and a nude run has none to speak of.
+     */
+    const dressedFromOutfit = !wantsNude && (outfitIndex || outfitText);
+    const dressedFromBase = !wantsNude && !dressedFromOutfit;
+    // Written per case rather than spliced from fragments — an earlier attempt at this produced
+    // "THE ROOM ARE IMAGE 1'S" on the nude path, and a heading that claimed the clothes came from
+    // image 1 while the sentence under it sent them to the garment.
+    const head = dressedFromBase ? "THE ROOM AND THE CLOTHES ARE IMAGE 1'S"
+      : dressedFromOutfit ? "THE ROOM IS IMAGE 1'S AND THE CLOTHES ARE THE OUTFIT'S"
+        : "THE ROOM IS IMAGE 1'S";
+    const clothesFrom = dressedFromBase
+      ? ' She wears what she wears in image 1 — not what the stand-in has on.'
+      : dressedFromOutfit
+        ? ` Her clothing comes from the outfit above, never from image ${poseIndex}.`
+        : '';
+    lines.push(`${head}, AND THE CAMERA DOES NOT CHANGE THAT: image ${poseIndex} gives the body position, the camera and the crop — and NOTHING of its room, walls, floor, furniture, props, bedding, view${wantsNude ? '' : ' or clothing'}.${clothesFrom} Where the new framing shows space beyond image 1's edges, extend image 1's OWN room into it. Never image ${poseIndex}'s.`);
   }
 
   // The identity lock demands a face by default (portrait or a normal pose). ONLY when the FACELESS
