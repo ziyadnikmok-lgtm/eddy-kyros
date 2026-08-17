@@ -143,7 +143,9 @@ check('the generation feed is hidden on Pinterest Library',
 check('Pinterest Library opts into the send', eddyTabs.includes('sendToPhotoMatch'));
 check('it is opt-in, not on for every collection', coll.includes('sendToPhotoMatch = false,'));
 const stash = coll.indexOf("stashSourceHandoff('photoMatchSeedream'");
-const nav = coll.indexOf("navigateTo('photoMatchSeedream')");
+// The destination is resolved, not literal: SD and NB2 share one handoff key, and the send must
+// land on the tab you were last in rather than always on SD.
+const nav = coll.indexOf('navigateTo(photoMatchTarget())');
 const evt = coll.indexOf("'kyros:use-as-photo-match-seedream-source'");
 check('it stashes BEFORE navigating', stash > -1 && nav > stash);
 check('and fires the event LAST, after the destination can be mounted', evt > nav);

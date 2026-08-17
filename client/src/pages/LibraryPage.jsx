@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { library as libraryApi, gallery as galleryApi, video as videoApi } from '../services/api';
-import { stashSourceHandoff } from '../lib/sourceHandoff';
+import { stashSourceHandoff, handoffDestination } from '../lib/sourceHandoff';
 import { downloadBlob, stripMetadata, stripEnabled } from '../lib/stripMetadata';
 import { cascadeDeleteFromCollections } from '../lib/galleryCascade';
 import { useApp } from '../context/AppContext';
@@ -1320,7 +1320,7 @@ export default function LibraryPage() {
       // produce duplicates.
 
       stashSourceHandoff(page, itemsPayload.map((it) => ({ dataUrl: it.dataUrl, name: it.name })));
-      navigateTo(page);
+      navigateTo(handoffDestination(page));
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent(eventName, { detail: { items: itemsPayload } }));
       }, 200);

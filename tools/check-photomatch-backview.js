@@ -99,7 +99,9 @@ for (const [name, opts] of Object.entries(COMBOS)) {
 // reassigns dataUrl. Detect after that and a blurred face reads as NO face, so every face-blurred
 // front photo silently becomes a back view — stripping the face rules from the photos that need
 // them most. Blur is ON by default, so this would have hit almost every source.
-const addBlock = src.slice(src.indexOf('const addSources = useCallback'), src.indexOf('setSources((prev) => [...prev, ...added]);'));
+// CHANGED 2026-08-17: the per-photo work moved into intakeUrls, the single intake shared by drops,
+// pastes, the picker, the gallery and Library sends — a Library send used to skip all of this.
+const addBlock = src.slice(src.indexOf('const intakeUrls = useCallback'), src.indexOf('setSources((prev) => (replace ? added : [...prev, ...added]));'));
 // CHANGED 2026-08-17: one detection now feeds both the blur and the back-view flag, so the order
 // is findFace-then-blurFound rather than two independent detector calls. Same invariant: the face is
 // found on the ORIGINAL, before any blur, or a blurred-out face reads as no face.

@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
-import { stashSourceHandoff } from '../lib/sourceHandoff';
+import { stashSourceHandoff, handoffDestination } from '../lib/sourceHandoff';
 import { saveIgFramesState, loadIgFramesState, clearIgFramesState } from '../lib/igFramesStateStore';
 import { appendFrames } from '../lib/frameLibraryStore';
 import { downloadBlob } from '../lib/stripMetadata';
@@ -916,7 +916,7 @@ export default function InstagramFramesPage() {
     const handoff = payload.map(p => ({ dataUrl: p.dataUrl, name: p.name, sourceUrl: p.sourceUrl || null }));
     // Stash for reliable mount-time pickup (the event alone races with the lazy page load).
     stashSourceHandoff(page, handoff);
-    navigateTo(page);
+    navigateTo(handoffDestination(page));
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent(target.event, { detail: { items: handoff } }));
     }, 300);

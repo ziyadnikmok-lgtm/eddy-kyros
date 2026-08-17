@@ -144,11 +144,11 @@ check('the scrape risk is stated in the source, not just in a chat message',
 // ON MOUNT. Frame Grabber has always done it in this order; the Pinterest tab did not.
 check('the payload is stashed before navigating', (() => {
   const i = page.indexOf('stashSourceHandoff(target.id, itemsPayload)');
-  const j = page.indexOf('navigateTo(target.id)');
+  const j = page.indexOf('navigateTo(handoffDestination(target.id))');
   return i > -1 && j > i;
 })());
 check('the event fires AFTER the navigate, for a page already open', (() => {
-  const j = page.indexOf('navigateTo(target.id)');
+  const j = page.indexOf('navigateTo(handoffDestination(target.id))');
   const k = page.indexOf('new CustomEvent(target.event');
   return k > j;
 })());
@@ -169,8 +169,12 @@ const pm = fs.readFileSync(path.join(ROOT, 'client/src/pages/PhotoMatchSeedreamP
 check('Photo Match reads that intent', /kyros\.pendingSourceMode\.photoMatchSeedream/.test(pm));
 check('and clears it, so it cannot leak into the next handoff', /removeItem\('kyros\.pendingSourceMode\.photoMatchSeedream'\)/.test(pm));
 check('ABSENT means ADD -- losing work is the worse mistake', /let mode = 'add';/.test(pm));
-check('adding dedups on the image itself', /const have = new Set\(prev\.map\(\(x\) => x\.dataUrl\)\)/.test(pm));
-check('replacing into an EMPTY list is the same as adding', /if \(mode === 'replace' \|\| !prev\.length\) return incoming;/.test(pm));
+// Both live in intakeUrls now — the ONE intake every source photo goes through, so a pin sent from
+// here is blurred, back-view-checked and capped exactly like a dropped file (see check-source-intake).
+check('adding dedups on the image itself', /const have = new Set\(replace \? \[\] : sources\.map\(\(s\) => s\.dataUrl\)\);/.test(pm));
+check('replacing drops what was there, adding keeps it', /setSources\(\(prev\) => \(replace \? added : \[\.\.\.prev, \.\.\.added\]\)\);/.test(pm));
+check('and a Pinterest send goes through that intake, not around it',
+  /const took = await intakeUrls\(items\.map\(\(it\) => it\.dataUrl\), \{ mode \}\);/.test(pm));
 
 // --- no generation feed on a page that generates nothing ---------------------------------------------
 const appSrc = fs.readFileSync(path.join(ROOT, 'client/src/App.jsx'), 'utf8').replace(/\r\n/g, '\n');

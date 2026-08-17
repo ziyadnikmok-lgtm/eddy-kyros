@@ -7,7 +7,7 @@ import { Card, Btn, Select, Textarea, Toggle, Badge, Spinner } from '../componen
 import CompareSlider from '../components/CompareSlider';
 import { SEEDREAM_ASPECT_RATIOS, SEEDREAM_RESOLUTIONS, SEEDREAM_MAX_IMAGES, seedreamCost } from '../config/photoModes';
 import { pushPending, resolvePending, rejectPending } from '../lib/generationFeed';
-import { consumeSourceHandoff } from '../lib/sourceHandoff';
+import { consumeSourceHandoff, rememberPhotoMatchTab, PHOTO_MATCH_HANDOFF_KEY } from '../lib/sourceHandoff';
 import { detectAspectRatio } from '../lib/detectAspectRatio';
 import { NSFW_PRESETS, nudeState, NUDE_LINE } from '../lib/nsfwPresets';
 import { createPageStore } from '../lib/pageStateStore';
@@ -828,6 +828,8 @@ const NB2_ATTEMPTS = 3;
  */
 export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
   const isNB2 = variant === 'nb2';
+  // Tell the senders which Photo Match tab is in use — see photoMatchTarget().
+  useEffect(() => { rememberPhotoMatchTab(isNB2 ? 'photoMatchNB2' : 'photoMatchSeedream'); }, [isNB2]);
   /**
    * What this tab's jobs are called on the queue.
    *
@@ -1181,14 +1183,47 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
   const totalCost = costPerJob * runCount;
 
   // ── sources ────────────────────────────────────────────────────────────────
-  const addSources = useCallback(async (files) => {
-    const room = MAX_SOURCES - sources.length;
-    if (room <= 0) { notify(`Maximum ${MAX_SOURCES} source photos`, 'error'); return; }
-    const valid = Array.from(files || []).filter((f) => /^image\/(png|jpeg|jpg|webp)$/i.test(f.type)).slice(0, room);
-    if (!valid.length) return;
+  /**
+   * EVERY PHOTO ENTERS THE PAGE THROUGH HERE.
+   *
+   * Dropping a file and sending from the Library used to be two separate intakes. The drop path
+   * detected the face, blurred it and flagged back views; the Library path pushed the picture
+   * straight into state. So a batch sent from the Library arrived UNBLURRED with auto-blur switched
+   * on, counted as front-facing whatever it showed, and ignored the 50-photo cap entirely — three
+   * bugs that only existed because the same job was written twice (owner, 2026-08-17: "and it can
+   * support mass draging or send from library or anything ye").
+   *
+   * One intake, so anything that can put a picture on this page gets the same treatment. Returns
+   * how many were actually taken.
+   */
+  const intakeUrls = useCallback(async (urls, { mode = 'add' } = {}) => {
+    const replace = mode === 'replace';
+    // Deduped on the image itself: sending the same pin twice must not queue it twice. A replace
+    // starts from an empty page, so only the incoming batch can collide with itself.
+    const have = new Set(replace ? [] : sources.map((s) => s.dataUrl));
+    const fresh = [];
+    for (const url of urls || []) {
+      if (!url || have.has(url)) continue;
+      have.add(url);
+      fresh.push(url);
+    }
+    /**
+     * A BATCH THAT DOES NOT FIT MUST SAY SO.
+     *
+     * Dropping eighty photos with room for fifty silently kept fifty. That looks identical to "it
+     * worked" — you only find out by counting tiles, which nobody does before pressing Generate.
+     */
+    const room = replace ? MAX_SOURCES : MAX_SOURCES - sources.length;
+    if (room <= 0) { notify(`Already at the ${MAX_SOURCES}-photo limit — clear some first`, 'error'); return 0; }
+    const take = fresh.slice(0, room);
+    const dupes = (urls || []).length - fresh.length;
+    const overflow = fresh.length - take.length;
+    if (dupes) notify(`${dupes} photo${dupes === 1 ? ' is' : 's are'} already here`, 'info');
+    if (overflow) notify(`${overflow} photo${overflow === 1 ? '' : 's'} left out — the limit is ${MAX_SOURCES}`, 'error');
+    if (!take.length) return 0;
     let missed = 0;
-    const added = await Promise.all(valid.map(async (f) => {
-      let dataUrl = await fileToDataUrl(f);
+    const added = await Promise.all(take.map(async (incoming) => {
+      let dataUrl = incoming;
       /**
        * ONE DETECTION, BOTH ANSWERS — is there a face, and where is it.
        *
@@ -1216,8 +1251,23 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
       return { id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, dataUrl, blurred, backView: !face.present };
     }));
     if (missed) notify(`${missed} photo(s): no face found even on the second pass — click a photo to blur by hand`, 'error');
-    setSources((prev) => [...prev, ...added]);
-  }, [sources.length, notify]);
+    setSources((prev) => (replace ? added : [...prev, ...added]));
+    return added.length;
+  }, [sources, notify]);
+
+  /** Files — a drop, a paste, the file picker, the gallery. Everything else is intakeUrls' job. */
+  const addSources = useCallback(async (files) => {
+    const all = Array.from(files || []);
+    const images = all.filter((f) => /^image\/(png|jpeg|jpg|webp)$/i.test(f.type));
+    // Silently dropping the odd HEIC or PDF out of a drag reads as "it worked" too.
+    const skipped = all.length - images.length;
+    if (skipped) notify(`${skipped} file${skipped === 1 ? '' : 's'} skipped — only PNG, JPEG and WEBP can be used`, 'error');
+    if (!images.length) return;
+    const urls = (await Promise.all(images.map((f) => fileToDataUrl(f).catch(() => null)))).filter(Boolean);
+    const unreadable = images.length - urls.length;
+    if (unreadable) notify(`${unreadable} file${unreadable === 1 ? '' : 's'} could not be read`, 'error');
+    await intakeUrls(urls);
+  }, [intakeUrls, notify]);
 
   // Re-run face detection over every source that isn't already blurred, in AGGRESSIVE mode (a
   // looser threshold that catches the profile/tilted faces pico misses on its first, conservative
@@ -1280,7 +1330,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
   useEffect(() => {
     const onDragOver = (e) => { e.preventDefault(); };
     const onDrop = async (e) => {
-      const files = Array.from(e.dataTransfer?.files || []).filter((f) => /^image//i.test(f.type));
+      const files = Array.from(e.dataTransfer?.files || []).filter((f) => /^image\//i.test(f.type));
       if (files.length) {
         e.preventDefault();
         await addSources(files);
@@ -1307,7 +1357,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
   }, [addSources, notify]);
 
   useEffect(() => {
-    const pending = consumeSourceHandoff('photoMatchSeedream');
+    const pending = consumeSourceHandoff(PHOTO_MATCH_HANDOFF_KEY);
     const items = pending.filter((p) => p?.dataUrl);
     if (!items.length) return;
     /**
@@ -1321,15 +1371,18 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     let mode = 'add';
     try { mode = window.sessionStorage.getItem('kyros.pendingSourceMode.photoMatchSeedream') || 'add'; } catch { /* private mode */ }
     try { window.sessionStorage.removeItem('kyros.pendingSourceMode.photoMatchSeedream'); } catch { /* ignore */ }
-    const incoming = items.map((it, i) => ({ id: `s-${Date.now()}-${i}`, dataUrl: it.dataUrl }));
-    setSources((prev) => {
-      if (mode === 'replace' || !prev.length) return incoming;
-      // Deduped on the image itself: sending the same pin twice must not queue it twice.
-      const have = new Set(prev.map((x) => x.dataUrl));
-      return [...prev, ...incoming.filter((x) => !have.has(x.dataUrl))];
-    });
-    notify(`${items.length} source${items.length > 1 ? 's' : ''} ${mode === 'replace' ? 'loaded' : 'added'} ⚡`, 'success');
-  }, [notify]);
+    /**
+     * Through the SAME intake as a dropped file — see intakeUrls.
+     *
+     * This used to build the tiles itself, which meant a picture sent from the Library was never
+     * face-blurred, never checked for a back view, and never counted against the cap.
+     */
+    (async () => {
+      const took = await intakeUrls(items.map((it) => it.dataUrl), { mode });
+      if (took) notify(`${took} source${took > 1 ? 's' : ''} ${mode === 'replace' ? 'loaded' : 'added'} ⚡`, 'success');
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchGallery = useCallback(async () => {
     setGalleryLoading(true);
@@ -2236,7 +2289,18 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
             className={cn('rounded-xl border-2 border-dashed p-3 transition-colors', dragging ? 'border-rose-500 bg-rose-500/[0.06]' : 'border-zinc-800/60')}
             onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
-            onDrop={(e) => { e.preventDefault(); setDragging(false); addSources(e.dataTransfer.files); }}
+            /**
+             * The box shows the highlight; the WINDOW handler does the adding.
+             *
+             * This used to call addSources itself. Once dropping was also bound to the window — so
+             * that releasing anywhere on the page works — a drop inside the box ran both, and every
+             * photo went in twice. It never showed up because the window handler was throwing on a
+             * broken regex at the time, so only the box path ever ran (see check-eaten-escapes).
+             *
+             * Deliberately no preventDefault and no stopPropagation here: the event has to reach the
+             * window, which is where the file/URL handling lives.
+             */
+            onDrop={() => setDragging(false)}
           >
             {sources.length ? (
               <div className="grid [grid-template-columns:repeat(auto-fill,minmax(90px,1fr))] gap-2">

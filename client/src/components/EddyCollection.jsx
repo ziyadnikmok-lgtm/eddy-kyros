@@ -11,7 +11,7 @@ import { downloadBlob, stripMetadata, stripEnabled } from '../lib/stripMetadata'
 import { isPosePromptBroken, hasPoseView, readPoseView, mergePoseView, poseSentence,
   readPoseDescription, readPoseTags, hasPoseTags, mergePoseTags } from '../lib/poseText';
 import { planPoseTagBackfill } from '../lib/poseTagBackfill';
-import { stashSourceHandoff } from '../lib/sourceHandoff';
+import { stashSourceHandoff, photoMatchTarget } from '../lib/sourceHandoff';
 
 /**
  * Eddy's shared collection UI — folders on top, items below, drop/paste/upload to add.
@@ -2379,7 +2379,8 @@ export default function EddyCollection({
     try {
       window.sessionStorage.setItem('kyros.pendingSourceMode.photoMatchSeedream', 'add');
     } catch { /* private mode: the destination falls back to adding, which loses nothing */ }
-    navigateTo('photoMatchSeedream');
+    // SD or NB2, whichever you were last in — see photoMatchTarget().
+    navigateTo(photoMatchTarget());
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent('kyros:use-as-photo-match-seedream-source', { detail: { items: payload } }));
     }, 300);

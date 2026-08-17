@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Btn, Card, Empty } from '../components/UI';
 import { useApp } from '../context/AppContext';
-import { stashSourceHandoff } from '../lib/sourceHandoff';
+import { stashSourceHandoff, handoffDestination } from '../lib/sourceHandoff';
 import { extractOneLink, runWithConcurrency, extractLinksViaApify } from '../lib/frameExtract';
 import { loadFrames, saveAllFrames } from '../lib/frameLibraryStore';
 import { getFailedFrameNames, clearFrameFailed } from '../lib/frameOutcomes';
@@ -770,7 +770,7 @@ export default function FrameLibraryPage() {
     // event (deduped by the page). Stash avoids the race where a lazily-loaded page mounts
     // after the event already fired.
     stashSourceHandoff(target.page, itemsPayload);
-    navigateTo(target.page);
+    navigateTo(handoffDestination(target.page));
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent(target.event, { detail: { items: itemsPayload } }));
     }, 300);
@@ -791,7 +791,7 @@ export default function FrameLibraryPage() {
     if (statusFilter === 'new' || statusFilter === 'failed') setStatusFilter('all');
     const one = [{ dataUrl: item.dataUrl, name: item.name, sourceUrl: item.sourceUrl || null }];
     stashSourceHandoff(target.page, one);
-    navigateTo(target.page);
+    navigateTo(handoffDestination(target.page));
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent(target.event, { detail: { items: one } }));
     }, 300);

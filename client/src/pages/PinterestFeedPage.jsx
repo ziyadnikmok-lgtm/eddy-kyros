@@ -14,7 +14,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { pinterestFeed } from '../services/api';
 import { createPageStore } from '../lib/pageStateStore';
-import { stashSourceHandoff } from '../lib/sourceHandoff';
+import { stashSourceHandoff, handoffDestination } from '../lib/sourceHandoff';
 import { createEddyCollection } from '../lib/eddyCollectionStore';
 import { interleave, topSeeds } from '../lib/pinterestMix';
 import { useApp } from '../context/AppContext';
@@ -607,7 +607,7 @@ export default function PinterestFeedPage() {
     try {
       window.sessionStorage.setItem(`kyros.pendingSourceMode.${target.id}`, replaceTarget ? 'replace' : 'add');
     } catch { /* private mode: the destination falls back to adding, which loses nothing */ }
-    navigateTo(target.id);
+    navigateTo(handoffDestination(target.id));
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent(target.event, { detail: { items: itemsPayload } }));
     }, 300);
