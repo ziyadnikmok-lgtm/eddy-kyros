@@ -162,7 +162,7 @@ async function callGemini(apiKey, modelId, parts, aspectRatio, imageSize, temper
       const REFUSALS = new Set(['IMAGE_OTHER', 'IMAGE_SAFETY', 'SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST']);
       throw new AppError(
         REFUSALS.has(finishReason)
-          ? `Google refused this image — its content filter, not an error (${finishReason}). Measured: this is decided by the SOURCE PHOTO, not by the prompt or by safety settings — the same request passed with a less revealing base photo and was refused with a sheer one, at every threshold including OFF. Seedream 5 Pro on WaveSpeed takes over automatically; if that account is out of credits the job stops here.${textParts ? ` — ${textParts.slice(0, 160)}` : ''}`
+          ? `Google refused this image — its content filter, not an error (${finishReason}). Measured: this is decided by the SOURCE PHOTO, not by the prompt or by safety settings — the same request passed with a less revealing base photo and was refused with a sheer one, at every threshold including OFF. Seedream 5 Pro on WaveSpeed takes over automatically, provided that account can still be billed.${textParts ? ` — ${textParts.slice(0, 160)}` : ''}`
           : `Nano Bypass returned no image (reason: ${finishReason})${textParts ? ` — ${textParts.slice(0, 200)}` : ''}`,
         502,
         'NANO_BYPASS_NO_IMAGE'

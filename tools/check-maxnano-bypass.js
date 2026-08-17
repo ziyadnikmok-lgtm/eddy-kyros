@@ -162,6 +162,40 @@ check('and the fallback fires below the queue ceiling, or it would never be reac
   Number(/const NB2_ATTEMPTS = (\d+);/.exec(rec)[1])
     < Number(/const MAX_SUBMIT_ATTEMPTS = (\d+);/.exec(read('server/services/jobQueue.js'))[1]));
 
+// --- ⚠️ A CONTENT REFUSAL MUST NOT BE READ AS A BILLING FAILURE ---------------------------------------
+//
+// "the fall back to seedream on wavespeed not working" (owner, 2026-08-17), and the log said why in
+// one line: `generation_out_of_credit engine=nanobypass error="Google refused this image…"`.
+//
+// isOutOfCredit ended in a keyword match on the message — belt-and-braces for a provider that
+// answers in prose with no code. Hours earlier the refusal message had been rewritten to explain
+// what happens next: "Seedream 5 Pro takes over automatically; if that account is OUT OF CREDITS
+// the job stops here". So every Google refusal matched, was classified terminal, and was never
+// retried or handed to Seedream. A sentence written to explain the fallback disabled it.
+//
+// Two fixes, because either alone would leave the trap armed: the classifier no longer reads prose
+// when the error carries its own code, and the message no longer contains the phrase.
+{
+  const i = rec.indexOf('function isOutOfCredit(err) {');
+  // eslint-disable-next-line no-new-func
+  const END = String.fromCharCode(10) + '}' + String.fromCharCode(10);
+  const isOutOfCredit = new Function(`${rec.slice(i, rec.indexOf(END, i) + 3)}; return isOutOfCredit;`)();
+  const refusal = /\? `(Google refused this image[^`]*)`/.exec(svc)[1].replace(/\$\{[^}]*\}/g, 'IMAGE_OTHER');
+
+  check('the real WaveSpeed credit error is still caught by its code',
+    isOutOfCredit({ code: 'INSUFFICIENT_CREDITS', status: 402, message: 'WaveSpeed is out of credits - top up your account to continue' }));
+  check('a code-less prose credit error is still caught by its words',
+    isOutOfCredit({ message: 'Insufficient credits. Please top up your account.' }));
+  check('but a CONTENT REFUSAL is not — it carries its own code',
+    !isOutOfCredit({ code: 'NANO_BYPASS_NO_IMAGE', status: 502, message: refusal }));
+  check('nor is a key problem, whatever its wording',
+    !isOutOfCredit({ code: 'GEMINI_KEY_REQUIRED', status: 400, message: 'needs a Gemini API key' }));
+  check('an error that knows its own code is never re-read for keywords', rec.includes('if (err?.code) return false;'));
+  check('and the refusal message no longer carries the phrase that tripped it',
+    !/out of credits/i.test(refusal));
+  check('the trap is written down where the classifier lives', /classifies by words that may be in the/i.test(rec));
+}
+
 // --- DOES IT REALLY RETRY FIVE TIMES? Simulated against the real constants ---------------------------
 //
 // ⚠️ Asked directly ("check if it is really doing 5 retry") — and it was NOT. The refusal streak was
@@ -247,7 +281,9 @@ check('the refusal message names the lever that IS real',
 // thing reaching the card while every job failed.
 check('a content refusal says so in words', svc.includes("Google refused this image — its content filter, not an error"));
 check('and names what happens next', svc.includes('Seedream 5 Pro on WaveSpeed takes over automatically'));
-check('and what stops it', svc.includes('if that account is out of credits the job stops here'));
+// Reworded 2026-08-17: the old phrasing contained "out of credits", which isOutOfCredit's keyword
+// match then read as a billing failure — disabling the very fallback the sentence describes.
+check('and what stops it', svc.includes('provided that account can still be billed'));
 check('the refusal reasons are listed rather than matched loosely',
   svc.includes("const REFUSALS = new Set(['IMAGE_OTHER', 'IMAGE_SAFETY', 'SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST']);"));
 check('a genuine fault still reports its raw reason', svc.includes('Nano Bypass returned no image (reason: ${finishReason})'));

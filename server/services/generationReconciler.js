@@ -386,7 +386,26 @@ const FALLBACK_PATCH = { resolution: '2K' };
 function isOutOfCredit(err) {
   if (err?.code === 'INSUFFICIENT_CREDITS') return true;
   if (err?.status === 402 || err?.statusCode === 402) return true;
-  return /insufficients+credit|out of credits|top up|balance too low|billing/i.test(err?.message || '');
+  /**
+   * ⚠️ AN ERROR THAT KNOWS WHAT IT IS, IS NOT RE-READ FOR KEYWORDS.
+   *
+   * The text match below is belt-and-braces for a provider that answers in prose with no code. It
+   * used to run on EVERY error, and that is a trap: it classifies by words that may be in the
+   * message for any reason at all.
+   *
+   * It caught one within hours. The bypass's content-refusal message was rewritten to explain what
+   * happens next — "Seedream 5 Pro takes over automatically; if that account is out of credits the
+   * job stops here" — and that sentence contains "out of credits". So every Google refusal was
+   * classified as a billing failure, marked terminal, and never retried OR handed to Seedream. The
+   * log said it plainly: `generation_out_of_credit engine=nanobypass error="Google refused this
+   * image…"` (owner, 2026-08-17: "the fall back to seedream on wavespeed not working").
+   *
+   * The real thing always carries INSUFFICIENT_CREDITS and 402 — both already answered above — so
+   * any error that carries a DIFFERENT code has already told us what it is. Only a code-less error
+   * gets its prose read.
+   */
+  if (err?.code) return false;
+  return /insufficient\s+credit|out of credits|top up|balance too low|billing/i.test(err?.message || '');
 }
 
 /**
