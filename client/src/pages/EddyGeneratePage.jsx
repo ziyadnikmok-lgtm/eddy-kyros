@@ -5739,15 +5739,55 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
           if (at === outfitIndex) return 'PRODUCT PHOTO OF THE GARMENT — the clothing only. Not its background, not its mannequin';
           return 'THE SUBJECT AND THE SETTING — she is the woman to render, and this room is the scene';
         });
-        data = await runEdit({
-          images: payload,
-          prompt,
-          model: 'nb2',
-          aspectRatio: ratio,
-          resolution,
-          labels,
-          tags: eddyTags(isEdit, characterName),
-        });
+        /**
+         * THE BELT-AND-BRACES FALLBACK — because "it should auto retry with wavespeed seedream"
+         * must not depend on the server getting every case right.
+         *
+         * The QUEUE is the primary fallback and is still the better one: it swaps after five tries,
+         * from the server, where it can tell a refusal from a rate limit. This does not race it —
+         * it only runs when the queue has already FAILED the job, i.e. finished with it entirely.
+         * A job the queue successfully swapped never reaches this catch, so there is no way to pay
+         * twice.
+         *
+         * It exists because the queue's fallback has now been silently disabled twice in one day —
+         * once by a user-context bug that lost the API keys, once by a helpful sentence containing
+         * the words "out of credits" — and both times the symptom was identical: a red card with a
+         * Retry button, and a person clicking it. One more attempt here costs nothing when the
+         * queue worked and saves the run when it did not.
+         *
+         * NOT for key or credit problems. Those are terminal on purpose: Seedream bills a different
+         * account, so retrying a dead Gemini key on WaveSpeed is exactly the silent substitution the
+         * queue refuses to make, and retrying an empty WaveSpeed balance on WaveSpeed is pointless.
+         */
+        try {
+          data = await runEdit({
+            images: payload,
+            prompt,
+            model: 'nb2',
+            aspectRatio: ratio,
+            resolution,
+            labels,
+            tags: eddyTags(isEdit, characterName),
+          });
+        } catch (bypassErr) {
+          const msg = String(bypassErr?.message || '');
+          const refused = /content filter|IMAGE_OTHER|IMAGE_SAFETY|PROHIBITED_CONTENT|BLOCKLIST|refused this image|returned no image/i.test(msg);
+          const terminal = /API key|out of credits|top up|Insufficient credits|balance/i.test(msg);
+          if (!refused || terminal) throw bypassErr;
+          data = await withRateLimitRetry(() => runEdit({
+            images: payload,
+            prompt,
+            aspectRatio: ratio,
+            resolution,
+            tags: [...eddyTags(isEdit, characterName), 'fallback'],
+          }));
+          usedFallback = true;
+          engineLabel = 'Seedream 5.0 Pro Edit (fallback)';
+          if (!warnedFallback.current) {
+            warnedFallback.current = true;
+            notify('Nano Banana 2 refused an image — Seedream 5.0 Pro made it instead. Those are tagged "fallback".', 'error');
+          }
+        }
         if (!(data.images || []).length) throw new Error('Nano Banana 2 (bypass) returned no image');
         /**
          * DID THE QUEUE FALL BACK? Ask it, do not assume.

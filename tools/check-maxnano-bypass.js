@@ -54,13 +54,32 @@ check('the service exists and takes raw images', svc.includes('async function ed
 // from the server, where a rate limit can be recognised for what it is. A client-side retry would
 // multiply that (4 x 3) and a client-side fallback would race the one the queue is running.
 const nb2Branch = page.slice(page.indexOf("if (engine === 'nb2') {"), page.indexOf("} else if (engine === 'nano2') {"));
-check('the bypass branch enqueues once', (nb2Branch.match(/await runEdit\(/g) || []).length === 1);
+// TWO runEdit calls in this branch now, and the pair is the point: the bypass, and a Seedream
+// attempt that runs ONLY if the queue already failed the job. See the note in the branch.
+check('the bypass branch enqueues the bypass, plus one guarded Seedream attempt',
+  (nb2Branch.match(/runEdit\(\{/g) || []).length === 2);
 // The words appear in the branch's own comment explaining why they are absent, so these look for
 // the CALL rather than the mention.
 check('with no client retry wrapper', !/=\s*await withEngineRetry\(/.test(nb2Branch));
-// It DOES read the queue's verdict back — that is not a client-side fallback, it is believing the
-// server's answer about which engine ran. What it must not do is issue its own Seedream call.
-check('and no client-side Seedream fallback call', !/runEdit\(\{[^}]*tags: \[\.\.\.eddyTags/.test(nb2Branch));
+// ⚠️ CHANGED 2026-08-17: it DOES issue its own Seedream call now — "i dont click i want it be
+// automated". The queue remains the primary fallback and the better one (five tries, server-side,
+// able to tell a refusal from a rate limit). This is the second line, and it cannot race the first:
+// it runs only in the CATCH, i.e. only once the queue has already failed the job and finished with
+// it. A job the queue swapped successfully never reaches it, so there is no double spend.
+//
+// It exists because the queue's fallback was silently disabled TWICE in one day — by a user-context
+// bug that lost the keys, and by a sentence containing "out of credits" — and both times the
+// symptom was the same red card with a Retry button.
+check('a refused bypass job is retried on Seedream without a click',
+  nb2Branch.includes('} catch (bypassErr) {')
+  && nb2Branch.includes("tags: [...eddyTags(isEdit, characterName), 'fallback'],"));
+check('and it is recognised as a refusal, not any old error',
+  nb2Branch.includes('content filter|IMAGE_OTHER|IMAGE_SAFETY|PROHIBITED_CONTENT|BLOCKLIST|refused this image|returned no image'));
+// Key and credit failures stay terminal: Seedream bills a DIFFERENT account, so retrying a dead
+// Gemini key there is the silent substitution the queue refuses to make.
+check('but never for a key or credit failure',
+  nb2Branch.includes('const terminal = /API key|out of credits|top up|Insufficient credits|balance/i.test(msg);')
+  && nb2Branch.includes('if (!refused || terminal) throw bypassErr;'));
 check('but it does read the queue verdict, so a fallback is labelled and priced honestly',
   nb2Branch.includes("if (data.fellBack || data.model === 'seedream5') {")
   && nb2Branch.includes("engineLabel = 'Seedream 5.0 Pro Edit (fallback)';"));
