@@ -637,15 +637,25 @@ async function _submitClaimed(job) {
      * engineOf reads that, so the job cannot bounce back to the bypass and loop.
      */
     /**
-     * The streak is counted here, where a real failure lands — a rate limit returned above with its
-     * attempt refunded, so it can never inflate this.
+     * ⚠️ THE STREAK COUNTS WHOLE JOBS THAT GAVE UP, NOT ATTEMPTS — and getting that wrong quietly
+     * cancelled the five tries that were just asked for.
+     *
+     * Counted per attempt, the first job's own retries fed it: attempt 1 -> streak 1, attempt 2 ->
+     * streak 2, attempt 3 -> streak 3, at which point bypassTries collapsed to 1 and the job fell
+     * back at THREE. Nothing ever got five. Worse across 300 lanes, where a batch's parallel
+     * failures race the counter up in the first seconds and everything after gets a single try.
+     *
+     * A streak is supposed to mean "several separate jobs have now proved this material is
+     * refused". So it is incremented at the moment a job actually gives up to a refusal — below,
+     * inside the fallback — and read here, before this job's own outcome is added to it.
      */
-    if (engine === 'nanobypass' && isContentRefusal(err)) refusalStreak += 1;
-    // Patience shrinks to a single probe once the refusals are clearly about the material.
     const bypassTries = refusalStreak >= REFUSAL_STREAK ? 1 : NB2_ATTEMPTS;
     if (engine === 'nanobypass' && job.attempts >= bypassTries && !isTerminalForFallback(err)) {
       if (jobQueue.switchEngine(job.id, 'seedream5', { tag: 'fallback', patch: FALLBACK_PATCH })) {
-        log.warn('generation_nb2_fallback', { jobId: job.id, attempts: job.attempts, error: err.message });
+        // This job is done with the bypass. If it ended on a refusal, that is one more piece of
+        // evidence that the MATERIAL is what is being refused.
+        if (isContentRefusal(err)) refusalStreak += 1;
+        log.warn('generation_nb2_fallback', { jobId: job.id, attempts: job.attempts, tries: bypassTries, streak: refusalStreak, error: err.message });
         return true;
       }
     }

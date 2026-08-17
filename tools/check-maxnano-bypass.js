@@ -126,7 +126,9 @@ check('with the fallback picked out in amber, since it cost a different rate',
 // the content is simply not allowed.
 check('a content refusal is told apart from a fault', rec.includes('function isContentRefusal(err)')
   && rec.includes('IMAGE_OTHER|IMAGE_SAFETY|PROHIBITED_CONTENT|BLOCKLIST|content filter'));
-check('consecutive refusals across jobs are counted', rec.includes("if (engine === 'nanobypass' && isContentRefusal(err)) refusalStreak += 1;"));
+// Counted per JOB THAT GAVE UP, not per attempt — see the simulation above for why that distinction
+// is the difference between five tries and three.
+check('consecutive refusals across jobs are counted', rec.includes('if (isContentRefusal(err)) refusalStreak += 1;'));
 check('and once it is clearly the material, the bypass gets one probe instead of five',
   rec.includes('const bypassTries = refusalStreak >= REFUSAL_STREAK ? 1 : NB2_ATTEMPTS;'));
 // ONE probe, not zero — that is what lets a run recover by itself when a passable image arrives.
@@ -159,6 +161,60 @@ check('a content refusal still falls back', !rec.includes("NB2_TERMINAL_CODES = 
 check('and the fallback fires below the queue ceiling, or it would never be reached',
   Number(/const NB2_ATTEMPTS = (\d+);/.exec(rec)[1])
     < Number(/const MAX_SUBMIT_ATTEMPTS = (\d+);/.exec(read('server/services/jobQueue.js'))[1]));
+
+// --- DOES IT REALLY RETRY FIVE TIMES? Simulated against the real constants ---------------------------
+//
+// ⚠️ Asked directly ("check if it is really doing 5 retry") — and it was NOT. The refusal streak was
+// counted per ATTEMPT, so the first job's own retries fed it: attempt 1 -> streak 1, attempt 2 ->
+// streak 2, attempt 3 -> streak 3, bypassTries collapses to 1, and the job fell back at THREE.
+// Nothing ever got five. Across 300 lanes it was worse: parallel failures race the counter up in
+// the first seconds and everything after gets a single try.
+//
+// The streak now counts whole jobs that GAVE UP, incremented inside the fallback. This replays the
+// queue's actual loop — claimNext increments attempts, requeueUnsent puts the job back — against
+// the constants read out of the source.
+{
+  const NB2 = Number(/const NB2_ATTEMPTS = (\d+);/.exec(rec)[1]);
+  const STREAK = Number(/const REFUSAL_STREAK = (\d+);/.exec(rec)[1]);
+  const MAX_SUBMIT = Number(/const MAX_SUBMIT_ATTEMPTS = (\d+);/.exec(read('server/services/jobQueue.js'))[1]);
+
+  /** One job, refused every time, through the real decision the reconciler makes. */
+  const runJob = (state) => {
+    let attempts = 0;
+    for (;;) {
+      attempts += 1;                                        // claimNext counts the attempt
+      if (attempts > MAX_SUBMIT) return { attempts, gaveUp: 'queue ceiling' };
+      const tries = state.streak >= STREAK ? 1 : NB2;       // read BEFORE this job's outcome
+      if (attempts >= tries) {                              // fall back
+        state.streak += 1;                                  // a whole job gave up to a refusal
+        return { attempts, gaveUp: 'fallback' };
+      }
+      // else requeueUnsent -> claimed again next tick
+    }
+  };
+
+  const state = { streak: 0 };
+  const runs = [1, 2, 3, 4, 5].map(() => runJob(state));
+  check(`the first job really is attempted ${NB2} times (got ${runs[0].attempts})`, runs[0].attempts === NB2);
+  check(`and so are the next two, before the streak trips (${runs[1].attempts}, ${runs[2].attempts})`,
+    runs[1].attempts === NB2 && runs[2].attempts === NB2);
+  check(`after ${STREAK} jobs give up, the rest get one probe (${runs[3].attempts}, ${runs[4].attempts})`,
+    runs[3].attempts === 1 && runs[4].attempts === 1);
+  check('every one ends in a fallback rather than the queue ceiling',
+    runs.every((r) => r.gaveUp === 'fallback'));
+  // A success anywhere resets it, which is what lets a run recover by itself.
+  state.streak = 0;
+  check('and one success restores the full five', runJob(state).attempts === NB2);
+  // The ceiling has to stay above the tries, or the queue kills the job before the fallback fires.
+  check(`the queue ceiling (${MAX_SUBMIT}) is above the tries (${NB2})`, MAX_SUBMIT > NB2);
+}
+check('the streak is incremented where a job gives up, not on every attempt',
+  rec.includes('if (isContentRefusal(err)) refusalStreak += 1;')
+  && !rec.includes("if (engine === 'nanobypass' && isContentRefusal(err)) refusalStreak += 1;"));
+check('and it is read before this job adds to it', rec.indexOf('const bypassTries = refusalStreak >= REFUSAL_STREAK')
+  < rec.indexOf('if (isContentRefusal(err)) refusalStreak += 1;'));
+check('the fallback log records the tries and the streak, so this is checkable in the field',
+  rec.includes('tries: bypassTries, streak: refusalStreak'));
 
 // --- WHAT ACTUALLY DECIDES A REFUSAL, measured ------------------------------------------------------
 //
