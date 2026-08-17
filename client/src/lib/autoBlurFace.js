@@ -26,18 +26,38 @@ import { detectFacePico } from './detectFacePico';
  * the confident pass keeps its own judgement, because a legitimate head-and-shoulders crop can fill
  * the frame and that one is not guessing.
  */
-const MAX_LOOSE_FACE_FRACTION = 0.4;
+/**
+ * SIZE ALONE WAS THE WRONG TEST, and it cost a real detection.
+ *
+ * This was a flat 40% cap on the loose pass. A close-up selfie's head is easily half the frame, so
+ * an obvious, front-facing, well-lit face came back unblurred with "no face" (owner, 2026-08-17).
+ * The caveat was even written down here — a head-and-shoulders crop can fill the frame — but only
+ * the confident pass was exempted, and a slightly turned face misses that pass and lands on this
+ * one.
+ *
+ * What the gate is actually for is the case it was written for: a bent-over pose where the loose
+ * threshold reports a hip or a backside. Those are large AND LOW. A face in a photograph of a
+ * person is large and HIGH — that is where heads are. So position does the work size cannot, and
+ * only an absurd match is rejected on size by itself.
+ */
+const ABSURD_FRACTION = 0.65;   // nothing in a photo of a person is a face at two thirds of the frame
+const LOW_MATCH_FRACTION = 0.3; // a big match whose centre sits below the midline is a body part
+const LOW_CENTRE = 0.55;
 
 export async function autoBlurFace(dataUrl, { aggressive = false } = {}) {
   try {
     const found = await detectFacePico(dataUrl, { aggressive });
     if (!found) return { dataUrl, blurred: false, reason: 'no face found' };
-    // Rejected rather than shrunk: a box this size is not a face in the wrong place, it is not a
-    // face. Reported as not-blurred so the amber badge shows and it can be blurred by hand — which
-    // is the honest outcome, and far better than handing back a photo with the wrong third of it
-    // smeared.
-    if (aggressive && (found.w > MAX_LOOSE_FACE_FRACTION || found.h > MAX_LOOSE_FACE_FRACTION)) {
-      return { dataUrl, blurred: false, reason: 'loose match was too large to be a face' };
+    // Rejected rather than shrunk: a box like this is not a face in the wrong place, it is not a
+    // face. Reported as not-blurred so the amber badge shows and it can be blurred by hand — far
+    // better than handing back a photo with the wrong third of it smeared.
+    if (aggressive) {
+      const centreY = found.y + found.h / 2;
+      const absurd = found.w > ABSURD_FRACTION || found.h > ABSURD_FRACTION;
+      const bigAndLow = found.h > LOW_MATCH_FRACTION && centreY > LOW_CENTRE;
+      if (absurd || bigAndLow) {
+        return { dataUrl, blurred: false, reason: 'loose match was not face-shaped or face-placed' };
+      }
     }
     const box = pad(found);
     return { dataUrl: await blurRegion(dataUrl, box), blurred: true };

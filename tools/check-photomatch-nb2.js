@@ -302,12 +302,15 @@ check('an in-progress tile is labelled as the source', pm.includes('Your source 
 // partly-hidden faces, and also how it starts reporting hips and backsides. Padded 25% on every
 // side, one false positive smears a third of the photograph (owner, 2026-08-16).
 const blur = read('client/src/lib/autoBlurFace.js');
-check('a loose match that is too large is rejected', blur.includes('MAX_LOOSE_FACE_FRACTION'));
-check('and only on the loose pass — the confident one keeps its judgement',
-  blur.includes('if (aggressive && (found.w > MAX_LOOSE_FACE_FRACTION'));
-// Rejected, not shrunk: a box that size is not a face in the wrong place, it is not a face.
-check('it reports not-blurred rather than blurring the wrong region',
-  blur.includes("reason: 'loose match was too large to be a face'"));
+// CHANGED 2026-08-17: the flat 40% cap rejected an obvious close-up selfie head. Size alone cannot
+// tell a big face from a big hip — position can, because heads are high in the frame. The gate and
+// its shapes are exercised properly in check-blur-gate.js; this only pins that it still exists and
+// still applies to the loose pass alone.
+check('the loose pass is gated at all', blur.includes('if (aggressive) {'));
+check('on absurd size or on large-and-low, not on size alone',
+  blur.includes('const absurd =') && blur.includes('const bigAndLow ='));
+check('and a rejected match reports not-blurred rather than blurring the wrong region',
+  blur.includes("reason: 'loose match was not face-shaped or face-placed'"));
 
 // --- an empty account fails immediately, and says so ------------------------------------------------
 // Both providers already answer with INSUFFICIENT_CREDITS and a message naming the top-up. The queue
