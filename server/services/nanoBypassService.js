@@ -181,6 +181,16 @@ async function editRaw({ apiKey, images, prompt, aspectRatio, imageSize = '2K', 
    *
    * Positional only, like the identity labels: the caller's prompt states every RULE, and repeating
    * rules here would be two briefs in one request.
+   *
+   * MEASURED, on the real API with the owner's key (2026-08-17). Base photo: a bright pink bedroom.
+   * Pose diagram: outdoors at night beside a white car. Same prompt, one variable:
+   *
+   *     labels ON   -> she is in the PINK BEDROOM, with the pose and boots taken from the diagram
+   *     labels OFF  -> she is OUTDOORS BESIDE THE CAR, wearing the other woman's clothes
+   *
+   * That is the whole bug, reproduced and then removed by this one field — and it explains why the
+   * same prompt was fine on WaveSpeed and wrong here ("from wavespeed the background is perfect but
+   * from gemini it using the pose photo as background").
    */
   const n = Math.max(0, Math.min(Number(identityCount) || 0, images.length - 1));
   if (Array.isArray(labels) && labels.length && !n) {

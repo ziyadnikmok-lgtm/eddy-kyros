@@ -92,7 +92,17 @@ check('a separate guard still rejects anything that is not a Nano Banana route',
 // an undifferentiated pile followed by a wall of text, nothing ties a number in the prose to the
 // bytes that arrived, so it edits whichever photo is most salient. A pose diagram IS a full
 // photograph of a room and a person — and so is the base photo.
+//
+// AND IT WAS MEASURED, not reasoned about. Real API, owner's key, same prompt, one variable — base
+// photo a pink bedroom, pose diagram outdoors beside a white car:
+//
+//     labels ON   -> she is in the PINK BEDROOM, pose and boots from the diagram
+//     labels OFF  -> she is OUTDOORS BESIDE THE CAR, in the other woman's clothes
+//
+// Which is exactly the report: "from wavespeed the background is perfect but from gemini it using
+// the pose photo as background".
 check('the service can label each image where it sits', svc.includes('if (Array.isArray(labels) && labels.length && !n) {'));
+check('and the A/B that proved it is recorded beside the code', /labels OFF  -> she is OUTDOORS BESIDE THE CAR/.test(svc));
 check('with the position stated, not the rules restated', svc.includes('parts.push({ text: `[Image ${i + 1} — ${label}]` });'));
 check('Eddy sends one label per image', page.includes('const labels = payload.map((_, i) => {'));
 check('built from the SAME indices the prompt uses, so the two cannot disagree',
