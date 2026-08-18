@@ -2560,6 +2560,58 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     if (lightboxId && !lightboxList.some((j) => j.id === lightboxId)) setLightboxId('');
   }, [lightboxId, lightboxList]);
 
+  /**
+   * ZOOM, in the large view (owner, 2026-08-18: "and make it possible to zoom").
+   *
+   * A 2K render shown at "fits on screen" is the one thing this page cannot be judged on: whether
+   * the skin has pores, whether the hands are right, whether her face is actually hers. All of that
+   * lives at 1:1, and the overlay was capped at max-h-full.
+   *
+   * Wheel zooms AT THE POINTER, which is the only version that feels right — zooming to the centre
+   * means chasing the detail you were looking at back across the screen. Drag pans, double-click
+   * toggles between fit and 2x at the point you hit, and +/-/0 do the same from the keyboard.
+   *
+   * Reset on every picture change: carrying a 4x zoom into the next image opens it on somebody's
+   * elbow.
+   */
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const panRef = useRef(null);
+  const ZOOM_MIN = 1;
+  const ZOOM_MAX = 8;
+  useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, [lightboxId]);
+
+  /**
+   * Zoom about a point. The maths is the whole trick: to keep the pixel under the cursor still, the
+   * pan has to move by how far that point would otherwise drift, which is the offset from centre
+   * scaled by the change in zoom.
+   */
+  const zoomAt = useCallback((factor, clientX, clientY, rect) => {
+    setZoom((z) => {
+      const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z * factor));
+      if (next === z) return z;
+      if (next === 1) { setPan({ x: 0, y: 0 }); return next; }
+      const cx = rect ? clientX - (rect.left + rect.width / 2) : 0;
+      const cy = rect ? clientY - (rect.top + rect.height / 2) : 0;
+      const ratio = next / z;
+      setPan((prev) => ({ x: cx - (cx - prev.x) * ratio, y: cy - (cy - prev.y) * ratio }));
+      return next;
+    });
+  }, []);
+
+  // Keyboard, alongside the existing Esc / arrows. Bound in the same effect so there is one
+  // listener and one place that decides what a key means while the overlay is open.
+  useEffect(() => {
+    if (!lightboxId) return undefined;
+    const onKey = (e) => {
+      if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomAt(1.4, 0, 0, null); }
+      else if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomAt(1 / 1.4, 0, 0, null); }
+      else if (e.key === '0') { e.preventDefault(); setZoom(1); setPan({ x: 0, y: 0 }); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightboxId, zoomAt]);
+
   const [showCompare, setShowCompare] = useState(() => {
     try { return localStorage.getItem('kyros.photoMatch.compare') === '1'; } catch { return false; }
   });
@@ -3467,16 +3519,56 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
             className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
             // Backdrop only: a click that started on the picture must not close it when the pointer
             // drifts off, which makes a large view feel broken.
-            onClick={(e) => { if (e.target === e.currentTarget) setLightboxId(''); }}
+            onClick={(e) => { if (e.target === e.currentTarget && zoom === 1) setLightboxId(''); }}
+            /**
+             * The wheel is bound on the BACKDROP, not the picture: once zoomed in, the image can be
+             * panned past the edge of the window, and a wheel over the empty area beside it should
+             * still zoom rather than do nothing.
+             *
+             * passive is not an option here — preventDefault is what stops the page behind the
+             * overlay scrolling — so this uses onWheel with an explicit preventDefault.
+             */
+            onWheel={(e) => {
+              e.preventDefault();
+              zoomAt(e.deltaY < 0 ? 1.18 : 1 / 1.18, e.clientX, e.clientY, e.currentTarget.getBoundingClientRect());
+            }}
+            onDoubleClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              if (zoom > 1) { setZoom(1); setPan({ x: 0, y: 0 }); } else zoomAt(2, e.clientX, e.clientY, rect);
+            }}
+            // Pointer events rather than mouse: one code path covers a trackpad, a mouse and a pen,
+            // and setPointerCapture keeps the drag alive when the pointer leaves the window.
+            onPointerDown={(e) => {
+              if (zoom === 1 || e.button !== 0) return;
+              e.currentTarget.setPointerCapture(e.pointerId);
+              // Where the pointer started, and where the picture was when it did. Panning is the
+              // sum of the two — tracking only the delta since the last move accumulates rounding
+              // and the image slowly drifts away from the cursor.
+              panRef.current = { fromX: e.clientX, fromY: e.clientY, panX: pan.x, panY: pan.y };
+            }}
+            onPointerMove={(e) => {
+              const g = panRef.current;
+              if (!g) return;
+              setPan({ x: g.panX + (e.clientX - g.fromX), y: g.panY + (e.clientY - g.fromY) });
+            }}
+            onPointerUp={() => { panRef.current = null; }}
+            onPointerCancel={() => { panRef.current = null; }}
           >
             <img src={src} alt="" draggable={false} onClick={(e) => e.stopPropagation()}
-              className="max-h-full max-w-full select-none rounded-xl object-contain" />
+              style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, cursor: zoom > 1 ? 'grab' : 'zoom-in' }}
+              className="max-h-full max-w-full select-none rounded-xl object-contain transition-transform duration-75 will-change-transform" />
 
             <div className="absolute left-4 top-4 rounded-lg bg-black/70 px-3 py-1.5 text-xs text-zinc-300">
               {job.charName || 'Photo Match'}
               {job.engine && <span className="text-zinc-500"> · {job.engine === 'nb2' ? 'NB2' : job.engine === 'nano2' ? 'Nano 2' : 'Seedream'}{job.fellBack ? ' (fallback)' : ''}</span>}
               {job.resolution && <span className="text-zinc-500"> {job.resolution}</span>}
               <span className="text-zinc-500"> · {i + 1} of {lightboxList.length}</span>
+              {/* The zoom level, and — while it is 1 — how to change it. A gesture nobody is told
+                  about is a gesture nobody uses, and it stops being worth saying the moment you
+                  have used it once. */}
+              {zoom > 1
+                ? <span className="text-zinc-400"> · {zoom.toFixed(1)}× <button type="button" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} className="underline hover:text-white cursor-pointer">reset</button></span>
+                : <span className="text-zinc-600"> · scroll or double-click to zoom</span>}
             </div>
 
             <button type="button" onClick={() => setLightboxId('')} aria-label="Close"

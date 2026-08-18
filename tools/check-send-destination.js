@@ -401,8 +401,30 @@ check('and the reason is recorded — fixed anchors to a transformed ancestor',
   pm.includes('nearest ancestor with a transform'));
 check('Esc closes it', pm.includes("if (e.key === 'Escape') setLightboxId('');"));
 check('arrows step through', pm.includes("else if (e.key === 'ArrowLeft') stepLightbox(-1);"));
+// The zoom guard joined it 2026-08-18: panning a zoomed picture ends with the pointer on the
+// backdrop about half the time, and closing the view every time a drag overshoots is maddening.
 check('only the backdrop closes on click, not a drifting pointer',
-  pm.includes("onClick={(e) => { if (e.target === e.currentTarget) setLightboxId(''); }}"));
+  pm.includes("onClick={(e) => { if (e.target === e.currentTarget && zoom === 1) setLightboxId(''); }}"));
+
+// --- ZOOM in the large view (owner, 2026-08-18: "and make it possible to zoom") -------------------
+// A 2K render shown at "fits on screen" cannot be judged on the things this page exists to get
+// right — pores, hands, whether the face is actually hers. All of that lives at 1:1.
+check('the wheel zooms', pm.includes('onWheel={(e) => {') && pm.includes("zoomAt(e.deltaY < 0 ? 1.18 : 1 / 1.18"));
+// At the POINTER, not the centre — zooming to the centre means chasing the detail back across the
+// screen, which is the difference between a zoom that works and one nobody uses twice.
+check('and it zooms at the pointer, not the centre',
+  pm.includes('const zoomAt = useCallback((factor, clientX, clientY, rect) => {')
+  && pm.includes('setPan((prev) => ({ x: cx - (cx - prev.x) * ratio, y: cy - (cy - prev.y) * ratio }));'));
+check('double-click toggles fit and 2x', pm.includes('onDoubleClick={(e) => {') && pm.includes('else zoomAt(2, e.clientX, e.clientY, rect);'));
+check('drag pans, from the START point rather than accumulated deltas',
+  pm.includes('panRef.current = { fromX: e.clientX, fromY: e.clientY, panX: pan.x, panY: pan.y };')
+  && pm.includes('setPan({ x: g.panX + (e.clientX - g.fromX), y: g.panY + (e.clientY - g.fromY) });'));
+check('a cancelled pointer releases the drag too', pm.includes('onPointerCancel={() => { panRef.current = null; }}'));
+check('the keyboard can do it as well', pm.includes("if (e.key === '+' || e.key === '=')") && pm.includes("else if (e.key === '0')"));
+// Carrying a 4x zoom into the next picture opens it on somebody's elbow.
+check('changing picture resets the zoom', pm.includes("useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, [lightboxId]);"));
+check('and the level is shown, with a way back to fit',
+  pm.includes('{zoom.toFixed(1)}×') && pm.includes('scroll or double-click to zoom'));
 check('a tile that leaves the panel closes the overlay rather than showing nothing',
   pm.includes('if (lightboxId && !lightboxList.some((j) => j.id === lightboxId)) setLightboxId('));
 check('the large view says whose it is and what made it', pm.includes("{job.charName || 'Photo Match'}"));
