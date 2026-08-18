@@ -14,7 +14,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { pinterestFeed } from '../services/api';
 import { createPageStore } from '../lib/pageStateStore';
-import { stashSourceHandoff, handoffDestination } from '../lib/sourceHandoff';
+import { stashSourceHandoff, handoffDestination, PHOTO_MATCH_HANDOFF_KEY } from '../lib/sourceHandoff';
 import { createEddyCollection } from '../lib/eddyCollectionStore';
 import { interleave, topSeeds } from '../lib/pinterestMix';
 import { useApp } from '../context/AppContext';
@@ -35,7 +35,18 @@ const DESTINATIONS = [
    * to like a pinterest library for download them and save").
    */
   { id: 'pinterestLibrary', label: 'Pinterest Library', collection: 'eddy-pinterest' },
-  { id: 'photoMatchSeedream', label: 'Photo Match', event: 'kyros:use-as-photo-match-seedream-source' },
+  /**
+   * TWO Photo Match tabs, named. They share one page and one handoff key, so the only thing that
+   * differs is which tab you land on — and that used to be decided FOR you, by whichever one you
+   * happened to open last (owner, 2026-08-18: "we have to send the pic selected to photo match nb2
+   * or sd"). Picking the engine is half the decision when you send a batch, so it belongs in the
+   * dropdown rather than in a remembered preference you cannot see.
+   *
+   * `handoffKey` is what the stash is written under; `id` is the tab to open. They are the same for
+   * every other destination — Photo Match is the one place two pages read one key.
+   */
+  { id: 'photoMatchNB2', label: 'Photo Match NB2', handoffKey: PHOTO_MATCH_HANDOFF_KEY, event: 'kyros:use-as-photo-match-seedream-source' },
+  { id: 'photoMatchSeedream', label: 'Photo Match SD', handoffKey: PHOTO_MATCH_HANDOFF_KEY, event: 'kyros:use-as-photo-match-seedream-source' },
   { id: 'sceneRecreateSeedream', label: 'Scene Recreate', event: 'kyros:use-as-scene-recreate-seedream-source' },
   { id: 'poseRemixSeedream', label: 'Pose Remix', event: 'kyros:use-as-pose-remix-seedream-source' },
   { id: 'outfitSwapSeedream', label: 'Outfit Swap', event: 'kyros:use-as-outfit-swap-seedream-source' },
@@ -601,13 +612,17 @@ export default function PinterestFeedPage() {
       return;
     }
 
-    stashSourceHandoff(target.id, itemsPayload);
+    // The stash key, which is the destination's own id everywhere except Photo Match.
+    const handoffKey = target.handoffKey || target.id;
+    stashSourceHandoff(handoffKey, itemsPayload);
     // REPLACE or ADD. Replacing is the common case -- a new scene means a new set -- but appending
     // is what you want when building one batch out of several searches.
     try {
-      window.sessionStorage.setItem(`kyros.pendingSourceMode.${target.id}`, replaceTarget ? 'replace' : 'add');
+      window.sessionStorage.setItem(`kyros.pendingSourceMode.${handoffKey}`, replaceTarget ? 'replace' : 'add');
     } catch { /* private mode: the destination falls back to adding, which loses nothing */ }
-    navigateTo(handoffDestination(target.id));
+    // An explicit Photo Match choice goes exactly there. Everything else keeps the old behaviour,
+    // where handoffDestination picks the tab that shares the key.
+    navigateTo(target.handoffKey ? target.id : handoffDestination(target.id));
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent(target.event, { detail: { items: itemsPayload } }));
     }, 300);

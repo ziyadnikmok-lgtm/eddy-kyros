@@ -103,6 +103,30 @@ const SEEDREAM_PROMPT_BUDGET = 3000;
 const NANO2_PROMPT_BUDGET = 8000;
 
 /**
+ * ONE PHOTOGRAPH, NOT A CONTACT SHEET.
+ *
+ * Measured on a real result (gallery 52cd1c0c, 2026-08-18): a run with THREE identity references
+ * came back as one wide image holding THREE near-identical panels of her, side by side. The source
+ * photo has one woman in it and every instruction in the prompt is written about one photograph —
+ * but nothing anywhere SAYS "one frame", so the model mirrored the reference count into the layout.
+ * The owner's word for it: "check last 3 images generated please fix the prompt wtf".
+ *
+ * The lever is the last sentence. Both engines take several images as identity evidence, and both
+ * will happily read "here are three pictures" as "make three pictures" unless told otherwise.
+ *
+ * It goes at the very tail, after the chips, because that is where both engines weight hardest —
+ * the same reason the identity lock sits where it does.
+ */
+function singleFrameLock(people) {
+  const n = people > 1 ? people : 1;
+  const who = n > 1 ? `exactly ${['', 'one', 'two', 'three', 'four', 'five'][n] || n} women` : 'exactly ONE woman';
+  return `ONE PHOTOGRAPH — ABSOLUTE: the output is a SINGLE frame containing ${who}, shot in one take. `
+    + 'Never a grid, collage, contact sheet, storyboard, split screen, side-by-side panels, '
+    + 'before/after, film strip, or the same woman repeated across the image. '
+    + 'The number of reference images is NOT the number of people, panels or frames to produce.';
+}
+
+/**
  * RETRY WITH A DIFFERENT PROMPT — the re-roll behind "Retry" (owner, 2026-08-18: "when i select
  * the result from the picture that are not good i need a retry bottum … but it try a differnet
  * prompt").
@@ -1770,7 +1794,16 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     const jobId = source.id;
     const feedId = `photomatch-sd-${jobId}`;
     pushPending({ id: feedId, prompt: 'Photo Match (Seedream)', imageModel: 'Seedream 5.0 Pro Edit', aspectRatio: ratio, resolutionTier: resolution });
-    setJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, status: 'running' } : j)));
+    /**
+     * WHICH ENGINE, said out loud while it is still running.
+     *
+     * The finished tile has named its engine for a while, but a tile that is still going said only
+     * "Matching…" — and with an automatic fallback in the middle, "is this Google or WaveSpeed?" is
+     * exactly the question you have while you are waiting, not after (owner, 2026-08-18: "it not
+     * showing if it is gemini no wavespeed u get me"). It updates when the fallback fires.
+     */
+    const asked = forceEngine || (isNB2 ? 'nb2' : engine === 'nano2' ? 'nano2' : 'seedream5');
+    setJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, status: 'running', runningOn: asked } : j)));
 
     try {
       const sourceImg = parseDataUrl(source.dataUrl);
@@ -1825,7 +1858,6 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         onJobId: (id) => { claimedJobId = id; _awaiting.add(id); },
       })).finally(() => { if (claimedJobId) _awaiting.delete(claimedJobId); });
 
-      const asked = forceEngine || (isNB2 ? 'nb2' : engine === 'nano2' ? 'nano2' : 'seedream5');
       let data;
       try {
         data = await send(asked);
@@ -1834,7 +1866,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         // Only a bypass job has anywhere better to go, and only a refusal is worth moving.
         if (asked !== 'nb2' || !isRefusal(msg) || isTerminalForRetry(msg)) throw sendErr;
         setJobs((prev) => prev.map((j) => (j.id === jobId
-          ? { ...j, status: 'running', error: 'Google refused it — trying Seedream 5 Pro…' } : j)));
+          ? { ...j, status: 'running', runningOn: 'seedream5', error: 'Google refused it — trying Seedream 5 Pro…' } : j)));
         data = await send('seedream5');
         usedClientFallback = true;
       }
@@ -2044,15 +2076,26 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
        * nude — there is no garment to keep closed.
        */
       if (allowBodyChange && !wantsNude) out = `${out}\n\n${CLOTHED_FIGURE_LOCK}`;
-      // Per engine: Seedream's cap is real and fatal, Nano's does not exist. Trimming a Nano prompt
-      // to Seedream's limit threw away chips for nothing.
+      // Per engine: Seedream cap is real and fatal, Nano has none. Trimming a Nano prompt to
+      // Seedream's limit threw away chips for nothing.
       const budget = engine === 'seedream' ? SEEDREAM_PROMPT_BUDGET : NANO2_PROMPT_BUDGET;
-      if (out.length > budget) {
-        // Seedream 422s on an over-long prompt and the whole batch dies. The base instruction
-        // is what makes identity work, so the extra text is what gives.
-        out = out.slice(0, budget);
+      /**
+       * THE ONE-FRAME LOCK IS APPENDED LAST AND SURVIVES THE TRIM.
+       *
+       * Appending it and then slicing to the budget would cut the very thing just appended —
+       * the trim takes from the END, and on a full Seedream prompt that is the lock. So room is
+       * made for it FIRST, out of the base text, exactly as the retry nudge does it. A lock that
+       * gets trimmed off is worse than no lock: it reads as done and changes nothing.
+       */
+      const frameLock = singleFrameLock(Array.isArray(who?.cast) ? who.cast.length : 1);
+      const room = budget - frameLock.length - 2;
+      if (out.length > room) {
+        // Seedream 422s on an over-long prompt and the whole batch dies. The base instruction is
+        // what makes identity work, so the extra text is what gives.
+        out = out.slice(0, Math.max(0, room));
         trimmed = true;
       }
+      out = `${out}\n\n${frameLock}`;
       return out;
     };
     return { promptFor, wasTrimmed: () => trimmed };
@@ -2078,8 +2121,25 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
    * degraded input and says so rather than silently producing a softer picture.
    */
   const rerunJob = useCallback(async (job, { forceEngine = null, vary = false } = {}) => {
-    const who = { id: job.whoId, name: job.charName || '' };
-    if (!who.id) { notify('This result predates re-running — regenerate from a fresh match', 'error'); return; }
+    /**
+     * WHOSE picture this is, from the tile.
+     *
+     * The id is the reliable answer, but tiles filed before it was persisted carry only her NAME —
+     * and pressing Retry on those said "this result predates re-running" and did nothing, which is
+     * every tile from an earlier session (owner, 2026-08-18). The name is on the tile and character
+     * names are unique in the picker, so look her up by it rather than refusing. Only if BOTH are
+     * missing is there genuinely nothing to go on.
+     */
+    const byName = job.charName
+      ? chars.find((c) => (c.name || '').trim().toLowerCase() === job.charName.trim().toLowerCase())
+      : null;
+    const who = { id: job.whoId || byName?.id || null, name: job.charName || byName?.name || '' };
+    if (!who.id) {
+      notify(job.charName
+        ? `${job.charName} is no longer in your characters — re-run this one from a fresh match`
+        : 'This result predates re-running — regenerate from a fresh match', 'error');
+      return;
+    }
 
     const live = sources.find((x) => x.id === job.srcId);
     const dataUrl = live?.dataUrl || job.thumb || job.thumbSmall;
@@ -2125,7 +2185,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
       if (runsInFlight.current === 0) setRunning(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sources, aspectRatio, charThumbs, notify, buildPromptFactory, engine]);
+  }, [sources, aspectRatio, charThumbs, notify, buildPromptFactory, engine, chars]);
 
   const handleMatch = async () => {
     if (!sources.length) { notify('Add at least one source photo', 'error'); return; }
@@ -3454,6 +3514,28 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
                       : job.status === 'failed' ? <Badge color="red">Failed</Badge>
                       : job.status === 'running' ? <Badge color="yellow">Matching…</Badge>
                       : <Badge color="zinc">Queued</Badge>}
+                    {/**
+                      * GOOGLE OR WAVESPEED, on every tile including the ones still going.
+                      *
+                      * It was one grey word in the small print under a finished picture, and
+                      * nothing at all while it rendered — so with an automatic fallback in the
+                      * middle there was no way to answer "is this Google or WaveSpeed?" at the
+                      * moment you were asking it (owner, 2026-08-18: "it not showing if it is
+                      * gemini no wavespeed u get me"). Blue is Google, amber is WaveSpeed, and a
+                      * fallback says so.
+                      */}
+                    {(() => {
+                      const on = job.status === 'done' ? job.engine : job.runningOn;
+                      if (!on) return null;
+                      const ws = on === 'seedream5' || on === 'seedream';
+                      return (
+                        <span className={cn('rounded px-1.5 py-px text-[0.5625rem] font-semibold uppercase tracking-wider',
+                          ws ? 'bg-amber-500/15 text-amber-300' : 'bg-sky-500/15 text-sky-300')}>
+                          {on === 'nb2' ? 'NB2 · Google' : on === 'nano2' ? 'Nano 2' : 'Seedream · WaveSpeed'}
+                          {job.status === 'done' && job.fellBack ? ' · fell back' : ''}
+                        </span>
+                      );
+                    })()}
                     {/* WHOSE result this is. With several characters ticked the same source photo
                         appears once per woman, and the thumbnails are identical — without the name
                         the only way to tell them apart is to open each one. */}

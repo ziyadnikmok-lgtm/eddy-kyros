@@ -103,9 +103,14 @@ check('through the same path as the retries', pm.includes('const rerunJob = useC
 check('a result that is merely bad can be retried differently', pm.includes('rerunJob(job, { vary: true })'));
 // The character comes from the id stored on the tile — reading whatever is ticked NOW would quietly
 // swap the woman on a regenerate.
+// CHANGED 2026-08-18: the id is still the answer, but a tile filed before it was persisted has
+// only her NAME — and those refused to re-run at all. Name lookup is the fallback; what must NEVER
+// happen is falling back to whoever is ticked right now, which would swap the woman silently.
 check('the character comes from the tile, not the current selection',
-  pm.includes("const who = { id: job.whoId, name: job.charName || '' };")
+  pm.includes("const who = { id: job.whoId || byName?.id || null, name: job.charName || byName?.name || '' };")
   && pm.includes('whoId: who.id,'));
+check('and the name fallback reads the TILE name, not the page selection',
+  pm.includes('const byName = job.charName') && !pm.includes('byName = chars.find((c) => c.id === characterId)'));
 check('and the source photo prefers the live full-size one',
   pm.includes('const live = sources.find((x) => x.id === job.srcId);')
   && pm.includes('const dataUrl = live?.dataUrl || job.thumb || job.thumbSmall;'));

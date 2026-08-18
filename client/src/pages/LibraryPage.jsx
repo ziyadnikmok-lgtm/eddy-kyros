@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { library as libraryApi, gallery as galleryApi, video as videoApi } from '../services/api';
-import { stashSourceHandoff, handoffDestination } from '../lib/sourceHandoff';
+import { stashSourceHandoff, handoffDestination, PHOTO_MATCH_HANDOFF_KEY } from '../lib/sourceHandoff';
 import { downloadBlob, stripMetadata, stripEnabled } from '../lib/stripMetadata';
 import { cascadeDeleteFromCollections } from '../lib/galleryCascade';
 import { useApp } from '../context/AppContext';
@@ -1309,6 +1309,13 @@ export default function LibraryPage() {
         seedreamEdit: { event: 'kyros:use-as-seedream-edit-source', label: 'Seedream 5 Pro' },
         outfitSwapSeedream: { event: 'kyros:use-as-outfit-swap-seedream-source', label: 'Outfit Swap · Seedream' },
         photoMatchSeedream: { event: 'kyros:use-as-photo-match-seedream-source', label: 'Photo Match · Seedream' },
+        /**
+         * NB2 is the same page on the other engine, sharing one handoff key. Sending used to land
+         * on whichever Photo Match tab was open last, which is a guess dressed up as a preference
+         * (owner, 2026-08-18: "we have to send the pic selected to photo match nb2 or sd").
+         * `stashAs` writes the stash under the shared key; the button navigates to the tab named.
+         */
+        photoMatchNB2: { event: 'kyros:use-as-photo-match-seedream-source', label: 'Photo Match · NB2', stashAs: PHOTO_MATCH_HANDOFF_KEY },
         sceneRecreateSeedream: { event: 'kyros:use-as-scene-recreate-seedream-source', label: 'Scene Recreate · Seedream' },
         poseRemixSeedream: { event: 'kyros:use-as-pose-remix-seedream-source', label: 'Pose Remix · Seedream' },
       }[page] || { event: 'kyros:use-as-scene-source', label: 'Scene Recreate' };
@@ -1319,8 +1326,9 @@ export default function LibraryPage() {
       // and migrate any localStorage sources on mount, which would re-add these and
       // produce duplicates.
 
-      stashSourceHandoff(page, itemsPayload.map((it) => ({ dataUrl: it.dataUrl, name: it.name })));
-      navigateTo(handoffDestination(page));
+      stashSourceHandoff(sendCfg.stashAs || page, itemsPayload.map((it) => ({ dataUrl: it.dataUrl, name: it.name })));
+      // A destination that names its own tab goes exactly there; the rest keep the old behaviour.
+      navigateTo(sendCfg.stashAs ? page : handoffDestination(page));
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent(eventName, { detail: { items: itemsPayload } }));
       }, 200);
@@ -1468,6 +1476,7 @@ export default function LibraryPage() {
                 </Btn>
                 <Btn variant="secondary" onClick={() => sendSelectedTo('seedreamEdit')} disabled={selectedIds.size === 0 || bulkBusy}>→ Seedream 5 Pro</Btn>
                 <Btn variant="secondary" onClick={() => sendSelectedTo('outfitSwapSeedream')} disabled={selectedIds.size === 0 || bulkBusy}>→ Outfit Swap</Btn>
+                <Btn variant="secondary" onClick={() => sendSelectedTo('photoMatchNB2')} disabled={selectedIds.size === 0 || bulkBusy}>→ Photo Match (NB2)</Btn>
                 <Btn variant="secondary" onClick={() => sendSelectedTo('photoMatchSeedream')} disabled={selectedIds.size === 0 || bulkBusy}>→ Photo Match (SD)</Btn>
                 <Btn variant="secondary" onClick={() => sendSelectedTo('sceneRecreateSeedream')} disabled={selectedIds.size === 0 || bulkBusy}>→ Scene (SD)</Btn>
                 <Btn variant="secondary" onClick={() => sendSelectedTo('poseRemixSeedream')} disabled={selectedIds.size === 0 || bulkBusy}>→ Pose (SD)</Btn>

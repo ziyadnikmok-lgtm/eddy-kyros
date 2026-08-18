@@ -161,10 +161,12 @@ check('and the page consumes that same named key', page.includes('consumeSourceH
 // Every sender. Missing one means that one still drags you to SD.
 const SENDERS = [
   ['client/src/components/EddyCollection.jsx', 'navigateTo(photoMatchTarget());'],
-  ['client/src/pages/LibraryPage.jsx', 'navigateTo(handoffDestination(page));'],
+  // CHANGED 2026-08-18: a destination that NAMES its tab (Photo Match NB2 / SD) goes straight
+  // there; everything else still resolves to whichever tab shares the key.
+  ['client/src/pages/LibraryPage.jsx', 'navigateTo(sendCfg.stashAs ? page : handoffDestination(page));'],
   ['client/src/pages/InstagramFramesPage.jsx', 'navigateTo(handoffDestination(page));'],
   ['client/src/pages/FrameLibraryPage.jsx', 'navigateTo(handoffDestination(target.page));'],
-  ['client/src/pages/PinterestFeedPage.jsx', 'navigateTo(handoffDestination(target.id));'],
+  ['client/src/pages/PinterestFeedPage.jsx', 'navigateTo(target.handoffKey ? target.id : handoffDestination(target.id));'],
 ];
 for (const [file, call] of SENDERS) {
   const s = read(file);

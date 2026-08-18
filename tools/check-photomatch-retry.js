@@ -64,7 +64,15 @@ check('and only varies when asked — Regenerate still repeats the request exact
 check('the attempt count lives on the tile, so tile A and tile B do not share one counter',
   pm.includes("? { ...j, status: 'queued', error: null, retryN: vary ? attempt : (j.retryN || 0) } : j)));"));
 check('the engine is in the deps, or a retry after switching engine uses the old cap',
-  pm.includes('}, [sources, aspectRatio, charThumbs, notify, buildPromptFactory, engine]);'));
+  pm.includes('}, [sources, aspectRatio, charThumbs, notify, buildPromptFactory, engine, chars]);'));
+// Every tile from an earlier session carries her NAME but no id — those said "this result predates
+// re-running" and did nothing at all.
+check('an older tile is matched by character name rather than refused',
+  pm.includes("const who = { id: job.whoId || byName?.id || null, name: job.charName || byName?.name || '' };"));
+check('and the name match ignores case and stray spaces',
+  pm.includes("(c.name || '').trim().toLowerCase() === job.charName.trim().toLowerCase()"));
+check('a character who is really gone says so by name',
+  pm.includes('is no longer in your characters — re-run this one from a fresh match'));
 
 // --- the buttons -------------------------------------------------------------------------------
 check('the selection bar has a Retry', pm.includes('{retrying ? \'Retrying…\' : `Retry ${pickedJobs.size}`}'));
@@ -80,6 +88,41 @@ check('and the tile shows which attempt the next press is', pm.includes('Retry{j
 
 check('the count survives a reload, or the next press repeats a text that already failed',
   pm.includes('retryN: j.retryN || 0,'));
+
+// --- ONE FRAME, not a contact sheet -----------------------------------------------------------
+// gallery 52cd1c0c (2026-08-18): three identity references came back as ONE wide image holding
+// three near-identical panels of her. Nothing in the prompt ever said "one photograph".
+const lockStart = pm.indexOf('function singleFrameLock(people) {');
+const lockEnd = pm.indexOf("frames to produce.';", lockStart);
+check('the single-frame lock is in the page', lockStart > -1 && lockEnd > lockStart);
+const singleFrameLock = new Function(
+  pm.slice(lockStart, pm.indexOf('}', lockEnd) + 1) + '; return singleFrameLock;',
+)();
+check('one character asks for exactly one woman', singleFrameLock(1).includes('exactly ONE woman'));
+check('and a pair asks for exactly two', singleFrameLock(2).includes('exactly two women'));
+check('a missing or zero count still means one',
+  singleFrameLock(0).includes('exactly ONE woman') && singleFrameLock(undefined).includes('exactly ONE woman'));
+check('it names the layouts that actually came back', singleFrameLock(1).includes('grid, collage, contact sheet'));
+// THE lever: the model mirrored the reference count into the panel count.
+check('and says the reference count is not a panel count',
+  singleFrameLock(1).includes('number of reference images is NOT the number of people, panels or frames'));
+check('it is appended dead last, after the chips and the figure lock',
+  pm.indexOf('out = `${out}') < pm.indexOf('${frameLock}`;')
+  && pm.indexOf('CLOTHED_FIGURE_LOCK}`;') < pm.indexOf('${frameLock}`;'));
+// Appending it and THEN slicing to the budget would cut the very thing just appended: the trim
+// takes from the end. Room is made out of the base first, the same way the retry nudge does it.
+check('room is made for it out of the base rather than trimming it off',
+  pm.includes('const room = budget - frameLock.length - 2;')
+  && pm.includes('out = out.slice(0, Math.max(0, room));')
+  && !pm.includes('out = out.slice(0, budget);'));
+
+// --- which engine, while it is still running (owner: "it not showing if it is gemini no wavespeed")
+check('a job records the engine it was sent to', pm.includes("status: 'running', runningOn: asked }"));
+check('and switches it when the fallback fires', pm.includes("status: 'running', runningOn: 'seedream5', error: 'Google refused it"));
+check('the tile names Google or WaveSpeed', pm.includes("{on === 'nb2' ? 'NB2 · Google' : on === 'nano2' ? 'Nano 2' : 'Seedream · WaveSpeed'}"));
+check('a finished tile reads its ACTUAL engine, not the one asked for',
+  pm.includes("const on = job.status === 'done' ? job.engine : job.runningOn;"));
+check('and a fallback says so on the chip', pm.includes("job.status === 'done' && job.fellBack ? ' · fell back' : ''"));
 
 // A duplicated chip rendered the character name twice on every tile.
 check('the character name is drawn once per tile',

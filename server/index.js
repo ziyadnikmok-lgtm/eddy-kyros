@@ -72,14 +72,10 @@ const batchRouter = require('./routes/batch');
 const tweakRouter = require('./routes/tweak');
 const reformatRouter = require('./routes/reformat');
 const imagesRouter = require('./routes/images');
-const nichesRouter = require('./routes/niches');
-const brandVoiceRouter = require('./routes/brandVoice');
-const storyRouter = require('./routes/story');
 const galleryRouter = require('./routes/gallery');
 const sceneRouter = require('./routes/scene');
 const sceneMemoryRouter = require('./routes/sceneMemory');
 const outfitsRouter = require('./routes/outfits');
-const autoRoute = require('./routes/auto');
 const carouselRoute = require('./routes/carousel');
 const reelRoute = require('./routes/reel');
 const reelCopyRoute = require('./routes/reelCopy');
@@ -91,18 +87,12 @@ const pinterestRoute = require('./routes/pinterest');
 const pinterestFeedRoute = require('./routes/pinterestFeed');
 const instagramFramesRoute = require('./routes/instagramFrames');
 const instagramReelRoute = require('./routes/instagramReel');
-const promptKnowledgeRoute = require('./routes/promptKnowledge');
 const availabilityRoute = require('./routes/availability');
 const templatesRouter = require('./routes/templates');
 const styleLibraryRouter = require('./routes/styleLibrary');
-const profileAnalyzerRouter = require('./routes/profileAnalyzer');
 const captionTemplatesRouter = require('./routes/captionTemplates');
 const videoRouter = require('./routes/video');
-const nsfwGenerateRouter = require('./routes/nsfwGenerate');
-const loraPresetsRouter = require('./routes/loraPresets');
-const loraDatasetsRouter = require('./routes/loraDatasets');
 const backgroundsRouter = require('./routes/backgrounds');
-const videoComposeRouter = require('./routes/videoCompose');
 const videoEditRouter = require('./routes/videoEdit');
 const photoMatchRouter = require('./routes/photoMatch');
 const nanoBypassRouter = require('./routes/nanoBypass');
@@ -110,7 +100,6 @@ const outfitSwapRouter = require('./routes/outfitSwap');
 const seedreamEditRouter = require('./routes/seedreamEdit');
 const jobsRouter = require('./routes/jobs');
 const seedanceOmniRouter = require('./routes/seedanceOmni');
-const xReplyRouter = require('./routes/xReply');
 const authRouter = require('./routes/authRoutes');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
@@ -312,7 +301,21 @@ app.use((req, res, next) => {
   } catch (_) { next(); }
 });
 
-app.use('/api/auth', authRouter);
+/**
+ * Every API mount goes through here so the boot banner cannot lie.
+ *
+ * It used to print a hand-typed list of endpoints. By 2026-08-18 that list still advertised
+ * /api/story, /api/auto, /api/niches, /api/brand-voice, /api/prompt-knowledge and
+ * /api/profile-analyzer — every one of them deleted — and named an image model that does not
+ * exist. A list nobody can forget to update is worth more than a prettier one.
+ */
+const MOUNTS = [];
+function mount(prefix, ...handlers) {
+  MOUNTS.push(prefix);
+  app.use(prefix, ...handlers);
+}
+
+mount('/api/auth', authRouter);
 
 // One-time admin bootstrap — no auth required, protected by BOOTSTRAP_SECRET env var
 // Secret must be sent in POST body, not query param (query params appear in logs/history)
@@ -343,11 +346,11 @@ app.post('/api/bootstrap-admin', (req, res) => {
 // the login screen with no way back except a restart.
 // Auth always enforced (removed NODE_ENV gate)
 app.use(requireAuth);
-app.use('/api/user/keys', userKeysRouter);
-app.use('/api/billing', billingRouter);
-app.use('/api/admin', adminRouter);
-app.use('/api/referral', referralRouter);
-app.use('/api/notifications', notificationsRouter);
+mount('/api/user/keys', userKeysRouter);
+mount('/api/billing', billingRouter);
+mount('/api/admin', adminRouter);
+mount('/api/referral', referralRouter);
+mount('/api/notifications', notificationsRouter);
 
 app.use((req, res, next) => {
   if (req.path === '/api/health') return next();
@@ -440,32 +443,28 @@ app.post('/api/app-license/activate', (req, res) => {
   }
 });
 
-app.use('/api/keys', readLimiter, keysRouter);
-app.use('/api/characters', readLimiter, charactersRouter);
-app.use('/api/pose-remix', poseRemixRouter);
-app.use('/api/eddy', eddyVisionRouter);
-app.use('/api/batch', batchLimiter, batchRouter);
-app.use('/api/tweak', generateLimiter, tweakRouter);
-app.use('/api/reformat', generateLimiter, reformatRouter);
-app.use('/api/images', imagesRouter);
-app.use('/api/niches', nichesRouter);
-app.use('/api/brand-voice', brandVoiceRouter);
-app.use('/api/story', storyRouter);
-app.use('/api/gallery', galleryRouter);
+mount('/api/keys', readLimiter, keysRouter);
+mount('/api/characters', readLimiter, charactersRouter);
+mount('/api/pose-remix', poseRemixRouter);
+mount('/api/eddy', eddyVisionRouter);
+mount('/api/batch', batchLimiter, batchRouter);
+mount('/api/tweak', generateLimiter, tweakRouter);
+mount('/api/reformat', generateLimiter, reformatRouter);
+mount('/api/images', imagesRouter);
+mount('/api/gallery', galleryRouter);
 // The durable generation queue. Not behind generateLimiter: enqueuing is a disk write, and
 // rate-limiting the QUEUE would throttle exactly the mechanism that exists to absorb bursts.
-app.use('/api/jobs', jobsRouter);
-app.use('/api/library', libraryRouter);
-app.use('/api/scene', generateLimiter, sceneRouter);
-app.use('/api/scene-memory', sceneMemoryRouter);
-app.use('/api/outfits', outfitsRouter);
-app.use('/api/generate', generateLimiter, generateRouter);
-app.use('/api/auto', batchLimiter, autoRoute);
-app.use('/api/carousel', batchLimiter, carouselRoute);
-app.use('/api/reel', generateLimiter, reelRoute);
-app.use('/api/reel-copy', cloneLimiter, reelCopyRoute);
-app.use('/api/post-clone', cloneLimiter, postCloneRoute);
-app.use('/api/profile-clone', cloneLimiter, profileCloneRoute);
+mount('/api/jobs', jobsRouter);
+mount('/api/library', libraryRouter);
+mount('/api/scene', generateLimiter, sceneRouter);
+mount('/api/scene-memory', sceneMemoryRouter);
+mount('/api/outfits', outfitsRouter);
+mount('/api/generate', generateLimiter, generateRouter);
+mount('/api/carousel', batchLimiter, carouselRoute);
+mount('/api/reel', generateLimiter, reelRoute);
+mount('/api/reel-copy', cloneLimiter, reelCopyRoute);
+mount('/api/post-clone', cloneLimiter, postCloneRoute);
+mount('/api/profile-clone', cloneLimiter, profileCloneRoute);
 /**
  * THE IMAGE PROXY IS NOT A GENERATION.
  *
@@ -486,28 +485,21 @@ app.use('/api/pinterest', (req, res, next) => (
 ), pinterestRoute);
 // NOT behind generateLimiter: that budget exists for paid generations, and browsing a grid
 // must not eat it. Pinterest's own rate limit is the real ceiling and is surfaced as 429.
-app.use('/api/pinterest-feed', pinterestFeedRoute);
-app.use('/api/instagram-frames', readLimiter, instagramFramesRoute);
-app.use('/api/instagram-reel', instagramReelRoute);
-app.use('/api/prompt-knowledge', promptKnowledgeRoute);
-app.use('/api/availability', availabilityRoute);
-app.use('/api/templates', templatesRouter);
-app.use('/api/style-library', styleLibraryRouter);
-app.use('/api/profile-analyzer', profileAnalyzerRouter);
-app.use('/api/caption-templates', captionTemplatesRouter);
-app.use('/api/video', generateLimiter, videoRouter);
-app.use('/api/nsfw-generate', generateLimiter, nsfwGenerateRouter);
-app.use('/api/lora-presets', loraPresetsRouter);
-app.use('/api/lora-datasets', generateLimiter, loraDatasetsRouter);
-app.use('/api/backgrounds', backgroundsRouter);
-app.use('/api/video-compose', generateLimiter, videoComposeRouter);
-app.use('/api/video-edit', generateLimiter, videoEditRouter);
-app.use('/api/photo-match', generateLimiter, photoMatchRouter);
-app.use('/api/nano-bypass', generateLimiter, nanoBypassRouter);
-app.use('/api/outfit-swap', generateLimiter, outfitSwapRouter);
-app.use('/api/seedream', generateLimiter, seedreamEditRouter);
-app.use('/api/seedance-omni', generateLimiter, seedanceOmniRouter);
-app.use('/api/x-reply', xReplyRouter);
+mount('/api/pinterest-feed', pinterestFeedRoute);
+mount('/api/instagram-frames', readLimiter, instagramFramesRoute);
+mount('/api/instagram-reel', instagramReelRoute);
+mount('/api/availability', availabilityRoute);
+mount('/api/templates', templatesRouter);
+mount('/api/style-library', styleLibraryRouter);
+mount('/api/caption-templates', captionTemplatesRouter);
+mount('/api/video', generateLimiter, videoRouter);
+mount('/api/backgrounds', backgroundsRouter);
+mount('/api/video-edit', generateLimiter, videoEditRouter);
+mount('/api/photo-match', generateLimiter, photoMatchRouter);
+mount('/api/nano-bypass', generateLimiter, nanoBypassRouter);
+mount('/api/outfit-swap', generateLimiter, outfitSwapRouter);
+mount('/api/seedream', generateLimiter, seedreamEditRouter);
+mount('/api/seedance-omni', generateLimiter, seedanceOmniRouter);
 
 const { CLIENT_DIST } = require('./paths');
 if (fs.existsSync(CLIENT_DIST)) {
@@ -670,26 +662,15 @@ require('./services/generationReconciler').startGenerationReconciler();
 const server = app.listen(PORT, HOST, () => {
   console.log('');
   console.log('==============================================');
-  console.log('  AI Content Generation Studio — Phase 8');
-  console.log('  Image Models: gemini-3-pro-image-preview, gemini-3.1-flash-image-preview');
+  console.log('  Kyros Studio — server');
   console.log('==============================================');
-  console.log(`  Server running at http://${HOST}:${PORT}`);
-  console.log('');
-  console.log('  Endpoints:');
-  console.log('    /api/health          /api/keys');
-  console.log('    /api/characters      /api/generate');
-  console.log('    /api/batch           /api/tweak');
-  console.log('    /api/images          /api/gallery');
-  console.log('    /api/scene           /api/niches');
-  console.log('    /api/brand-voice     /api/story');
-  console.log('    /api/auto            /api/carousel');
-  console.log('    /api/reel            /api/reel-copy');
-  console.log('    /api/post-clone      /api/profile-clone');
-  console.log('    /api/prompt-knowledge');
-  console.log('    /api/availability');
-  console.log('    /api/style-library');
-  console.log('    /api/profile-analyzer');
-  console.log('    /api/caption-templates');
+  console.log(`  Running at http://${HOST}:${PORT}`);
+  console.log(`  ${MOUNTS.length} API mounts:`);
+  // Three to a row, sorted — long enough to be useful, short enough to read.
+  const sorted = [...MOUNTS].sort();
+  for (let i = 0; i < sorted.length; i += 3) {
+    console.log('    ' + sorted.slice(i, i + 3).map((m) => m.padEnd(24)).join('').trimEnd());
+  }
   console.log('==============================================');
   console.log('');
 });

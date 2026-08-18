@@ -98,7 +98,7 @@ check('the payload is never returned — it holds the source images', !routes.in
 check('enqueue validates it has something to render', routes.includes('"payload.images" must hold at least one source image'));
 
 // --- 6. it is actually wired in --------------------------------------------------------------------------------
-check('the routes are mounted', index.includes("app.use('/api/jobs', jobsRouter)"));
+check('the routes are mounted', index.includes("mount('/api/jobs', jobsRouter)"));
 check('the reconciler starts at boot', index.includes("require('./services/generationReconciler').startGenerationReconciler()"));
 check('it starts alongside the video one, not instead of it', index.includes('startVideoReconciler()'));
 check('the queue is NOT behind the generate rate limiter',

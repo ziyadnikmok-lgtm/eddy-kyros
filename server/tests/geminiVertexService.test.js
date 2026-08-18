@@ -9,12 +9,15 @@ describe('GeminiVertexService', () => {
       expect(geminiVertexService.resolveImageModel(null)).toBe('gemini-3-pro-image-preview');
     });
 
+    // The id is `gemini-3.1-flash-image` with NO `-preview` suffix. The suffixed form is not a
+    // Vertex model at all — see the note above IMAGE_MODEL_ALTERNATES. This test asserted the
+    // suffixed one and had been red ever since the service was corrected.
     it('resolves experimental model to flash alternate', () => {
-      expect(geminiVertexService.resolveImageModel('nano-bypass-experimental')).toBe('gemini-3.1-flash-image-preview');
+      expect(geminiVertexService.resolveImageModel('nano-bypass-experimental')).toBe('gemini-3.1-flash-image');
     });
 
     it('allows valid alternate model', () => {
-      expect(geminiVertexService.resolveImageModel('gemini-3.1-flash-image-preview')).toBe('gemini-3.1-flash-image-preview');
+      expect(geminiVertexService.resolveImageModel('gemini-3.1-flash-image')).toBe('gemini-3.1-flash-image');
     });
 
     it('throws on unsupported model', () => {

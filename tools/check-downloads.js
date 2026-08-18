@@ -30,8 +30,12 @@ check('the anchor form is gone from the single path',
 // --- both zips ---
 check('a shared helper exists rather than the fix landing in one of the two',
   /async function saveDownloadedBlob\(blob, fileName\)/.test(api));
-check('the LoRA dataset zip too (a third path the anchor-count assertion found)',
-  /return saveDownloadedBlob\(blob, `lora-dataset-\$\{id\}\.zip`\)/.test(api));
+// The LoRA dataset zip was the third path this found. That whole feature is gone (2026-08-18),
+// so what matters now is that no NEW anchor download crept back in beside the shared helper —
+// exactly ONE anchor in the file, and it is the helper's own IPC-failed fallback.
+check('exactly one anchor download in api.js, inside the shared helper',
+  (api.match(/createElement\('a'\)/g) || []).length === 1
+  && api.indexOf("createElement('a')") > api.indexOf('async function saveDownloadedBlob'));
 check('gallery zip goes through it', /return saveDownloadedBlob\(blob, `gallery-\$\{Date\.now\(\)\}\.zip`\)/.test(api));
 check('video zip goes through it', /return saveDownloadedBlob\(blob, `videos-\$\{Date\.now\(\)\}\.zip`\)/.test(api));
 check('NEITHER zip path still builds an anchor', (api.match(/document\.createElement\('a'\)/g) || []).length === 1);

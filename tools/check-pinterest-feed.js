@@ -128,7 +128,7 @@ check('the page is imported', /PinterestFeedPage = lazy/.test(app));
 check('the component is mapped', /pinterestFeed: PinterestFeedPage,/.test(app));
 check('it has a sidebar entry', /\{ id: 'pinterestFeed', label: 'Pinterest' \}/.test(app));
 check('it has an icon and a colour', /pinterestFeed: IconCrosshairs/.test(app) && /pinterestFeed: \['#fca5a5'/.test(app));
-check('the route is mounted', /app\.use\('\/api\/pinterest-feed', pinterestFeedRoute\)/.test(index));
+check('the route is mounted', /mount\('\/api\/pinterest-feed', pinterestFeedRoute\)/.test(index));
 check('browsing does NOT eat the paid-generation rate budget',
   /\/\/ NOT behind generateLimiter/.test(index));
 
@@ -142,9 +142,12 @@ check('the scrape risk is stated in the source, not just in a chat message',
 // A CustomEvent alone dropped everything: the destination is lazy-loaded, so the event fired into
 // the void before its chunk had mounted. lib/sourceHandoff exists for exactly this and is consumed
 // ON MOUNT. Frame Grabber has always done it in this order; the Pinterest tab did not.
+// CHANGED 2026-08-18: the stash key and the tab to open are no longer the same thing. Photo Match
+// is two tabs on one key, and the dropdown now names which one — so the key is target.handoffKey
+// and the destination is target.id.
 check('the payload is stashed before navigating', (() => {
-  const i = page.indexOf('stashSourceHandoff(target.id, itemsPayload)');
-  const j = page.indexOf('navigateTo(handoffDestination(target.id))');
+  const i = page.indexOf('stashSourceHandoff(handoffKey, itemsPayload)');
+  const j = page.indexOf('navigateTo(target.handoffKey ? target.id : handoffDestination(target.id))');
   return i > -1 && j > i;
 })());
 check('the event fires AFTER the navigate, for a page already open', (() => {
@@ -164,7 +167,13 @@ check('Load more still pages by bookmark', /search\(query, true\)/.test(page));
 
 // --- replace or add -------------------------------------------------------------------------------
 check('the toggle exists and is remembered', /localStorage\.getItem\('kyros\.pinterest\.replaceTarget'\)/.test(page));
-check('the intent travels with the stash', /kyros\.pendingSourceMode\.\$\{target\.id\}/.test(page));
+check('the intent travels with the stash — under the same key as the payload',
+  /kyros\.pendingSourceMode\.\$\{handoffKey\}/.test(page));
+// Both Photo Match tabs, named, so a send is not decided by which one you opened last.
+check('the dropdown offers both Photo Match tabs by name',
+  page.includes("id: 'photoMatchNB2', label: 'Photo Match NB2', handoffKey: PHOTO_MATCH_HANDOFF_KEY")
+  && page.includes("id: 'photoMatchSeedream', label: 'Photo Match SD', handoffKey: PHOTO_MATCH_HANDOFF_KEY"));
+check('and both write to the ONE key the page reads', (page.match(/handoffKey: PHOTO_MATCH_HANDOFF_KEY/g) || []).length === 2);
 const pm = fs.readFileSync(path.join(ROOT, 'client/src/pages/PhotoMatchSeedreamPage.jsx'), 'utf8').replace(/\r\n/g, '\n');
 check('Photo Match reads that intent', /kyros\.pendingSourceMode\.photoMatchSeedream/.test(pm));
 check('and clears it, so it cannot leak into the next handoff', /removeItem\('kyros\.pendingSourceMode\.photoMatchSeedream'\)/.test(pm));

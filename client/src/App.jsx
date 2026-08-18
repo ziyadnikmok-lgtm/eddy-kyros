@@ -42,8 +42,6 @@ import {
 const GeneratePage = lazy(() => import('./pages/GeneratePage'));
 const BatchPage = lazy(() => import('./pages/BatchPage'));
 const CarouselPage = lazy(() => import('./pages/CarouselPage'));
-const StorytellerPage = lazy(() => import('./pages/StorytellerPage'));
-const AutoGeneratorPage = lazy(() => import('./pages/AutoGeneratorPage'));
 const CharactersPage = lazy(() => import('./pages/CharactersPage'));
 const LibraryPage = lazy(() => import('./pages/LibraryPage'));
 const PasteInboxPage = lazy(() => import('./pages/PasteInboxPage'));
@@ -51,9 +49,6 @@ const SceneRecreatePage = lazy(() => import('./pages/SceneRecreatePage'));
 const FrameLibraryPage = lazy(() => import('./pages/FrameLibraryPage'));
 const PostClonePage = lazy(() => import('./pages/PostClonePage'));
 const StyleLibraryPage = lazy(() => import('./pages/StyleLibraryPage'));
-const ProfileAnalyzerPage = lazy(() => import('./pages/ProfileAnalyzerPage'));
-const PromptBuilderPage = lazy(() => import('./pages/PromptBuilderPage'));
-const LoraDatasetPage = lazy(() => import('./pages/LoraDatasetPage'));
 const ApiKeysPage = lazy(() => import('./pages/ApiKeysPage'));
 const VideoPage = lazy(() => import('./pages/VideoPage'));
 const VideoGalleryPage = lazy(() => import('./pages/VideoGalleryPage'));
@@ -85,7 +80,6 @@ const EddyMaxNanoPage = lazy(async () => {
 const VideoLibraryPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.VideoLibraryPage })));
 const PinterestLibraryPage = lazy(() => import('./pages/EddyTabs').then((m) => ({ default: m.PinterestLibraryPage })));
 const EddyCharacterPage = lazy(() => import('./pages/EddyCharacterPage'));
-const NsfwGeneratePage = lazy(() => import('./pages/NsfwGeneratePage'));
 const ImageEditorPage = lazy(() => import('./pages/ImageEditorPage'));
 const BillingPage = lazy(() => import('./pages/BillingPage'));
 const InstagramFramesPage = lazy(() => import('./pages/InstagramFramesPage'));
@@ -101,9 +95,7 @@ const ReferralPage = lazy(() => import('./pages/ReferralPage'));
 
 const NAV_ICONS = {
   generate: IconBadgeSparkle,
-  nsfwGenerate: IconFlame,
   batch: IconAppStack,
-  auto: IconBolt,
   carousel: IconLayers,
   scene: IconCamera,
   video: IconVideo,
@@ -136,10 +128,6 @@ const NAV_ICONS = {
   instagramReel: IconCamera,
   frameLibrary: IconGrid2,
   styleLibrary: IconColorPalette,
-  promptBuilder: IconMagicWandSparkle,
-  loraDataset: IconLayers,
-  profileAnalyzer: IconMagnifier,
-  storyteller: IconBookOpen,
   library: IconGrid2,
   pasteInbox: IconClipboard,
   imageEditor: IconRulerPen,
@@ -160,9 +148,7 @@ const NAV_ICONS = {
 // Each entry: [gradientTop, gradientBottom] matching --nc-gradient-1-color-1 / color-2
 const NAV_COLORS = {
   generate:       ['#a5b4fc', '#6366f1'],
-  nsfwGenerate:   ['#fca5a5', '#ef4444'],
   batch:          ['#c4b5fd', '#8b5cf6'],
-  auto:           ['#fde68a', '#f59e0b'],
   carousel:       ['#93c5fd', '#3b82f6'],
   scene:          ['#67e8f9', '#0891b2'],
   video:          ['#f9a8d4', '#ec4899'],
@@ -197,9 +183,6 @@ const NAV_COLORS = {
   instagramReel:  ['#fbcfe8', '#c026d3'],
   frameLibrary:    ['#fcd34d', '#f43f5e'],
   styleLibrary:   ['#6ee7b7', '#059669'],
-  promptBuilder:  ['#a5b4fc', '#4f46e5'],
-  profileAnalyzer:['#7dd3fc', '#0284c7'],
-  storyteller:    ['#bef264', '#65a30d'],
   library:        ['#67e8f9', '#0284c7'],
   pasteInbox:     ['#c084fc', '#7c3aed'],
   imageEditor:    ['#f9a8d4', '#db2777'],
@@ -382,7 +365,7 @@ const FEED_HIDDEN_PAGES = new Set([
 
 // Pages where controls panel is narrow and feed takes the rest of the space
 const FEED_DOMINANT_PAGES = new Set([
-  'generate', 'nsfwGenerate', 'batch', 'video', 'seedanceVideo', 'seedanceOmni', 'auto',
+  'generate', 'batch', 'video', 'seedanceVideo', 'seedanceOmni',
   'scene', 'postClone', 'carousel', 'photoMatch', 'poseFix', 'nanoBypass', 'outfitSwap',
 ]);
 
@@ -460,7 +443,6 @@ function SidebarHeader({ collapsed, onToggle }) {
 
 const PAGE_DESCRIPTIONS = {
   generate: 'Create a single image with full control',
-  nsfwGenerate: 'WaveSpeed Turbo LoRA — uncensored image generation',
   batch: 'Generate multiple images in parallel',
   video: 'Generate videos from images using AI',
   seedanceVideo: 'Muapi Seedance 2 Omni — show it photos of your model and it builds a fresh video of her (reference, not a first frame)',
@@ -484,7 +466,6 @@ const PAGE_DESCRIPTIONS = {
   eddyBase: 'Make a new base photo of a saved character, from her own references',
   eddyBaseLibrary: 'Your generated base photos, filed by character',
   eddyCharacter: 'Characters from a base image — no prompt needed',
-  auto: 'AI-planned multi-day content schedules',
   carousel: 'Generate slide variations from a source image',
   scene: 'Upload a scene and recreate it with your character',
   postClone: 'Clone Instagram posts with your character',
@@ -492,10 +473,6 @@ const PAGE_DESCRIPTIONS = {
   instagramReel: 'Recreate a reel with your model',
   frameLibrary: 'Manage your downloaded Instagram/TikTok frames and reference images',
   styleLibrary: 'Manage reusable style building blocks',
-  promptBuilder: 'Visual prompt composition with Nano-Banana formula',
-  loraDataset: 'Build captioned LoRA training datasets from characters',
-  profileAnalyzer: 'Extract style patterns from Instagram profiles',
-  storyteller: 'Generate captions and hashtags for images',
   library: 'Browse and manage all generated images and videos',
   pasteInbox: 'Save pasted images for quick reuse in Photo Match or Scene Recreate',
   imageEditor: 'Crop, adjust and touch up any image in your gallery',
@@ -524,7 +501,6 @@ function PageFallback() {
 
 const PAGES = {
   generate: GeneratePage,
-  nsfwGenerate: NsfwGeneratePage,
   batch: BatchPage,
   carousel: CarouselPage,
   scene: SceneRecreatePage,
@@ -533,10 +509,6 @@ const PAGES = {
   instagramReel: InstagramReelPage,
   frameLibrary: FrameLibraryPage,
   styleLibrary: StyleLibraryPage,
-  promptBuilder: PromptBuilderPage,
-  loraDataset: LoraDatasetPage,
-  profileAnalyzer: ProfileAnalyzerPage,
-  storyteller: StorytellerPage,
   library: LibraryPage,
   pasteInbox: PasteInboxPage,
   video: VideoPage,
@@ -564,7 +536,6 @@ const PAGES = {
   videoLibrary: VideoLibraryPage,
   pinterestLibrary: PinterestLibraryPage,
   eddyCharacter: EddyCharacterPage,
-  auto: AutoGeneratorPage,
   imageEditor: ImageEditorPage,
   videoEditor: VideoEditorPage,
   characters: CharactersPage,

@@ -44,10 +44,9 @@ const LONG_RUNNING_PATHS = [
   '/generate', '/batch', '/tweak',
   '/post-clone', '/reel-copy',
   '/carousel/execute', '/carousel/follow-up',
-  '/scene/recreate', '/scene/analyze', '/pose-remix/suggest', '/pinterest/recreate', '/story/generate',
-  '/auto/plan', '/auto/execute',
+  '/scene/recreate', '/scene/analyze', '/pose-remix/suggest', '/pinterest/recreate',
   '/video/generate', '/reformat',
-  '/nsfw-generate', '/photo-match', '/nano-bypass', '/lora-datasets/generate',
+  '/photo-match', '/nano-bypass',
   // '/seedream' (Muapi Seedream 5) holds the request while polling Muapi (up to 180s
   // server-side), so it must NOT use the 30s default.
   '/seedream',
@@ -73,17 +72,10 @@ const USAGE_MUTATION_PATHS = [
   '/carousel/polls',
   '/scene/recreate',
   '/pinterest/recreate',
-  '/story/generate',
-  '/auto/plan',
-  '/auto/execute',
-  '/auto/plans/',
   '/video/generate',
-  '/video-compose',
   '/reformat',
-  '/nsfw-generate',
   '/photo-match',
   '/nano-bypass',
-  '/lora-datasets/generate',
   '/profile-clone',
 ];
 
@@ -305,11 +297,6 @@ export const videoEdit = {
   export: (formData) => request('/video-edit', { method: 'POST', body: formData, timeoutMs: 7 * 60_000 }),
 };
 
-export const videoCompose = {
-  compose: (formData) => request('/video-compose', { method: 'POST', body: formData, timeoutMs: LONG_TIMEOUT_MS }),
-  extractTextOverlay: (formData) => request('/video-compose/extract-text-overlay', { method: 'POST', body: formData, timeoutMs: VIDEO_ANALYZE_TIMEOUT_MS }),
-};
-
 export const characters = {
   list: () => request(`/characters?_=${Date.now()}`, { cache: 'no-store' }),
   get: (id) => request(`/characters/${id}`),
@@ -336,30 +323,6 @@ export const generate = {
 export const nsfwGenerate = {
   image: (body) => request('/nsfw-generate', { method: 'POST', body }),
   vary: (body) => request('/nsfw-generate/vary', { method: 'POST', body }),
-};
-
-export const loraPresets = {
-  list: () => request('/lora-presets'),
-  create: (body) => request('/lora-presets', { method: 'POST', body }),
-  update: (id, body) => request(`/lora-presets/${id}`, { method: 'PATCH', body }),
-  remove: (id) => request(`/lora-presets/${id}`, { method: 'DELETE' }),
-};
-
-export const loraDatasets = {
-  list: () => request('/lora-datasets'),
-  get: (id) => request(`/lora-datasets/${id}`),
-  generate: (body) => request('/lora-datasets/generate', { method: 'POST', body }),
-  progress: (id) => new EventSource(`${BASE}/lora-datasets/${id}/progress`),
-  imageUrl: (galleryId) => `${BASE}/gallery/${galleryId}/image`,
-  download: async (id) => {
-    const res = await fetch(`${BASE}/lora-datasets/${id}/download`);
-    if (!res.ok) {
-      const json = await res.json().catch(() => null);
-      throw new Error(json?.error?.message || `Download failed (${res.status})`);
-    }
-    const blob = await res.blob();
-    return saveDownloadedBlob(blob, `lora-dataset-${id}.zip`);
-  },
 };
 export const batch = {
   list: (status) => request(`/batch${status ? `?status=${status}` : ''}`),
@@ -509,29 +472,6 @@ export const outfitSwap = {
   swap: (body) => request('/outfit-swap/swap', { method: 'POST', body }),
 };
 
-export const xReply = {
-  start: (body) => request('/x-reply/start', { method: 'POST', body }),
-  stop: () => request('/x-reply/stop', { method: 'POST' }),
-  status: () => request('/x-reply/status'),
-};
-
-export const niches = {
-  list: () => request('/niches'),
-  get: (id) => request(`/niches/${id}`),
-  create: (data) => request('/niches', { method: 'POST', body: data }),
-  update: (id, data) => request(`/niches/${id}`, { method: 'PATCH', body: data }),
-  remove: (id) => request(`/niches/${id}`, { method: 'DELETE' }),
-};
-
-export const brandVoice = {
-  get: () => request('/brand-voice'),
-  update: (data) => request('/brand-voice', { method: 'PATCH', body: data }),
-};
-
-export const story = {
-  generate: (body) => request('/story/generate', { method: 'POST', body }),
-};
-
 export const carousel = {
   plan: (body) => request('/carousel/plan', { method: 'POST', body }),
   execute: (body) => request('/carousel/execute', { method: 'POST', body }),
@@ -563,10 +503,6 @@ export const styleFocus = {
   get: (id) => request(`/post-clone/style-focus/${id}`),
   save: (data) => request('/post-clone/style-focus', { method: 'POST', body: data }),
   remove: (id) => request(`/post-clone/style-focus/${id}`, { method: 'DELETE' }),
-};
-
-export const promptKnowledge = {
-  list: (query = '') => request(`/prompt-knowledge${query ? `?${query}` : ''}`),
 };
 
 export const templates = {
@@ -624,26 +560,6 @@ export const styleLibrary = {
   stats: () => request('/style-library/stats'),
   profiles: () => request('/style-library/profiles'),
   contentPresets: () => request('/style-library/content-presets'),
-};
-
-export const autoPlans = {
-  list: () => request('/auto/plans'),
-  get: (id) => request(`/auto/plans/${id}`),
-  save: (data) => request('/auto/plans', { method: 'POST', body: data }),
-  update: (id, data) => request(`/auto/plans/${id}`, { method: 'PATCH', body: data }),
-  remove: (id) => request(`/auto/plans/${id}`, { method: 'DELETE' }),
-  executeDay: (id, dayNumber) => request(`/auto/plans/${id}/execute-day`, { method: 'POST', body: { dayNumber } }),
-};
-
-export const profileAnalyzer = {
-  analyze: (username, postLimit = 12, opts = {}) => {
-    const params = { username, postLimit: String(postLimit) };
-    if (opts.sort) params.sort = opts.sort;
-    if (opts.newerThan) params.newerThan = opts.newerThan;
-    const qs = new URLSearchParams(params);
-    return new EventSource(`${BASE}/profile-analyzer/analyze?${qs}`);
-  },
-  save: (body) => request('/profile-analyzer/save', { method: 'POST', body }),
 };
 
 export const reformat = {
