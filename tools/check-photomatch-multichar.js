@@ -128,7 +128,7 @@ check('no job is run twice', new Set(drain(Array.from({ length: 30 }, (_, i) => 
 // runOne is called once per SOURCE x CHARACTER but read the component-level charName, which is the
 // HEAD of the ticked list. A run with Grace, Mia and Chloe tagged every picture 'Grace' and filed
 // all three into Grace's folder — two women's work under a third woman's name, findable only by eye.
-check('runOne is told whose picture it is', g.includes('const runOne = async (source, charRefs, ratio, prompt, who)'));
+check('runOne is told whose picture it is', g.includes('const runOne = async (source, charRefs, ratio, prompt, who, { forceEngine = null } = {})'));
 check('and the call site passes her', g.includes('promptFor(item.who, item.who.refs.length, item.src), item.who);'));
 check('the tag is hers', g.includes("tags: whoName ? ['eddy', whoName] : ['eddy'],"));
 check('the destination folder is hers', g.includes("destFolder: whoName || 'Photo Match',"));

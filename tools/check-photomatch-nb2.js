@@ -45,7 +45,9 @@ check('and the SD tab keeps the key it always had', pm.includes("sd: createPageS
 // --- the engine ---------------------------------------------------------------------------------------
 check('NB2 has exactly one engine', pm.includes("const engine = isNB2 ? 'nb2' : engineSD;"));
 check('and its toggle offers only the bypass', pm.includes("isNB2 ? [['nb2', 'Nano Banana 2 — bypass']]"));
-check('the queue is told which model', pm.includes("model: isNB2 ? 'nb2' : engine === 'nano2' ? 'nano2' : 'seedream5',"));
+check('the queue is told which model',
+  pm.includes("const asked = forceEngine || (isNB2 ? 'nb2' : engine === 'nano2' ? 'nano2' : 'seedream5');")
+  && pm.includes('const send = (model) => withRateLimitRetry(() => queuedSeedreamEdit({'));
 check('and the reconciler reads it', rec.includes("if (model === 'nb2') return 'nanobypass';"));
 
 // The 3,000 cap is ByteDance's. Applying it to a Gemini run would amputate a prompt for a limit that
@@ -65,6 +67,53 @@ check(`the queue gives the bypass ${attemptsIn(rec)} tries`, attemptsIn(rec) ===
 check('and the page states the same number', attemptsIn(pm) === attemptsIn(rec));
 check('the reason for the number is recorded, not just the number',
   /refusal is a roll rather than a verdict/.test(rec));
+
+// --- RE-RUNNING ONE TILE: regenerate, retry, and an automatic Seedream ------------------------------
+//
+// Owner, 2026-08-18: "fix the photo match nb2 to be able regenerated and it not falling auto to
+// wavespeed it need i do retry but add a retry bottom with wavespeed but the fall back should be
+// automatic … and i wanna be able generated again evne if i i click generated."
+//
+// Four separate things, and the page had none of them: no regenerate at all, no per-tile retry, no
+// client-side fallback, and a Generate button that refused a second batch while one was running.
+
+// 1. AUTOMATIC. The queue is still the primary fallback and the better one — five tries, server
+//    side, able to tell a refusal from a rate limit. This is the second line and it cannot race it:
+//    it runs only in the catch, i.e. once the queue has already failed the job and finished with it.
+check('a refused bypass job goes to Seedream without a click',
+  pm.includes("if (asked !== 'nb2' || !isRefusal(msg) || isTerminalForRetry(msg)) throw sendErr;")
+  && pm.includes("data = await send('seedream5');"));
+check('and the tile says what is happening while it does', pm.includes("error: 'Google refused it — trying Seedream 5 Pro…'"));
+// Key and credit failures stay terminal: Seedream bills a DIFFERENT account, so moving a dead-key
+// job there is the silent substitution the queue refuses to make.
+check('but never for a key or credit failure', pm.includes('const isTerminalForRetry = (msg) => /API key|out of credits|top up|Insufficient credits|balance/i.test'));
+check('a client-side swap is priced and labelled as a fallback, the same as the queue swap',
+  pm.includes("const fellBack = !!data.fellBack || usedClientFallback || (isNB2 && ranOn !== 'nb2');"));
+
+// 2. THE BUTTON, for when it will never pass. A refusal is a roll, so "Try again" repeats it as
+//    asked; "On WaveSpeed" skips the argument and runs it on Seedream.
+check('a failed tile offers both', pm.includes('Try again') && pm.includes('On WaveSpeed'));
+check('and the WaveSpeed one forces the engine', pm.includes("rerunJob(job, { forceEngine: 'seedream5' })"));
+
+// 3. REGENERATE, on a finished tile.
+check('a finished tile can be made again', pm.includes('Regenerate'));
+check('through the same path as the retries', pm.includes('const rerunJob = useCallback(async (job, { forceEngine = null } = {}) => {'));
+// The character comes from the id stored on the tile — reading whatever is ticked NOW would quietly
+// swap the woman on a regenerate.
+check('the character comes from the tile, not the current selection',
+  pm.includes("const who = { id: job.whoId, name: job.charName || '' };")
+  && pm.includes('whoId: who.id,'));
+check('and the source photo prefers the live full-size one',
+  pm.includes('const live = sources.find((x) => x.id === job.srcId);')
+  && pm.includes('const dataUrl = live?.dataUrl || job.thumb || job.thumbSmall;'));
+check('degrading to the stored copy is said out loud, not silent',
+  pm.includes('Re-running from the small stored copy'));
+// ONE prompt builder, or a regenerate would drift from a run within a week.
+// Called by BOTH the batch run and the single-tile re-run — one definition, two callers.
+check('the prompt builder is shared, not copied', pm.includes('const buildPromptFactory = useCallback(() => {')
+  && (pm.match(/= buildPromptFactory\(\);/g) || []).length === 2);
+// The full source is deliberately NOT persisted — that is what thumbSmall exists to avoid.
+check('and the full source is not persisted per tile', !/thumb: j\.thumb/.test(pm));
 
 // --- what the spare budget is SPENT on ------------------------------------------------------------
 //

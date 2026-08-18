@@ -252,6 +252,14 @@ function liteJob(j) {
     libRowId: j.libRowId || null,
     mimeType: j.result?.mimeType || j.mimeType || 'image/png',
     charName: j.charName || '',
+    // Carried through the reload so a restored tile can still be regenerated — without them the
+    // buttons would be dead on everything from the previous session.
+    whoId: j.whoId || null,
+    srcId: j.srcId || null,
+    // NOT the full-size `thumb`. That is the whole source photo as a data URL, and persisting one
+    // per finished tile is exactly the storage bloat thumbSmall exists to avoid. A restored tile
+    // regenerates from the live source when the photo is still on the page, and from thumbSmall
+    // when it is not — see rerunJob.
     filedDb: j.filedDb || 'eddy-library',
     thumbSmall: j.thumbSmall || null,
     error: j.error || '',
@@ -1695,7 +1703,18 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
    *
    * Falls back to charName so a single-character run behaves exactly as before.
    */
-  const runOne = async (source, charRefs, ratio, prompt, who) => {
+  /**
+   * A REFUSAL, told apart from a fault. Google declines to draw an image and answers with no
+   * picture; that is worth handing to Seedream, and a missing key or an empty balance is not.
+   */
+  const isRefusal = (msg) => /content filter|IMAGE_OTHER|IMAGE_SAFETY|PROHIBITED_CONTENT|BLOCKLIST|refused this image|returned no image/i.test(String(msg || ''));
+  const isTerminalForRetry = (msg) => /API key|out of credits|top up|Insufficient credits|balance/i.test(String(msg || ''));
+
+  /**
+   * `forceEngine` runs this one job on a named engine regardless of the page's selection — used by
+   * the automatic Seedream fallback below and by the per-tile "Retry on WaveSpeed" button.
+   */
+  const runOne = async (source, charRefs, ratio, prompt, who, { forceEngine = null } = {}) => {
     const whoName = String(who?.name || charName || '').trim();
     const jobId = source.id;
     const feedId = `photomatch-sd-${jobId}`;
@@ -1718,7 +1737,24 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
        * filed into the same place it would have gone, rather than needing to be found by hand.
        */
       let claimedJobId = null;
-      const data = await withRateLimitRetry(() => queuedSeedreamEdit({
+      /**
+       * THE AUTOMATIC SEEDREAM FALLBACK, on this side of the wire.
+       *
+       * The QUEUE is the primary fallback and the better one: five tries, server-side, able to tell
+       * a refusal from a rate limit. This is the second line, and it cannot race it — it runs only
+       * in the catch, i.e. only once the queue has already failed the job and finished with it. A
+       * job the queue swapped successfully never reaches it, so nothing is paid for twice.
+       *
+       * It exists because the queue's fallback was silently disabled twice in one day — by a bug
+       * that lost the API keys, and by a sentence containing the words "out of credits" — and both
+       * times the symptom was the same: a red tile, a Retry button, and a person clicking it. The
+       * owner's ask was plain: "the fall back should be automatic to wavespeed".
+       *
+       * Not for key or credit failures. Seedream bills a DIFFERENT account, so silently moving a
+       * dead-key job there is exactly the substitution the queue refuses to make.
+       */
+      let usedClientFallback = false;
+      const send = (model) => withRateLimitRetry(() => queuedSeedreamEdit({
         feature: FEATURE,
         images: [...charRefs, sourceImg],
         // Her photos come first and the scene last — this says where the boundary is, so the
@@ -1727,7 +1763,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         prompt,
         aspectRatio: ratio,
         resolution,
-        model: isNB2 ? 'nb2' : engine === 'nano2' ? 'nano2' : 'seedream5',
+        model,
         provider: 'wavespeed',
         // Her name travels with the generation so "Recover missing" can file a stranded Photo
         // Match picture into the right folder, exactly as it does for Eddy's.
@@ -1738,6 +1774,20 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         onJobId: (id) => { claimedJobId = id; _awaiting.add(id); },
       })).finally(() => { if (claimedJobId) _awaiting.delete(claimedJobId); });
 
+      const asked = forceEngine || (isNB2 ? 'nb2' : engine === 'nano2' ? 'nano2' : 'seedream5');
+      let data;
+      try {
+        data = await send(asked);
+      } catch (sendErr) {
+        const msg = String(sendErr?.message || '');
+        // Only a bypass job has anywhere better to go, and only a refusal is worth moving.
+        if (asked !== 'nb2' || !isRefusal(msg) || isTerminalForRetry(msg)) throw sendErr;
+        setJobs((prev) => prev.map((j) => (j.id === jobId
+          ? { ...j, status: 'running', error: 'Google refused it — trying Seedream 5 Pro…' } : j)));
+        data = await send('seedream5');
+        usedClientFallback = true;
+      }
+
       /**
        * The engine that actually produced it, read back from the queue rather than assumed.
        *
@@ -1746,7 +1796,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
        * claiming to be NB2 — the same shape of quiet lie as a tick with no proof behind it.
        */
       const ranOn = data.model === 'seedream5' ? 'seedream' : data.model === 'nano2' ? 'nano2' : data.model === 'nb2' ? 'nb2' : engine;
-      const fellBack = !!data.fellBack || (isNB2 && ranOn !== 'nb2');
+      const fellBack = !!data.fellBack || usedClientFallback || (isNB2 && ranOn !== 'nb2');
       const engineLabel = ranOn === 'nb2' ? 'Nano Banana 2 (Gemini bypass)'
         : ranOn === 'nano2' ? 'Nano Banana 2 (WaveSpeed)' : 'Seedream 5.0 Pro Edit';
 
@@ -1837,46 +1887,29 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
    */
   const runIdsRef = useRef(new Set());
 
-  const handleMatch = async () => {
-    if (!sources.length) { notify('Add at least one source photo', 'error'); return; }
-    if (!characterIds.length) { notify('Pick the character whose identity to use', 'error'); return; }
-    // Once per RUN, which means clearing it when a run starts. A ref set once and never reset is
-    // once per page LOAD — the second batch of the session would fall back in silence.
-    warnedFallback.current = false;
+  /**
+   * HOW MANY RUNS ARE IN FLIGHT, so a second Generate is allowed while the first is still going
+   * (owner, 2026-08-18: "i wanna be able generated again evne if i i click generated").
+   *
+   * `running` was a plain boolean set true at the start of a run and false at the end. With two runs
+   * overlapping, whichever finished FIRST cleared it — the button would go idle and the progress
+   * counter would stop while a dozen images were still rendering. A count is the honest version of
+   * the same flag: the page is busy while any run is.
+   */
+  const runsInFlight = useRef(0);
 
-    // Without identity images Seedream can only fall back on the source photo's face — the exact
-    // failure this page exists to prevent. Fail loudly instead of quietly producing the stand-in.
-    // Straight from the collection: these are already data URLs, so there is no fetch to fail
-    // and no server round-trip per reference.
-    /**
-     * Identity images for EACH ticked character, resolved once up front.
-     *
-     * Loaded before anything is dispatched so a character with no usable photo is caught here
-     * rather than failing partway through a paid batch. One that cannot load is dropped and
-     * named; the run continues with the rest instead of being abandoned.
-     */
-    const perChar = [];
-    const unloadable = [];
-    for (const cid of characterIds) {
-      const refs = [];
-      for (const r of refsForCharacter(cid).slice(0, MAX_CHAR_IMAGES)) {
-        const full = charThumbs[r.id] || await charStore.getImage(r.id);
-        // Shrunk before it goes anywhere — see shrinkForUpload. This is the single biggest lever
-        // on how long a run takes, and it costs nothing an identity reference needs.
-        const dataUrl = full ? await shrinkForUpload(full) : null;
-        const img = dataUrl ? parseDataUrl(dataUrl) : null;
-        if (img) refs.push(img);
-      }
-      const name = chars.find((c) => c.id === cid)?.name || '';
-      // `cast` set = this ticked character is a pair, and it stays ONE entry here. That is the whole
-      // change to the run: the cross product below is untouched, so a pair produces one job per
-      // source photo (both women in it) instead of one per woman.
-      if (refs.length) perChar.push({ id: cid, name, refs, cast: castOf(cid) });
-      else unloadable.push(name || cid);
-    }
-    if (!perChar.length) { notify('No character identity images could be loaded — add a primary image to this character', 'error'); return; }
-    if (unloadable.length) notify(`Skipped ${unloadable.join(', ')} — no identity image could be loaded`, 'error');
-
+  /**
+   * THE PROMPT BUILDER, HOISTED — because two things build prompts now, not one.
+   *
+   * All of this lived inside handleMatch, which was fine while a run was the only way to generate.
+   * Regenerate and "Retry on WaveSpeed" need exactly the same prompt for exactly the same reasons,
+   * and the alternative was a second copy that would drift from this one within a week.
+   *
+   * Returns a FRESH pair each call: the builder, and a reader for whether anything had to be
+   * trimmed to fit the engine's cap. That flag is per-call state — shared across runs it would
+   * report a previous batch's trimming.
+   */
+  const buildPromptFactory = useCallback(() => {
     // A Mood preset deliberately overrides the scene's expression. The base prompt must stop
     // demanding the expression be preserved, or the two instructions cancel and the model does
     // neither — which reads exactly like a broken preset.
@@ -1971,6 +2004,112 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
       }
       return out;
     };
+    return { promptFor, wasTrimmed: () => trimmed };
+  // Every value read below is component state; the deps list is deliberately the whole set so a
+  // changed chip is picked up by the very next Regenerate.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [extra, nsfw, exactRecreate, varyBackground, faceless, build, charDetail, characterId, engine, chars]);
+
+  /**
+   * RUN ONE TILE AGAIN — the engine behind Regenerate and "Retry on WaveSpeed".
+   *
+   * Photo Match had neither (owner, 2026-08-18: "fix the photo match nb2 to be able regenerated …
+   * add a retry bottom with wavespeed"). A picture you did not like, or one that failed, could only
+   * be redone by re-running the whole batch — every other photo included, at full price.
+   *
+   * It rebuilds the request from the tile plus the page's CURRENT settings, which is deliberate:
+   * pressing Regenerate after changing a chip should use the chip. What it must NOT do is guess who
+   * she is, so the character comes from the id stored on the tile rather than from whatever is
+   * ticked now.
+   *
+   * THE SOURCE PHOTO, in order of preference: the live one still on the page (full size), then the
+   * tile's own copy from this session, then the small JPEG kept for the slider. The last is a
+   * degraded input and says so rather than silently producing a softer picture.
+   */
+  const rerunJob = useCallback(async (job, { forceEngine = null } = {}) => {
+    const who = { id: job.whoId, name: job.charName || '' };
+    if (!who.id) { notify('This result predates re-running — regenerate from a fresh match', 'error'); return; }
+
+    const live = sources.find((x) => x.id === job.srcId);
+    const dataUrl = live?.dataUrl || job.thumb || job.thumbSmall;
+    if (!dataUrl) { notify('The source photo for this result is gone — add it again to re-run it', 'error'); return; }
+    if (!live && !job.thumb) notify('Re-running from the small stored copy — the source photo is no longer on the page', 'info');
+
+    const refs = [];
+    for (const r of refsForCharacter(who.id).slice(0, MAX_CHAR_IMAGES)) {
+      // eslint-disable-next-line no-await-in-loop
+      const full = charThumbs[r.id] || await charStore.getImage(r.id);
+      // eslint-disable-next-line no-await-in-loop
+      const shrunk = full ? await shrinkForUpload(full) : null;
+      const img = shrunk ? parseDataUrl(shrunk) : null;
+      if (img) refs.push(img);
+    }
+    if (!refs.length) { notify(`No identity image could be loaded for ${who.name || 'this character'}`, 'error'); return; }
+    who.refs = refs;
+    who.cast = castOf(who.id);
+
+    const ratio = aspectRatio === 'auto'
+      ? await detectAspectRatio(dataUrl, SEEDREAM_ASPECT_RATIOS)
+      : aspectRatio;
+    const src = { id: job.id, dataUrl, backView: live?.backView, blurred: live?.blurred };
+
+    runsInFlight.current += 1;
+    setRunning(true);
+    runIdsRef.current = new Set([...runIdsRef.current, job.id]);
+    // Cleared so the tile does not show the previous failure while it is running again.
+    setJobs((prev) => prev.map((j) => (j.id === job.id ? { ...j, status: 'queued', error: null } : j)));
+    try {
+      const { promptFor } = buildPromptFactory();
+      await runOne(src, refs, ratio, promptFor(who, refs.length, src), who, { forceEngine });
+    } finally {
+      runIdsRef.current = new Set([...runIdsRef.current].filter((id) => id !== job.id));
+      runsInFlight.current = Math.max(0, runsInFlight.current - 1);
+      if (runsInFlight.current === 0) setRunning(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sources, aspectRatio, charThumbs, notify, buildPromptFactory]);
+
+  const handleMatch = async () => {
+    if (!sources.length) { notify('Add at least one source photo', 'error'); return; }
+    if (!characterIds.length) { notify('Pick the character whose identity to use', 'error'); return; }
+    // Once per RUN, which means clearing it when a run starts. A ref set once and never reset is
+    // once per page LOAD — the second batch of the session would fall back in silence.
+    warnedFallback.current = false;
+
+    // Without identity images Seedream can only fall back on the source photo's face — the exact
+    // failure this page exists to prevent. Fail loudly instead of quietly producing the stand-in.
+    // Straight from the collection: these are already data URLs, so there is no fetch to fail
+    // and no server round-trip per reference.
+    /**
+     * Identity images for EACH ticked character, resolved once up front.
+     *
+     * Loaded before anything is dispatched so a character with no usable photo is caught here
+     * rather than failing partway through a paid batch. One that cannot load is dropped and
+     * named; the run continues with the rest instead of being abandoned.
+     */
+    const perChar = [];
+    const unloadable = [];
+    for (const cid of characterIds) {
+      const refs = [];
+      for (const r of refsForCharacter(cid).slice(0, MAX_CHAR_IMAGES)) {
+        const full = charThumbs[r.id] || await charStore.getImage(r.id);
+        // Shrunk before it goes anywhere — see shrinkForUpload. This is the single biggest lever
+        // on how long a run takes, and it costs nothing an identity reference needs.
+        const dataUrl = full ? await shrinkForUpload(full) : null;
+        const img = dataUrl ? parseDataUrl(dataUrl) : null;
+        if (img) refs.push(img);
+      }
+      const name = chars.find((c) => c.id === cid)?.name || '';
+      // `cast` set = this ticked character is a pair, and it stays ONE entry here. That is the whole
+      // change to the run: the cross product below is untouched, so a pair produces one job per
+      // source photo (both women in it) instead of one per woman.
+      if (refs.length) perChar.push({ id: cid, name, refs, cast: castOf(cid) });
+      else unloadable.push(name || cid);
+    }
+    if (!perChar.length) { notify('No character identity images could be loaded — add a primary image to this character', 'error'); return; }
+    if (unloadable.length) notify(`Skipped ${unloadable.join(', ')} — no identity image could be loaded`, 'error');
+
+    const { promptFor, wasTrimmed } = buildPromptFactory();
 
     // Resolve 'auto' per source — each photo has its own ratio — before pushPending and before
     // the call. Seedream 422s on the literal string 'auto'.
@@ -1987,8 +2126,9 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
      * would see whichever finished last rather than all three.
      */
     const work = perChar.flatMap((who) => sources.map((src) => ({ src, who })));
-    if (trimmed) notify(`Instructions trimmed to ${engine === 'seedream' ? SEEDREAM_PROMPT_BUDGET : NANO2_PROMPT_BUDGET} characters — the model rejects longer prompts`, 'error');
+    if (wasTrimmed()) notify(`Instructions trimmed to ${engine === 'seedream' ? SEEDREAM_PROMPT_BUDGET : NANO2_PROMPT_BUDGET} characters — the model rejects longer prompts`, 'error');
 
+    runsInFlight.current += 1;
     setRunning(true);
     /**
      * A NEW RUN IS ADDED TO THE PANEL, NOT SWAPPED IN.
@@ -2018,9 +2158,19 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
       // "Arya + Rosary" would file a pair's results into a folder the user never created, sitting
       // beside the one they did.
       charName: who.name || '',
+      // WHICH character, by id. charName alone cannot be resolved back to a set of identity photos
+      // — two characters can share a name and a rename orphans it — and re-running one tile needs
+      // exactly those photos. Kept on the job so Regenerate and Retry work from the tile alone.
+      whoId: who.id,
+      // The source photo id, so a re-run can find the live source (full resolution) rather than
+      // making do with the shrunken copy kept for the before/after slider.
+      srcId: src.id,
     }));
     setJobs((prev) => [...fresh, ...prev]);
-    runIdsRef.current = runIds;
+    // UNION, not assignment: assigning dropped the first run's ids the moment a second started, so
+    // the progress counter jumped to the new run and the older one's images vanished from the count
+    // while they were still rendering.
+    runIdsRef.current = new Set([...runIdsRef.current, ...runIds]);
 
     // Simple concurrency pool — each job holds an HTTP request while Muapi renders.
     const queue = [...work];
@@ -2034,7 +2184,10 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
       }
     });
     await Promise.all(workers);
-    setRunning(false);
+    // This run's ids leave the progress set; the flag clears only when nothing else is running.
+    runIdsRef.current = new Set([...runIdsRef.current].filter((id) => !runIds.has(id)));
+    runsInFlight.current = Math.max(0, runsInFlight.current - 1);
+    if (runsInFlight.current === 0) setRunning(false);
     // Report what actually happened. This said "Batch finished" unconditionally, so a run where
     // every job 422'd still looked like a success and the failures were invisible.
     setJobs((prev) => {
@@ -2984,10 +3137,20 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
           </p>
         </Card>
 
-        <Btn onClick={handleMatch} disabled={running} className="w-full">
+        {/**
+          * NOT disabled while running (owner, 2026-08-18). A batch here can take many minutes, and
+          * refusing a second one meant sitting and watching rather than queueing the next set of
+          * photos. Nothing about a run is exclusive: each has its own ids, its own lanes and its own
+          * completion summary, and the queue behind it is built for concurrency.
+          *
+          * The label still shows live progress across every run in flight, so pressing it again is
+          * an addition rather than a replacement — which is exactly what the panel does with the
+          * tiles.
+          */}
+        <Btn onClick={handleMatch} className="w-full">
           {running ? <Spinner size={16} /> : null}
           {running
-            ? `Matching… (${runProgress.done}/${runProgress.total})`
+            ? `Matching… (${runProgress.done}/${runProgress.total}) · press again to add ${runCount}`
             : `Photo Match${runCount > 1 ? ` · ${runCount} images` : ''} · $${totalCost.toFixed(3)}`}
         </Btn>
 
@@ -3205,6 +3368,31 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
                   )}
 
                   {job.status === 'failed' && <p className="text-[0.625rem] text-red-400 leading-snug">{job.error}</p>}
+                  {/**
+                    * ONE TILE, RUN AGAIN — the two ways you actually want it.
+                    *
+                    * "Try again" repeats it exactly as asked, which is the right move for a refusal:
+                    * a refusal is a roll, not a verdict, and the same request often passes next time.
+                    * "On WaveSpeed" skips the argument entirely and runs it on Seedream 5 Pro, which
+                    * is where a job the bypass will never accept has to go.
+                    *
+                    * Both are per-tile on purpose. Before this the only way to redo one picture was
+                    * to re-run the whole batch, paying for every other photo again.
+                    */}
+                  {job.status === 'failed' && (
+                    <div className="flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
+                      <button type="button" onClick={() => rerunJob(job)}
+                        title="Run this one again, exactly as it was asked for"
+                        className="rounded-md border border-white/[0.12] px-2 py-1 text-[0.625rem] font-semibold text-zinc-300 hover:border-zinc-400 cursor-pointer">
+                        Try again
+                      </button>
+                      <button type="button" onClick={() => rerunJob(job, { forceEngine: 'seedream5' })}
+                        title="Run this one on Seedream 5 Pro (WaveSpeed) instead — where a picture Google will not make still gets made"
+                        className="rounded-md border border-amber-600/50 bg-amber-500/10 px-2 py-1 text-[0.625rem] font-semibold text-amber-200 hover:border-amber-400 cursor-pointer">
+                        On WaveSpeed
+                      </button>
+                    </div>
+                  )}
                   {/* Where this one currently lives, so "send to Base" has a visible before and
                       after rather than being an action with no feedback. */}
                   {job.status === 'done' && urlOfJob(job) && (
@@ -3219,6 +3407,24 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
                         {job.faceless && ' · faceless'}
                       </p>
                       <span className="flex items-center gap-2">
+                        {/**
+                          * REGENERATE — make this one again.
+                          *
+                          * Rebuilt from the tile plus the page's CURRENT settings, so changing a
+                          * chip and pressing this does what you would expect. The character comes
+                          * from the id stored on the tile, never from whatever happens to be ticked
+                          * now, or a regenerate would quietly swap the woman.
+                          *
+                          * It REPLACES this tile rather than adding one: it is the same picture,
+                          * made again. Sending it to a library first and regenerating after leaves
+                          * the filed copy alone — this only changes what is on the panel.
+                          */}
+                        <button type="button"
+                          onClick={(e) => { e.stopPropagation(); rerunJob(job); }}
+                          title="Make this one again with the current settings — the same source photo and the same character"
+                          className="text-[0.625rem] text-zinc-400 underline hover:text-zinc-200 cursor-pointer">
+                          Regenerate
+                        </button>
                         {/* REMOVE takes it off this panel only. The picture stays in the gallery and
                             in whichever library it was filed into — this is the queue's exit, not a
                             delete. Same meaning as Eddy's Remove. */}

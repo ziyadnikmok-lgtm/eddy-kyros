@@ -426,10 +426,23 @@ check('and so does the job handed to runOne', pm.includes('id: `${item.src.id}::
 check('every job records whose it is, not just a multi-character run',
   pm.includes("charName: who.name || '',"));
 
-check('progress counts THIS run, not the whole panel', pm.includes('`Matching… (${runProgress.done}/${runProgress.total})`'));
+// The label gained "press again to add N" when Generate stopped refusing a second batch.
+check('progress counts the runs in flight, not the whole panel',
+  pm.includes('`Matching… (${runProgress.done}/${runProgress.total}) · press again to add ${runCount}`'));
 check('and the finish report does too', pm.includes('const mine = prev.filter((j) => runIds.has(j.id));'));
+// CHANGED 2026-08-18: the ref is now a UNION of every run in flight, because Generate no longer
+// refuses a second batch while the first is going. Assigning dropped the first run's ids the moment
+// a second started, so the counter jumped to the new run while a dozen images were still rendering.
 check('the run ids live in a ref declared above their first use',
-  pm.indexOf('const runIdsRef = useRef(new Set());') < pm.indexOf('runIdsRef.current = runIds;'));
+  pm.indexOf('const runIdsRef = useRef(new Set());') < pm.indexOf('runIdsRef.current = new Set([...runIdsRef.current, ...runIds]);'));
+check('and a second run ADDS to the progress set rather than replacing it',
+  pm.includes('runIdsRef.current = new Set([...runIdsRef.current, ...runIds]);')
+  && pm.includes('runIdsRef.current = new Set([...runIdsRef.current].filter((id) => !runIds.has(id)));'));
+// A boolean cleared by whichever run finished first; a count is the honest version of the flag.
+check('busy is counted, not toggled', pm.includes('const runsInFlight = useRef(0);')
+  && pm.includes('if (runsInFlight.current === 0) setRunning(false);'));
+check('and Generate accepts a second batch while the first runs',
+  pm.includes('<Btn onClick={handleMatch} className="w-full">'));
 
 // --- replay: a second run must not eat the first --------------------------------------------------------
 let panel = [{ id: 'a::g::r1', status: 'done' }, { id: 'b::g::r1', status: 'done' }];
