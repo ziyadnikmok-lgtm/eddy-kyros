@@ -94,8 +94,8 @@ check('the count survives a reload, or the next press repeats a text that alread
 // wavy. The prompt asked for 'hair' — one word in a list, the same mistake the body list already
 // learned from.
 check('hair names its attributes rather than being one word',
-  pm.includes("allowHairChange ? null : 'hair — its exact colour, length, texture and parting'"));
-check('and the tail lock says it too', pm.includes('hair at its own colour, length and texture'));
+  pm.includes("allowHairChange ? null : 'hair — its exact colour, length and texture'"));
+check('and the tail lock says it too', pm.includes('hair at her own colour and length'));
 // A Hair preset deliberately overrides the references; the clause must still drop when one is on,
 // or the two cancel and neither happens.
 check('a hair preset still drops the whole clause', pm.includes('allowHairChange ? null :'));
@@ -104,7 +104,7 @@ check('a hair preset still drops the whole clause', pm.includes('allowHairChange
 // gallery 52cd1c0c (2026-08-18): three identity references came back as ONE wide image holding
 // three near-identical panels of her. Nothing in the prompt ever said "one photograph".
 const lockStart = pm.indexOf('function singleFrameLock(people) {');
-const lockEnd = pm.indexOf("frames to produce.';", lockStart);
+const lockEnd = pm.indexOf("a number of people or panels.';", lockStart);
 check('the single-frame lock is in the page', lockStart > -1 && lockEnd > lockStart);
 const singleFrameLock = new Function(
   pm.slice(lockStart, pm.indexOf('}', lockEnd) + 1) + '; return singleFrameLock;',
@@ -114,9 +114,13 @@ check('and a pair asks for exactly two', singleFrameLock(2).includes('exactly tw
 check('a missing or zero count still means one',
   singleFrameLock(0).includes('exactly ONE woman') && singleFrameLock(undefined).includes('exactly ONE woman'));
 check('it names the layouts that actually came back', singleFrameLock(1).includes('grid, collage, contact sheet'));
+// It is subtracted from the budget handed to the builder, so the builder drops a paragraph in its
+// ranked order instead of having its own tail sliced.
+check('its length is taken off the builder budget rather than guessed',
+  pm.includes('- extra.trim().length - singleFrameLock(Array.isArray(who?.cast) ? who.cast.length : 1).length - 10)'));
 // THE lever: the model mirrored the reference count into the panel count.
 check('and says the reference count is not a panel count',
-  singleFrameLock(1).includes('number of reference images is NOT the number of people, panels or frames'));
+  singleFrameLock(1).includes('number of reference images is NOT a number of people or panels'));
 check('it is appended dead last, after the chips and the figure lock',
   pm.indexOf('out = `${out}') < pm.indexOf('${frameLock}`;')
   && pm.indexOf('CLOTHED_FIGURE_LOCK}`;') < pm.indexOf('${frameLock}`;'));
