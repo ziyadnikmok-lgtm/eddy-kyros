@@ -120,10 +120,9 @@ const NANO2_PROMPT_BUDGET = 8000;
 function singleFrameLock(people) {
   const n = people > 1 ? people : 1;
   const who = n > 1 ? `exactly ${['', 'one', 'two', 'three', 'four', 'five'][n] || n} women` : 'exactly ONE woman';
-  return `ONE PHOTOGRAPH — ABSOLUTE: the output is a SINGLE frame containing ${who}, shot in one take. `
-    + 'Never a grid, collage, contact sheet, storyboard, split screen, side-by-side panels, '
-    + 'before/after, film strip, or the same woman repeated across the image. '
-    + 'The number of reference images is NOT the number of people, panels or frames to produce.';
+  return `ONE PHOTOGRAPH: a SINGLE frame containing ${who}, shot in one take. `
+    + 'No grid, collage, contact sheet, split screen, side-by-side panels, before/after, film strip '
+    + 'or repeated figures. The number of reference images is NOT a number of people or panels.';
 }
 
 /**
@@ -460,7 +459,17 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
   const outfitFromRefs = outfitFromChar && !wantsNude;
   const identity = [
     faceless ? 'skin tone' : 'face, head shape, jaw, skin tone, her makeup',
-    allowHairChange ? null : 'hair',
+    /**
+     * HAIR IS NOT ONE WORD EITHER.
+     *
+     * The comment above says a body is not one word at the end of a list about a face; hair had
+     * exactly the same problem and it showed. Gallery 1c2e8850 (2026-08-18) came back with long
+     * straight blonde ombre hair for a character whose every reference is dark and wavy — colour,
+     * length and texture all drifted at once, from a prompt that asked for "hair" and nothing more
+     * (owner: "it didint use hair our model fo face good etc"). Naming the attributes is what made
+     * the body list hold, so hair gets the same treatment.
+     */
+    allowHairChange ? null : 'hair — its exact colour, length and texture',
     allowBodyChange ? null : 'neck, shoulders, arms, hands, torso, waist, hips, legs, height and build',
     outfitFromRefs ? 'the exact clothing she is wearing — every garment, its colour, cut, fabric and length' : null,
   ].filter(Boolean).join(', ');
@@ -738,7 +747,7 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
     parts.push(`FINAL — HIGHEST PRIORITY, overrides everything above: ${her} ${pair ? 'faces are' : 'face is'} intentionally OUT of the shot — ${backView ? 'she is facing away and stays that way' : 'cropped above the shoulders, turned away, or hidden by hair/hand/angle'} so no recognisable face is visible. Do NOT invent or show a face. ${pair ? 'Their bodies, hair, skin and proportions' : 'Her body, hair, skin and proportions'} still come from ${ownRefs}${allowBodyChange ? '' : ' at their true size — never averaged or shrunk toward ' + src}.`);
   } else {
     const finalLock = [
-      `FINAL — HIGHEST PRIORITY, overrides everything above: render ${person} from scratch as ${who} from ${ownRefs} — ${pair ? 'faces' : 'face'}, hair, skin and whole ${pair ? 'bodies' : 'body'}${pair ? `, ${countWord} distinct women in the frame` : ''}. ${pair ? 'The women' : 'The woman'} in ${src} ${pair ? 'are anonymous stand-ins: discard them' : 'is an anonymous stand-in: discard her'} entirely, ${pair ? 'faces' : 'face'} and ${pair ? 'figures' : 'figure'} alike, and when in doubt copy ${pair ? 'the reference images' : refs}.`,
+      `FINAL — HIGHEST PRIORITY, overrides everything above: render ${person} from scratch as ${who} from ${ownRefs} — ${pair ? 'faces' : 'face'}, hair at her own colour and length, skin and whole ${pair ? 'bodies' : 'body'}${pair ? `, ${countWord} distinct women in the frame` : ''}. ${pair ? 'The women' : 'The woman'} in ${src} ${pair ? 'are anonymous stand-ins: discard them' : 'is an anonymous stand-in: discard her'} entirely, ${pair ? 'faces' : 'face'} and ${pair ? 'figures' : 'figure'} alike, and when in doubt copy ${pair ? 'the reference images' : refs}.`,
       // Body/chest: pinned to the refs UNLESS a size chip is driving it (then the chip, appended
       // after this whole prompt, wins and re-pinning here would fight it).
       allowBodyChange
@@ -2054,9 +2063,12 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
         /**
          * The room the base instruction may take, so it can drop a paragraph whole rather than
          * having its tail sliced off. The chips are appended AFTER it and are what the remaining
-         * space is for — `extra` is measured here rather than guessed.
+         * space is for — `extra` is measured here rather than guessed, and so is the one-frame
+         * lock, which is appended after everything. Guessing either would cost the builder the
+         * graceful degradation it is written to do.
          */
-        budget: Math.max(600, (engine === 'seedream' ? SEEDREAM_PROMPT_BUDGET : NANO2_PROMPT_BUDGET) - extra.trim().length - 8),
+        budget: Math.max(600, (engine === 'seedream' ? SEEDREAM_PROMPT_BUDGET : NANO2_PROMPT_BUDGET)
+          - extra.trim().length - singleFrameLock(Array.isArray(who?.cast) ? who.cast.length : 1).length - 10),
         refCount,
         masterPrompt: who.id === characterId ? charDetail?.masterPrompt : undefined,
         exactRecreate,

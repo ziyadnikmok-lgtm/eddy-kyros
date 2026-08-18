@@ -89,6 +89,17 @@ check('and the tile shows which attempt the next press is', pm.includes('Retry{j
 check('the count survives a reload, or the next press repeats a text that already failed',
   pm.includes('retryN: j.retryN || 0,'));
 
+// --- HER HAIR (owner, 2026-08-18: 'it didint use hair our model fo face good etc') -------------
+// Gallery 1c2e8850: long straight blonde ombre for a character whose every reference is dark and
+// wavy. The prompt asked for 'hair' — one word in a list, the same mistake the body list already
+// learned from.
+check('hair names its attributes rather than being one word',
+  pm.includes("allowHairChange ? null : 'hair — its exact colour, length, texture and parting'"));
+check('and the tail lock says it too', pm.includes('hair at its own colour, length and texture'));
+// A Hair preset deliberately overrides the references; the clause must still drop when one is on,
+// or the two cancel and neither happens.
+check('a hair preset still drops the whole clause', pm.includes('allowHairChange ? null :'));
+
 // --- ONE FRAME, not a contact sheet -----------------------------------------------------------
 // gallery 52cd1c0c (2026-08-18): three identity references came back as ONE wide image holding
 // three near-identical panels of her. Nothing in the prompt ever said "one photograph".

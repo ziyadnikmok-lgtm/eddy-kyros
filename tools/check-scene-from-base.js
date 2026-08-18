@@ -154,7 +154,13 @@ for (const [name, opts] of Object.entries({
     room < at(out, 'POSE MATCH'));
   // Before the identity check, which stays the last word on WHO she is.
   check(`${name}: and before the final identity check`, room < at(out, 'FINAL CHECK'));
-  check(`${name}: it sits in the last fifth of the prompt`, room / out.length > 0.8);
+  // 0.75, not 0.8, since 2026-08-18: there are now TWO absolute tails after it — the one-frame
+  // lock (a run with several references was returning a contact sheet) and, on a re-generate, the
+  // CORRECTION, which has to stay the genuinely last word. With both present the room line sits at
+  // ~0.78. Still the last quarter, still after everything it has to beat, and the two assertions
+  // above pin the ORDER, which is what actually matters.
+  check(`${name}: it sits in the last quarter of the prompt (${(room / out.length).toFixed(2)})`,
+    room / out.length > 0.75);
 }
 
 // --- THE EXPRESSION LINE WAS DESCRIBING THE STAND-IN'S FACE -------------------------------------------

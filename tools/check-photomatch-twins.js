@@ -9,6 +9,15 @@
 //      pin, not a snapshot to re-bless: if one breaks, the single-character prompt changed, and
 //      that either was not intended or needs its own decision.
 //
+//      RE-PINNED ONCE, 2026-08-18, and this is what a legitimate re-pin looks like: the owner
+//      reported a character coming back with the wrong hair ("it didint use hair our model fo face
+//      good etc") and gallery 1c2e8850 showed long straight blonde ombre where every reference is
+//      dark and wavy. The prompt asked for "hair" — one word in a list, the same mistake the body
+//      list had already been fixed for. It now names colour, length and texture. That is a
+//      deliberate change to the single-character prompt, so the pin moved WITH it, on purpose,
+//      once, with the reason written here. Anything that breaks these hashes without a line like
+//      this one is the accident the pin exists to catch.
+//
 //   2. THE PAIR PROMPT MUST SAY THE THINGS THAT MAKE IT WORK. Naming two women is not enough —
 //      the model takes its count from the scene and averages two reference sets into one face
 //      unless told otherwise, and both failures look identical in the output ("it ignored the

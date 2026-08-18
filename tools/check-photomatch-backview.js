@@ -61,7 +61,10 @@ check('and her face must not be brought into frame', /do NOT bring her face or c
 check('the pose may not change to make a face visible', /do NOT change the pose to make either visible/.test(back));
 
 check('the identity list no longer demands a face', !/match exactly: face, head shape, jaw/.test(back));
-check('but skin, hair and body still come from her references', /match exactly: skin tone, hair, neck, shoulders/.test(back));
+// The hair clause names its attributes since 2026-08-18 — a character whose references are all
+// dark and wavy came back blonde and straight, from a prompt that said only "hair".
+check('but skin, hair and body still come from her references',
+  /match exactly: skin tone, hair — its exact colour, length and texture, neck, shoulders/.test(back));
 check('no face is invented', /Do NOT invent or show a face/.test(back));
 // "cropped above the shoulders" is a different composition — it would re-frame a shot we are
 // otherwise telling it to reproduce exactly.

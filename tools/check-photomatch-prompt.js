@@ -193,8 +193,36 @@ check('and the control is hidden rather than left doing nothing', src.includes('
 check('the reason that guard uses nsfw and not wantsNude is recorded',
   /does not exist at render time/.test(src));
 
-check(`both variants fit the budget (scene ${p.length}, hers ${hers.length})`,
-  p.length <= BUDGET && hers.length <= BUDGET && exactHers.length <= BUDGET);
+/**
+ * WHAT THE BUDGET ACTUALLY GUARANTEES.
+ *
+ * This asserted that all three UNBOUNDED builds fit inside 3,000. As of 2026-08-18 the default
+ * one — exact + her outfit — is 3,092: the one-frame lock (260, because three references were
+ * coming back as a contact sheet) and the hair attributes (66, because a dark-haired character came
+ * back blonde) both landed for measured reasons.
+ *
+ * That does NOT mean an over-long prompt is sent. promptFor passes the builder a REDUCED budget and
+ * the builder drops whole paragraphs in a ranked order to fit it — SCENE AND CAMERA first, then
+ * SKIN AND DETAIL, identity never. So on SEEDREAM (cap 3,000) the default run now loses SCENE AND
+ * CAMERA; on NB2 (cap 8,000, and the page the owner actually uses) nothing drops at all.
+ *
+ * The two things worth pinning are therefore: the scene and hers variants still fit unbounded, and
+ * the bounded build always fits. Both are asserted here.
+ *
+ * TODO, when WaveSpeed has credit again: 3,000 was never measured as the ceiling — 420 passed and
+ * 5,386 failed, and nothing between was ever tried. If the real cap is 4,000 this whole problem is
+ * a config line.
+ */
+check(`the two smaller variants still fit unbounded (scene ${p.length}, hers ${hers.length})`,
+  p.length <= BUDGET && hers.length <= BUDGET);
+check(`exact+outfit is over the Seedream cap and drops SCENE AND CAMERA (${exactHers.length})`,
+  exactHers.length > BUDGET
+  && !buildMatchInstruction({ ...BASE, exactRecreate: true, outfitFromChar: true, budget: BUDGET }).includes('SCENE AND CAMERA:'));
+check('and the bounded build fits, which is what is actually sent',
+  buildMatchInstruction({ ...BASE, exactRecreate: true, outfitFromChar: true, budget: BUDGET }).length <= BUDGET);
+// Identity is not in the droppable list at all — check it survives the worst squeeze.
+check('identity survives the squeeze',
+  buildMatchInstruction({ ...BASE, exactRecreate: true, outfitFromChar: true, budget: 900 }).includes('FINAL — HIGHEST PRIORITY'));
 check('the page says which one is in force', src.includes('she wears HER outfit from her reference photos'));
 
 // --- the house lighting line, on every prompt (owner, 2026-08-13) ------------------------------------
@@ -264,8 +292,11 @@ check('a tight budget sheds everything optional and still keeps the lock', (() =
     && !/^Chloe: x/m.test(tiny)
     && tiny.length < unbounded.length;
 })());
-check('the caller passes its real budget, minus the chips it appends after',
-  src.includes('budget: Math.max(600, (engine === ') && src.includes('- extra.trim().length - 8)'));
+check('the caller passes its real budget, minus everything it appends after',
+  src.includes('budget: Math.max(600, (engine === ')
+  // The chips AND the one-frame lock, both measured rather than guessed — a guess costs the builder
+  // the ranked degradation it is written to do.
+  && src.includes('- extra.trim().length - singleFrameLock(Array.isArray(who?.cast) ? who.cast.length : 1).length - 10)'));
 
 // --- exact recreate is the DEFAULT (owner, 2026-08-15: "exact recreate always toggle on") --------
 // Off, the prompt tells the model "a new photo of her in that scene, NOT a retouch" — loose on
@@ -311,7 +342,9 @@ check('the identity list names the whole body, part by part',
   /torso, waist, hips, legs, height and build/.test(unblurred));
 check("the stand-in's body shape is forbidden", /body shape/.test(unblurred));
 check('no blending of bodies, not just faces', /not her face and not her body/.test(unblurred));
-check('and the final lock says whole body', /face, hair, skin and whole body/.test(unblurred));
+// Hair names its attributes here too since 2026-08-18 — see the hair note in check-photomatch-retry.
+check('and the final lock says whole body',
+  /face, hair at her own colour and length, skin and whole body/.test(unblurred));
 
 // --- quality: 2K by default, and a POSITIVE skin instruction ---------------------------------------
 //

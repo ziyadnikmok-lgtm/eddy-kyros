@@ -1278,6 +1278,19 @@ function buildPrompt({ instruction, outfitText, poseText, outfitIndex, poseIndex
       : 'FINAL CHECK: the woman in the result is the woman from image 1. Her face must match image 1. No other face from any reference may appear.'));
   lines.push('Photorealistic: real skin texture with pores, natural hair, slight asymmetry. No plastic or CGI look.');
 
+  /**
+   * ONE PHOTOGRAPH, NOT A PANEL PER REFERENCE.
+   *
+   * Max Nano sends up to four images — the base, the outfit, the pose diagram and the close-up —
+   * and every instruction here is written about one photograph without ever saying so. Photo Match
+   * hit exactly this with three references and returned a three-panel contact sheet (gallery
+   * 52cd1c0c, 2026-08-18); the same lock is added here before it happens with four.
+   *
+   * The operative sentence is the last one: a model handed several pictures will read "here are
+   * four pictures" as "make four pictures" unless told it is evidence, not a layout.
+   */
+  lines.push('ONE PHOTOGRAPH: the output is a SINGLE frame containing exactly one woman, shot in one take. Never a grid, collage, contact sheet, storyboard, split screen, side-by-side panels, before/after, film strip, or the same woman repeated across the image. The number of reference images is NOT the number of people, panels or frames to produce.');
+
   // Stated LAST, and the softened rules above point forward to it by name. Two reasons it goes
   // here rather than next to the page instruction: the rules it overrides have to have been read
   // first for "except where the CORRECTION says otherwise" to resolve to anything, and this file

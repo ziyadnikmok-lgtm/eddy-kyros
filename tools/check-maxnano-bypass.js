@@ -360,5 +360,17 @@ check('and uses the queue-backed lane count, not the browser one',
 check('a finished picture names the route that made it', page.includes("engine === 'nb2' ? 'Nano Banana 2 (Gemini bypass)'"));
 check('and a fallback still says Seedream', page.includes("const who = (engine === 'nano2' || engine === 'nb2') && !usedFallback ? 'Nano Banana 2' : 'Seedream';"));
 
+// --- one frame, not a panel per reference (2026-08-18) ----------------------------------------
+// Photo Match returned a three-panel contact sheet from three identity references. Max Nano sends
+// up to FOUR images and had no such rule either.
+check('Max Nano asks for a single frame', page.includes('ONE PHOTOGRAPH: the output is a SINGLE frame containing exactly one woman'));
+check('and names the layouts that come back instead', page.includes('grid, collage, contact sheet, storyboard, split screen'));
+check('the operative sentence is there',
+  page.includes('The number of reference images is NOT the number of people, panels or frames to produce.'));
+// After the FINAL CHECK, before the CORRECTION — the correction has to stay last, it overrides.
+check('it sits after the identity check and before the correction',
+  page.indexOf('ONE PHOTOGRAPH:') > page.indexOf('FINAL CHECK: the woman in the result is the woman from image 1 and image')
+  && page.indexOf('ONE PHOTOGRAPH:') < page.indexOf('CORRECTION — this image is being generated again'));
+
 console.log(fail ? `\nFAIL — ${fail}` : `\nPASS — ${pass}/${pass}`);
 process.exit(fail ? 1 : 0);
