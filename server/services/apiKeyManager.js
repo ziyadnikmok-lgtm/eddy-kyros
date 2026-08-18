@@ -20,28 +20,56 @@ const _keyAccessLog = [];
 
 class ApiKeyManager {
   constructor() {
-    this._userStores = new Map(); // userId -> store object (lazy-loaded)
+    // Keyed by the store FILE, not the userId -- see the _store getter for why.
+    this._userStores = new Map(); // keys.enc path -> { store, stamp }
     this._derivedKeyCache = new Map();
   }
 
   get _dataFile() { return path.join(getDataDir(), 'keys.enc'); }
 
-  /** Returns (and lazily initialises) the per-user in-memory store */
-  get _store() {
-    const userId = getUserId() || '__anon__';
-    if (!this._userStores.has(userId)) {
-      this._ensureDataDir();
-      const store = this._loadStore();
-      this._migrateGlobalSpendFor(store);
-      this._userStores.set(userId, store);
+  /** A cheap identity for the file on disk: changes whenever somebody writes it. */
+  _stampOf(file) {
+    try {
+      const st = fs.statSync(file);
+      return `${st.mtimeMs}:${st.size}`;
+    } catch {
+      return 'absent';
     }
-    return this._userStores.get(userId);
   }
 
-  /** Test/back-compat hook: replace the current user's in-memory store. */
+  /**
+   * The in-memory store, cached per FILE.
+   *
+   * It used to be cached per userId, which is wrong wherever two contexts resolve to the SAME
+   * file -- which is exactly the desktop app: ELECTRON_USER_DATA pins every caller to one
+   * keys.enc, so a request carrying a user, a queue worker running a job with `userId: null`,
+   * and a startup health check each got their OWN copy of that one file. Saving a new WaveSpeed
+   * key updated the copy belonging to whoever saved it; every other copy went on serving the key
+   * it had loaded at boot, for the life of the process. Measured, 2026-08-18: save OLD, read with
+   * no user (OLD), save NEW as the user, read as the user (NEW), read with no user -- still OLD,
+   * with NEW sitting on disk. That is a top-up that never takes effect and a 401 nobody can
+   * explain.
+   *
+   * Keying by file makes them one object on the desktop and keeps them apart on the web, where
+   * each user's path genuinely differs. The stamp then covers a write from OUTSIDE this process;
+   * our own saves refresh it, so a save never costs a reload, and a setter that touches the store
+   * several times in a row cannot have it swapped underneath it.
+   */
+  get _store() {
+    const file = this._dataFile;
+    const held = this._userStores.get(file);
+    if (held && held.stamp === this._stampOf(file)) return held.store;
+    this._ensureDataDir();
+    const store = this._loadStore();
+    this._migrateGlobalSpendFor(store);
+    this._userStores.set(file, { store, stamp: this._stampOf(file) });
+    return store;
+  }
+
+  /** Test/back-compat hook: replace the in-memory store for the current file. */
   set _store(store) {
-    const userId = getUserId() || '__anon__';
-    this._userStores.set(userId, store);
+    const file = this._dataFile;
+    this._userStores.set(file, { store, stamp: this._stampOf(file) });
   }
 
   /** Migrate old global spend data to the active key entry (one-time) */
@@ -141,7 +169,6 @@ class ApiKeyManager {
     this.checkBudget();
 
     // Audit log — record every decryption event
-    const { getUserId } = require('../userContext');
     const auditEntry = {
       at: new Date().toISOString(),
       userId: getUserId() || '__anon__',
@@ -924,7 +951,11 @@ class ApiKeyManager {
   }
 
   _saveStore() {
-    atomicWriteJSON(this._dataFile, this._store);
+    const file = this._dataFile;
+    const store = this._store;
+    atomicWriteJSON(file, store);
+    // Re-stamp so our own write does not read as somebody else's and force a pointless reload.
+    this._userStores.set(file, { store, stamp: this._stampOf(file) });
   }
 }
 

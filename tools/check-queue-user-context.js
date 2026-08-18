@@ -28,8 +28,13 @@ let pass = 0; let fail = 0;
 const check = (n, ok) => { if (ok) { pass += 1; console.log('  OK   ' + n); } else { fail += 1; console.log('  FAIL ' + n); } };
 
 // --- the two things that actually depend on the context ---------------------------------------
-check('key storage is per user, resolved from AsyncLocalStorage',
-  keys.includes("const userId = getUserId() || '__anon__';"));
+// CHANGED 2026-08-18: the store cache is keyed by the resolved keys.enc PATH, not by the userId.
+// Per-user isolation on the web is unchanged — it comes from the path, which paths.js builds from
+// the context — but keying by userId ALSO split the desktop's single file into one copy per
+// caller, so a newly saved WaveSpeed key never reached the queue worker. See
+// check-key-store-cache.js, which measures both halves.
+check('key storage is keyed by the store file it resolves to',
+  keys.includes('const held = this._userStores.get(file);'));
 check('and in the web deployment so is the data directory itself',
   paths.includes('const userId = getUserId();') && paths.includes('return path.join(WEB_DATA_ROOT, userId);'));
 check('with a no-context fallback that is NOT the user\'s data — hence the empty store',

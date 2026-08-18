@@ -103,6 +103,54 @@ const SEEDREAM_PROMPT_BUDGET = 3000;
 const NANO2_PROMPT_BUDGET = 8000;
 
 /**
+ * RETRY WITH A DIFFERENT PROMPT — the re-roll behind "Retry" (owner, 2026-08-18: "when i select
+ * the result from the picture that are not good i need a retry bottum … but it try a differnet
+ * prompt").
+ *
+ * Regenerate sends the identical request, which is right for a REFUSAL — that is a roll, not a
+ * verdict. It is the wrong tool for a picture that came back ugly: the same words get you the same
+ * kind of ugly, and you pay for it again. So a retry keeps every instruction and adds a block at
+ * the very tail — where both engines weight hardest — that says the last attempt was rejected and
+ * names the thing to do better.
+ *
+ * FOUR of them, cycled by attempt number, each aimed at a different way these pictures go wrong:
+ * her face drifting off the references, plastic skin, mangled hands, and flat phone-flash light.
+ * Pressing retry four times therefore asks four different questions instead of shouting the same
+ * one, which is the entire point of a retry button.
+ */
+const RETRY_NUDGES = [
+  'RETRY — the previous attempt at this exact request was rejected. Every instruction above still '
+  + 'applies; do not reproduce that attempt. Her face must match the reference photos more closely '
+  + 'than it did: bone structure, eye shape and spacing, nose, lip shape and jawline. Render the '
+  + 'face sharply and in full detail.',
+  'RETRY — the previous attempt at this exact request was rejected for looking artificial. Every '
+  + 'instruction above still applies. Render skin as real photographed skin: visible pores, fine '
+  + 'texture, natural oil and sheen, real subsurface tone variation, faint imperfections. No '
+  + 'plastic, waxy, smoothed, airbrushed or beauty-filtered surfaces.',
+  'RETRY — the previous attempt at this exact request was rejected for broken anatomy. Every '
+  + 'instruction above still applies. Give particular care to hands and fingers (five per hand, '
+  + 'correct length and joints), to how limbs connect at shoulder and hip, and to the way the '
+  + 'garment sits on the body where it meets and folds.',
+  'RETRY — the previous attempt at this exact request was rejected for looking flat. Every '
+  + 'instruction above still applies. Photograph it properly: directional light with real falloff '
+  + 'and shadow shape, believable depth of field, natural lens character. No flat on-camera flash '
+  + 'and no evenly-lit CGI render.',
+];
+
+/**
+ * Bolt a retry block onto a finished prompt without blowing the engine's cap.
+ *
+ * Seedream 422s on an over-long prompt and the whole job dies, so when there is no room the BASE
+ * text gives, not the nudge — a retry whose retry instruction got trimmed off is just a repeat.
+ */
+function withRetryNudge(prompt, attempt, budget) {
+  const nudge = RETRY_NUDGES[(Math.max(1, attempt) - 1) % RETRY_NUDGES.length];
+  const room = budget - nudge.length - 2;
+  const base = prompt.length > room ? prompt.slice(0, Math.max(0, room)) : prompt;
+  return `${base}\n\n${nudge}`;
+}
+
+/**
  * A SOURCE SHOT FROM BEHIND, and the failure it exists to stop.
  *
  * The rest of this prompt demands a face: "match exactly: face, head shape, jaw", "render her face
@@ -256,6 +304,9 @@ function liteJob(j) {
     // buttons would be dead on everything from the previous session.
     whoId: j.whoId || null,
     srcId: j.srcId || null,
+    // How many times this one has been retried. Dropped, a reload sent the next press back to the
+    // first retry text — the one that had already failed to fix it.
+    retryN: j.retryN || 0,
     // NOT the full-size `thumb`. That is the whole source photo as a data URL, and persisting one
     // per finished tile is exactly the storage bloat thumbSmall exists to avoid. A restored tile
     // regenerates from the live source when the photo is still on the page, and from thumbSmall
@@ -2026,7 +2077,7 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
    * tile's own copy from this session, then the small JPEG kept for the slider. The last is a
    * degraded input and says so rather than silently producing a softer picture.
    */
-  const rerunJob = useCallback(async (job, { forceEngine = null } = {}) => {
+  const rerunJob = useCallback(async (job, { forceEngine = null, vary = false } = {}) => {
     const who = { id: job.whoId, name: job.charName || '' };
     if (!who.id) { notify('This result predates re-running — regenerate from a fresh match', 'error'); return; }
 
@@ -2056,18 +2107,25 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     runsInFlight.current += 1;
     setRunning(true);
     runIdsRef.current = new Set([...runIdsRef.current, job.id]);
+    // The attempt count lives on the tile so the FIFTH retry asks a different question from the
+    // first. Kept per tile, not per page: two pictures fail for different reasons.
+    const attempt = (job.retryN || 0) + 1;
     // Cleared so the tile does not show the previous failure while it is running again.
-    setJobs((prev) => prev.map((j) => (j.id === job.id ? { ...j, status: 'queued', error: null } : j)));
+    setJobs((prev) => prev.map((j) => (j.id === job.id
+      ? { ...j, status: 'queued', error: null, retryN: vary ? attempt : (j.retryN || 0) } : j)));
     try {
       const { promptFor } = buildPromptFactory();
-      await runOne(src, refs, ratio, promptFor(who, refs.length, src), who, { forceEngine });
+      const budget = engine === 'seedream' ? SEEDREAM_PROMPT_BUDGET : NANO2_PROMPT_BUDGET;
+      const built = promptFor(who, refs.length, src);
+      const prompt = vary ? withRetryNudge(built, attempt, budget) : built;
+      await runOne(src, refs, ratio, prompt, who, { forceEngine });
     } finally {
       runIdsRef.current = new Set([...runIdsRef.current].filter((id) => id !== job.id));
       runsInFlight.current = Math.max(0, runsInFlight.current - 1);
       if (runsInFlight.current === 0) setRunning(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sources, aspectRatio, charThumbs, notify, buildPromptFactory]);
+  }, [sources, aspectRatio, charThumbs, notify, buildPromptFactory, engine]);
 
   const handleMatch = async () => {
     if (!sources.length) { notify('Add at least one source photo', 'error'); return; }
@@ -2493,6 +2551,32 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     [filedJobs, pickedJobs],
   );
   const [movingTo, setMovingTo] = useState('');
+
+  /**
+   * RETRY THE TICKED ONES, with a different instruction each time.
+   *
+   * Owner, 2026-08-18: "when i select the result from the picture that are not good i need a retry
+   * bottum". Looking down a grid of twenty and marking the four duds is how you actually judge a
+   * batch, and until now the only thing you could do with that selection was file it.
+   *
+   * It acts ONLY on what is ticked — unlike Send, which falls back to everything filed. "Send them
+   * all" is a sane default; "spend money on all of them again" is not, so with nothing ticked this
+   * button is not there to press.
+   *
+   * allSettled, not all: one retry that throws must not abandon the other three, and each tile
+   * already shows its own outcome.
+   */
+  const [retrying, setRetrying] = useState(false);
+  const retryPicked = useCallback(async () => {
+    const picked = filedJobs.filter((j) => pickedJobs.has(j.id));
+    if (!picked.length) { notify('Tick the results that came out badly first', 'error'); return; }
+    setRetrying(true);
+    try {
+      await Promise.allSettled(picked.map((job) => rerunJob(job, { vary: true })));
+    } finally {
+      setRetrying(false);
+    }
+  }, [filedJobs, pickedJobs, rerunJob, notify]);
 
   /**
    * SMART SELECTING — by count and by age, the same two questions the Library answers.
@@ -3322,6 +3406,16 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
                   </button>
                 )}
                 <span className="ml-auto flex flex-wrap gap-2">
+                  {/* Only with a selection — see retryPicked for why this one does not default to
+                      everything the way the Send buttons do. */}
+                  {pickedJobs.size > 0 && (
+                    <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs !border-sky-500/40 !text-sky-200"
+                      disabled={retrying}
+                      title="Make these again with a different instruction — the same photos and the same character. Each press asks for something different: face, skin, hands, light."
+                      onClick={retryPicked}>
+                      {retrying ? 'Retrying…' : `Retry ${pickedJobs.size}`}
+                    </Btn>
+                  )}
                   <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs"
                     disabled={!!movingTo}
                     onClick={() => moveResultsTo('eddy-library')}>
@@ -3362,10 +3456,6 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
                       : <Badge color="zinc">Queued</Badge>}
                     {/* WHOSE result this is. With several characters ticked the same source photo
                         appears once per woman, and the thumbnails are identical — without the name
-                        the only way to tell them apart is to open each one. */}
-                    {job.charName && <span className="text-[0.625rem] font-semibold text-rose-300">{job.charName}</span>}
-                    {/* WHOSE result this is. With several characters ticked the same source photo
-                        appears once per woman and the thumbnails are identical -- without the name
                         the only way to tell them apart is to open each one. */}
                     {job.charName && <span className="text-[0.625rem] font-semibold text-rose-300">{job.charName}</span>}
                     {job.status === 'done' && typeof job.cost === 'number' && <span className="text-[0.625rem] text-zinc-600 font-mono">${job.cost.toFixed(3)}</span>}
@@ -3476,6 +3566,17 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
                           title="Make this one again with the current settings — the same source photo and the same character"
                           className="text-[0.625rem] text-zinc-400 underline hover:text-zinc-200 cursor-pointer">
                           Regenerate
+                        </button>
+                        {/* RETRY — the same picture, asked for differently. Regenerate repeats the
+                            request word for word, which gets you the same kind of picture; this
+                            adds a line at the tail naming what to do better, and a different one
+                            on each press. One bad tile is the common case, so it is here as well
+                            as on the selection bar. */}
+                        <button type="button"
+                          onClick={(e) => { e.stopPropagation(); rerunJob(job, { vary: true }); }}
+                          title="Not good? Make it again with a different instruction — same photo, same character. Each press changes what it asks for: face, skin, hands, light."
+                          className="text-[0.625rem] text-sky-300/80 underline hover:text-sky-200 cursor-pointer">
+                          Retry{job.retryN ? ` ${job.retryN + 1}` : ''}
                         </button>
                         {/* REMOVE takes it off this panel only. The picture stays in the gallery and
                             in whichever library it was filed into — this is the queue's exit, not a

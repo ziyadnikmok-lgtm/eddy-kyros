@@ -97,7 +97,10 @@ check('and the WaveSpeed one forces the engine', pm.includes("rerunJob(job, { fo
 
 // 3. REGENERATE, on a finished tile.
 check('a finished tile can be made again', pm.includes('Regenerate'));
-check('through the same path as the retries', pm.includes('const rerunJob = useCallback(async (job, { forceEngine = null } = {}) => {'));
+check('through the same path as the retries', pm.includes('const rerunJob = useCallback(async (job, { forceEngine = null, vary = false } = {}) => {'));
+// And a fourth way to run it again, added 2026-08-18: same picture, DIFFERENT instruction, for a
+// result that came back ugly rather than refused. See check-photomatch-retry.js.
+check('a result that is merely bad can be retried differently', pm.includes('rerunJob(job, { vary: true })'));
 // The character comes from the id stored on the tile — reading whatever is ticked NOW would quietly
 // swap the woman on a regenerate.
 check('the character comes from the tile, not the current selection',
