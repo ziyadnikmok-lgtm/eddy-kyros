@@ -386,13 +386,52 @@ app.get('/api/logs', (req, res) => {
   });
 });
 
+/**
+ * IS THE RUNNING SERVER OLDER THAN THE CODE ON DISK?
+ *
+ * Electron watches client/dist and reloads the window on every rebuild, so the CLIENT is always
+ * current. The server is not: server/*.js is read once at boot. On 2026-08-19 that asymmetry cost
+ * most of a day — the owner was testing fixes against a process that had booted 25 hours earlier,
+ * so a new route 404'd, a swallowed catch hid it, and the bug looked unfixed. Three rounds of
+ * "still same" were all the same stale process.
+ *
+ * Cheapest honest signal: the newest mtime under server/, compared with when this process started.
+ * Computed once per health call, which is not hot, and never fatal — an unreadable directory just
+ * means the check says nothing rather than breaking the endpoint.
+ */
+const BOOT_MS = Date.now();
+function serverCodeChangedAfterBoot() {
+  const dir = path.join(__dirname);
+  let newest = 0;
+  const walk = (d, depth) => {
+    if (depth > 3) return;
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+      const full = path.join(d, e.name);
+      if (e.isDirectory()) walk(full, depth + 1);
+      else if (e.name.endsWith('.js')) {
+        const m = fs.statSync(full).mtimeMs;
+        if (m > newest) newest = m;
+      }
+    }
+  };
+  try { walk(dir, 0); } catch { return null; }
+  // A second of slack: the boot itself touches nothing, but clocks and copies are not exact.
+  return newest > BOOT_MS + 1000 ? { staleSinceMs: Math.round(newest - BOOT_MS), newestMtime: new Date(newest).toISOString() } : null;
+}
+
 app.get('/api/health', (_req, res) => {
+  const stale = serverCodeChangedAfterBoot();
   res.json({
     success: true,
     data: {
       status: 'ok',
       timestamp: new Date().toISOString(),
       version: require('../package.json').version,
+      // Present ONLY when server code on disk is newer than this process — the UI shows a restart
+      // prompt on it. Absent is the normal case and costs the client nothing.
+      staleServer: stale,
+      bootedAt: new Date(BOOT_MS).toISOString(),
       uptime: Math.round(process.uptime()),
       memoryMB: Math.round(process.memoryUsage().rss / (1024 * 1024)),
       imageStore: imageStore.stats(),

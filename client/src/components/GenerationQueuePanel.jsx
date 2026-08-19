@@ -24,8 +24,22 @@ export default function GenerationQueuePanel({ className = '' }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
+  /**
+   * IS THE SERVER RUNNING THE CODE THAT IS ON DISK?
+   *
+   * Electron reloads this window on every client rebuild, so the UI is always current. The server
+   * is not — server/*.js is read once at boot. On 2026-08-19 that cost most of a day: fixes were
+   * tested against a process 25 hours old, so a newly added route 404'd, the caller's catch
+   * swallowed it, and the bug read as unfixed. Three rounds of "still same" were one stale process.
+   *
+   * Nothing in the app said so. Now it does, on the bar that is already on every page.
+   */
+  const [staleServer, setStaleServer] = useState(null);
 
   const load = useCallback(async () => {
+    // Rides along with the poll that already runs — no new timer, no extra request when idle.
+    fetch('/api/health').then((r) => r.json()).then((h) => setStaleServer(h?.data?.staleServer || null))
+      .catch(() => { /* offline or restarting: say nothing rather than cry wolf */ });
     try {
       const r = await jobsApi.list();
       setData(r?.data ?? r);
@@ -46,8 +60,20 @@ export default function GenerationQueuePanel({ className = '' }) {
 
   const counts = data?.counts;
   const failed = data?.failed || [];
-  // Nothing has ever been queued — say nothing at all.
-  if (!counts || (!counts.active && !counts.failed && !counts.unfiled)) return null;
+  // A stale server matters whether or not anything is queued, and this bar is otherwise hidden on a
+  // quiet page — which is exactly where a silent 404 goes unnoticed longest.
+  const staleBanner = staleServer ? (
+    <div className="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+      <span className="text-xs font-semibold text-amber-200">Server code changed since it started</span>
+      <span className="text-[0.6875rem] text-amber-200/80">
+        The window reloads itself on a rebuild; the server does not. Quit Kyros completely and reopen it —
+        until then anything fixed server-side is still running the old code.
+      </span>
+    </div>
+  ) : null;
+
+  // Nothing has ever been queued — say nothing at all, unless the server is stale.
+  if (!counts || (!counts.active && !counts.failed && !counts.unfiled)) return staleBanner;
 
   const retryAll = async () => {
     setBusy(true);
@@ -108,7 +134,9 @@ export default function GenerationQueuePanel({ className = '' }) {
   ) : null);
 
   return (
-    <div className={cn('rounded-xl border border-white/[0.07] bg-black/30 px-3 py-2', className)}>
+    <div className={className}>
+    {staleBanner}
+    <div className={cn('rounded-xl border border-white/[0.07] bg-black/30 px-3 py-2')}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[0.6875rem] font-semibold uppercase tracking-wider text-zinc-500">Queue</span>
         <Pill n={counts.queued} label="waiting" tone="bg-zinc-500/20 text-zinc-300" />
@@ -156,6 +184,7 @@ export default function GenerationQueuePanel({ className = '' }) {
           ))}
         </div>
       )}
+    </div>
     </div>
   );
 }

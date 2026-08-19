@@ -247,7 +247,12 @@ check('it shows what is waiting, rendering, to file and failed',
 check('it offers the bulk retry', panel.includes('jobsApi.retryAllFailed()'));
 check('and a per-job one', panel.includes('jobsApi.retry(id)'));
 check('failures show their REASON, not just a count', panel.includes('j.error ?') && panel.includes('j.cardName || j.feature'));
-check('it hides entirely when the queue is empty', panel.includes('if (!counts || (!counts.active && !counts.failed && !counts.unfiled)) return null;'));
+// CHANGED 2026-08-19: still hides the QUEUE when empty, but a stale-server warning outlives that
+// early return — a quiet page is exactly where a silent 404 from an un-restarted server goes
+// unnoticed longest. See check-stale-server.js.
+check('it hides the queue when empty', panel.includes('if (!counts || (!counts.active && !counts.failed && !counts.unfiled)) return staleBanner;'));
+check('but a stale-server warning still shows on a quiet page',
+  panel.includes('const staleBanner = staleServer ? (') && panel.includes('return staleBanner;'));
 check('and polls slowly when nothing is moving', panel.includes('active ? BUSY_MS : IDLE_MS'));
 check('a failed poll keeps the last view rather than flashing an error',
   panel.includes('// Signed out, offline, or the server is restarting.'));
