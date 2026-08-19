@@ -132,12 +132,31 @@ router.post('/retry-failed', (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/** Discard failed jobs instead of retrying them — same scope as retry-failed, opposite action. */
+/**
+ * Discard failed jobs instead of retrying them.
+ *
+ * ?feature=<name> limits it to one page's rows. Without it this was account-wide, so dismissing
+ * Photo Match's 7 failed also deleted Eddy's 20 (2026-08-19).
+ */
 router.delete('/failed', (req, res, next) => {
   try {
     const userId = userIdOf(req);
-    const removed = jobQueue.deleteAllFailed(userId);
+    const feature = typeof req.query.feature === 'string' && req.query.feature ? req.query.feature : null;
+    const removed = jobQueue.deleteAllFailed(userId, feature);
     res.json({ success: true, data: { removed, counts: jobQueue.counts(userId) } });
+  } catch (err) { next(err); }
+});
+
+/**
+ * ONE failed job — what the per-tile dismiss needs so the tile does not come back on refresh.
+ *
+ * Declared BEFORE '/:id' or Express would match this path against that route first.
+ */
+router.delete('/failed/:id', (req, res, next) => {
+  try {
+    const userId = userIdOf(req);
+    const removed = jobQueue.deleteFailedJob(userId, req.params.id);
+    res.json({ success: true, data: { removed } });
   } catch (err) { next(err); }
 });
 

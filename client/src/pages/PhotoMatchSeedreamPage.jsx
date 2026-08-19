@@ -438,6 +438,53 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
   // every generate would fail. This is what tools/check-tdz-deps.js exists for.
   const ownRefs = pair ? 'their own reference images' : refs;
 
+  /**
+   * ONE REFERENCE IS A DIFFERENT JOB FROM THREE.
+   *
+   * Owner, 2026-08-19: "some character have 3 image character and some only 1 so this prompt need
+   * to adapt to it". Measured: apart from renumbering image 1 to images 1-3, the two prompts were
+   * BYTE-IDENTICAL. Every clause was written as though several photos exist, and two of them are
+   * actively wrong with one:
+   *
+   *   - "her body, figure and chest come from image 1 at their true size" — a single face-only
+   *     headshot contains no body, so there is nothing to take it from and the model fills the gap
+   *     from the stand-in. The page already warns about this in the UI ("for her FIGURE to carry,
+   *     at least one of her reference photos has to show her body"); the prompt never said it.
+   *   - "when in doubt copy images 1-3" — with one photo there is nothing to cross-check between.
+   *     The instruction should be to hold that photo harder, not to average across a set.
+   *
+   * The fix is scoped to the single case (see the note on refEvidence for why the multi half was
+   * not worth its characters): say the one photo is the whole of the evidence, and that whatever it
+   * does not show must NOT be borrowed from the source. That is the clause that matters — the
+   * difference between "I cannot see her body, so I will use the stand-in's" and "I cannot see her
+   * body, so I will not copy anyone's".
+   */
+  const single = !pair && n === 1;
+  /**
+   * Declared INSIDE the builder on purpose.
+   *
+   * Eight suites lift this function out of the page with `new Function` and run it headless. A
+   * module-level constant it closes over has to be hand-injected by every one of them, and the day
+   * it was one, all eight threw ReferenceError at once. Anything the builder needs lives in the
+   * builder.
+   */
+  const ONLY_PHOTO_MARKER = 'ONLY REFERENCE: ';
+  /**
+   * Only the SINGLE case earns prompt text.
+   *
+   * Both halves were written first and the multi-reference half cost ~200 characters to tell the
+   * model something it already does — several photos of one woman are combined without being asked.
+   * On Seedream that pushed the everyday prompt 155 over the 3,000 cap, which buys a dropped
+   * paragraph elsewhere. The single case is the one with a real failure behind it, so it is the one
+   * that gets the words.
+   */
+  const refEvidence = single
+    // Trimmed to the operative sentence: the Seedream cap is 3,000 and this case starts from a
+    // higher base than the multi one. The "only photograph" preamble was scene-setting; the clause
+    // that changes the picture is where NOT to get the rest of her from.
+    ? `${ONLY_PHOTO_MARKER}${refs} is the only photograph of ${who} — whatever it does not show of her, do NOT take from ${src}.`
+    : null;
+
   // Identity comes from the refs. Each allow* flag drops its clause so a preset that overrides
   // that attribute (hair/body) doesn't fight the base prompt. Hair/body default ON = from refs.
   // When faceless, the face is intentionally hidden — don't ask the model to match it here (the
@@ -537,7 +584,10 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
     // the model to average eight photos of two different women into one look worn by both.
     pair
       ? `Match each woman to HER OWN reference images — never the other's, never an average of the two: ${identity}. Where ${src} disagrees, the reference images win.`
-      : `From ${refs}, match exactly: ${identity}. Where ${src} disagrees, ${refs} win.`,
+      : `From ${refs}, match exactly: ${identity}. Where ${src} disagrees, ${refs} ${single ? 'wins' : 'win'}.`,
+    // Its OWN paragraph, so the budget loop can drop it whole rather than it riding along inside
+    // the identity line where nothing can remove it — see the droppable list below.
+    refEvidence,
     `From ${src}: ${scene}.`,
     // #4 — camera as its own instruction. Seedream copies the pose but defaults to a flattering
     // eye-level portrait crop unless the SHOT itself is pinned; this is what "same camera angle"
@@ -747,7 +797,7 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
     parts.push(`FINAL — HIGHEST PRIORITY, overrides everything above: ${her} ${pair ? 'faces are' : 'face is'} intentionally OUT of the shot — ${backView ? 'she is facing away and stays that way' : 'cropped above the shoulders, turned away, or hidden by hair/hand/angle'} so no recognisable face is visible. Do NOT invent or show a face. ${pair ? 'Their bodies, hair, skin and proportions' : 'Her body, hair, skin and proportions'} still come from ${ownRefs}${allowBodyChange ? '' : ' at their true size — never averaged or shrunk toward ' + src}.`);
   } else {
     const finalLock = [
-      `FINAL — HIGHEST PRIORITY, overrides everything above: render ${person} from scratch as ${who} from ${ownRefs} — ${pair ? 'faces' : 'face'}, hair at her own colour and length, skin and whole ${pair ? 'bodies' : 'body'}${pair ? `, ${countWord} distinct women in the frame` : ''}. ${pair ? 'The women' : 'The woman'} in ${src} ${pair ? 'are anonymous stand-ins: discard them' : 'is an anonymous stand-in: discard her'} entirely, ${pair ? 'faces' : 'face'} and ${pair ? 'figures' : 'figure'} alike, and when in doubt copy ${pair ? 'the reference images' : refs}.`,
+      `FINAL — HIGHEST PRIORITY, overrides everything above: render ${person} from scratch as ${who} from ${ownRefs} — ${pair ? 'faces' : 'face'}, hair at her own colour and length, skin and whole ${pair ? 'bodies' : 'body'}${pair ? `, ${countWord} distinct women in the frame` : ''}. ${pair ? 'The women' : 'The woman'} in ${src} ${pair ? 'are anonymous stand-ins: discard them' : 'is an anonymous stand-in: discard her'} entirely, ${pair ? 'faces' : 'face'} and ${pair ? 'figures' : 'figure'} alike, and when in doubt copy ${pair ? 'the reference images' : (single ? `${refs} — it is the only record of her, so follow it rather than guessing` : refs)}.`,
       // Body/chest: pinned to the refs UNLESS a size chip is driving it (then the chip, appended
       // after this whole prompt, wins and re-pinning here would fight it).
       allowBodyChange
@@ -897,7 +947,11 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
       // flag on — because faceless mode does not emit MAKEUP or EYES TO CAMERA, so the pair
       // loses the two droppables it would otherwise spend first.
       'NO TATTOOS:',
-      'The face visible in'];
+      'The face visible in',
+      // The single-reference note goes LAST of all, so it is only lost when everything else already
+      // has been. It is the difference between a missing body being invented from the stand-in and
+      // being inferred from her one photo — worth keeping until there is genuinely no room.
+      ONLY_PHOTO_MARKER];
     for (const marker of droppable) {
       if (joined().length <= budget) break;
       const i = parts.findIndex((t) => typeof t === 'string' && t.startsWith(marker));
@@ -1526,7 +1580,19 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
       const out = await blurFound(incoming, face);
       return { dataUrl: out.dataUrl, blurred: out.blurred, present: face.present };
     };
-    const useWorkers = poolAvailable() && take.length > 1;
+    /**
+     * ONE PHOTO GOES TO A WORKER TOO.
+     *
+     * `take.length > 1` excluded the single-photo case — which is the one that happens constantly:
+     * paste a screenshot, drag one pin in. Those took the main-thread path and froze the window for
+     * the ~945ms the cascade sweep costs, which reads as "the drag did not work, and the app is
+     * slow" (owner, 2026-08-19). runBatch handles a batch of one perfectly well; the guard bought
+     * nothing but a frozen UI on the commonest action in the page.
+     *
+     * The pool is warmed on mount (see the effect below) so the first photo does not pay worker
+     * startup on top of the sweep.
+     */
+    const useWorkers = poolAvailable();
     if (useWorkers) setScanning({ done: 0, total: take.length });
     const results = useWorkers
       ? await runBatch(take, {
@@ -1591,7 +1657,8 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
     let blurred = 0; let missed = 0;
     // On the workers, same as intake — this is the button most likely to be pressed on 500 photos,
     // and on the main thread that is eight minutes of frozen window.
-    const useWorkers = poolAvailable() && targets.length > 1;
+    // Same reasoning as the intake path above: a batch of one belongs on a worker as much as ten.
+    const useWorkers = poolAvailable();
     if (useWorkers) setScanning({ done: 0, total: targets.length });
     const out = useWorkers
       ? await runBatch(targets.map((s) => s.dataUrl), {
@@ -1646,6 +1713,15 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
   }, [notify]);
 
   const unblurredCount = sources.filter((s) => !s.blurred).length;
+
+  /**
+   * WARM THE WORKERS ON MOUNT.
+   *
+   * Spawning them costs real milliseconds, and paying it on the first paste puts it right where it
+   * is most visible — between dropping a photo and seeing it. Doing it when the page opens means
+   * the first photo hits a pool that is already up. Idempotent: poolAvailable spawns once.
+   */
+  useEffect(() => { poolAvailable(); }, []);
 
   useEffect(() => {
     const onPaste = async (e) => {
@@ -2589,10 +2665,24 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
    * to scroll past, and "Clear" throws away the finished pictures with them (owner, 2026-08-17).
    * Dismissing only drops the tile from this page; nothing on the server or in the library moves.
    */
+  /**
+   * ONE TILE, AND THE ROW BEHIND IT.
+   *
+   * This used to remove the tile only. The resume effect reads every failed row back from the
+   * server on each load, so a dismissed tile returned on the next refresh, every time (owner,
+   * 2026-08-19: "i click clear but it disappear but when it refresh it come back"). Deleting the
+   * row is what makes the dismissal stick; the endpoint is FAILED-only and scoped to the caller,
+   * so it cannot cancel live work.
+   *
+   * Best effort, and the tile goes either way: a dismissal that needs the network to succeed is
+   * worse than one that occasionally leaves a row behind.
+   */
   const dismissJob = useCallback((id) => {
+    const job = jobs.find((j) => j.id === id);
     setJobs((prev) => prev.filter((j) => j.id !== id));
     setPickedJobs((cur) => { const next = new Set(cur); next.delete(id); return next; });
-  }, []);
+    if (job?.jobId) jobsApi.deleteFailed(job.jobId).catch(() => { /* the tile is gone either way */ });
+  }, [jobs]);
   const dismissAllFailed = useCallback(async () => {
     const n = jobs.filter((j) => j.status === 'failed').length;
     if (!n) return;
@@ -2609,7 +2699,9 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
      * asked for. Worth knowing it is account-wide rather than this tab's rows — there is no
      * per-job delete endpoint, and the single-tile × below is therefore page-only.
      */
-    try { await jobsApi.deleteAllFailed(); } catch { /* the tiles are gone either way */ }
+    // Scoped to THIS page's feature since 2026-08-19: it was account-wide, so dismissing Photo
+    // Match's failures also deleted Eddy's — 7 here and 20 there, at the time it was reported.
+    try { await jobsApi.deleteAllFailed(FEATURE); } catch { /* the tiles are gone either way */ }
     notify(`${n} failed result${n === 1 ? '' : 's'} dismissed — finished pictures untouched`, 'info');
   }, [jobs, notify]);
   const retryFailed = useCallback(async () => {

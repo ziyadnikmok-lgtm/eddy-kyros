@@ -23,6 +23,12 @@
 //      now names the CROP and settles that conflict. See check-exact-recreate.js, which carries
 //      the measurement — the source photo sent and the widened shot that came back.
 //
+//      RE-PINNED 2026-08-19 (second time that day): a character with ONE reference photo was
+//      getting a prompt byte-identical to a three-reference one apart from the numbering, so
+//      "her body comes from image 1" was said about a face-only headshot that contains no body.
+//      These fixtures are refCount 4, so what moved them is the plural/singular verb agreement
+//      that came with it. See check-reference-count.js.
+//
 //   2. THE PAIR PROMPT MUST SAY THE THINGS THAT MAKE IT WORK. Naming two women is not enough —
 //      the model takes its count from the scene and averages two reference sets into one face
 //      unless told otherwise, and both failures look identical in the output ("it ignored the

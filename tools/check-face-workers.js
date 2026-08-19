@@ -77,11 +77,19 @@ check('the same JPEG quality blurRegion uses — the source is uploaded, not arc
 check('a failed worker photo reports ok:false rather than a silent pass-through', worker.includes("self.postMessage({ id, ok: false"));
 
 // --- the page ---------------------------------------------------------------------------------------
-check('intake runs the batch through the pool', page.includes('const useWorkers = poolAvailable() && take.length > 1;'));
+// CHANGED 2026-08-19. This used to require MORE THAN ONE photo, on the reasoning below that a
+// single one "is not worth the message round-trip". Measured, that is backwards: the round-trip is
+// sub-millisecond and the cascade sweep is ~945ms, so the guard bought a frozen window on the
+// commonest action there is — paste a screenshot, drag one pin in. It read as "the drag did not
+// work, and the app is slow" (owner, 2026-08-19).
+check('intake runs the batch through the pool', page.includes('const useWorkers = poolAvailable();'));
 check('Blur all faces does too — the button most likely to meet 500 photos',
-  page.includes('const useWorkers = poolAvailable() && targets.length > 1;'));
-// One photo is not worth the message round-trip, and the pool may not exist at all.
-check('a single photo stays on the main thread', page.includes('take.length > 1'));
+  (page.match(/const useWorkers = poolAvailable\(\);/g) || []).length === 2);
+// On the CODE, not the prose — the comment above the fix quotes the old guard by name.
+check('a single photo is NOT excluded any more',
+  !page.includes('poolAvailable() && take.length > 1') && !page.includes('poolAvailable() && targets.length > 1'));
+// Spawning costs real milliseconds; paying it on the first paste puts it exactly where it shows.
+check('the pool is warmed on mount', page.includes('useEffect(() => { poolAvailable(); }, []);'));
 check('and anything the pool cannot take falls back rather than being skipped',
   page.includes('fallback: onMainThread') && page.includes('fallback: (url) => autoBlurFace(url),'));
 

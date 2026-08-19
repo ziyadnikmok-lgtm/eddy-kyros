@@ -361,7 +361,10 @@ export const jobs = {
   markFiled: (id) => request(`/jobs/${id}/filed`, { method: 'POST' }),
   retry: (id) => request(`/jobs/${id}/retry`, { method: 'POST' }),
   retryAllFailed: () => request('/jobs/retry-failed', { method: 'POST' }),
-  deleteAllFailed: () => request('/jobs/failed', { method: 'DELETE' }),
+  // feature-scoped: dismissing one page's failed rows must not empty another page's (2026-08-19).
+  deleteAllFailed: (feature) => request(`/jobs/failed${feature ? `?feature=${encodeURIComponent(feature)}` : ''}`, { method: 'DELETE' }),
+  // One row, so the per-tile dismiss survives a refresh instead of the resume reading it back.
+  deleteFailed: (id) => request(`/jobs/failed/${id}`, { method: 'DELETE' }),
   cancelQueued: () => request('/jobs/cancel-queued', { method: 'POST' }),
 };
 

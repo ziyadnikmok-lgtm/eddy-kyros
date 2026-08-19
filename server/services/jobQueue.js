@@ -325,9 +325,38 @@ function retryAllFailed(userId) {
  * anything with a task_id — see the ORPHAN WINDOW note at the top of this file), so deleting one
  * discards nothing that was ever paid for.
  */
-function deleteAllFailed(userId) {
-  const res = db.prepare(`DELETE FROM generation_jobs WHERE user_id = ? AND status = ?`)
-    .run(userId, STATUS.FAILED);
+function deleteAllFailed(userId, feature = null) {
+  /**
+   * FEATURE-SCOPED, since 2026-08-19.
+   *
+   * It was user-wide, so "Dismiss 7 failed" on Photo Match also deleted Eddy's failed rows —
+   * measured at the time of the report: 7 failed on photoMatchNB2 and 20 on eddy, and the page's
+   * own top bar said "27 FAILED" while its panel said 7, because the count came from the whole
+   * account and the tiles came from one feature. Clearing one page must not empty another's.
+   *
+   * Omitting the feature keeps the old behaviour for any caller that means the whole account.
+   */
+  const res = feature
+    ? db.prepare(`DELETE FROM generation_jobs WHERE user_id = ? AND status = ? AND feature = ?`)
+      .run(userId, STATUS.FAILED, feature)
+    : db.prepare(`DELETE FROM generation_jobs WHERE user_id = ? AND status = ?`)
+      .run(userId, STATUS.FAILED);
+  return res.changes;
+}
+
+/**
+ * ONE failed job, by id — what the per-tile × has always needed.
+ *
+ * Without it the × was page-only: it removed the tile and left the row, and the resume effect
+ * reads every failed row back on the next load, so the tile returned every refresh (owner,
+ * 2026-08-19: "i click clear but it disappear but when it refresh it come back").
+ *
+ * FAILED only, and only the caller's own row. A queued or running job is not something a dismiss
+ * button should be able to cancel, and a done row holds a delivered picture.
+ */
+function deleteFailedJob(userId, id) {
+  const res = db.prepare(`DELETE FROM generation_jobs WHERE id = ? AND user_id = ? AND status = ?`)
+    .run(id, userId, STATUS.FAILED);
   return res.changes;
 }
 
@@ -431,6 +460,7 @@ module.exports = {
   retry,
   retryAllFailed,
   deleteAllFailed,
+  deleteFailedJob,
   cancelQueued,
   counts,
   get,

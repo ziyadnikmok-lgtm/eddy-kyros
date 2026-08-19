@@ -213,8 +213,16 @@ check('the reason that guard uses nsfw and not wantsNude is recorded',
  * 5,386 failed, and nothing between was ever tried. If the real cap is 4,000 this whole problem is
  * a config line.
  */
-check(`the two smaller variants still fit unbounded (scene ${p.length}, hers ${hers.length})`,
-  p.length <= BUDGET && hers.length <= BUDGET);
+// 'hers' joined exact+outfit over the cap on 2026-08-19, when the single-reference note landed —
+// this BASE is refCount 1, which is exactly the case that note applies to. Unbounded it is 3,050;
+// BOUNDED it is 2,825 AND still carries the note, because the note is its own paragraph and the
+// drop loop ranks it last rather than slicing a tail. Bounded is what is actually sent.
+check(`the scene variant still fits unbounded (${p.length})`, p.length <= BUDGET);
+check(`hers is over unbounded (${hers.length}) but fits once bounded`,
+  hers.length > BUDGET
+  && buildMatchInstruction({ ...BASE, outfitFromChar: true, budget: BUDGET }).length <= BUDGET);
+check('and the single-reference note survives that squeeze — it is not the first thing to go',
+  buildMatchInstruction({ ...BASE, outfitFromChar: true, budget: BUDGET }).includes('ONLY REFERENCE'));
 check(`exact+outfit is over the Seedream cap and drops SCENE AND CAMERA (${exactHers.length})`,
   exactHers.length > BUDGET
   && !buildMatchInstruction({ ...BASE, exactRecreate: true, outfitFromChar: true, budget: BUDGET }).includes('SCENE AND CAMERA:'));
