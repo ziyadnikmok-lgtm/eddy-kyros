@@ -203,6 +203,33 @@ async function editRaw({ apiKey, images, prompt, aspectRatio, imageSize = '2K', 
   };
 
   const parts = [];
+  /**
+   * THE PROMPT LEADS, and this is what makes the recreate exact.
+   *
+   * Every part was pushed images-first with the whole brief last, because that is the order the
+   * WaveSpeed payload happens to have. Measured on the live API (2026-08-19), same four images,
+   * same prompt text, ONLY the part order varied:
+   *
+   *   prompt LAST   -> the camera pulls back and re-composes the shot. The source was a tight
+   *                    close-up with her arms crossed overhead; the output was a three-quarter
+   *                    portrait that shares almost no framing with it.
+   *   prompt FIRST  -> the framing comes back exactly: same crop, same arms, same head tilt, same
+   *                    couch. The instruction is read as a brief for the pictures that follow
+   *                    rather than as commentary on pictures already consumed.
+   *
+   * That is the owner's "exact recreate is not doing exact recreate" on this engine, and it is a
+   * transport-level bug rather than a wording one — no amount of rephrasing the brief helps when
+   * it arrives after the model has already decided what it is looking at.
+   *
+   * It is repeated at the TAIL as well, unchanged. Both engines weight the end, and the locks that
+   * live there (exact recreate, one frame) were written on that assumption; dropping the trailing
+   * copy to save tokens would quietly weaken them.
+   *
+   * NOTE, measured in the same run: this does NOT recover identity. The returned woman still is
+   * not the character, with the prompt first, last, or both. Identity is a separate fault.
+   */
+  parts.push({ text: String(prompt).trim() });
+
 
   /**
    * A LABEL PER IMAGE, for callers whose images are not one identity block and one scene.
