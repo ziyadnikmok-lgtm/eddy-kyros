@@ -533,13 +533,30 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
   ].filter(Boolean).join(', ');
 
   const parts = [
-    // Roles by image index, stated up front and hard.
+    /**
+     * ROLES BY IMAGE INDEX — and BOTH roles, not just the forbidden one.
+     *
+     * Owner, 2026-08-19: "grace have 3 image of her so need say image 4 is the one we try recreate".
+     * Measured on a real payload: the scene photo is named seventeen times and NOT ONCE introduced
+     * as the photograph being recreated. Every mention is negative — "a DIFFERENT woman",
+     * "FORBIDDEN from image 4", "discard her entirely". The first thing ever said about it is what
+     * not to take from it.
+     *
+     * With ONE reference that is survivable: the scene is image 2, there are only two pictures, and
+     * which is which is obvious. With three it is image 4 — a number that only appears after three
+     * others — and the model has to infer that this unnamed fourth picture is the thing to rebuild.
+     * That is exactly the prompt the owner's own Arya example reads clearly and Grace's does not.
+     *
+     * So the source photo gets a positive definition FIRST: it is the photograph being recreated.
+     * The "different woman, never an identity reference" clause still follows — it is true and it
+     * is needed — but it is now the second thing said about that image rather than the only thing.
+     */
     pair
       // Which images are WHOSE. Without this the model has one undifferentiated pile of faces and
       // averages them into a single woman used twice — the exact failure NO BLENDING guards, but
       // between the two characters rather than against the stand-in.
-      ? `${cast.map((c) => `${c.from === c.to ? `image ${c.from}` : `images ${c.from}-${c.to}`} = ${c.name}`).join('. ')}. Those are the ONLY source for the people. ${src} = a photograph of DIFFERENT people, used ONLY for its scene — NEVER an identity reference.`
-      : `${refs} = ${who} = the ONLY source for the person. ${src} = a photograph of a DIFFERENT woman, used ONLY for its scene — NEVER an identity reference.`,
+      ? `${cast.map((c) => `${c.from === c.to ? `image ${c.from}` : `images ${c.from}-${c.to}`} = ${c.name}`).join('. ')}. Those are the ONLY source for the people. ${src.toUpperCase()} IS THE PHOTO TO RECREATE — its scene is the target; the DIFFERENT people in it are NEVER an identity reference.`
+      : `${refs} = ${who} = the ONLY source for the person. ${src.toUpperCase()} IS THE PHOTOGRAPH YOU ARE RECREATING — its scene is the target, and the DIFFERENT woman in it is NEVER an identity reference.`,
     /**
      * HOW MANY COME OUT, WHO THEY ARE, AND THAT THEY ARE NOT EACH OTHER — one paragraph.
      *

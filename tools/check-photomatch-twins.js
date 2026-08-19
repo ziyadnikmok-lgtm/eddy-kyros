@@ -29,6 +29,10 @@
 //      These fixtures are refCount 4, so what moved them is the plural/singular verb agreement
 //      that came with it. See check-reference-count.js.
 //
+//      RE-PINNED 2026-08-19 (third): the source photo is now introduced as "IMAGE N IS THE
+//      PHOTOGRAPH YOU ARE RECREATING" rather than only as "a DIFFERENT woman". It was defined
+//      purely by what not to take from it, which reads clearly at image 2 and not at image 4.
+//
 //   2. THE PAIR PROMPT MUST SAY THE THINGS THAT MAKE IT WORK. Naming two women is not enough —
 //      the model takes its count from the scene and averages two reference sets into one face
 //      unless told otherwise, and both failures look identical in the output ("it ignored the

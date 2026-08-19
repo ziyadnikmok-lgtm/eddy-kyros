@@ -135,7 +135,13 @@ check('a body chip does NOT loosen the face', /NO BLENDING/.test(bodyFree));
 
 const multi = buildMatchInstruction({ ...BASE, refCount: 4 });
 check('several references are addressed as a range', /images 1-4 = Chloe/.test(multi));
-check('and the source index moves with them', /image 5 = a photograph of a DIFFERENT woman/.test(multi));
+// CHANGED 2026-08-19: the source photo is now named POSITIVELY first. It was defined only by what
+// it must not be used for — "a DIFFERENT woman", never once "this is the photo you are recreating"
+// — which is survivable at image 2 and confusing at image 4 (owner: "grace have 3 image of her so
+// need say image 4 is the one we try recreate").
+check('and the source index moves with them', /IMAGE 5 IS THE PHOTOGRAPH YOU ARE RECREATING/.test(multi));
+check('the source is introduced as the target, not only as forbidden',
+  /IMAGE 5 IS THE PHOTOGRAPH YOU ARE RECREATING/.test(multi) && /NEVER an identity reference/.test(multi));
 
 // --- the ordering Seedream actually weights -----------------------------------------------------------
 // The tail carries the most weight, which is why the locks live at the end.
