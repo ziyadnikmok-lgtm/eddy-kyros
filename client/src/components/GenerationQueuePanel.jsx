@@ -63,6 +63,32 @@ export default function GenerationQueuePanel({ className = '' }) {
     }
   };
 
+  /**
+   * DISMISS, beside Retry — because this bar never had one.
+   *
+   * Owner, 2026-08-19: "i click clear and still show". The per-tile x and the results panel's
+   * "Dismiss N failed" both delete their rows now, but THIS bar — the one that says "27 FAILED" at
+   * the top of the page — only ever offered Retry. There was nothing here to press that could clear
+   * anything, so the count sat there through every refresh no matter what was dismissed below.
+   *
+   * Account-wide on purpose: this bar's counts are account-wide (27 = 7 Photo Match + 20 Eddy),
+   * so a dismiss scoped to one feature would leave a number that still did not match the button.
+   * The results panel keeps its feature-scoped version for clearing just one page.
+   */
+  const dismissAll = async () => {
+    setBusy(true);
+    try {
+      const r = await jobsApi.deleteAllFailed();
+      const n = (r?.data ?? r)?.removed ?? 0;
+      notify(n ? `${n} failed job${n === 1 ? '' : 's'} dismissed` : 'Nothing to dismiss', n ? 'success' : 'info');
+      await load();
+    } catch (err) {
+      notify(err.message || 'Could not dismiss', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const retryOne = async (id) => {
     setBusy(true);
     try {
@@ -93,7 +119,13 @@ export default function GenerationQueuePanel({ className = '' }) {
         {counts.failed > 0 && (
           <>
             <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs" disabled={busy} onClick={retryAll}>
-              {busy ? 'Retrying…' : `Retry ${counts.failed} failed`}
+              {busy ? 'Working…' : `Retry ${counts.failed} failed`}
+            </Btn>
+            {/* Retrying a failure costs money; throwing it away does not. Both belong here. */}
+            <Btn variant="secondary" className="!rounded-lg !py-1 !px-3 !text-xs" disabled={busy}
+              title="Remove these failed jobs from the queue. Finished pictures and anything in your libraries are untouched."
+              onClick={dismissAll}>
+              {busy ? 'Working…' : `Dismiss ${counts.failed}`}
             </Btn>
             <button type="button" onClick={() => setOpen((v) => !v)}
               className="text-[0.6875rem] text-zinc-500 hover:text-zinc-300 cursor-pointer">

@@ -55,6 +55,22 @@ check('the route passes the query through', route.includes("req.query.feature ==
 check('the api sends it', api.includes('deleteAllFailed: (feature) =>'));
 check('and the page sends ITS feature', pm.includes('jobsApi.deleteAllFailed(FEATURE)'));
 
+// --- the QUEUE BAR needs its own dismiss ---------------------------------------------------------
+// Owner, 2026-08-19: "i click clear and still show". The per-tile x and the results panel both
+// delete their rows — but the bar at the top of the page that reads "27 FAILED" only ever offered
+// Retry. Nothing there could clear anything, so the count survived every refresh regardless.
+const panel = read('client/src/components/GenerationQueuePanel.jsx');
+check('the queue bar has a dismiss', panel.includes('const dismissAll = async () => {'));
+check('and it calls the delete, not the retry', panel.includes('await jobsApi.deleteAllFailed();'));
+check('the button is rendered beside Retry', panel.includes('`Dismiss ${counts.failed}`'));
+// Account-wide here on purpose: this bar's counts are account-wide (27 = 7 Photo Match + 20 Eddy),
+// so a feature-scoped dismiss would leave a number that does not match its own button.
+check('account-wide, matching the count it sits next to',
+  panel.includes('jobsApi.deleteAllFailed();') && !panel.includes('deleteAllFailed(FEATURE)'));
+check('why it is account-wide is written down', /this bar's counts are account-wide/.test(panel));
+check('it reports what it removed rather than assuming', panel.includes("`${n} failed job${n === 1 ? '' : 's'} dismissed`"));
+check('and reloads so the count updates', panel.split('const dismissAll')[1].slice(0, 600).includes('await load();'));
+
 // --- one photo goes to a worker --------------------------------------------------------------------
 // ~945ms of cascade sweep per photo, benchmarked over 25 real photos. On the main thread that is a
 // frozen window at exactly the moment you drop something in.
