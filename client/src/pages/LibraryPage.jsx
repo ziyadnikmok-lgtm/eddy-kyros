@@ -653,6 +653,32 @@ export default function LibraryPage() {
     };
   }, [selectedIds, setBulkMode]);
 
+  /**
+   * A FOLDER'S COUNT, COUNTED THE WAY THE FOLDER IS OPENED.
+   *
+   * The chip rendered `itemIds.length` — the raw stored array — while opening the folder filters
+   * the live items by that same array. Deleting a picture removes the gallery row but leaves its id
+   * in this localStorage store (removeItemFromFolder exists in this file and is never called), so
+   * the two answers drift apart permanently: a folder that lost 20 of 27 pictures showed "27" on
+   * the chip and 7 inside, forever, and every later delete widened the gap.
+   *
+   * Deriving the count from the same match the view uses makes a stale id invisible rather than
+   * merely rarer — the number cannot disagree with the contents even when a cascade is missed
+   * somewhere else. That is worth more here than chasing every delete path.
+   */
+  const liveItemKeys = useMemo(() => {
+    const keys = new Set();
+    for (const it of items) {
+      if (it?.id != null) keys.add(String(it.id));
+      if (it?.originalId != null) keys.add(String(it.originalId));
+    }
+    return keys;
+  }, [items]);
+  const folderCount = useCallback(
+    (f) => (f?.itemIds || []).filter((id) => liveItemKeys.has(String(id))).length,
+    [liveItemKeys],
+  );
+
   const imageItems = useMemo(() => items.filter((item) => item.mediaType === 'image'), [items]);
   const imagePreviewUrls = useMemo(() => imageItems.map((item) => item.previewUrl), [imageItems]);
 
@@ -1076,7 +1102,11 @@ export default function LibraryPage() {
       setEditDestinationBusy(false);
       setContextMenu(null);
     }
-  }, [contextMenu, handleImageDownload, navigateTo, notify, openImage]);
+  // `folders` was missing while the body reads folders.length to decide whether "Move to folder"
+  // can open. Frozen at empty, it kept answering "Create a folder first" after one had been
+  // created. contextMenu changes on every right-click so the callback usually rebuilt, which is
+  // why this only bit in the window right after creating the first folder.
+  }, [contextMenu, handleImageDownload, navigateTo, notify, openImage, folders]);
 
   const openContextMenu = useCallback((event, item) => {
     event.preventDefault();
@@ -1401,7 +1431,7 @@ export default function LibraryPage() {
                 style={activeFolderId === f.id ? { borderColor: f.color, background: f.color + '22', color: f.color } : {}}>
                 <span>📁</span>
                 {f.name}
-                <span className="text-[0.625rem] opacity-60">{(f.itemIds||[]).length}</span>
+                <span className="text-[0.625rem] opacity-60">{folderCount(f)}</span>
               </button>
             )}
             <button type="button" onClick={() => deleteFolder(f.id)} title="Delete folder"
@@ -1496,7 +1526,7 @@ export default function LibraryPage() {
                           className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[0.8125rem] text-zinc-300 hover:bg-white/[0.07] transition cursor-pointer">
                           <span style={{ color: f.color }}>📁</span>
                           <span className="truncate">{f.name}</span>
-                          <span className="ml-auto text-[0.625rem] text-zinc-600">{(f.itemIds||[]).length}</span>
+                          <span className="ml-auto text-[0.625rem] text-zinc-600">{folderCount(f)}</span>
                         </button>
                       ))}
                     </div>

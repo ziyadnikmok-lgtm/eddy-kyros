@@ -109,17 +109,41 @@ export default function VideoGalleryPage() {
     if (!deleteTarget) return;
 
     if (deleteTarget === '__bulk__') {
+      /**
+       * ONLY WHAT ACTUALLY WENT.
+       *
+       * This filtered out every selected id regardless of which calls succeeded, and reported the
+       * survivors with an 'info' toast — so deleting ten videos when three failed removed ten tiles
+       * and said "Deleted 7", which nobody reads as a failure. The three came back on the next
+       * mount, because that refetches from GET /api/video/history.
+       *
+       * Failures here are ordinary, not exotic: the history store is capped at 100 entries and
+       * evicts the oldest on every add, so a client list that has not been refetched routinely
+       * holds ids the server no longer has — and DELETE /api/video/history/:id throws 404 for those.
+       * A bare catch turned every one of them into a silent lie.
+       *
+       * The single-video path right below always did this correctly. This is now the same.
+       */
       const ids = [...selectedIds];
-      let removed = 0;
+      const gone = new Set();
+      const failures = [];
       for (const id of ids) {
         try {
+          // eslint-disable-next-line no-await-in-loop -- sequential on purpose: this unlinks files.
           await videoApi.removeHistory(id);
-          removed++;
-        } catch {}
+          gone.add(id);
+        } catch (err) {
+          failures.push(err?.message || 'failed');
+        }
       }
-      setVideos((prev) => prev.filter((v) => !selectedIds.has(v.id)));
-      setSelectedIds(new Set());
-      notify(`Deleted ${removed} video(s)`, 'info');
+      // Only the ones the server confirmed. A tile that is still on disk stays on screen.
+      setVideos((prev) => prev.filter((v) => !gone.has(v.id)));
+      setSelectedIds((prev) => new Set([...prev].filter((id) => !gone.has(id))));
+      if (failures.length) {
+        notify(`Deleted ${gone.size} — ${failures.length} could not be deleted and are still selected: ${failures[0]}`, 'error');
+      } else {
+        notify(`Deleted ${gone.size} video${gone.size === 1 ? '' : 's'}`, 'success');
+      }
     } else {
       try {
         await videoApi.removeHistory(deleteTarget);

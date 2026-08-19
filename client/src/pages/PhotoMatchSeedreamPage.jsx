@@ -2236,7 +2236,14 @@ export default function PhotoMatchSeedreamPage({ variant = 'sd' }) {
   // Every value read below is component state; the deps list is deliberately the whole set so a
   // changed chip is picked up by the very next Regenerate.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [extra, nsfw, exactRecreate, varyBackground, faceless, build, charDetail, characterId, engine, chars]);
+  // lookAtCamera and outfitFromChar were MISSING here, and both change the prompt materially:
+  // lookAtCamera gates the EYES TO CAMERA paragraph and drops 'expression' from the scene list,
+  // outfitFromChar swaps whose clothes she wears. Without them in the deps the factory kept a
+  // frozen copy — flip either toggle and press Generate, and you paid for a picture built from the
+  // PREVIOUS setting while the toggle sat visibly on. Editing the instruction box first made it
+  // work, because `extra` is a dep, which is exactly why it felt intermittent rather than broken.
+  }, [extra, nsfw, exactRecreate, varyBackground, faceless, build, charDetail, characterId, engine, chars,
+    lookAtCamera, outfitFromChar]);
 
   /**
    * RUN ONE TILE AGAIN — the engine behind Regenerate and "Retry on WaveSpeed".

@@ -21,6 +21,7 @@
  * Run it:  npx eslint src --ext .js,.jsx
  */
 import globals from 'globals';
+import reactHooks from 'eslint-plugin-react-hooks';
 
 export default [
   {
@@ -57,6 +58,7 @@ export default [
       // Same reason: one file carries a jsx-a11y disable and that plugin is not installed either.
       'jsx-a11y': { rules: { 'no-noninteractive-element-interactions': { create: () => ({}) } } },
     },
+    plugins: { 'react-hooks': reactHooks },
     rules: {
       'no-undef': 'error',
       /**
@@ -85,6 +87,22 @@ export default [
         // JSX components and React itself read as unused to the base rule.
         varsIgnorePattern: '^[A-Z_]',
       }],
+      /**
+       * MISSING HOOK DEPS — the bug class that produced three separate "the toggle does nothing"
+       * reports on 2026-08-19.
+       *
+       * A useCallback that reads state absent from its dep array keeps a FROZEN copy of it. On
+       * Photo Match that meant flipping "Look at camera" or "Outfit from: her photos" and paying
+       * for a picture built from the previous setting, with the toggle sitting visibly on. It only
+       * corrected itself when some unrelated listed dep changed, which is why it read as
+       * intermittent instead of broken, and why nobody could reproduce it on demand.
+       *
+       * WARN, in the spirit of the note at the top of this file: the repo has pre-existing cases
+       * that are deliberate, and a rule that fails the build on day one gets deleted along with
+       * the two rules that actually matter. It is here to be READ during a change — and
+       * check-hook-deps.js fails hard on the handful that are known to bite.
+       */
+      'react-hooks/exhaustive-deps': 'warn',
       'no-const-assign': 'error',
       'no-dupe-keys': 'error',
       'no-dupe-args': 'error',

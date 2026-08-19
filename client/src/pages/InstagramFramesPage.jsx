@@ -1024,6 +1024,47 @@ export default function InstagramFramesPage() {
   const hasCookies = !!(cookieInfo?.instagram?.hasCookies || cookieInfo?.tiktok?.hasCookies || cookieInfo?.x?.hasCookies);
   const totalFrames = flatFrames.length;
 
+  /**
+   * THE FOLDER TABS NOW FILTER. They never did.
+   *
+   * activeFolder was state with a full folder UI on top of it — create, rename, colour, delete,
+   * a count on every chip, an active highlight — and five references in the whole file: the
+   * useState, a reset on delete, and three that pick a CSS class. The grid rendered allFrames with
+   * no filter anywhere, so clicking a folder highlighted the chip and changed nothing below it.
+   * Frames went in, a success toast came back, and there was no way to get them out again: a
+   * write-only bucket (owner, 2026-08-19: "all pages have some weird bugs").
+   *
+   * FrameLibraryPage is the same page done right and filters in exactly this shape. Grouping is
+   * preserved — a folder view still shows which reel each frame came from — and a group that
+   * loses all its frames drops out rather than rendering an empty header.
+   */
+  const visibleGroups = useMemo(() => {
+    if (!activeFolder) return allFrames;
+    const col = folders.find((c) => c.id === activeFolder);
+    const keep = new Set(col?.frameIds || []);
+    /**
+     * The id is built from the frame's index WITHIN ITS GROUP, both here and on the tile — so a
+     * filter that re-indexes silently changes every id after the first gap, and selecting inside a
+     * folder would then tick the wrong frame. The original index is carried through as `_fIdx` and
+     * the tile prefers it, which keeps ids stable no matter what is filtered out.
+     */
+    return allFrames
+      .map((g) => ({
+        ...g,
+        frames: g.frames
+          .map((f, fIdx) => ({ ...f, _fIdx: fIdx }))
+          .filter((f) => keep.has(`${g.url}-${f.timestampMs}-${f._fIdx}`)),
+      }))
+      .filter((g) => g.frames.length);
+  }, [allFrames, activeFolder, folders]);
+
+  /** Counted off live frames, so a stale id cannot leave the chip disagreeing with the folder. */
+  const liveFrameIds = useMemo(() => new Set(flatFrames.map((f) => f.id)), [flatFrames]);
+  const collectionCount = useCallback(
+    (col) => (col?.frameIds || []).filter((id) => liveFrameIds.has(id)).length,
+    [liveFrameIds],
+  );
+
   const handleDragStart = (e, frame, frameId, globalIdx) => {
     if (!window.electronAPI?.startDragFiles) return;
 
@@ -1074,7 +1115,7 @@ export default function InstagramFramesPage() {
 
         {folders.map((col) => {
           const isActive = activeFolder === col.id;
-          const count = col.frameIds?.length || 0;
+          const count = collectionCount(col);
           return (
             <div key={col.id} className="relative group/col flex items-center">
               {renamingFolder?.id === col.id ? (
@@ -1560,8 +1601,8 @@ export default function InstagramFramesPage() {
         {totalFrames > 0 && (
           <div className="space-y-3 animate-in">
             {/* Groups by reel */}
-            {allFrames.map((group, gIdx) => {
-              const offset = allFrames.slice(0, gIdx).reduce((s, g) => s + g.frames.length, 0);
+            {visibleGroups.map((group, gIdx) => {
+              const offset = visibleGroups.slice(0, gIdx).reduce((s, g) => s + g.frames.length, 0);
               return (
                 <div key={gIdx} className="space-y-2">
                   <div className="flex items-center gap-2 py-1">
@@ -1595,7 +1636,8 @@ export default function InstagramFramesPage() {
                       const globalIdx = offset + fIdx;
                       // Must match the flatFrames id formula exactly (see above) — fIdx
                       // disambiguates smart-mode frames that share timestampMs=0.
-                      const frameId = `${group.url}-${frame.timestampMs}-${fIdx}`;
+                      // _fIdx when a folder filter has re-indexed the group — see visibleGroups.
+                      const frameId = `${group.url}-${frame.timestampMs}-${frame._fIdx ?? fIdx}`;
                       const isSelected = selected.has(frameId);
                       const isPreviewing = previewIdx === globalIdx;
                       return (

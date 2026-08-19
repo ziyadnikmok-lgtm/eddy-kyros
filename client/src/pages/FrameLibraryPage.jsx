@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Btn, Card, Empty } from '../components/UI';
 import { useApp } from '../context/AppContext';
 import { stashSourceHandoff, handoffDestination } from '../lib/sourceHandoff';
@@ -294,6 +294,16 @@ export default function FrameLibraryPage() {
 
 
   // Declared early so effects below (keyboard nav, clamp) can safely depend on it.
+  /**
+   * Counted the way the folder is opened — see the note on removeItem. The chip used the raw id
+   * array while the view filters live frames, so the number and the contents disagreed.
+   */
+  const liveFrameIds = useMemo(() => new Set(items.map((it) => it.id)), [items]);
+  const collectionCount = useCallback(
+    (col) => (col?.frameIds || []).filter((id) => liveFrameIds.has(id)).length,
+    [liveFrameIds],
+  );
+
   const filteredItems = useMemo(() => {
     let list = items;
     // Collection filter — if a folder is active only show its frames
@@ -699,7 +709,22 @@ export default function FrameLibraryPage() {
     }
   };
 
+  /**
+   * DELETING A FRAME ALSO TAKES IT OUT OF EVERY FOLDER.
+   *
+   * removeFrameFromAllCollections was written for exactly this, imported at the top of this file,
+   * and never called once. So a deleted frame kept its place in every folder's frameIds: the chip
+   * counted ids, the folder view filtered live frames, and the two drifted apart permanently —
+   * worst after "Clear entire frame library", which left every folder claiming its full old count
+   * over an empty library.
+   *
+   * The counts are now derived from live frames as well (see collectionCount), so a stale id is
+   * invisible even if some other path forgets to cascade. Both, because either alone is a
+   * half-fix: cascading keeps the store honest, deriving keeps the UI honest.
+   */
   const removeItem = (id) => {
+    removeFrameFromAllCollections(id);
+    refreshCollections();
     setItems((prev) => prev.filter((item) => item.id !== id));
     setSelectedIds((prev) => prev.filter((itemId) => itemId !== id));
     if (previewIdx !== null) {
@@ -716,6 +741,8 @@ export default function FrameLibraryPage() {
 
   const deleteSelected = () => {
     if (selectedIds.length === 0) return;
+    for (const id of selectedIds) removeFrameFromAllCollections(id);
+    refreshCollections();
     setItems((prev) => prev.filter((item) => !selectedIds.includes(item.id)));
     setSelectedIds([]);
     setPreviewIdx(null);
@@ -724,6 +751,9 @@ export default function FrameLibraryPage() {
 
   const clearAll = () => {
     if (window.confirm('Are you sure you want to clear your entire frame library?')) {
+      // "Library cleared" said so while leaving every folder holding the whole old library.
+      for (const it of items) removeFrameFromAllCollections(it.id);
+      refreshCollections();
       setItems([]);
       setSelectedIds([]);
       setPreviewIdx(null);
@@ -856,7 +886,7 @@ export default function FrameLibraryPage() {
 
         {collections.map((col) => {
           const isActive = activeCollection === col.id;
-          const count = col.frameIds?.length || 0;
+          const count = collectionCount(col);
           return (
             <div key={col.id} className="relative group/col flex items-center">
               {renamingCol?.id === col.id ? (

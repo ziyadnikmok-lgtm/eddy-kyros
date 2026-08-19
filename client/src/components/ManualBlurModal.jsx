@@ -69,7 +69,6 @@ export default function ManualBlurModal({ src, onApply, onClose }) {
           onPointerUp={onUp}
           onPointerLeave={onUp}
         >
-          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
           <img ref={imgRef} src={src} alt="" draggable={false} className="block w-full max-h-[60vh] object-contain bg-zinc-900 pointer-events-none" />
           {box && (
             <div

@@ -4398,7 +4398,10 @@ export default function EddyGeneratePage({ mode = 'eddy' }) {
     await modelsStore.set('active', name);
     // A quota refusal must not look like a save: these are two full photos and the store CAN fill.
     notify(ok ? `Saved ${name}` : `Could not save ${name} — storage is full`, ok ? 'success' : 'error');
-  }, [activeModel, baseImage, faceImage, build, models, notify]);
+  // pickedBases / pickedBasePhotos were missing, and both are READ by the guards above. Frozen,
+  // they made "Save as model" refuse with "Pick the photos to dress first" over photos that were
+  // visibly ticked — and, the other way round, let a save through on an empty selection.
+  }, [activeModel, baseImage, faceImage, build, models, notify, pickedBases, pickedBasePhotos]);
 
   const deleteModel = useCallback(async () => {
     if (!activeModel) return;
