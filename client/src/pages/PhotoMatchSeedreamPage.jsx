@@ -838,13 +838,42 @@ export function buildMatchInstruction({ characterName, refCount, masterPrompt, e
    * Two lengths for the usual reason — Seedream has no spare room. The short one costs it nothing,
    * because turning exact recreate on now also removes the lighting line that was contradicting it.
    */
+  /**
+   * AND THE CONFLICT IT KEPT LOSING (owner, 2026-08-19: "exact recreate is not doing exact
+   * recreate" — the second time this has been reported).
+   *
+   * Measured, not guessed. Job 6998637f, read back out of the queue with the images it sent:
+   *
+   *   SOURCE  an extreme close-up. Her face fills the frame, arms crossed over the top, shot from
+   *           above, cropped well above the chest — no torso in the picture at all.
+   *   OUTPUT  the same couch and the same idea, but the camera pulled right back to a
+   *           three-quarter shot showing her chest and a tank top that is not in the source.
+   *
+   * The prompt was 4,417 characters against NB2's 8,000 cap, so nothing was trimmed and this lock
+   * was present. It lost anyway, because two paragraphs above it ORDER a re-frame whenever a bust
+   * chip is on: the chip itself ("VERY LARGE, heavy, extremely full bust ... deep natural
+   * cleavage") and the identity lock's own clause ("her chest comes from her references at its
+   * true size; the source outfit stretches to fit HER"). A photograph cropped above the chest
+   * cannot show a bust — the only way to obey those is to widen the crop. The model was not
+   * ignoring the instruction; it was choosing between two, and the loud one won.
+   *
+   * So the lock now SETTLES it rather than restating "do not re-frame" louder. Framing wins; where
+   * the source does not show her figure, the figure instruction simply has nothing to apply to
+   * (owner's call, 2026-08-19). Identity is untouched by this — her face, hair and skin still come
+   * from her references, which is the whole point of the page.
+   */
   if (exactRecreate) {
+    const figureYields = allowBodyChange || buildText
+      ? ' The crop outranks her figure: if this photograph does not show her chest or body, that is simply not visible here — widening, zooming out or re-angling the shot to bring it into view is WRONG. Her figure applies only where the original framing already shows it.'
+      : '';
     parts.push(roomy
-      ? `EXACT RECREATE — the photograph itself is FIXED: ${src}'s framing, crop, camera angle, pose, background, props, lighting, contrast and colour all stay exactly as they are. Do not re-frame, re-pose, relight, restyle, tidy, recolour or "improve" any of it. The ONLY thing that changes in that photograph is who the woman is.`
+      ? `EXACT RECREATE — the photograph itself is FIXED: ${src}'s framing, crop, camera angle, pose, background, props, lighting, contrast and colour all stay exactly as they are. Do not re-frame, re-pose, relight, restyle, tidy, recolour or "improve" any of it. The ONLY thing that changes in that photograph is who the woman is.${figureYields}`
       // Measured to the character. Turning exact recreate on removes the 81-character lighting line
       // it contradicts, and this is sized to fit in that gap — so Seedream gains the lock without
       // losing the skin paragraph to the trim loop. Anything longer costs one.
-      : `EXACT RECREATE: ${src}'s framing, pose, lighting and colour stay EXACTLY as they are — never restyled.`);
+      // Seedream has no spare room, so the short form gets the shortest possible form of the same
+      // ruling — the crop clause is the half that was actually being disobeyed.
+      : `EXACT RECREATE: ${src}'s framing, crop, pose, lighting and colour stay EXACTLY as they are — never restyled.${figureYields ? ' Never widen or re-angle the crop to bring her figure into view.' : ''}`);
   }
 
   const SEP = '\n\n';

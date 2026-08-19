@@ -18,6 +18,11 @@
 //      once, with the reason written here. Anything that breaks these hashes without a line like
 //      this one is the accident the pin exists to catch.
 //
+//      RE-PINNED AGAIN, 2026-08-19, exact and outfit only: "exact recreate is not doing exact
+//      recreate", traced to the bust chip ordering a re-frame the lock never overruled. The lock
+//      now names the CROP and settles that conflict. See check-exact-recreate.js, which carries
+//      the measurement — the source photo sent and the widened shot that came back.
+//
 //   2. THE PAIR PROMPT MUST SAY THE THINGS THAT MAKE IT WORK. Naming two women is not enough —
 //      the model takes its count from the scene and averages two reference sets into one face
 //      unless told otherwise, and both failures look identical in the output ("it ignored the
